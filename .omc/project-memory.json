@@ -55,38 +55,104 @@
   "hotPaths": [
     {
       "path": "docs/ROADMAP.md",
-      "accessCount": 12,
-      "lastAccessed": 1778812859690,
+      "accessCount": 13,
+      "lastAccessed": 1778821344324,
       "type": "file"
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "accessCount": 11,
-      "lastAccessed": 1778813115865,
-      "type": "file"
-    },
-    {
-      "path": "docs/WORKFLOW_SOLO_AI.md",
-      "accessCount": 9,
-      "lastAccessed": 1778812598270,
+      "accessCount": 12,
+      "lastAccessed": 1778821344841,
       "type": "file"
     },
     {
       "path": "docs/PRD.md",
-      "accessCount": 9,
-      "lastAccessed": 1778812925121,
+      "accessCount": 11,
+      "lastAccessed": 1778821345383,
+      "type": "file"
+    },
+    {
+      "path": "docs/WORKFLOW_SOLO_AI.md",
+      "accessCount": 10,
+      "lastAccessed": 1778821346087,
       "type": "file"
     },
     {
       "path": ".vibelign/project_map.json",
+      "accessCount": 10,
+      "lastAccessed": 1778823297089,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/pyproject.toml",
+      "accessCount": 10,
+      "lastAccessed": 1778823344128,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/main.py",
+      "accessCount": 8,
+      "lastAccessed": 1778823325041,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/config/constants.py",
       "accessCount": 7,
-      "lastAccessed": 1778813006552,
+      "lastAccessed": 1778823331553,
+      "type": "file"
+    },
+    {
+      "path": "pyproject.toml",
+      "accessCount": 7,
+      "lastAccessed": 1778823348856,
+      "type": "file"
+    },
+    {
+      "path": "docs/DEPLOY.md",
+      "accessCount": 6,
+      "lastAccessed": 1778818171541,
       "type": "file"
     },
     {
       "path": "apps/server/Dockerfile",
+      "accessCount": 6,
+      "lastAccessed": 1778821504169,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/db/alembic.ini",
+      "accessCount": 6,
+      "lastAccessed": 1778821851731,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/main.py",
+      "accessCount": 6,
+      "lastAccessed": 1778823331108,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/db/alembic/env.py",
+      "accessCount": 6,
+      "lastAccessed": 1778823342584,
+      "type": "file"
+    },
+    {
+      "path": "apps/web/vite.config.ts",
+      "accessCount": 6,
+      "lastAccessed": 1778823344007,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/pyproject.toml",
+      "accessCount": 6,
+      "lastAccessed": 1778823348420,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/api/v1/health.py",
       "accessCount": 5,
-      "lastAccessed": 1778813402104,
+      "lastAccessed": 1778822481640,
       "type": "file"
     },
     {
@@ -96,21 +162,15 @@
       "type": "file"
     },
     {
-      "path": "docs/DEPLOY.md",
-      "accessCount": 4,
-      "lastAccessed": 1778813112223,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/db/alembic.ini",
-      "accessCount": 4,
-      "lastAccessed": 1778813387201,
-      "type": "file"
-    },
-    {
       "path": "README.md",
       "accessCount": 4,
       "lastAccessed": 1778813557404,
+      "type": "file"
+    },
+    {
+      "path": "apps/web/package.json",
+      "accessCount": 4,
+      "lastAccessed": 1778821860045,
       "type": "file"
     },
     {
@@ -126,21 +186,15 @@
       "type": "file"
     },
     {
+      "path": "pnpm-workspace.yaml",
+      "accessCount": 3,
+      "lastAccessed": 1778821361427,
+      "type": "file"
+    },
+    {
       "path": "docs/SETUP_MEETING_PC.html",
       "accessCount": 2,
       "lastAccessed": 1778810957963,
-      "type": "file"
-    },
-    {
-      "path": "pyproject.toml",
-      "accessCount": 2,
-      "lastAccessed": 1778813253216,
-      "type": "file"
-    },
-    {
-      "path": "pnpm-workspace.yaml",
-      "accessCount": 2,
-      "lastAccessed": 1778813253559,
       "type": "file"
     },
     {
@@ -150,57 +204,9 @@
       "type": "file"
     },
     {
-      "path": "apps/server/pyproject.toml",
+      "path": "apps/web/tsconfig.json",
       "accessCount": 2,
-      "lastAccessed": 1778813257858,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/main.py",
-      "accessCount": 2,
-      "lastAccessed": 1778813258369,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/pyproject.toml",
-      "accessCount": 2,
-      "lastAccessed": 1778813259467,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/main.py",
-      "accessCount": 2,
-      "lastAccessed": 1778813259873,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/config/constants.py",
-      "accessCount": 2,
-      "lastAccessed": 1778813268819,
-      "type": "file"
-    },
-    {
-      "path": "apps/web/package.json",
-      "accessCount": 2,
-      "lastAccessed": 1778813271839,
-      "type": "file"
-    },
-    {
-      "path": "apps/web/vite.config.ts",
-      "accessCount": 2,
-      "lastAccessed": 1778813272236,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/db/alembic/env.py",
-      "accessCount": 2,
-      "lastAccessed": 1778813274205,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/api/v1/health.py",
-      "accessCount": 2,
-      "lastAccessed": 1778813274600,
+      "lastAccessed": 1778821859489,
       "type": "file"
     },
     {
@@ -327,12 +333,6 @@
       "path": "apps/server/.dockerignore",
       "accessCount": 1,
       "lastAccessed": 1778812943510,
-      "type": "file"
-    },
-    {
-      "path": "apps/web/tsconfig.json",
-      "accessCount": 1,
-      "lastAccessed": 1778812958285,
       "type": "file"
     },
     {

@@ -64,9 +64,17 @@
     },
     "apps/client_sidecar/config/constants.py": {
       "category": "service",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 13,
+      "anchors": [
+        "CONSTANTS"
+      ],
+      "anchor_spans": [
+        {
+          "name": "CONSTANTS",
+          "start": 1,
+          "end": 15
+        }
+      ],
+      "line_count": 15,
       "imports": [],
       "imported_by": [
         "apps/client_sidecar/main.py"
@@ -74,9 +82,24 @@
     },
     "apps/client_sidecar/main.py": {
       "category": "entry",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 22,
+      "anchors": [
+        "MAIN",
+        "MAIN_RUN"
+      ],
+      "anchor_spans": [
+        {
+          "name": "MAIN",
+          "start": 1,
+          "end": 26
+        },
+        {
+          "name": "MAIN_RUN",
+          "start": 15,
+          "end": 21,
+          "signature": "def run() -> None:"
+        }
+      ],
+      "line_count": 26,
       "imports": [
         "apps/client_sidecar/config/constants.py"
       ],
@@ -100,33 +123,65 @@
     },
     "apps/desktop/src-tauri/build.rs": {
       "category": "ui",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 3,
+      "anchors": [
+        "BUILD"
+      ],
+      "anchor_spans": [
+        {
+          "name": "BUILD",
+          "start": 1,
+          "end": 5
+        }
+      ],
+      "line_count": 5,
       "imports": [],
       "imported_by": []
     },
     "apps/desktop/src-tauri/src/lib.rs": {
       "category": "other",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 6,
+      "anchors": [
+        "LIB"
+      ],
+      "anchor_spans": [
+        {
+          "name": "LIB",
+          "start": 1,
+          "end": 8
+        }
+      ],
+      "line_count": 8,
       "imports": [],
       "imported_by": []
     },
     "apps/desktop/src-tauri/src/main.rs": {
       "category": "entry",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 6,
+      "anchors": [
+        "MAIN"
+      ],
+      "anchor_spans": [
+        {
+          "name": "MAIN",
+          "start": 1,
+          "end": 8
+        }
+      ],
+      "line_count": 8,
       "imports": [],
       "imported_by": []
     },
     "apps/desktop/src/App.tsx": {
       "category": "other",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 7,
+      "anchors": [
+        "APP"
+      ],
+      "anchor_spans": [
+        {
+          "name": "APP",
+          "start": 1,
+          "end": 9
+        }
+      ],
+      "line_count": 9,
       "imports": [],
       "imported_by": [
         "apps/desktop/src/main.tsx"
@@ -134,9 +189,17 @@
     },
     "apps/desktop/src/main.tsx": {
       "category": "other",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 9,
+      "anchors": [
+        "MAIN"
+      ],
+      "anchor_spans": [
+        {
+          "name": "MAIN",
+          "start": 1,
+          "end": 11
+        }
+      ],
+      "line_count": 11,
       "imports": [
         "apps/desktop/src/App.tsx"
       ],
@@ -144,9 +207,17 @@
     },
     "apps/desktop/vite.config.ts": {
       "category": "other",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 21,
+      "anchors": [
+        "VITE_CONFIG"
+      ],
+      "anchor_spans": [
+        {
+          "name": "VITE_CONFIG",
+          "start": 1,
+          "end": 23
+        }
+      ],
+      "line_count": 23,
       "imports": [],
       "imported_by": []
     },
@@ -184,9 +255,24 @@
     },
     "apps/server/api/v1/health.py": {
       "category": "service",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 8,
+      "anchors": [
+        "HEALTH",
+        "HEALTH_HEALTH"
+      ],
+      "anchor_spans": [
+        {
+          "name": "HEALTH",
+          "start": 1,
+          "end": 12
+        },
+        {
+          "name": "HEALTH_HEALTH",
+          "start": 8,
+          "end": 11,
+          "signature": "async def health() -> dict[str, str]:"
+        }
+      ],
+      "line_count": 12,
       "imports": [],
       "imported_by": [
         "apps/server/main.py"
@@ -202,9 +288,45 @@
     },
     "apps/server/db/alembic/env.py": {
       "category": "service",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 54,
+      "anchors": [
+        "ENV",
+        "ENV_RUN_MIGRATIONS_OFFLINE",
+        "ENV_DO_RUN_MIGRATIONS",
+        "ENV_RUN_ASYNC_MIGRATIONS",
+        "ENV_RUN_MIGRATIONS_ONLINE"
+      ],
+      "anchor_spans": [
+        {
+          "name": "ENV",
+          "start": 1,
+          "end": 64
+        },
+        {
+          "name": "ENV_RUN_MIGRATIONS_OFFLINE",
+          "start": 24,
+          "end": 30,
+          "signature": "def run_migrations_offline() -> None:"
+        },
+        {
+          "name": "ENV_DO_RUN_MIGRATIONS",
+          "start": 33,
+          "end": 38,
+          "signature": "def do_run_migrations(connection: Connection) -> None:"
+        },
+        {
+          "name": "ENV_RUN_ASYNC_MIGRATIONS",
+          "start": 41,
+          "end": 51,
+          "signature": "async def run_async_migrations() -> None:"
+        },
+        {
+          "name": "ENV_RUN_MIGRATIONS_ONLINE",
+          "start": 54,
+          "end": 57,
+          "signature": "def run_migrations_online() -> None:"
+        }
+      ],
+      "line_count": 64,
       "imports": [],
       "imported_by": []
     },
@@ -218,9 +340,24 @@
     },
     "apps/server/main.py": {
       "category": "entry",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 16,
+      "anchors": [
+        "MAIN",
+        "MAIN_RUN"
+      ],
+      "anchor_spans": [
+        {
+          "name": "MAIN",
+          "start": 1,
+          "end": 20
+        },
+        {
+          "name": "MAIN_RUN",
+          "start": 10,
+          "end": 15,
+          "signature": "def run() -> None:"
+        }
+      ],
+      "line_count": 20,
       "imports": [
         "apps/server/api/v1/health.py"
       ],
@@ -236,17 +373,33 @@
     },
     "apps/web/postcss.config.js": {
       "category": "other",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 6,
+      "anchors": [
+        "POSTCSS_CONFIG"
+      ],
+      "anchor_spans": [
+        {
+          "name": "POSTCSS_CONFIG",
+          "start": 1,
+          "end": 8
+        }
+      ],
+      "line_count": 8,
       "imports": [],
       "imported_by": []
     },
     "apps/web/src/App.tsx": {
       "category": "other",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 7,
+      "anchors": [
+        "APP"
+      ],
+      "anchor_spans": [
+        {
+          "name": "APP",
+          "start": 1,
+          "end": 9
+        }
+      ],
+      "line_count": 9,
       "imports": [],
       "imported_by": [
         "apps/web/src/main.tsx"
@@ -254,9 +407,17 @@
     },
     "apps/web/src/main.tsx": {
       "category": "other",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 10,
+      "anchors": [
+        "MAIN"
+      ],
+      "anchor_spans": [
+        {
+          "name": "MAIN",
+          "start": 1,
+          "end": 12
+        }
+      ],
+      "line_count": 12,
       "imports": [
         "apps/web/src/App.tsx"
       ],
@@ -264,49 +425,146 @@
     },
     "apps/web/src/vite-env.d.ts": {
       "category": "other",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 1,
+      "anchors": [
+        "VITE_ENV_D"
+      ],
+      "anchor_spans": [
+        {
+          "name": "VITE_ENV_D",
+          "start": 1,
+          "end": 3
+        }
+      ],
+      "line_count": 3,
       "imports": [],
       "imported_by": []
     },
     "apps/web/tailwind.config.ts": {
       "category": "other",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 8,
+      "anchors": [
+        "TAILWIND_CONFIG"
+      ],
+      "anchor_spans": [
+        {
+          "name": "TAILWIND_CONFIG",
+          "start": 1,
+          "end": 10
+        }
+      ],
+      "line_count": 10,
       "imports": [],
       "imported_by": []
     },
     "apps/web/vite.config.ts": {
       "category": "other",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 7,
+      "anchors": [
+        "VITE_CONFIG"
+      ],
+      "anchor_spans": [
+        {
+          "name": "VITE_CONFIG",
+          "start": 1,
+          "end": 9
+        }
+      ],
+      "line_count": 9,
       "imports": [],
       "imported_by": []
     },
     "generate_md_cards.py": {
       "category": "other",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 223,
+      "anchors": [
+        "GENERATE_MD_CARDS",
+        "GENERATE_MD_CARDS_SLUGIFY",
+        "GENERATE_MD_CARDS_EXTRACT_SUMMARY",
+        "GENERATE_MD_CARDS_CLEAN",
+        "GENERATE_MD_CARDS_BUILD_PROMPT",
+        "GENERATE_MD_CARDS_REQUEST_IMAGE",
+        "GENERATE_MD_CARDS_RESOLVE_TARGETS",
+        "GENERATE_MD_CARDS_MAIN"
+      ],
+      "anchor_spans": [
+        {
+          "name": "GENERATE_MD_CARDS",
+          "start": 3,
+          "end": 240
+        },
+        {
+          "name": "GENERATE_MD_CARDS_SLUGIFY",
+          "start": 40,
+          "end": 45,
+          "signature": "def slugify(path: Path) -> str:"
+        },
+        {
+          "name": "GENERATE_MD_CARDS_EXTRACT_SUMMARY",
+          "start": 48,
+          "end": 96,
+          "signature": "def extract_summary(markdown: str, max_items: int = 10) -> dict[str, object]:"
+        },
+        {
+          "name": "GENERATE_MD_CARDS_CLEAN",
+          "start": 75,
+          "end": 90,
+          "signature": "def clean(items: list[str], limit: int) -> list[str]:"
+        },
+        {
+          "name": "GENERATE_MD_CARDS_BUILD_PROMPT",
+          "start": 101,
+          "end": 109,
+          "signature": "def build_prompt(path: Path, summary: dict[str, object]) -> str:"
+        },
+        {
+          "name": "GENERATE_MD_CARDS_REQUEST_IMAGE",
+          "start": 133,
+          "end": 168,
+          "signature": "def request_image(prompt: str, *, model: str, size: str) -> bytes:"
+        },
+        {
+          "name": "GENERATE_MD_CARDS_RESOLVE_TARGETS",
+          "start": 171,
+          "end": 181,
+          "signature": "def resolve_targets(include_all_md: bool) -> list[Path]:"
+        },
+        {
+          "name": "GENERATE_MD_CARDS_MAIN",
+          "start": 184,
+          "end": 235,
+          "signature": "def main() -> int:"
+        }
+      ],
+      "line_count": 240,
       "imports": [],
       "imported_by": []
     },
     "packages/sdk-python/yeson_meet_sdk/__init__.py": {
       "category": "other",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 5,
+      "anchors": [
+        "__INIT__"
+      ],
+      "anchor_spans": [
+        {
+          "name": "__INIT__",
+          "start": 1,
+          "end": 7
+        }
+      ],
+      "line_count": 7,
       "imports": [],
       "imported_by": []
     },
     "packages/ui/src/index.ts": {
       "category": "entry",
-      "anchors": [],
-      "anchor_spans": [],
-      "line_count": 3,
+      "anchors": [
+        "INDEX"
+      ],
+      "anchor_spans": [
+        {
+          "name": "INDEX",
+          "start": 1,
+          "end": 5
+        }
+      ],
+      "line_count": 5,
       "imports": [],
       "imported_by": []
     }
@@ -317,49 +575,124 @@
   "service_modules": [],
   "large_files": [],
   "file_count": 32,
-  "anchor_index": {},
+  "anchor_index": {
+    "apps/client_sidecar/config/constants.py": [
+      "CONSTANTS"
+    ],
+    "apps/client_sidecar/main.py": [
+      "MAIN",
+      "MAIN_RUN"
+    ],
+    "apps/desktop/src-tauri/build.rs": [
+      "BUILD"
+    ],
+    "apps/desktop/src-tauri/src/lib.rs": [
+      "LIB"
+    ],
+    "apps/desktop/src-tauri/src/main.rs": [
+      "MAIN"
+    ],
+    "apps/desktop/src/App.tsx": [
+      "APP"
+    ],
+    "apps/desktop/src/main.tsx": [
+      "MAIN"
+    ],
+    "apps/desktop/vite.config.ts": [
+      "VITE_CONFIG"
+    ],
+    "apps/server/api/v1/health.py": [
+      "HEALTH",
+      "HEALTH_HEALTH"
+    ],
+    "apps/server/db/alembic/env.py": [
+      "ENV",
+      "ENV_RUN_MIGRATIONS_OFFLINE",
+      "ENV_DO_RUN_MIGRATIONS",
+      "ENV_RUN_ASYNC_MIGRATIONS",
+      "ENV_RUN_MIGRATIONS_ONLINE"
+    ],
+    "apps/server/main.py": [
+      "MAIN",
+      "MAIN_RUN"
+    ],
+    "apps/web/postcss.config.js": [
+      "POSTCSS_CONFIG"
+    ],
+    "apps/web/src/App.tsx": [
+      "APP"
+    ],
+    "apps/web/src/main.tsx": [
+      "MAIN"
+    ],
+    "apps/web/src/vite-env.d.ts": [
+      "VITE_ENV_D"
+    ],
+    "apps/web/tailwind.config.ts": [
+      "TAILWIND_CONFIG"
+    ],
+    "apps/web/vite.config.ts": [
+      "VITE_CONFIG"
+    ],
+    "generate_md_cards.py": [
+      "GENERATE_MD_CARDS",
+      "GENERATE_MD_CARDS_SLUGIFY",
+      "GENERATE_MD_CARDS_EXTRACT_SUMMARY",
+      "GENERATE_MD_CARDS_CLEAN",
+      "GENERATE_MD_CARDS_BUILD_PROMPT",
+      "GENERATE_MD_CARDS_REQUEST_IMAGE",
+      "GENERATE_MD_CARDS_RESOLVE_TARGETS",
+      "GENERATE_MD_CARDS_MAIN"
+    ],
+    "packages/sdk-python/yeson_meet_sdk/__init__.py": [
+      "__INIT__"
+    ],
+    "packages/ui/src/index.ts": [
+      "INDEX"
+    ]
+  },
   "recently_changed": [
     {
-      "path": "packages/sdk-python/yeson_meet_sdk/__init__.py",
-      "mtime": 1778813024.5808446
-    },
-    {
       "path": "packages/ui/src/index.ts",
-      "mtime": 1778813015.5394123
+      "mtime": 1778821183.91927
     },
     {
-      "path": "apps/desktop/src-tauri/src/lib.rs",
-      "mtime": 1778813009.2514894
+      "path": "packages/sdk-python/yeson_meet_sdk/__init__.py",
+      "mtime": 1778821183.9164743
     },
     {
-      "path": "apps/desktop/src-tauri/src/main.rs",
-      "mtime": 1778813008.1264603
+      "path": "generate_md_cards.py",
+      "mtime": 1778821183.9136088
     },
     {
-      "path": "apps/desktop/src-tauri/build.rs",
-      "mtime": 1778813007.1973786
+      "path": "apps/web/vite.config.ts",
+      "mtime": 1778821183.9095902
     },
     {
-      "path": "apps/desktop/src/App.tsx",
-      "mtime": 1778813004.649356
-    },
-    {
-      "path": "apps/desktop/src/main.tsx",
-      "mtime": 1778813003.3682897
-    },
-    {
-      "path": "apps/desktop/vite.config.ts",
-      "mtime": 1778813001.2900527
+      "path": "apps/web/tailwind.config.ts",
+      "mtime": 1778821183.907424
     },
     {
       "path": "apps/web/src/vite-env.d.ts",
-      "mtime": 1778812964.7133934
+      "mtime": 1778821183.9052813
+    },
+    {
+      "path": "apps/web/src/main.tsx",
+      "mtime": 1778821183.9030051
     },
     {
       "path": "apps/web/src/App.tsx",
-      "mtime": 1778812963.579169
+      "mtime": 1778821183.900708
+    },
+    {
+      "path": "apps/web/postcss.config.js",
+      "mtime": 1778821183.898479
+    },
+    {
+      "path": "apps/server/main.py",
+      "mtime": 1778821183.8961067
     }
   ],
   "generated_at": "2026-05-14T01:23:03.651301Z",
-  "updated_at": "2026-05-15T04:07:40.393660Z"
+  "updated_at": "2026-05-15T05:02:58.297625Z"
 }

@@ -1,5 +1,195 @@
 {
   "schema_version": 1,
-  "anchors": {},
-  "files": {}
+  "anchors": {
+    "apps/client_sidecar/config/constants.py": [
+      "CONSTANTS"
+    ],
+    "apps/client_sidecar/main.py": [
+      "MAIN",
+      "MAIN_RUN"
+    ],
+    "apps/desktop/src-tauri/build.rs": [
+      "BUILD"
+    ],
+    "apps/desktop/src-tauri/src/lib.rs": [
+      "LIB"
+    ],
+    "apps/desktop/src-tauri/src/main.rs": [
+      "MAIN"
+    ],
+    "apps/desktop/src/App.tsx": [
+      "APP"
+    ],
+    "apps/desktop/src/main.tsx": [
+      "MAIN"
+    ],
+    "apps/desktop/vite.config.ts": [
+      "VITE_CONFIG"
+    ],
+    "apps/server/api/v1/health.py": [
+      "HEALTH",
+      "HEALTH_HEALTH"
+    ],
+    "apps/server/db/alembic/env.py": [
+      "ENV",
+      "ENV_RUN_MIGRATIONS_OFFLINE",
+      "ENV_DO_RUN_MIGRATIONS",
+      "ENV_RUN_ASYNC_MIGRATIONS",
+      "ENV_RUN_MIGRATIONS_ONLINE"
+    ],
+    "apps/server/main.py": [
+      "MAIN",
+      "MAIN_RUN"
+    ],
+    "apps/web/postcss.config.js": [
+      "POSTCSS_CONFIG"
+    ],
+    "apps/web/src/App.tsx": [
+      "APP"
+    ],
+    "apps/web/src/main.tsx": [
+      "MAIN"
+    ],
+    "apps/web/src/vite-env.d.ts": [
+      "VITE_ENV_D"
+    ],
+    "apps/web/tailwind.config.ts": [
+      "TAILWIND_CONFIG"
+    ],
+    "apps/web/vite.config.ts": [
+      "VITE_CONFIG"
+    ],
+    "generate_md_cards.py": [
+      "GENERATE_MD_CARDS",
+      "GENERATE_MD_CARDS_SLUGIFY",
+      "GENERATE_MD_CARDS_EXTRACT_SUMMARY",
+      "GENERATE_MD_CARDS_CLEAN",
+      "GENERATE_MD_CARDS_BUILD_PROMPT",
+      "GENERATE_MD_CARDS_REQUEST_IMAGE",
+      "GENERATE_MD_CARDS_RESOLVE_TARGETS",
+      "GENERATE_MD_CARDS_MAIN"
+    ],
+    "packages/sdk-python/yeson_meet_sdk/__init__.py": [
+      "__INIT__"
+    ],
+    "packages/ui/src/index.ts": [
+      "INDEX"
+    ]
+  },
+  "files": {
+    "apps/client_sidecar/config/constants.py": {
+      "anchors": [
+        "CONSTANTS"
+      ]
+    },
+    "apps/client_sidecar/main.py": {
+      "anchors": [
+        "MAIN",
+        "MAIN_RUN"
+      ]
+    },
+    "apps/desktop/src-tauri/build.rs": {
+      "anchors": [
+        "BUILD"
+      ]
+    },
+    "apps/desktop/src-tauri/src/lib.rs": {
+      "anchors": [
+        "LIB"
+      ]
+    },
+    "apps/desktop/src-tauri/src/main.rs": {
+      "anchors": [
+        "MAIN"
+      ]
+    },
+    "apps/desktop/src/App.tsx": {
+      "anchors": [
+        "APP"
+      ]
+    },
+    "apps/desktop/src/main.tsx": {
+      "anchors": [
+        "MAIN"
+      ]
+    },
+    "apps/desktop/vite.config.ts": {
+      "anchors": [
+        "VITE_CONFIG"
+      ]
+    },
+    "apps/server/api/v1/health.py": {
+      "anchors": [
+        "HEALTH",
+        "HEALTH_HEALTH"
+      ]
+    },
+    "apps/server/db/alembic/env.py": {
+      "anchors": [
+        "ENV",
+        "ENV_RUN_MIGRATIONS_OFFLINE",
+        "ENV_DO_RUN_MIGRATIONS",
+        "ENV_RUN_ASYNC_MIGRATIONS",
+        "ENV_RUN_MIGRATIONS_ONLINE"
+      ]
+    },
+    "apps/server/main.py": {
+      "anchors": [
+        "MAIN",
+        "MAIN_RUN"
+      ]
+    },
+    "apps/web/postcss.config.js": {
+      "anchors": [
+        "POSTCSS_CONFIG"
+      ]
+    },
+    "apps/web/src/App.tsx": {
+      "anchors": [
+        "APP"
+      ]
+    },
+    "apps/web/src/main.tsx": {
+      "anchors": [
+        "MAIN"
+      ]
+    },
+    "apps/web/src/vite-env.d.ts": {
+      "anchors": [
+        "VITE_ENV_D"
+      ]
+    },
+    "apps/web/tailwind.config.ts": {
+      "anchors": [
+        "TAILWIND_CONFIG"
+      ]
+    },
+    "apps/web/vite.config.ts": {
+      "anchors": [
+        "VITE_CONFIG"
+      ]
+    },
+    "generate_md_cards.py": {
+      "anchors": [
+        "GENERATE_MD_CARDS",
+        "GENERATE_MD_CARDS_SLUGIFY",
+        "GENERATE_MD_CARDS_EXTRACT_SUMMARY",
+        "GENERATE_MD_CARDS_CLEAN",
+        "GENERATE_MD_CARDS_BUILD_PROMPT",
+        "GENERATE_MD_CARDS_REQUEST_IMAGE",
+        "GENERATE_MD_CARDS_RESOLVE_TARGETS",
+        "GENERATE_MD_CARDS_MAIN"
+      ]
+    },
+    "packages/sdk-python/yeson_meet_sdk/__init__.py": {
+      "anchors": [
+        "__INIT__"
+      ]
+    },
+    "packages/ui/src/index.ts": {
+      "anchors": [
+        "INDEX"
+      ]
+    }
+  }
 }

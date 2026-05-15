@@ -1,229 +1,201 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-15T04:07:36.256483Z",
+  "updated_at": "2026-05-15T05:01:35.458442Z",
   "recent_events": [
     {
-      "time": "2026-05-15T03:31:43.119376Z",
+      "time": "2026-05-15T04:59:43.916434Z",
+      "kind": "modified",
+      "path": "apps/desktop/src-tauri/src/lib.rs",
+      "message": "apps/desktop/src-tauri/src/lib.rs modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:43.923997Z",
+      "kind": "modified",
+      "path": "apps/desktop/src-tauri/src/main.rs",
+      "message": "apps/desktop/src-tauri/src/main.rs modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:43.930947Z",
+      "kind": "modified",
+      "path": "apps/desktop/vite.config.ts",
+      "message": "apps/desktop/vite.config.ts modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:43.938273Z",
+      "kind": "modified",
+      "path": "apps/server/api/v1/health.py",
+      "message": "apps/server/api/v1/health.py modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:43.946281Z",
+      "kind": "modified",
+      "path": "apps/server/db/alembic/env.py",
+      "message": "apps/server/db/alembic/env.py modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:43.953394Z",
+      "kind": "modified",
+      "path": "apps/server/main.py",
+      "message": "apps/server/main.py modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:43.961167Z",
+      "kind": "modified",
+      "path": "apps/web/postcss.config.js",
+      "message": "apps/web/postcss.config.js modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:43.967963Z",
+      "kind": "modified",
+      "path": "apps/web/src/App.tsx",
+      "message": "apps/web/src/App.tsx modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:43.974407Z",
+      "kind": "modified",
+      "path": "apps/web/src/main.tsx",
+      "message": "apps/web/src/main.tsx modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:43.981551Z",
+      "kind": "modified",
+      "path": "apps/web/src/vite-env.d.ts",
+      "message": "apps/web/src/vite-env.d.ts modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:43.988325Z",
+      "kind": "modified",
+      "path": "apps/web/tailwind.config.ts",
+      "message": "apps/web/tailwind.config.ts modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:43.995148Z",
+      "kind": "modified",
+      "path": "apps/web/vite.config.ts",
+      "message": "apps/web/vite.config.ts modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:44.002342Z",
+      "kind": "created",
+      "path": "generate_md_cards.py",
+      "message": "generate_md_cards.py created",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:44.009841Z",
+      "kind": "modified",
+      "path": "packages/sdk-python/yeson_meet_sdk/__init__.py",
+      "message": "packages/sdk-python/yeson_meet_sdk/__init__.py modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:59:44.018805Z",
+      "kind": "modified",
+      "path": "packages/ui/src/index.ts",
+      "message": "packages/ui/src/index.ts modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T05:01:35.440415Z",
       "kind": "deleted",
-      "path": "deploy/data/postgres/global/pg_internal.init",
-      "message": "deploy/data/postgres/global/pg_internal.init deleted",
+      "path": "docs/PRD.md.tmp.3978.f399636f5f6c",
+      "message": "docs/PRD.md.tmp.3978.f399636f5f6c deleted",
       "action": "Confirm the deletion intent or restore the file if needed."
     },
     {
-      "time": "2026-05-15T03:31:43.123475Z",
-      "kind": "deleted",
-      "path": "deploy/data/postgres/base/1/pg_internal.init.93",
-      "message": "deploy/data/postgres/base/1/pg_internal.init.93 deleted",
-      "action": "Confirm the deletion intent or restore the file if needed."
-    },
-    {
-      "time": "2026-05-15T03:31:43.130074Z",
+      "time": "2026-05-15T05:01:35.442856Z",
       "kind": "warning",
-      "path": "deploy/data/postgres/base/1/pg_internal.init",
-      "message": "pg_internal.init에 앵커가 없습니다",
+      "path": "docs/PRD.md",
+      "message": "PRD.md에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-15T03:31:43.138439Z",
+      "time": "2026-05-15T05:01:35.444526Z",
+      "kind": "warning",
+      "path": "docs/PRD.md",
+      "message": "PRD.md에 UI와 비즈니스 로직이 혼재할 수 있습니다",
+      "action": "UI 코드와 서비스/처리 로직을 분리하세요."
+    },
+    {
+      "time": "2026-05-15T05:01:35.451767Z",
       "kind": "moved",
-      "path": "deploy/data/postgres/base/1/pg_internal.init",
-      "message": "deploy/data/postgres/base/1/pg_internal.init moved",
+      "path": "docs/PRD.md",
+      "message": "docs/PRD.md moved",
       "action": "Review the latest change and refresh transfer handoff if needed."
     },
     {
-      "time": "2026-05-15T03:35:23.058114Z",
+      "time": "2026-05-15T05:01:35.458442Z",
       "kind": "deleted",
-      "path": "deploy/data/postgres/pg_logical/replorigin_checkpoint.tmp",
-      "message": "deploy/data/postgres/pg_logical/replorigin_checkpoint.tmp deleted",
-      "action": "Confirm the deletion intent or restore the file if needed."
-    },
-    {
-      "time": "2026-05-15T03:35:23.066266Z",
-      "kind": "moved",
-      "path": "deploy/data/postgres/pg_logical/replorigin_checkpoint",
-      "message": "deploy/data/postgres/pg_logical/replorigin_checkpoint moved",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-15T03:35:23.074257Z",
-      "kind": "deleted",
-      "path": "deploy/data/postgres/pg_logical/replorigin_checkpoint",
-      "message": "deploy/data/postgres/pg_logical/replorigin_checkpoint deleted",
-      "action": "Confirm the deletion intent or restore the file if needed."
-    },
-    {
-      "time": "2026-05-15T03:35:26.005349Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/global/pg_control",
-      "message": "deploy/data/postgres/global/pg_control modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-15T03:35:26.009835Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/base/1/2696",
-      "message": "2696에 앵커가 없습니다",
-      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
-    },
-    {
-      "time": "2026-05-15T03:35:26.017239Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/1/2696",
-      "message": "deploy/data/postgres/base/1/2696 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-15T03:35:26.024556Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/base/1/2619",
-      "message": "2619에 앵커가 없습니다",
-      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
-    },
-    {
-      "time": "2026-05-15T03:35:26.031641Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/1/2619",
-      "message": "deploy/data/postgres/base/1/2619 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-15T03:35:26.039003Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/1/2619_fsm",
-      "message": "deploy/data/postgres/base/1/2619_fsm modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-15T03:35:26.046643Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/1/2619_vm",
-      "message": "deploy/data/postgres/base/1/2619_vm modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-15T03:35:26.050698Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/base/1/1259",
-      "message": "1259에 앵커가 없습니다",
-      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
-    },
-    {
-      "time": "2026-05-15T03:35:26.058098Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/1/1259",
-      "message": "deploy/data/postgres/base/1/1259 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-15T04:03:48.772363Z",
-      "kind": "deleted",
-      "path": "apps/desktop/vite.config.ts.timestamp-1778817828759-97666f709d00f.mjs",
-      "message": "apps/desktop/vite.config.ts.timestamp-1778817828759-97666f709d00f.mjs deleted",
-      "action": "Confirm the deletion intent or restore the file if needed."
-    },
-    {
-      "time": "2026-05-15T04:07:36.238446Z",
-      "kind": "deleted",
-      "path": ".gitignore.tmp.3978.89f9d739a81a",
-      "message": ".gitignore.tmp.3978.89f9d739a81a deleted",
-      "action": "Confirm the deletion intent or restore the file if needed."
-    },
-    {
-      "time": "2026-05-15T04:07:36.246778Z",
-      "kind": "moved",
-      "path": ".gitignore",
-      "message": ".gitignore moved",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-15T04:07:36.256483Z",
-      "kind": "deleted",
-      "path": ".gitignore",
-      "message": ".gitignore deleted",
+      "path": "docs/PRD.md",
+      "message": "docs/PRD.md deleted",
       "action": "Confirm the deletion intent or restore the file if needed."
     }
   ],
   "relevant_files": [
     {
-      "path": "deploy/data/postgres/pg_logical/replorigin_checkpoint",
+      "path": "apps/web/src/App.tsx",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "apps/web/src/main.tsx",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "apps/web/src/vite-env.d.ts",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "apps/web/tailwind.config.ts",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "apps/web/vite.config.ts",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "generate_md_cards.py",
+      "why": "Recently created in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "packages/sdk-python/yeson_meet_sdk/__init__.py",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "packages/ui/src/index.ts",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "docs/PRD.md.tmp.3978.f399636f5f6c",
       "why": "Recently deleted in watch.",
       "source": "watch"
     },
     {
-      "path": "deploy/data/postgres/global/pg_control",
-      "why": "Recently modified in watch.",
-      "source": "watch"
-    },
-    {
-      "path": "deploy/data/postgres/base/1/2696",
-      "why": "Recently modified in watch.",
-      "source": "watch"
-    },
-    {
-      "path": "deploy/data/postgres/base/1/2619",
-      "why": "Recently modified in watch.",
-      "source": "watch"
-    },
-    {
-      "path": "deploy/data/postgres/base/1/2619_fsm",
-      "why": "Recently modified in watch.",
-      "source": "watch"
-    },
-    {
-      "path": "deploy/data/postgres/base/1/2619_vm",
-      "why": "Recently modified in watch.",
-      "source": "watch"
-    },
-    {
-      "path": "deploy/data/postgres/base/1/1259",
-      "why": "Recently modified in watch.",
-      "source": "watch"
-    },
-    {
-      "path": "apps/desktop/vite.config.ts.timestamp-1778817828759-97666f709d00f.mjs",
-      "why": "Recently deleted in watch.",
-      "source": "watch"
-    },
-    {
-      "path": ".gitignore.tmp.3978.89f9d739a81a",
-      "why": "Recently deleted in watch.",
-      "source": "watch"
-    },
-    {
-      "path": ".gitignore",
+      "path": "docs/PRD.md",
       "why": "Recently deleted in watch.",
       "source": "watch"
     }
   ],
   "warnings": [
-    {
-      "time": "2026-05-15T03:30:43.120303Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/base/1/pg_internal.init",
-      "message": "pg_internal.init에 앵커가 없습니다",
-      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
-    },
-    {
-      "time": "2026-05-15T03:30:52.232399Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/global/pg_internal.init",
-      "message": "pg_internal.init에 앵커가 없습니다",
-      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
-    },
-    {
-      "time": "2026-05-15T03:30:52.926917Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/base/16384/pg_internal.init",
-      "message": "pg_internal.init에 앵커가 없습니다",
-      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
-    },
-    {
-      "time": "2026-05-15T03:31:23.091870Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/global/pg_internal.init",
-      "message": "pg_internal.init에 앵커가 없습니다",
-      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
-    },
     {
       "time": "2026-05-15T03:31:23.119058Z",
       "kind": "warning",
@@ -265,6 +237,34 @@
       "path": "deploy/data/postgres/base/1/1259",
       "message": "1259에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T04:09:31.289024Z",
+      "kind": "warning",
+      "path": "docs/DEPLOY.md",
+      "message": "DEPLOY.md에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T04:09:31.291065Z",
+      "kind": "warning",
+      "path": "docs/DEPLOY.md",
+      "message": "DEPLOY.md에 UI와 비즈니스 로직이 혼재할 수 있습니다",
+      "action": "UI 코드와 서비스/처리 로직을 분리하세요."
+    },
+    {
+      "time": "2026-05-15T05:01:35.442856Z",
+      "kind": "warning",
+      "path": "docs/PRD.md",
+      "message": "PRD.md에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T05:01:35.444526Z",
+      "kind": "warning",
+      "path": "docs/PRD.md",
+      "message": "PRD.md에 UI와 비즈니스 로직이 혼재할 수 있습니다",
+      "action": "UI 코드와 서비스/처리 로직을 분리하세요."
     }
   ],
   "decisions": [],

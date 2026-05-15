@@ -3,7 +3,10 @@ name = "yeson-meet-client-sidecar"
 version = "0.0.0"
 description = "yeson-meet client sidecar (audio capture & transport)"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+  "websockets>=13.1",
+  "httpx>=0.27",
+]
 
 [build-system]
 requires = ["hatchling"]

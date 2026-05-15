@@ -1,3 +1,4 @@
+// === ANCHOR: VITE_CONFIG_START ===
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -19,3 +20,4 @@ export default defineConfig(async () => ({
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
   },
 }));
+// === ANCHOR: VITE_CONFIG_END ===

@@ -16,6 +16,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # Localhost-only port exposure for dev tooling (alembic/psql from host).
+    # Production behind LAN can remove this — server already reaches postgres
+    # on the compose network without it.
+    ports:
+      - "127.0.0.1:5432:5432"
 
   server:
     build:
@@ -36,6 +41,11 @@ services:
         condition: service_healthy
     expose:
       - "8000"
+    # Localhost-only port exposure for dev tooling (Vite proxy /api /ws).
+    # Production behind Caddy can omit this — Caddy reaches server on the
+    # compose network without host port binding.
+    ports:
+      - "127.0.0.1:8000:8000"
 
   caddy:
     image: caddy:2-alpine

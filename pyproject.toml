@@ -6,3 +6,8 @@ requires-python = ">=3.12"
 
 [tool.uv.workspace]
 members = ["apps/server", "apps/client_sidecar", "packages/sdk-python"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["apps/server/tests"]
+pythonpath = ["."]

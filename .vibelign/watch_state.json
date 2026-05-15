@@ -2,12 +2,12 @@
   ".omc/state/hud-stdin-cache.json": {
     "path": ".omc/state/hud-stdin-cache.json",
     "lines": 1,
-    "sha1": "ced889ac430eb768e170c9214b613c70d6c96434"
+    "sha1": "cf5aa24bb421902b1ef42c3dfdf00195abb6e0bf"
   },
   ".omc/state/idle-notif-cooldown.json": {
     "path": ".omc/state/idle-notif-cooldown.json",
     "lines": 3,
-    "sha1": "2e58873f948fe88bea203f6591c1053afb3a5548"
+    "sha1": "383c2965ad0631a8f25990c82f81eaca71ed801a"
   },
   "opencode.json": {
     "path": "opencode.json",
@@ -16,13 +16,13 @@
   },
   ".omc/state/agent-replay-c311bf67-7b04-4cdf-8b25-f5aa21c9bf2a.jsonl": {
     "path": ".omc/state/agent-replay-c311bf67-7b04-4cdf-8b25-f5aa21c9bf2a.jsonl",
-    "lines": 25,
-    "sha1": "80e8ae9dcc9fe0e9a1c280fbbbad6c6409e62381"
+    "lines": 28,
+    "sha1": "486abb5f4c87008ef720d03616332fdfc3d7ad1d"
   },
   ".omc/state/subagent-tracking.json": {
     "path": ".omc/state/subagent-tracking.json",
-    "lines": 98,
-    "sha1": "c07f5c466500418e9b62562c5df39b718535004d"
+    "lines": 105,
+    "sha1": "f0ca639d03aa69e29cce3b2bcfba83e68b06c0e9"
   },
   "pnpm-workspace.yaml": {
     "path": "pnpm-workspace.yaml",
@@ -66,13 +66,13 @@
   },
   "apps/server/main.py": {
     "path": "apps/server/main.py",
-    "lines": 16,
-    "sha1": "5bd88bb3fe42f72b0a392a90a28e29b346f8813b"
+    "lines": 20,
+    "sha1": "297f18e9aaa2b100255c5ca69ad30975df527f1f"
   },
   "apps/server/api/v1/health.py": {
     "path": "apps/server/api/v1/health.py",
-    "lines": 8,
-    "sha1": "7240011858000b2dfdf0b43e336e5275cadb22b0"
+    "lines": 12,
+    "sha1": "4ffb353f46d05284a99de1fdfddc478f88d2bda0"
   },
   "apps/server/ws/__init__.py": {
     "path": "apps/server/ws/__init__.py",
@@ -101,8 +101,8 @@
   },
   "apps/client_sidecar/config/constants.py": {
     "path": "apps/client_sidecar/config/constants.py",
-    "lines": 13,
-    "sha1": "c2a70ed31084393659c57567d62424a6c7596f50"
+    "lines": 15,
+    "sha1": "9d5d45dc4d82b75e26bf88e4ccefc0bb0a4aa1bf"
   },
   "apps/client_sidecar/audio/__init__.py": {
     "path": "apps/client_sidecar/audio/__init__.py",
@@ -121,13 +121,13 @@
   },
   "apps/client_sidecar/main.py": {
     "path": "apps/client_sidecar/main.py",
-    "lines": 22,
-    "sha1": "8053171bf3f8ee1b02f998cc1065766d138b85ec"
+    "lines": 26,
+    "sha1": "af3213e6ad2f6843c512ca789977bb995843332a"
   },
   "apps/server/db/alembic/env.py": {
     "path": "apps/server/db/alembic/env.py",
-    "lines": 54,
-    "sha1": "f3cc2cd9a99781973dfa127a63bcdd6d7ba5823a"
+    "lines": 64,
+    "sha1": "a35ac820573053e3daecb1c54d2fc51f60b50d69"
   },
   "apps/server/db/alembic/script.py.mako": {
     "path": "apps/server/db/alembic/script.py.mako",
@@ -151,18 +151,18 @@
   },
   "apps/web/vite.config.ts": {
     "path": "apps/web/vite.config.ts",
-    "lines": 7,
-    "sha1": "b9375f7fd88503abac0c4c3efe1ff2b5619c2baa"
+    "lines": 9,
+    "sha1": "746364dbecf589a4e87d3195f06e0d75019e0eb6"
   },
   "apps/web/tailwind.config.ts": {
     "path": "apps/web/tailwind.config.ts",
-    "lines": 8,
-    "sha1": "cbcc0708ad210be6f5fd534817febb814371681f"
+    "lines": 10,
+    "sha1": "79b0b241e9110e4fb912d6befe9baa6547b0df64"
   },
   "apps/web/postcss.config.js": {
     "path": "apps/web/postcss.config.js",
-    "lines": 6,
-    "sha1": "50423d11f317aef9d5fcfb2563b2a501b344dcd5"
+    "lines": 8,
+    "sha1": "8a0ebc25aae00244c89238469ef3df3ab303b35c"
   },
   "apps/web/index.html": {
     "path": "apps/web/index.html",
@@ -171,13 +171,13 @@
   },
   "apps/web/src/main.tsx": {
     "path": "apps/web/src/main.tsx",
-    "lines": 10,
-    "sha1": "6113132d2b48b56d57503be9b7664dc5e66cb75a"
+    "lines": 12,
+    "sha1": "2c569f8b3c216e3faad5fb4dabb8fed3fd39a437"
   },
   "apps/web/src/App.tsx": {
     "path": "apps/web/src/App.tsx",
-    "lines": 7,
-    "sha1": "5c32da6d8433951114accb783f5b24a21c4418f0"
+    "lines": 9,
+    "sha1": "c2947b75d1768530a363c2947cd06e23b349ff16"
   },
   "apps/web/src/index.css": {
     "path": "apps/web/src/index.css",
@@ -186,8 +186,8 @@
   },
   "apps/web/src/vite-env.d.ts": {
     "path": "apps/web/src/vite-env.d.ts",
-    "lines": 1,
-    "sha1": "e2eac6bcc8767d416f859eb09486cc8709de95a5"
+    "lines": 3,
+    "sha1": "47a6f9cd5fe0ef5d5f038eeecd2556b000b6e8fd"
   },
   "apps/desktop/package.json": {
     "path": "apps/desktop/package.json",
@@ -201,8 +201,8 @@
   },
   "apps/desktop/vite.config.ts": {
     "path": "apps/desktop/vite.config.ts",
-    "lines": 21,
-    "sha1": "4b4fcb2c984a6a8466b0a9c0d2e8cde6a4553575"
+    "lines": 23,
+    "sha1": "0d9892380ba58f5b231b8d03e3a76d5ffa16f25a"
   },
   "apps/desktop/index.html": {
     "path": "apps/desktop/index.html",
@@ -211,13 +211,13 @@
   },
   "apps/desktop/src/main.tsx": {
     "path": "apps/desktop/src/main.tsx",
-    "lines": 9,
-    "sha1": "bca0d2c6dd6eede86ad9e374ad9ae430947bccb6"
+    "lines": 11,
+    "sha1": "e5a4379facff57861107767e11546f9ae0f3591f"
   },
   "apps/desktop/src/App.tsx": {
     "path": "apps/desktop/src/App.tsx",
-    "lines": 7,
-    "sha1": "5028a04f772085ce6d924675a3ac481101abbf2d"
+    "lines": 9,
+    "sha1": "1ae6f4b42d6c30ce0f9409e823ba53d413d9ba0a"
   },
   "apps/desktop/src-tauri/Cargo.toml": {
     "path": "apps/desktop/src-tauri/Cargo.toml",
@@ -226,18 +226,18 @@
   },
   "apps/desktop/src-tauri/build.rs": {
     "path": "apps/desktop/src-tauri/build.rs",
-    "lines": 3,
-    "sha1": "9405ae71ed460cf7bcbb6977813f17c0529754f4"
+    "lines": 5,
+    "sha1": "802f844bc0637cea9dd68d2b04d512b57922404a"
   },
   "apps/desktop/src-tauri/src/main.rs": {
     "path": "apps/desktop/src-tauri/src/main.rs",
-    "lines": 6,
-    "sha1": "2752ed2de58fc9d4e505be3fc93838c01b565b64"
+    "lines": 8,
+    "sha1": "ff31e9416332596b5cd88f110822974ee729ae0c"
   },
   "apps/desktop/src-tauri/src/lib.rs": {
     "path": "apps/desktop/src-tauri/src/lib.rs",
-    "lines": 6,
-    "sha1": "c08ae3c8dd799a4be6d43bea19cc1e4819a8cda2"
+    "lines": 8,
+    "sha1": "37537c0d67eab1de8909c1af4df5143853cd2cb2"
   },
   "apps/desktop/src-tauri/tauri.conf.json": {
     "path": "apps/desktop/src-tauri/tauri.conf.json",
@@ -266,8 +266,8 @@
   },
   "packages/ui/src/index.ts": {
     "path": "packages/ui/src/index.ts",
-    "lines": 3,
-    "sha1": "bae647f2d2fdbe3ca98cedef41e88f6aa7a817f9"
+    "lines": 5,
+    "sha1": "fbe0452a92fbf0f4ff7cb1b72b682b1046b86236"
   },
   "packages/ui/src/tokens.css": {
     "path": "packages/ui/src/tokens.css",
@@ -281,8 +281,8 @@
   },
   "packages/sdk-python/yeson_meet_sdk/__init__.py": {
     "path": "packages/sdk-python/yeson_meet_sdk/__init__.py",
-    "lines": 5,
-    "sha1": "9e9e5ae779080b9e48ec8cea7ab69e3142091981"
+    "lines": 7,
+    "sha1": "628b59c9d503e26e92d8b42ac7a77d483ce6b29c"
   },
   "deploy/docker-compose.yml": {
     "path": "deploy/docker-compose.yml",
@@ -293,11 +293,6 @@
     "path": "deploy/Caddyfile",
     "lines": 36,
     "sha1": "628102814051b94b7055f1682ba5d1eed674464c"
-  },
-  "deploy/env.example": {
-    "path": "deploy/env.example",
-    "lines": 23,
-    "sha1": "3b8a42a6d41a51081cf143bc66abb286d91dbdf0"
   },
   "deploy/postgres/init.sql": {
     "path": "deploy/postgres/init.sql",
@@ -5628,5 +5623,15 @@
     "path": "deploy/data/postgres/base/1/pg_internal.init",
     "lines": 1329,
     "sha1": "1ee73194dc3a9c25f7db3463095196c5480e5698"
+  },
+  "PROJECT_CONTEXT.md": {
+    "path": "PROJECT_CONTEXT.md",
+    "lines": 219,
+    "sha1": "f0b383d0af2ce6735be7ce26054e875c83d08201"
+  },
+  "generate_md_cards.py": {
+    "path": "generate_md_cards.py",
+    "lines": 240,
+    "sha1": "6cd038d42f6d3c4ecf8ac2e8fe084c85ccda9c6b"
   }
 }

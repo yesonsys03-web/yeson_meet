@@ -1,3 +1,4 @@
+// === ANCHOR: TAILWIND_CONFIG_START ===
 import type { Config } from "tailwindcss";
 
 export default {
@@ -6,3 +7,4 @@ export default {
   theme: { extend: {} },
   plugins: [],
 } satisfies Config;
+// === ANCHOR: TAILWIND_CONFIG_END ===

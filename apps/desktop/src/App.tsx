@@ -1,3 +1,4 @@
+// === ANCHOR: APP_START ===
 export default function App() {
   return (
     <div style={{ padding: 32, fontFamily: "system-ui", fontSize: 20 }}>
@@ -5,3 +6,4 @@ export default function App() {
     </div>
   );
 }
+// === ANCHOR: APP_END ===

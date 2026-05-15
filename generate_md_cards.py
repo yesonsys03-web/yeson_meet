@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+
+# === ANCHOR: GENERATE_MD_CARDS_START ===
 """Generate card-style summary images from project Markdown docs.
 
 Usage:
@@ -35,12 +37,15 @@ DEFAULT_TARGETS = [
 ]
 
 
+# === ANCHOR: GENERATE_MD_CARDS_SLUGIFY_START ===
 def slugify(path: Path) -> str:
     stem = path.with_suffix("").as_posix().replace("/", "__")
     stem = re.sub(r"[^A-Za-z0-9가-힣_.-]+", "-", stem)
     return stem.strip("-").lower()
+# === ANCHOR: GENERATE_MD_CARDS_SLUGIFY_END ===
 
 
+# === ANCHOR: GENERATE_MD_CARDS_EXTRACT_SUMMARY_START ===
 def extract_summary(markdown: str, max_items: int = 10) -> dict[str, object]:
     title = "Document"
     headings: list[str] = []
@@ -67,6 +72,7 @@ def extract_summary(markdown: str, max_items: int = 10) -> dict[str, object]:
         elif any(token in line for token in ("MVP", "Windows", "Gemini", "자막", "viewer", "Slice", "β")):
             highlights.append(line)
 
+    # === ANCHOR: GENERATE_MD_CARDS_CLEAN_START ===
     def clean(items: list[str], limit: int) -> list[str]:
         seen: set[str] = set()
         result: list[str] = []
@@ -81,15 +87,18 @@ def extract_summary(markdown: str, max_items: int = 10) -> dict[str, object]:
             if len(result) >= limit:
                 break
         return result
+    # === ANCHOR: GENERATE_MD_CARDS_CLEAN_END ===
 
     return {
         "title": title,
         "headings": clean(headings, 6),
         "bullets": clean(bullets, max_items),
+# === ANCHOR: GENERATE_MD_CARDS_EXTRACT_SUMMARY_END ===
         "highlights": clean(highlights, 6),
     }
 
 
+# === ANCHOR: GENERATE_MD_CARDS_BUILD_PROMPT_START ===
 def build_prompt(path: Path, summary: dict[str, object]) -> str:
     title = summary["title"]
     headings = "\n".join(f"- {item}" for item in summary["headings"])
@@ -97,6 +106,7 @@ def build_prompt(path: Path, summary: dict[str, object]) -> str:
     highlights = "\n".join(f"- {item}" for item in summary["highlights"])
 
     return f"""Create a polished Korean card-style infographic image summarizing this Markdown document.
+# === ANCHOR: GENERATE_MD_CARDS_BUILD_PROMPT_END ===
 
 Document file: {path.relative_to(PROJECT_ROOT)}
 Document title: {title}
@@ -120,6 +130,7 @@ Visual style:
 """
 
 
+# === ANCHOR: GENERATE_MD_CARDS_REQUEST_IMAGE_START ===
 def request_image(prompt: str, *, model: str, size: str) -> bytes:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -154,8 +165,10 @@ def request_image(prompt: str, *, model: str, size: str) -> bytes:
         with urllib.request.urlopen(item["url"], timeout=180) as response:
             return response.read()
     raise RuntimeError(f"Unexpected image response: {body}")
+# === ANCHOR: GENERATE_MD_CARDS_REQUEST_IMAGE_END ===
 
 
+# === ANCHOR: GENERATE_MD_CARDS_RESOLVE_TARGETS_START ===
 def resolve_targets(include_all_md: bool) -> list[Path]:
     if include_all_md:
         excluded_parts = {".git", ".omc", ".vibelign", "vibelign_exports"}
@@ -165,8 +178,10 @@ def resolve_targets(include_all_md: bool) -> list[Path]:
             if not any(part in excluded_parts for part in path.relative_to(PROJECT_ROOT).parts)
         )
     return [path for path in DEFAULT_TARGETS if path.exists()]
+# === ANCHOR: GENERATE_MD_CARDS_RESOLVE_TARGETS_END ===
 
 
+# === ANCHOR: GENERATE_MD_CARDS_MAIN_START ===
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="gpt-image-2")
@@ -217,7 +232,9 @@ def main() -> int:
         encoding="utf-8",
     )
     return 0
+# === ANCHOR: GENERATE_MD_CARDS_MAIN_END ===
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+# === ANCHOR: GENERATE_MD_CARDS_END ===

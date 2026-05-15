@@ -1,0 +1,278 @@
+{
+  "CONSTANTS": {
+    "intent": "프로그램 연결 주소 설정",
+    "aliases": [
+      "통신 주소 설정",
+      "서버 접속 번호",
+      "connection settings",
+      "network port config"
+    ],
+    "description": "프로그램끼리 서로 대화할 때 어디로 찾아가야 할지 집 주소와 대문 번호를 정해두는 곳입니다.",
+    "_source": "ai",
+    "_content_hash": "0663bd8a8f7b055f"
+  },
+  "MAIN_RUN": {
+    "intent": "웹 서비스 엔진 시동걸기",
+    "aliases": [
+      "서버 프로그램 시작",
+      "백엔드 구동하기",
+      "start web server",
+      "launch backend"
+    ],
+    "description": "준비된 웹 서비스를 실제로 작동시켜서 사용자가 들어올 수 있게 문을 여는 역할을 합니다.",
+    "_source": "ai",
+    "_content_hash": "79b3e3109d878071"
+  },
+  "APP": {
+    "intent": "실제 화면 내용 꾸미기",
+    "aliases": [
+      "메인 페이지 구성",
+      "첫 인사 화면",
+      "home screen layout",
+      "primary app view"
+    ],
+    "description": "사용자에게 보여줄 배경색이나 글자 같은 구체적인 화면 디자인을 담고 있습니다.",
+    "_source": "ai",
+    "_content_hash": "0bc41367fc2cff48"
+  },
+  "MAIN": {
+    "intent": "화면 그리기 시작점",
+    "aliases": [
+      "첫 화면 연결하기",
+      "웹 페이지 뿌리",
+      "render root page",
+      "display main view"
+    ],
+    "description": "우리 눈에 보이는 웹 화면을 브라우저에 처음으로 그려주기 위해 뿌리를 내리는 곳입니다.",
+    "_source": "ai",
+    "_content_hash": "74174d50cfef68d2"
+  },
+  "BUILD": {
+    "intent": "설치 파일 꾸러미 만들기",
+    "aliases": [
+      "프로그램 빌드",
+      "실행 파일 제작",
+      "create app package",
+      "compile software"
+    ],
+    "description": "작성한 코드를 하나로 모아서 컴퓨터에 설치할 수 있는 파일 형태로 변환합니다.",
+    "_source": "ai",
+    "_content_hash": "d470003c01682e1b"
+  },
+  "LIB": {
+    "intent": "앱의 심장부 실행하기",
+    "aliases": [
+      "메인 화면 띄우기",
+      "앱 엔진 시작",
+      "initialize app engine",
+      "start core logic"
+    ],
+    "description": "프로그램이 켜질 때 가장 먼저 작동하여 전체적인 화면과 기능을 준비시키는 본부입니다.",
+    "_source": "ai",
+    "_content_hash": "b91ddac51d4da30d"
+  },
+  "VITE_CONFIG": {
+    "intent": "개발 도우미 환경 설정",
+    "aliases": [
+      "미리보기 도구 설정",
+      "웹 제작 옵션",
+      "dev server setup",
+      "frontend build options"
+    ],
+    "description": "개발자가 화면을 만들 때 실시간으로 확인하며 작업할 수 있게 도와주는 도구의 설정입니다.",
+    "_source": "ai",
+    "_content_hash": "b035cbcf31118f0f"
+  },
+  "HEALTH_HEALTH": {
+    "intent": "서버 정상 작동 확인",
+    "aliases": [
+      "살아있는지 체크",
+      "연결 상태 점검",
+      "check system status",
+      "ping server"
+    ],
+    "description": "서버가 아프지 않고 잘 돌아가고 있는지 정기적으로 안부를 묻는 신호를 보냅니다.",
+    "_source": "ai",
+    "_content_hash": "0d0e55d2d9e2ef5e"
+  },
+  "ENV_RUN_MIGRATIONS_OFFLINE": {
+    "intent": "창고 구조 직접 수정",
+    "aliases": [
+      "오프라인 데이터 정리",
+      "데이터 틀 고치기",
+      "update local database",
+      "manual schema sync"
+    ],
+    "description": "인터넷 연결 없이 컴퓨터 내부의 데이터 보관함 구조를 새롭게 단장합니다.",
+    "_source": "ai",
+    "_content_hash": "4986f4b6348cf0e1"
+  },
+  "ENV_DO_RUN_MIGRATIONS": {
+    "intent": "보관함 칸막이 공사",
+    "aliases": [
+      "데이터베이스 수정",
+      "창고 구조 변경",
+      "modify data structure",
+      "apply storage changes"
+    ],
+    "description": "데이터를 담는 상자들의 크기나 종류를 바꾸는 실제 공사 작업을 수행합니다.",
+    "_source": "ai",
+    "_content_hash": "a751c96027a7700a"
+  },
+  "ENV_RUN_ASYNC_MIGRATIONS": {
+    "intent": "비동기 데이터 정리",
+    "aliases": [
+      "대기 없는 창고 관리",
+      "조용한 데이터 업데이트",
+      "parallel database update",
+      "asynchronous schema task"
+    ],
+    "description": "다른 작업을 방해하지 않으면서 조용하고 빠르게 데이터 창고를 최신 상태로 바꿉니다.",
+    "_source": "ai",
+    "_content_hash": "a57c126a863aa2a6"
+  },
+  "ENV_RUN_MIGRATIONS_ONLINE": {
+    "intent": "실시간 데이터 업데이트",
+    "aliases": [
+      "온라인 DB 정리",
+      "서버 데이터 동기화",
+      "live database migration",
+      "sync cloud storage"
+    ],
+    "description": "인터넷이 연결된 상태에서 실시간으로 데이터 보관함의 정보를 새롭게 고칩니다.",
+    "_source": "ai",
+    "_content_hash": "ef0ebc7b4367e5e4"
+  },
+  "POSTCSS_CONFIG": {
+    "intent": "디자인 자동 보정 설정",
+    "aliases": [
+      "스타일 가공 도구",
+      "화면 꾸미기 보조",
+      "design system config",
+      "style processing setup"
+    ],
+    "description": "화면을 예쁘게 꾸미는 코드가 모든 브라우저에서 똑같이 보이도록 다듬어주는 설정입니다.",
+    "_source": "ai",
+    "_content_hash": "d41c807e4407865d"
+  },
+  "VITE_ENV_D": {
+    "intent": "코드 작성용 단어 사전",
+    "aliases": [
+      "개발 도움말 정의",
+      "코딩 용어 가이드",
+      "development type hints",
+      "code auto-completion guide"
+    ],
+    "description": "개발자가 코드를 쓸 때 컴퓨터가 어떤 단어를 쓸지 미리 알려주는 참고용 사전입니다.",
+    "_source": "ai",
+    "_content_hash": "4849702f627362d0"
+  },
+  "TAILWIND_CONFIG": {
+    "intent": "전체 디자인 테마 설정",
+    "aliases": [
+      "색상 및 글꼴 규칙",
+      "디자인 가이드라인",
+      "global theme settings",
+      "visual style rules"
+    ],
+    "description": "앱 전체에 사용할 색깔이나 글자 크기 같은 디자인 약속을 정해두는 곳입니다.",
+    "_source": "ai",
+    "_content_hash": "8f6cd0dc1c337a65"
+  },
+  "GENERATE_MD_CARDS_SLUGIFY": {
+    "intent": "깔끔한 주소 이름 생성",
+    "aliases": [
+      "파일 이름 다듬기",
+      "URL용 제목 변경",
+      "format web address",
+      "clean filename for url"
+    ],
+    "description": "복잡한 제목을 인터넷 주소로 쓰기 좋게 깔끔한 영어와 숫자로만 바꿉니다.",
+    "_source": "ai",
+    "_content_hash": "fdb64b026d1effef"
+  },
+  "GENERATE_MD_CARDS_CLEAN": {
+    "intent": "본문 내용 보기 좋게 정리",
+    "aliases": [
+      "글자 찌꺼기 제거",
+      "내용 깔끔하게 다듬기",
+      "text content sanitizer",
+      "remove clutter from notes"
+    ],
+    "description": "요약 카드에 넣기 위해 불필요한 기호나 너무 긴 문장을 예쁘게 정리합니다.",
+    "_source": "ai",
+    "_content_hash": "5266d6acd6e5cf82"
+  },
+  "GENERATE_MD_CARDS_BUILD_PROMPT": {
+    "intent": "AI에게 보낼 요청서 작성",
+    "aliases": [
+      "인공지능 작업 지시",
+      "그림 설명서 만들기",
+      "craft AI instructions",
+      "prepare design prompt"
+    ],
+    "description": "정리된 내용을 바탕으로 AI가 예쁜 이미지를 그릴 수 있게 상세한 설명을 적습니다.",
+    "_source": "ai",
+    "_content_hash": "f231701d7c2230a8"
+  },
+  "GENERATE_MD_CARDS_REQUEST_IMAGE": {
+    "intent": "AI에게 그림 그리기 요청",
+    "aliases": [
+      "이미지 생성 시키기",
+      "AI 화가에게 부탁",
+      "call image generator",
+      "fetch AI artwork"
+    ],
+    "description": "준비한 설명서를 AI에게 보내서 실제로 멋진 요약 이미지 파일을 받아옵니다.",
+    "_source": "ai",
+    "_content_hash": "e23795f2c4af0199"
+  },
+  "GENERATE_MD_CARDS_RESOLVE_TARGETS": {
+    "intent": "작업할 메모 파일 찾기",
+    "aliases": [
+      "대상 문서 수집",
+      "카드 만들 파일 고르기",
+      "scan markdown files",
+      "find document list"
+    ],
+    "description": "컴퓨터 안에 있는 여러 메모 중 이미지로 만들 대상들만 쏙쏙 골라냅니다.",
+    "_source": "ai",
+    "_content_hash": "599b4ed85b7b7188"
+  },
+  "GENERATE_MD_CARDS_MAIN": {
+    "intent": "카드 생성 도구의 시작 지점",
+    "aliases": [
+      "문서 카드 제작 시작",
+      "이미지 크기 설정하기",
+      "start document production",
+      "configure output settings"
+    ],
+    "description": "프로그램이 실행될 때 필요한 설정인 모델 종류나 사진 크기 등을 입력받고 동작을 시작하는 곳입니다.",
+    "_source": "ai",
+    "_content_hash": "eda340c40accf04a"
+  },
+  "__INIT": {
+    "intent": "프로그램의 기초 정보와 버전",
+    "aliases": [
+      "프로그램의 첫인상과 버전",
+      "기본 정보 관리",
+      "identity information",
+      "core module setup"
+    ],
+    "description": "이 프로그램이 어떤 도구인지 간단히 소개하고 현재 버전이 몇 번인지 알려주는 명찰 같은 곳입니다.",
+    "_source": "ai",
+    "_content_hash": "55789be945c5a334"
+  },
+  "INDEX": {
+    "intent": "화면 구성 요소 모음집",
+    "aliases": [
+      "화면 재료 꾸러미",
+      "사용자 경험 설계",
+      "visual building blocks",
+      "ui library entry"
+    ],
+    "description": "버튼이나 창처럼 화면을 만드는 데 필요한 여러 조각을 한데 모아 정리해 놓은 목록입니다.",
+    "_source": "ai",
+    "_content_hash": "3ed11735b2f7ab72"
+  }
+}

@@ -361,6 +361,10 @@ Session.visibility 값:
 | **MVP-α 번역자 UX 정책** | 큰 글씨 기본값 외 단축키 / 용어집 / 북마크 / 메모 / Slow-down 등은 β-1 |
 | 자막 정책 | 최대 2줄, 한 줄 ≤ 40자, 영어 기술 용어는 영문 유지 |
 | 키워드 카테고리 | 일정 / 리테이크 / 승인 / 이슈 / 자산 (5종) |
+| **Slice 1 — DomainEvent v0** | **🔒 Slice 1 락 (2026-05-15)**: MVP-α S1은 `utterance.transcribed` **1종만** 발행. `session.started / session.ended / status.changed / keyword.detected / action.detected` 등은 S2~β-3에서 추가. JSON 직렬화는 `apps/server/domain/events.py` Pydantic 모델에서 단일 SSOT (ARCH §4 참조). 모든 viewer/SDK 클라이언트는 type 필드로 dispatch |
+| **Slice 1 — DB 테이블 5종** | **🔒 Slice 1 락 (2026-05-15)**: `app_user / device / session / session_token / utterance`. 컬럼은 ARCH §3 초안 그대로 (department/role은 S5, glossary/bookmark/note는 β-1, keyword/action_item은 β-3에서 추가). Alembic 단일 마이그레이션 파일 `0001_initial.py`로 묶음 |
+| **Slice 1 — REST 엔드포인트 3개** | **🔒 Slice 1 락 (2026-05-15)**: ① `POST /api/v1/auth/login` (email+password → JWT 24h + refresh 30d). ② `POST /api/v1/devices` (admin JWT, 1회성 API Key 평문 반환, sha256만 DB 저장). ③ `POST /api/v1/sessions` (operator JWT → viewer_url 반환). 그 외 `/api/v1/sessions/{id}/end`, `/report` 등은 S4 |
+| **Slice 1 — viewer 백필 시그니처** | **🔒 Slice 1 락 (2026-05-15)**: `GET /api/v1/sessions/{id}/utterances?since=<seq>&limit=50` — 응답은 `{utterances: [{seq, text_en, text_ko, started_at, is_final, ...}]}`. `since` 생략 시 최근 50개, `since=N` 지정 시 `seq > N` 필터. S5 viewer 백그라운드 복귀 따라잡기와 호환 (`(session_id, seq) UNIQUE` 활용) |
 
 ---
 
