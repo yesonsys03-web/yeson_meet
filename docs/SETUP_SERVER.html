@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>yeson-meet · 사내 서버 셋업 가이드</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif;
+      background:
+        radial-gradient(circle at 5% -5%, rgba(16,185,129,.18), transparent 30%),
+        radial-gradient(circle at 95% -5%, rgba(59,130,246,.16), transparent 28%),
+        #f3f6fb;
+      min-height:100vh;
+    }
+    .glass{ background:rgba(255,255,255,.92); backdrop-filter: blur(8px); border:1px solid rgba(15,23,42,.08); }
+    .code{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .step-done{ opacity:.55; }
+    .step-done .step-title{ text-decoration: line-through; }
+    details summary{ cursor:pointer; user-select:none; }
+    details[open] summary .chev{ transform: rotate(90deg); }
+    .chev{ transition: transform .18s; display:inline-block; }
+    kbd{ font-family: ui-monospace, monospace; }
+    @media print{
+      .no-print{ display:none !important; }
+      body{ background:white; }
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+/* ========== 부품 ========== */
+const useChecklist = (key) => {
+  const [done, setDone] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch { return {}; }
+  });
+  const toggle = (id) => setDone(d => {
+    const next = {...d, [id]: !d[id]};
+    localStorage.setItem(key, JSON.stringify(next));
+    return next;
+  });
+  const reset = () => { setDone({}); localStorage.removeItem(key); };
+  return { done, toggle, reset };
+};
+
+const CopyBtn = ({text}) => {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(()=>setCopied(false), 1500); }}
+      className="no-print text-[11px] font-bold px-2.5 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-white transition">
+      {copied ? "✓ 복사됨" : "📋 복사"}
+    </button>
+  );
+};
+
+const Code = ({children, copy}) => (
+  <div className="relative group">
+    <pre className="code bg-slate-900 text-slate-100 text-[12.5px] rounded-lg p-3 overflow-auto leading-relaxed">{children}</pre>
+    <div className="absolute top-2 right-2"><CopyBtn text={copy || children}/></div>
+  </div>
+);
+
+const Pill = ({color="slate", children}) => {
+  const p = {
+    blue:"bg-blue-50 text-blue-700 border-blue-200",
+    green:"bg-emerald-50 text-emerald-700 border-emerald-200",
+    amber:"bg-amber-50 text-amber-700 border-amber-200",
+    rose:"bg-rose-50 text-rose-700 border-rose-200",
+    slate:"bg-slate-100 text-slate-700 border-slate-200",
+  }[color];
+  return <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border ${p}`}>{children}</span>;
+};
+
+const Step = ({id, n, title, est, tag, done, toggle, children, trouble}) => (
+  <div className={`glass rounded-2xl p-5 transition ${done[id] ? "step-done" : ""}`}>
+    <div className="flex items-start gap-3">
+      <label className="cursor-pointer pt-0.5 no-print">
+        <input type="checkbox" checked={!!done[id]} onChange={()=>toggle(id)}
+          className="w-5 h-5 rounded accent-emerald-600"/>
+      </label>
+      <div className="flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[12px] font-bold text-slate-400">STEP {n}</span>
+          {tag && <Pill color={tag.color}>{tag.label}</Pill>}
+          {est && <span className="text-[11px] text-slate-500">⏱ {est}</span>}
+        </div>
+        <h3 className="step-title font-extrabold text-slate-900 text-[16px] mt-0.5">{title}</h3>
+        <div className="text-[13px] text-slate-700 mt-2 space-y-2">{children}</div>
+        {trouble && (
+          <details className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3 no-print">
+            <summary className="text-[12px] font-bold text-amber-800"><span className="chev">▸</span> 트러블슈팅 ({trouble.length}건)</summary>
+            <div className="mt-2 space-y-2 text-[12px] text-slate-700">
+              {trouble.map((t,i)=>(
+                <div key={i} className="border-t border-amber-200 pt-2 first:border-0 first:pt-0">
+                  <div className="font-bold text-amber-900">증상: {t.symptom}</div>
+                  <div className="mt-1">→ {t.fix}</div>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
+    </div>
+  </div>
+);
+
+const Phase = ({n, icon, title, children}) => (
+  <section className="space-y-3 mb-8">
+    <h2 className="text-[20px] font-black tracking-tight text-slate-900 flex items-center gap-2 mt-8">
+      <span className="text-2xl">{icon}</span>
+      <span className="text-emerald-700">Phase {n}</span>
+      <span>·</span>
+      <span>{title}</span>
+    </h2>
+    <div className="space-y-3">{children}</div>
+  </section>
+);
+
+/* ========== 콘텐츠 정의 ========== */
+const phases = [
+  {
+    n:1, icon:"🖥️", title:"하드웨어 + Ubuntu Server 설치",
+    steps:[
+      {
+        id:"hw", title:"미니PC / 자체 가상화 / 사내 서버 결정",
+        est:"가변", tag:{color:"slate", label:"준비"},
+        content:(<>
+          <p>권장 사양: <b>8코어 / 16GB / 1TB NVMe</b>. 최소: 4코어 / 8GB / 256GB.</p>
+          <p>추천 미니PC: <b>Beelink / Minisforum / Intel NUC</b> · ₩50~80만원대. 24/7 운영 가능.</p>
+          <p>유선 1Gbps · 고정 IP · 백업용 사내 NAS 경로 확보.</p>
+        </>),
+      },
+      {
+        id:"ubuntu", title:"Ubuntu Server 24.04 LTS 설치",
+        est:"30~60분", tag:{color:"blue", label:"OS"},
+        content:(<>
+          <p>설치 시 <b>OpenSSH server</b> 옵션 체크. 도커 자동 설치 옵션은 OFF (직접 설치 권장).</p>
+          <p>설치 후 콘솔에서 IP 확인:</p>
+          <Code>ip -4 addr show | grep inet</Code>
+          <p>관리 PC에서 SSH 접속 시도:</p>
+          <Code copy="ssh USER@SERVER_IP">ssh {`<user>@<server-ip>`}</Code>
+        </>),
+        trouble:[
+          {symptom:"SSH 연결 거부", fix:"sudo systemctl status ssh / sudo ufw status 확인. 22번 포트 열려 있는지."},
+          {symptom:"고정 IP 미설정", fix:"sudo nano /etc/netplan/*.yaml 편집 후 sudo netplan apply"},
+        ],
+      },
+      {
+        id:"hostname", title:"호스트명 / 시간대 설정",
+        est:"3분", tag:{color:"blue", label:"OS"},
+        content:(<>
+          <Code>{`sudo hostnamectl set-hostname yeson-meet-server
+sudo timedatectl set-timezone Asia/Seoul`}</Code>
+        </>),
+      },
+    ],
+  },
+  {
+    n:2, icon:"🔒", title:"기본 보안",
+    steps:[
+      {
+        id:"sshkey", title:"SSH key-only 로그인 (비밀번호 비활성화)",
+        est:"10분", tag:{color:"rose", label:"보안"},
+        content:(<>
+          <p>관리 PC에서 공개키 등록:</p>
+          <Code copy="ssh-copy-id USER@SERVER_IP">ssh-copy-id {`<user>@<server-ip>`}</Code>
+          <p>서버에서 비밀번호 로그인 비활성화:</p>
+          <Code>{`sudo sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+sudo systemctl restart ssh`}</Code>
+        </>),
+        trouble:[
+          {symptom:"비활성화 후 SSH 못 들어감", fix:"콘솔로 직접 접근해 PasswordAuthentication yes 다시 켜고 키 등록 점검."},
+        ],
+      },
+      {
+        id:"ufw", title:"방화벽(ufw) + fail2ban + 자동 업데이트",
+        est:"5분", tag:{color:"rose", label:"보안"},
+        content:(<>
+          <Code>{`sudo apt update && sudo apt -y upgrade
+sudo apt -y install ufw fail2ban unattended-upgrades curl ca-certificates gnupg git htop
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw --force enable
+sudo systemctl enable --now fail2ban
+sudo dpkg-reconfigure -plow unattended-upgrades`}</Code>
+          <p className="text-[12px] text-slate-500">unattended-upgrades 마지막 단계는 대화형 → "Yes" 선택.</p>
+        </>),
+      },
+    ],
+  },
+  {
+    n:3, icon:"🐳", title:"Docker 설치",
+    steps:[
+      {
+        id:"docker", title:"공식 스크립트로 Docker 설치",
+        est:"5분", tag:{color:"blue", label:"인프라"},
+        content:(<>
+          <Code>{`curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER`}</Code>
+          <p className="text-[12px] text-amber-700">⚠️ 그룹 적용을 위해 <b>로그아웃 후 다시 SSH 접속</b>.</p>
+          <p>확인:</p>
+          <Code>{`docker version
+docker compose version`}</Code>
+        </>),
+      },
+    ],
+  },
+  {
+    n:4, icon:"🌐", title:"고정 IP + HTTPS 인증서 (도메인 없음)",
+    steps:[
+      {
+        id:"static-ip", title:"고정 IP 확인 / 예약",
+        est:"10분", tag:{color:"amber", label:"네트워크"},
+        content:(<>
+          <p>회사 정책: <b>고정 IP 사용</b>. 도메인 등록 X.</p>
+          <ul className="list-disc pl-5 text-[12.5px]">
+            <li>서버 NIC가 <b>고정 IP</b>로 설정되어 있는지 확인 (DHCP 예약 또는 정적 할당).</li>
+            <li>회의실 PC와 viewer 클라이언트가 같은 네트워크에서 IP에 도달 가능해야 함 (방화벽 / VLAN 점검).</li>
+            <li>IP는 <code className="bg-slate-100 px-1 rounded">SERVER_HOST</code> 환경변수에 등록 (다음 Phase env 단계).</li>
+          </ul>
+          <p className="text-[12px] text-slate-500">실제 IP 값은 운영자가 직접 결정. 이 가이드에선 <code className="bg-slate-100 px-1 rounded">&lt;SERVER_IP&gt;</code> placeholder로 표기.</p>
+        </>),
+        trouble:[
+          {symptom:"클라이언트에서 IP에 도달 안 됨", fix:"같은 서브넷인지 / 라우터 ACL / 방화벽 / 회사 VLAN 격리 정책 점검."},
+          {symptom:"서버 재부팅 후 IP 변경", fix:"DHCP 예약 누락. MAC 기반 IP 고정 설정 확인."},
+        ],
+      },
+      {
+        id:"cert", title:"HTTPS 인증서 (사내 CA 또는 Caddy internal)",
+        est:"15분", tag:{color:"rose", label:"보안"},
+        content:(<>
+          <p><b>옵션 A:</b> 사내 CA 인증서 발급받아 <code className="bg-slate-100 px-1 rounded">deploy/certs/</code>에 배치.</p>
+          <p><b>옵션 B (MVP 추천):</b> Caddy의 <code className="bg-slate-100 px-1 rounded">tls internal</code> 사용. Caddy가 자체 CA로 발급.</p>
+          <p>회의실 PC와 viewer 클라이언트에 Caddy root CA를 신뢰 등록:</p>
+          <Code copy="docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./root.crt">{`# Caddy 컨테이너에서 root CA 추출 (서버 시작 후)
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./root.crt`}</Code>
+          <p className="text-[12px] text-slate-500">이 root.crt를 회의실 Mac/Win에 신뢰 인증서로 등록 (회의실 PC 셋업 가이드 참조).</p>
+        </>),
+      },
+    ],
+  },
+  {
+    n:5, icon:"📁", title:"저장소 + 환경변수",
+    steps:[
+      {
+        id:"clone", title:"저장소 클론",
+        est:"3분", tag:{color:"slate", label:"준비"},
+        content:(<>
+          <Code>{`sudo mkdir -p /opt/yeson-meet
+sudo chown $USER:$USER /opt/yeson-meet
+cd /opt/yeson-meet
+git clone <사내 git URL> .`}</Code>
+        </>),
+      },
+      {
+        id:"env", title:".env 작성",
+        est:"10분", tag:{color:"rose", label:"보안"},
+        content:(<>
+          <p>템플릿 복사:</p>
+          <Code>cp deploy/env.example .env</Code>
+          <p>강력한 시크릿 생성:</p>
+          <Code>{`echo "DB_PASSWORD=$(openssl rand -base64 32)" >> .env.new
+echo "JWT_SECRET=$(openssl rand -base64 48)" >> .env.new
+# .env를 편집해서 위 값을 넣고 다음도 채움:
+# SERVER_HOST=<운영자가 정한 사내 고정 IP>
+# GEMINI_API_KEY=<발급된 키>
+# ACCESS_MODE=lan`}</Code>
+          <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-[12.5px] text-rose-800">
+            🔐 <b>주의:</b> .env는 절대 git에 커밋 X. .gitignore에 <code>.env</code>, <code>.env.*</code>, <code>!.env.example</code> 패턴이 있는지 확인. 백업은 별도 비공개 경로로.
+          </div>
+        </>),
+        trouble:[
+          {symptom:"GEMINI_API_KEY는 어떻게 발급?", fix:"https://aistudio.google.com → API key 생성. 결제 활성화 필요(Gemini Live 사용)."},
+        ],
+      },
+    ],
+  },
+  {
+    n:6, icon:"🚀", title:"Docker Compose 시작 + 초기화",
+    steps:[
+      {
+        id:"up", title:"컨테이너 기동",
+        est:"5분 (첫 빌드 10~15분)", tag:{color:"green", label:"실행"},
+        content:(<>
+          <Code>{`cd /opt/yeson-meet
+docker compose up -d --build
+docker compose ps`}</Code>
+          <p>모든 서비스가 <b>healthy</b> 상태가 되는 데 1~2분 소요.</p>
+        </>),
+        trouble:[
+          {symptom:"caddy 80/443 포트 충돌", fix:"sudo lsof -i :80 / :443 으로 점유 프로세스 확인."},
+          {symptom:"postgres 권한 오류", fix:"./data/postgres 디렉토리 소유권 점검. docker compose down -v 후 재시도."},
+        ],
+      },
+      {
+        id:"migrate", title:"DB 마이그레이션",
+        est:"1분", tag:{color:"green", label:"실행"},
+        content:(<>
+          <Code>docker compose run --rm server alembic upgrade head</Code>
+        </>),
+      },
+      {
+        id:"admin", title:"어드민 계정 생성",
+        est:"2분", tag:{color:"green", label:"실행"},
+        content:(<>
+          <Code>{`docker compose run --rm server \\
+  python -m apps.server.scripts.create_admin \\
+  --email admin@corp.local --name "관리자"`}</Code>
+          <p>임시 비밀번호가 콘솔에 출력됨. 첫 로그인 후 즉시 변경.</p>
+        </>),
+      },
+      {
+        id:"health", title:"헬스 체크",
+        est:"1분", tag:{color:"green", label:"검증"},
+        content:(<>
+          <Code copy="curl -sk https://<SERVER_IP>/api/v1/health">curl -sk https://{`<SERVER_IP>`}/api/v1/health</Code>
+          <p>응답 <code className="bg-slate-100 px-1 rounded">{`{"status":"ok"}`}</code> 확인.</p>
+          <p>브라우저로 <code className="bg-slate-100 px-1 rounded">https://{`<SERVER_IP>`}</code> 진입 → 로그인 화면. (첫 진입 시 Root CA 경고, 다음 단계 진행)</p>
+        </>),
+        trouble:[
+          {symptom:"인증서 경고", fix:"클라이언트 PC에 root CA가 등록되지 않음. Phase 4 cert 단계 참조."},
+        ],
+      },
+    ],
+  },
+  {
+    n:7, icon:"💾", title:"운영 자동화 (백업 / 모니터링) — MVP-β-7 (선택)",
+    steps:[
+      {
+        id:"backup", title:"백업 cron 등록",
+        est:"5분", tag:{color:"slate", label:"운영"},
+        content:(<>
+          <p>nightly 백업 (DB dump + storage rsync):</p>
+          <p className="text-[12px] text-amber-700">※ 아래 스크립트 파일은 <b>MVP-β-7에서 제공 예정</b>. MVP-α 단계에서는 운영자가 같은 내용을 수동 스크립트로 작성.</p>
+          <Code>{`sudo cp /opt/yeson-meet/deploy/cron/yeson-meet-backup /etc/cron.daily/
+sudo chmod +x /etc/cron.daily/yeson-meet-backup
+# 사내 NAS 마운트 경로 확인 후 스크립트 내 BACKUP_DIR 조정`}</Code>
+          <p className="text-[12px] text-slate-500">백업 스크립트는 30일 이상된 백업 자동 정리 포함.</p>
+        </>),
+      },
+      {
+        id:"retention", title:"회의 음성 보관 만료 cron (90일)",
+        est:"3분", tag:{color:"slate", label:"운영"},
+        content:(<>
+          <Code>{`# /etc/cron.daily/yeson-meet-retention
+#!/usr/bin/env bash
+docker compose -f /opt/yeson-meet/deploy/docker-compose.yml \\
+  exec -T server python -m apps.server.scripts.retention_cleanup --days 90`}</Code>
+        </>),
+      },
+      {
+        id:"watch", title:"기본 모니터링 ping",
+        est:"5분", tag:{color:"slate", label:"운영"},
+        content:(<>
+          <p>사내 다른 PC에서 헬스 ping (cron 또는 외부 워치독):</p>
+          <Code>{`*/5 * * * * curl -sk https://<SERVER_IP>/api/v1/health > /dev/null \\
+  || mail -s "yeson-meet DOWN" admin@example.com`}</Code>
+        </>),
+      },
+    ],
+  },
+  {
+    n:8, icon:"🏷️", title:"회의실 PC 등록 (관리자 작업)",
+    steps:[
+      {
+        id:"device", title:"각 회의실 PC마다 Device 생성",
+        est:"회의실당 3분", tag:{color:"amber", label:"운영"},
+        content:(<>
+          <p>관리자 UI 진입: <code className="bg-slate-100 px-1 rounded">https://{`<SERVER_IP>`}/admin/devices</code></p>
+          <ol className="list-decimal pl-5 text-[12.5px] space-y-1">
+            <li>"새 Device" → 회의실 이름(예: "회의실A PC") 입력</li>
+            <li>발급된 <b>1회성 API Key</b>를 안전한 채널로 회의실 PC 담당자에게 전달</li>
+            <li>회의실 PC 셋업 가이드 (별도 문서) 따라 입력</li>
+          </ol>
+          <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-[12.5px] text-amber-800">
+            ⚠️ API Key는 평문 1회만 노출. 분실 시 서버에서는 복구 불가 — 재발급 필요.
+          </div>
+        </>),
+      },
+    ],
+  },
+  {
+    n:9, icon:"🛠️", title:"운영 명령어 카탈로그",
+    steps:[
+      {
+        id:"ops", title:"자주 쓰는 명령어",
+        est:"참조용", tag:{color:"slate", label:"참조"},
+        content:(<>
+          <Code>{`# 상태
+docker compose ps
+docker compose logs -f server
+docker compose exec postgres pg_isready -U yeson_meet
+
+# 재시작
+docker compose restart server
+docker compose down && docker compose up -d
+
+# DB 접속
+docker compose exec postgres psql -U yeson_meet -d yeson_meet
+
+# 백업 즉시 실행
+sudo /etc/cron.daily/yeson-meet-backup
+
+# 업데이트
+cd /opt/yeson-meet
+git fetch && git checkout v0.x.y
+docker compose build
+docker compose run --rm server alembic upgrade head
+docker compose up -d`}</Code>
+        </>),
+      },
+    ],
+  },
+];
+
+/* ========== App ========== */
+const allStepIds = phases.flatMap(p => p.steps.map(s => s.id));
+
+const App = () => {
+  const { done, toggle, reset } = useChecklist("yeson-meet-setup-server");
+  const completed = allStepIds.filter(id => done[id]).length;
+  const total = allStepIds.length;
+  const pct = Math.round((completed/total) * 100);
+
+  return (
+    <div className="max-w-[1100px] mx-auto px-5 py-8">
+      <header className="mb-8">
+        <div className="flex items-center gap-2 text-xs font-bold text-emerald-700 uppercase tracking-wider">
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          시스템 부서용 셋업 가이드 · 2026-05-14
+        </div>
+        <h1 className="text-[36px] md:text-[44px] font-black tracking-tight text-slate-900 leading-tight mt-1">
+          yeson-meet <span className="text-emerald-600">사내 서버 셋업</span>
+        </h1>
+        <p className="text-slate-500 mt-1">Ubuntu Server 24.04 LTS + Docker Compose 1식 · 단일 노드 운영</p>
+      </header>
+
+      {/* MVP 스코프 안내 */}
+      <div className="rounded-2xl bg-amber-50 border-2 border-amber-300 p-4 mb-6">
+        <div className="flex items-start gap-3">
+          <span className="text-2xl">🅰️</span>
+          <div className="text-[13px] text-amber-900 leading-relaxed">
+            <b>이 가이드는 MVP-α 시점 서버 셋업 기준.</b> Phase 1~6은 MVP-α 운영에 필수. <b>Phase 7 (운영 자동화 — 백업 cron / 보관 만료 / 모니터링)</b>은 <b>MVP-β-7</b> 작업 — MVP-α 시점에는 <b>선택</b>이지만 사전 준비해두면 운영 시 즉시 활성화 가능.
+          </div>
+        </div>
+      </div>
+
+      {/* Pre-flight checklist */}
+      <div className="glass rounded-2xl p-5 mb-8 border-l-4 border-amber-400">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-2xl">📋</span>
+          <h2 className="text-[16px] font-black text-slate-900">시작 전 준비 — 미리 확보할 것</h2>
+        </div>
+        <ul className="grid md:grid-cols-2 gap-x-6 gap-y-1.5 text-[13px] text-slate-700">
+          <li>☐ 미니PC / 자체 가상화 / 사내 서버 (하드웨어)</li>
+          <li>☐ 사내 고정 IP 1개 · 유선 1Gbps 권장</li>
+          <li>☐ 운영자가 결정한 서버 고정 IP (도메인 미사용)</li>
+          <li>☐ 사내 git 저장소 URL + 접근 권한</li>
+          <li>☐ <b>Gemini API Key</b> (aistudio.google.com)</li>
+          <li>☐ 사내 NAS 백업 경로</li>
+          <li>☐ 관리 PC의 SSH 공개키</li>
+          <li>☐ 회의실 이름 목록 (Device 등록용)</li>
+        </ul>
+      </div>
+
+      {/* Progress */}
+      <div className="glass rounded-2xl p-5 mb-8 sticky top-3 z-10 no-print">
+        <div className="flex items-center justify-between mb-2">
+          <span className="font-extrabold text-slate-900">진행 상황 — {completed}/{total} 완료 ({pct}%)</span>
+          <button onClick={()=>{ if(confirm("진행 상태를 초기화할까요?")) reset(); }}
+            className="text-[11px] font-bold text-slate-500 hover:text-rose-600">↺ 진도 리셋</button>
+        </div>
+        <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
+          <div className="h-full bg-gradient-to-r from-emerald-500 to-blue-500 transition-all duration-300" style={{width:`${pct}%`}}/>
+        </div>
+        <div className="text-[11px] text-slate-500 mt-2">체크 상태는 이 브라우저에 자동 저장됨 (localStorage). 다른 PC에선 안 보임.</div>
+      </div>
+
+      {/* Phases */}
+      {phases.map(p => (
+        <Phase key={p.n} n={p.n} icon={p.icon} title={p.title}>
+          {p.steps.map((s,i)=>(
+            <Step key={s.id} id={s.id} n={`${p.n}.${i+1}`} title={s.title} est={s.est} tag={s.tag}
+              done={done} toggle={toggle} trouble={s.trouble}>
+              {s.content}
+            </Step>
+          ))}
+        </Phase>
+      ))}
+
+      <footer className="mt-16 pt-6 border-t border-slate-200 text-center text-[12px] text-slate-400">
+        <p>관련 문서: <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">docs/DEPLOY.md · docs/ARCHITECTURE.md</code></p>
+        <p className="mt-1">회의실 PC 셋업은 <b>SETUP_MEETING_PC.html</b> 별도 가이드 참조.</p>
+        <p className="mt-3 no-print">
+          <button onClick={()=>window.print()} className="text-[11px] font-bold px-3 py-1 rounded bg-slate-700 text-white">🖨 인쇄용 보기</button>
+        </p>
+      </footer>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

@@ -1,0 +1,365 @@
+{
+  "schema_version": 2,
+  "project_name": "yeson_meet",
+  "tree": [
+    "vibelign_exports/",
+    "  antigravity/",
+    "    README.md",
+    "    SETUP.md",
+    "    TASK_ARTIFACT.md",
+    "    VERIFICATION_CHECKLIST.md",
+    "  claude/",
+    "    PROMPT_TEMPLATE.md",
+    "    README.md",
+    "    RULES.md",
+    "    SETUP.md",
+    "  codex/",
+    "    README.md",
+    "    SETUP.md",
+    "    TASK_ARTIFACT.md",
+    "    VERIFICATION_CHECKLIST.md",
+    "  cursor/",
+    "    PROMPT_TEMPLATE.md",
+    "    README.md",
+    "    RULES.md",
+    "    SETUP.md",
+    "  opencode/",
+    "    PROMPT_TEMPLATE.md",
+    "    README.md",
+    "    RULES.md",
+    "    SETUP.md",
+    "AGENTS.md",
+    "AI_DEV_SYSTEM_SINGLE_FILE.md",
+    "AI_Meeting_Dashboard_Mac_Windows_Diagram.png",
+    "AI_Meeting_Dashboard_Mac_Windows_Workflow.html",
+    "AI_Meeting_Dashboard_Mac_Windows_Workflow.md",
+    "CLAUDE.md",
+    "opencode.json",
+    "OPENCODE.md"
+  ],
+  "files": {
+    "apps/client_sidecar/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 0,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/client_sidecar/audio/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 1,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/client_sidecar/config/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 1,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/client_sidecar/config/constants.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 13,
+      "imports": [],
+      "imported_by": [
+        "apps/client_sidecar/main.py"
+      ]
+    },
+    "apps/client_sidecar/main.py": {
+      "category": "entry",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 22,
+      "imports": [
+        "apps/client_sidecar/config/constants.py"
+      ],
+      "imported_by": []
+    },
+    "apps/client_sidecar/queue/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 1,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/client_sidecar/transport/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 1,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/desktop/src-tauri/build.rs": {
+      "category": "ui",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 3,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/desktop/src-tauri/src/lib.rs": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 6,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/desktop/src-tauri/src/main.rs": {
+      "category": "entry",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 6,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/desktop/src/App.tsx": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 7,
+      "imports": [],
+      "imported_by": [
+        "apps/desktop/src/main.tsx"
+      ]
+    },
+    "apps/desktop/src/main.tsx": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 9,
+      "imports": [
+        "apps/desktop/src/App.tsx"
+      ],
+      "imported_by": []
+    },
+    "apps/desktop/vite.config.ts": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 21,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/server/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 0,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/server/ai/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 1,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/server/api/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 0,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/server/api/v1/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 0,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/server/api/v1/health.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 8,
+      "imports": [],
+      "imported_by": [
+        "apps/server/main.py"
+      ]
+    },
+    "apps/server/db/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 0,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/server/db/alembic/env.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 54,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/server/integrations/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 1,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/server/main.py": {
+      "category": "entry",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 16,
+      "imports": [
+        "apps/server/api/v1/health.py"
+      ],
+      "imported_by": []
+    },
+    "apps/server/ws/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 1,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/web/postcss.config.js": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 6,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/web/src/App.tsx": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 7,
+      "imports": [],
+      "imported_by": [
+        "apps/web/src/main.tsx"
+      ]
+    },
+    "apps/web/src/main.tsx": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 10,
+      "imports": [
+        "apps/web/src/App.tsx"
+      ],
+      "imported_by": []
+    },
+    "apps/web/src/vite-env.d.ts": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 1,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/web/tailwind.config.ts": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 8,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/web/vite.config.ts": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 7,
+      "imports": [],
+      "imported_by": []
+    },
+    "generate_md_cards.py": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 223,
+      "imports": [],
+      "imported_by": []
+    },
+    "packages/sdk-python/yeson_meet_sdk/__init__.py": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 5,
+      "imports": [],
+      "imported_by": []
+    },
+    "packages/ui/src/index.ts": {
+      "category": "entry",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 3,
+      "imports": [],
+      "imported_by": []
+    }
+  },
+  "entry_files": [],
+  "ui_modules": [],
+  "core_modules": [],
+  "service_modules": [],
+  "large_files": [],
+  "file_count": 32,
+  "anchor_index": {},
+  "recently_changed": [
+    {
+      "path": "packages/sdk-python/yeson_meet_sdk/__init__.py",
+      "mtime": 1778813024.5808446
+    },
+    {
+      "path": "packages/ui/src/index.ts",
+      "mtime": 1778813015.5394123
+    },
+    {
+      "path": "apps/desktop/src-tauri/src/lib.rs",
+      "mtime": 1778813009.2514894
+    },
+    {
+      "path": "apps/desktop/src-tauri/src/main.rs",
+      "mtime": 1778813008.1264603
+    },
+    {
+      "path": "apps/desktop/src-tauri/build.rs",
+      "mtime": 1778813007.1973786
+    },
+    {
+      "path": "apps/desktop/src/App.tsx",
+      "mtime": 1778813004.649356
+    },
+    {
+      "path": "apps/desktop/src/main.tsx",
+      "mtime": 1778813003.3682897
+    },
+    {
+      "path": "apps/desktop/vite.config.ts",
+      "mtime": 1778813001.2900527
+    },
+    {
+      "path": "apps/web/src/vite-env.d.ts",
+      "mtime": 1778812964.7133934
+    },
+    {
+      "path": "apps/web/src/App.tsx",
+      "mtime": 1778812963.579169
+    }
+  ],
+  "generated_at": "2026-05-14T01:23:03.651301Z",
+  "updated_at": "2026-05-15T04:07:40.393660Z"
+}

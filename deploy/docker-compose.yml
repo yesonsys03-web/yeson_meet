@@ -1,0 +1,54 @@
+name: yeson-meet
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-yeson}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD required}
+      POSTGRES_DB: ${DB_NAME:-yeson_meet}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-yeson} -d ${DB_NAME:-yeson_meet}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: ..
+      dockerfile: apps/server/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-yeson}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-yeson_meet}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET required}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ACCESS_MODE: ${ACCESS_MODE:-lan}
+      SERVER_HOST: ${SERVER_HOST:-localhost}
+      STORAGE_ROOT: /var/lib/yeson-meet/storage
+    volumes:
+      - ./data/storage:/var/lib/yeson-meet/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SERVER_HOST: ${SERVER_HOST:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy:/data
+      - ./data/caddy-config:/config
+      - ../apps/web/dist:/srv/web:ro
+    depends_on:
+      - server

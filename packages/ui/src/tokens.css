@@ -1,0 +1,63 @@
+/* yeson-meet design tokens — extracted from docs/UI_DESIGN_SYSTEM.md (§2 — Slice 1+) */
+:root {
+  /* Typography (5 levels per PRD §1.1 visibility) */
+  --ys-font-base: 14px;
+  --ys-font-subtitle-s: 24px;
+  --ys-font-subtitle-m: 32px;
+  --ys-font-subtitle-l: 44px;  /* MVP-α default */
+  --ys-font-subtitle-xl: 56px;
+  --ys-font-subtitle-xxl: 72px;
+  --ys-font-subtitle-current: var(--ys-font-subtitle-l);
+  --ys-font-viewer-phone-default: 26px;
+  --ys-font-viewer-laptop-default: 30px;
+  --ys-font-family: 'Pretendard', 'Noto Sans KR', system-ui;
+  --ys-font-weight-subtitle: 700;
+  --ys-line-height-subtitle: 1.25;
+
+  /* Color (dark mode default) */
+  --ys-bg-base: #0f172a;
+  --ys-bg-elevated: #1e293b;
+  --ys-text-primary: #f1f5f9;
+  --ys-text-muted: #94a3b8;
+  --ys-accent: #38bdf8;
+  --ys-danger: #f43f5e;
+
+  /* Spacing scale (4px base) */
+  --ys-space-1: 4px;
+  --ys-space-2: 8px;
+  --ys-space-3: 12px;
+  --ys-space-4: 16px;
+  --ys-space-6: 24px;
+  --ys-space-8: 32px;
+
+  /* Radius */
+  --ys-radius-sm: 6px;
+  --ys-radius-md: 10px;
+  --ys-radius-lg: 16px;
+}
+
+/* 회의실 모드 (XXL 강제 + 사이드 폴딩) */
+[data-mode="meeting-room"] {
+  --ys-font-subtitle-current: var(--ys-font-subtitle-xxl);
+}
+
+/* 글자 크기 prop (β-2에서 활용) */
+[data-subtitle-size="s"] {
+  --ys-font-subtitle-current: var(--ys-font-subtitle-s);
+}
+
+[data-subtitle-size="m"] {
+  --ys-font-subtitle-current: var(--ys-font-subtitle-m);
+}
+
+[data-subtitle-size="l"] {
+  --ys-font-subtitle-current: var(--ys-font-subtitle-l);
+}
+
+[data-subtitle-size="xl"] {
+  --ys-font-subtitle-current: var(--ys-font-subtitle-xl);
+}
+
+[data-subtitle-size="xxl"] {
+  --ys-font-subtitle-current: var(--ys-font-subtitle-xxl);
+}

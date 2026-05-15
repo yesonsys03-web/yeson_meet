@@ -1,0 +1,10 @@
+{
+  "name": "yeson-meet",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev:web": "pnpm --filter @yeson-meet/web dev",
+    "dev:desktop": "pnpm --filter @yeson-meet/desktop tauri:dev",
+    "build:web": "pnpm --filter @yeson-meet/web build"
+  }
+}

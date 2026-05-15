@@ -1,0 +1,1 @@
+-- yeson-meet bootstrap. Real DDL via Alembic from Slice 1.

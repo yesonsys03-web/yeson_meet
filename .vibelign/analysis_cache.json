@@ -1,0 +1,68 @@
+{
+  "schema_version": 2,
+  "generated_at": "2026-05-14T00:45:31.122119+00:00",
+  "feature_flags": {
+    "USE_ACTION_ENGINE": false
+  },
+  "project_mtime_hash": "d41d8cd98f00b204e9800998ecf8427e",
+  "report": {
+    "project_score": 100,
+    "status": "Safe",
+    "anchor_coverage": 100,
+    "stats": {
+      "files_scanned": 32,
+      "source_files_scanned": 0,
+      "oversized_entry_files": 0,
+      "missing_anchor_files": 0,
+      "anchor_coverage": 100,
+      "legacy_penalty": 0,
+      "project_map_loaded": true,
+      "mcp_status": {
+        "claude": {
+          "enabled": true,
+          "registered": true,
+          "config_path": ".mcp.json",
+          "label": "Claude Code",
+          "state": "registered"
+        },
+        "cursor": {
+          "enabled": true,
+          "registered": true,
+          "config_path": ".cursor/mcp.json",
+          "label": "Cursor",
+          "state": "registered"
+        },
+        "opencode": {
+          "enabled": true,
+          "registered": true,
+          "config_path": "opencode.json",
+          "label": "OpenCode",
+          "state": "registered"
+        },
+        "antigravity": {
+          "enabled": true,
+          "registered": true,
+          "config_path": "~/.gemini/antigravity/mcp_config.json",
+          "label": "Antigravity",
+          "state": "registered"
+        },
+        "codex": {
+          "enabled": true,
+          "registered": true,
+          "config_path": "~/.codex/config.toml",
+          "label": "Codex",
+          "state": "registered"
+        }
+      },
+      "prepared_tool_status": {},
+      "checkpoint_engine_status": {
+        "engine_used": "rust",
+        "last_fallback_reason": null
+      },
+      "project_map_file_count": 0,
+      "project_map_generated_at": "2026-05-14T00:45:30.615295Z"
+    },
+    "issues": [],
+    "recommended_actions": []
+  }
+}

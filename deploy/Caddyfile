@@ -1,0 +1,36 @@
+{
+    admin off
+    log {
+        output stdout
+        format console
+        level INFO
+    }
+}
+
+{$SERVER_HOST}:443 {
+    tls internal
+
+    # API
+    handle /api/* {
+        reverse_proxy server:8000
+    }
+
+    # WebSocket
+    handle /ws/* {
+        reverse_proxy server:8000
+    }
+
+    # Static web (Vite build output)
+    handle {
+        root * /srv/web
+        try_files {path} /index.html
+        file_server
+    }
+
+    encode zstd gzip
+}
+
+# Optional: redirect plain HTTP to HTTPS
+:80 {
+    redir https://{host}{uri} permanent
+}

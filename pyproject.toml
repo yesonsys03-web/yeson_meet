@@ -1,0 +1,8 @@
+[project]
+name = "yeson-meet"
+version = "0.0.0"
+description = "AI meeting interpretation dashboard"
+requires-python = ">=3.12"
+
+[tool.uv.workspace]
+members = ["apps/server", "apps/client_sidecar", "packages/sdk-python"]

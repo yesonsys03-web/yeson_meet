@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>yeson-meet docs</title>
+<style>
+  body {
+    font-family: 'Pretendard', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 1080px; margin: 0 auto; padding: 48px 24px 80px;
+    background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+    color: #0f172a;
+  }
+  h1 { font-size: 32px; margin: 0 0 8px; letter-spacing: -0.02em; }
+  .subtitle { color: #64748b; margin-bottom: 32px; font-size: 15px; }
+  .section-title { font-size: 13px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin: 32px 0 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+  .card {
+    background: white; border-radius: 12px; padding: 20px 22px;
+    text-decoration: none; color: inherit; display: block;
+    border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(15,23,42,0.04);
+    transition: transform .12s ease, box-shadow .12s ease, border-color .12s;
+  }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(15,23,42,0.08); border-color: #cbd5e1; }
+  .card .icon { font-size: 24px; margin-bottom: 8px; }
+  .card .name { font-weight: 700; font-size: 16px; color: #0f172a; margin-bottom: 4px; }
+  .card .filename { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: #94a3b8; margin-bottom: 8px; }
+  .card .desc { font-size: 13px; color: #475569; line-height: 1.55; }
+  .footer { margin-top: 48px; padding-top: 24px; border-top: 1px solid #e2e8f0; font-size: 13px; color: #64748b; }
+  .footer code { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <h1>yeson-meet docs</h1>
+  <div class="subtitle">AI 회의 통역 대시보드 — 기획안·아키텍처·로드맵·운영 가이드</div>
+<div class="section-title">기획안 (md ↔ html 동기)</div><div class="grid"><a class="card" href="PRD.html"><div class="icon">📋</div><div class="name">PRD</div><div class="filename">PRD.md → PRD.html</div><div class="desc">기획안 - 비전·스코프·MVP-α/β 분리·결정 로그</div></a><a class="card" href="ARCHITECTURE.html"><div class="icon">🏗️</div><div class="name">Architecture</div><div class="filename">ARCHITECTURE.md → ARCHITECTURE.html</div><div class="desc">시스템 토폴로지·컴포넌트·도메인 모델·DDL·엣지케이스</div></a><a class="card" href="ROADMAP.html"><div class="icon">🗺️</div><div class="name">Roadmap</div><div class="filename">ROADMAP.md → ROADMAP.html</div><div class="desc">MVP-α 5 슬라이스 + β 7 묶음 · 영업일 단위 일정</div></a><a class="card" href="DEPLOY.html"><div class="icon">🚀</div><div class="name">Deploy</div><div class="filename">DEPLOY.md → DEPLOY.html</div><div class="desc">사내 서버 운영 가이드 · Docker Compose · 백업 SOP</div></a><a class="card" href="UI_DESIGN_SYSTEM.html"><div class="icon">🎨</div><div class="name">UI Design</div><div class="filename">UI_DESIGN_SYSTEM.md → UI_DESIGN_SYSTEM.html</div><div class="desc">5슬롯 컴포지션 + 디자인 토큰 + 3층 컴포넌트</div></a><a class="card" href="WORKFLOW_COLLABORATION.html"><div class="icon">👥</div><div class="name">Workflow Team</div><div class="filename">WORKFLOW_COLLABORATION.md → WORKFLOW_COLLABORATION.html</div><div class="desc">비코딩 팀(시스템 부원·번역 담당자·참석자) 협업 가이드</div></a><a class="card" href="WORKFLOW_SOLO_AI.html"><div class="icon">🤖</div><div class="name">Workflow Solo+AI</div><div class="filename">WORKFLOW_SOLO_AI.md → WORKFLOW_SOLO_AI.html</div><div class="desc">1인 + AI 병렬 작업 · 슬라이스 사이클 · 에이전트 카탈로그</div></a></div><div class="section-title">기존 페이지</div><div class="grid"><a class="card" href="PLAN_VIEWER.html"><div class="icon">📊</div><div class="name">Plan Viewer (SPA)</div><div class="filename">PLAN_VIEWER.html</div><div class="desc">기존 단일 페이지 통합 뷰어 (인터랙티브)</div></a><a class="card" href="SETUP_SERVER.html"><div class="icon">🖥️</div><div class="name">Setup Server</div><div class="filename">SETUP_SERVER.html</div><div class="desc">사내 서버 셋업 인터랙티브 체크리스트</div></a><a class="card" href="SETUP_MEETING_PC.html"><div class="icon">💻</div><div class="name">Setup Meeting PC</div><div class="filename">SETUP_MEETING_PC.html</div><div class="desc">회의실 PC 셋업 (Win/Mac 토글)</div></a></div>
+  <div class="footer">
+    빌드 2026-05-15 · 모든 HTML은 같은 폴더의 <code>.md</code>를 inline embed해서 marked.js로 렌더링.
+    md 갱신 시 HTML도 다시 빌드해야 함.
+  </div>
+</body>
+</html>

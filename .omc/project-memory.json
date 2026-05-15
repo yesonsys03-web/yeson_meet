@@ -1,0 +1,358 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1778803457726,
+  "projectRoot": "/Users/usabatch/coding/yeson_dev/yeson_meet",
+  "techStack": {
+    "languages": [],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 9,
+      "lastAccessed": 1778803457673,
+      "keyFiles": [
+        "ARCHITECTURE.md",
+        "DEPLOY.md",
+        "PLAN_VIEWER.html",
+        "PRD.md",
+        "ROADMAP.md"
+      ]
+    },
+    "vibelign_exports": {
+      "path": "vibelign_exports",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1778803457678,
+      "keyFiles": []
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "docs/ROADMAP.md",
+      "accessCount": 12,
+      "lastAccessed": 1778812859690,
+      "type": "file"
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "accessCount": 11,
+      "lastAccessed": 1778813115865,
+      "type": "file"
+    },
+    {
+      "path": "docs/WORKFLOW_SOLO_AI.md",
+      "accessCount": 9,
+      "lastAccessed": 1778812598270,
+      "type": "file"
+    },
+    {
+      "path": "docs/PRD.md",
+      "accessCount": 9,
+      "lastAccessed": 1778812925121,
+      "type": "file"
+    },
+    {
+      "path": ".vibelign/project_map.json",
+      "accessCount": 7,
+      "lastAccessed": 1778813006552,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/Dockerfile",
+      "accessCount": 5,
+      "lastAccessed": 1778813402104,
+      "type": "file"
+    },
+    {
+      "path": "docs/PLAN_VIEWER.bak.html",
+      "accessCount": 4,
+      "lastAccessed": 1778810037027,
+      "type": "file"
+    },
+    {
+      "path": "docs/DEPLOY.md",
+      "accessCount": 4,
+      "lastAccessed": 1778813112223,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/db/alembic.ini",
+      "accessCount": 4,
+      "lastAccessed": 1778813387201,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 4,
+      "lastAccessed": 1778813557404,
+      "type": "file"
+    },
+    {
+      "path": "docs/UI_DESIGN_SYSTEM.md",
+      "accessCount": 3,
+      "lastAccessed": 1778813006689,
+      "type": "file"
+    },
+    {
+      "path": "tsconfig.base.json",
+      "accessCount": 3,
+      "lastAccessed": 1778813254667,
+      "type": "file"
+    },
+    {
+      "path": "docs/SETUP_MEETING_PC.html",
+      "accessCount": 2,
+      "lastAccessed": 1778810957963,
+      "type": "file"
+    },
+    {
+      "path": "pyproject.toml",
+      "accessCount": 2,
+      "lastAccessed": 1778813253216,
+      "type": "file"
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "accessCount": 2,
+      "lastAccessed": 1778813253559,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 2,
+      "lastAccessed": 1778813253901,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/pyproject.toml",
+      "accessCount": 2,
+      "lastAccessed": 1778813257858,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/main.py",
+      "accessCount": 2,
+      "lastAccessed": 1778813258369,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/pyproject.toml",
+      "accessCount": 2,
+      "lastAccessed": 1778813259467,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/main.py",
+      "accessCount": 2,
+      "lastAccessed": 1778813259873,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/config/constants.py",
+      "accessCount": 2,
+      "lastAccessed": 1778813268819,
+      "type": "file"
+    },
+    {
+      "path": "apps/web/package.json",
+      "accessCount": 2,
+      "lastAccessed": 1778813271839,
+      "type": "file"
+    },
+    {
+      "path": "apps/web/vite.config.ts",
+      "accessCount": 2,
+      "lastAccessed": 1778813272236,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/db/alembic/env.py",
+      "accessCount": 2,
+      "lastAccessed": 1778813274205,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/api/v1/health.py",
+      "accessCount": 2,
+      "lastAccessed": 1778813274600,
+      "type": "file"
+    },
+    {
+      "path": "AI_Meeting_Dashboard_Mac_Windows_Workflow.md",
+      "accessCount": 1,
+      "lastAccessed": 1778806234806,
+      "type": "file"
+    },
+    {
+      "path": "docs/WORKFLOW_COLLABORATION.md",
+      "accessCount": 1,
+      "lastAccessed": 1778806438429,
+      "type": "file"
+    },
+    {
+      "path": "docs/PLAN_VIEWER.html",
+      "accessCount": 1,
+      "lastAccessed": 1778808758486,
+      "type": "file"
+    },
+    {
+      "path": "docs/SETUP_SERVER.html",
+      "accessCount": 1,
+      "lastAccessed": 1778810860018,
+      "type": "file"
+    },
+    {
+      "path": ".nvmrc",
+      "accessCount": 1,
+      "lastAccessed": 1778812888061,
+      "type": "file"
+    },
+    {
+      "path": ".python-version",
+      "accessCount": 1,
+      "lastAccessed": 1778812889023,
+      "type": "file"
+    },
+    {
+      "path": ".editorconfig",
+      "accessCount": 1,
+      "lastAccessed": 1778812889974,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1778812919549,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/api/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1778812920537,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/api/v1/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1778812922371,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/db/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1778812923346,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/ws/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1778812929746,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/ai/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1778812930889,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/integrations/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1778812931460,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1778812933046,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/config/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1778812934024,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/audio/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1778812936855,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/transport/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1778812937829,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/queue/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1778812938832,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/db/alembic/script.py.mako",
+      "accessCount": 1,
+      "lastAccessed": 1778812942350,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/.dockerignore",
+      "accessCount": 1,
+      "lastAccessed": 1778812943510,
+      "type": "file"
+    },
+    {
+      "path": "apps/web/tsconfig.json",
+      "accessCount": 1,
+      "lastAccessed": 1778812958285,
+      "type": "file"
+    },
+    {
+      "path": "apps/web/tailwind.config.ts",
+      "accessCount": 1,
+      "lastAccessed": 1778812960207,
+      "type": "file"
+    },
+    {
+      "path": "apps/web/postcss.config.js",
+      "accessCount": 1,
+      "lastAccessed": 1778812961552,
+      "type": "file"
+    },
+    {
+      "path": "apps/web/index.html",
+      "accessCount": 1,
+      "lastAccessed": 1778812962442,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

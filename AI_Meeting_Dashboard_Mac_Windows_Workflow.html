@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Meeting Dashboard - Mac / Windows Workflow</title>
+  <style>
+    :root{
+      --bg:#f4f7fb;--ink:#111827;--muted:#64748b;--blue:#2563eb;--green:#22c55e;--dark:#07111f;--line:#d8e2ef;--panel:#fff;--shadow:0 18px 45px rgba(15,23,42,.12)
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif;background:radial-gradient(circle at 10% 0%,rgba(37,99,235,.12),transparent 28%),radial-gradient(circle at 90% 0%,rgba(34,197,94,.11),transparent 25%),var(--bg);color:var(--ink)}
+    .wrap{max-width:1500px;margin:0 auto;padding:34px 24px 50px}
+    header{text-align:center;margin-bottom:26px}
+    h1{font-size:clamp(30px,4vw,52px);margin:0 0 10px;letter-spacing:-.04em}
+    .sub{font-size:18px;color:var(--muted)}
+    .card{background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:26px;box-shadow:var(--shadow)}
+    .section-title{font-size:25px;font-weight:900;color:var(--blue);margin:0 0 18px}
+    .flow{padding:25px;margin-bottom:26px}
+    .flow-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:15px}
+    .step{position:relative;text-align:center;background:linear-gradient(180deg,#fff,#f8fbff);border:1px solid #dbe7f6;border-radius:22px;padding:18px 10px;min-height:170px;display:flex;flex-direction:column;justify-content:center;align-items:center}
+    .step:not(:last-child)::after{content:"→";position:absolute;right:-17px;top:50%;transform:translateY(-50%);font-size:27px;font-weight:900}
+    .icon{width:66px;height:66px;border-radius:20px;background:#eef6ff;border:1px solid #d6eaff;display:grid;place-items:center;font-size:32px;margin-bottom:10px}
+    .step b{font-size:17px}
+    .step span{font-size:13px;color:var(--muted);line-height:1.4;margin-top:5px}
+    .os-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:26px}
+    .os{padding:24px}
+    .os h2{margin:0 0 16px;font-size:28px}
+    .mac h2{color:#2563eb}.win h2{color:#16a34a}
+    .route{background:#0b1220;color:#e5e7eb;border-radius:18px;padding:18px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.8;margin:14px 0}
+    .list{line-height:1.9;color:#334155}
+    .dashboard{padding:24px;margin-bottom:26px}
+    .screen{background:var(--dark);color:white;border-radius:22px;padding:20px;display:grid;grid-template-columns:1.5fr 1fr .7fr;gap:16px;border:1px solid #1f3a5f}
+    .widget{background:rgba(15,23,42,.78);border:1px solid rgba(148,163,184,.34);border-radius:16px;padding:16px}
+    .widget h3{margin:0 0 12px;color:#7cff6b}
+    .caption-lines{font-size:32px;font-weight:900;line-height:1.3;letter-spacing:-.03em}
+    .client{color:#fbbf24;font-weight:900;margin-bottom:12px}
+    .tags{display:flex;flex-wrap:wrap;gap:10px}
+    .tag{padding:8px 12px;border-radius:10px;background:#111827;border:1px solid rgba(59,130,246,.55);color:#60a5fa;font-weight:800}
+    .tag.y{color:#fbbf24;border-color:rgba(245,158,11,.55)}.tag.g{color:#86efac;border-color:rgba(34,197,94,.55)}.tag.p{color:#c4b5fd;border-color:rgba(139,92,246,.55)}
+    .todo li{list-style:"☐  ";line-height:1.8}
+    table{width:100%;border-collapse:collapse}td{padding:7px 4px;border-bottom:1px solid rgba(148,163,184,.18)}td:first-child{color:#cbd5e1;width:58px}
+    .bottom{display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px}
+    .info{padding:24px}.info h2{color:var(--blue);margin:0 0 14px}
+    .check li{list-style:"✅  ";line-height:1.8}
+    .note{margin-top:26px;padding:20px;border-radius:20px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;line-height:1.7}
+    @media(max-width:1100px){.flow-grid{grid-template-columns:repeat(2,1fr)}.step::after{display:none}.os-grid,.bottom,.screen{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>AI 해외 미팅 실시간 통역 대시보드</h1>
+  <div class="sub">Mac / Windows 모두 세팅 가능한 Gemini Live API 기반 회의 이해 보조 시스템</div>
+</header>
+
+<section class="card flow">
+  <h2 class="section-title">공통 전체 흐름</h2>
+  <div class="flow-grid">
+    <div class="step"><div class="icon">💻</div><b>Google Meet</b><span>회의 음성</span></div>
+    <div class="step"><div class="icon">🔊</div><b>시스템 오디오</b><span>PC에서 나오는 소리</span></div>
+    <div class="step"><div class="icon">🎛️</div><b>가상 오디오</b><span>Mac: BlackHole<br>Win: Voicemeeter</span></div>
+    <div class="step"><div class="icon">🐍</div><b>Python 앱</b><span>오디오 스트리밍</span></div>
+    <div class="step"><div class="icon">✦</div><b>Gemini Live API</b><span>전사 + 요약 번역</span></div>
+    <div class="step"><div class="icon">🖥️</div><b>Dashboard UI</b><span>자막 / TODO / 로그</span></div>
+    <div class="step"><div class="icon">📄</div><b>회의 리포트</b><span>MD / TXT / PDF</span></div>
+  </div>
+</section>
+
+<section class="os-grid">
+  <div class="card os mac">
+    <h2>Mac 세팅</h2>
+    <div class="route">Google Meet<br>↓<br>Mac 시스템 오디오<br>↓<br>BlackHole<br>↓<br>Python 앱<br>↓<br>Gemini Live API</div>
+    <ul class="list">
+      <li>BlackHole 설치</li>
+      <li>Audio MIDI 설정에서 멀티 출력 장치 생성</li>
+      <li>출력: 실제 스피커 + BlackHole</li>
+      <li>Python 입력 장치: BlackHole</li>
+    </ul>
+  </div>
+
+  <div class="card os win">
+    <h2>Windows 세팅</h2>
+    <div class="route">Google Meet<br>↓<br>Windows 시스템 오디오<br>↓<br>Voicemeeter / VB-Audio Cable<br>↓<br>Python 앱<br>↓<br>Gemini Live API</div>
+    <ul class="list">
+      <li>간단 테스트: VB-Audio Cable</li>
+      <li>실무 추천: Voicemeeter Banana</li>
+      <li>Google Meet 출력: Voicemeeter Input</li>
+      <li>A1: 실제 스피커 / B1: Python 입력</li>
+    </ul>
+  </div>
+</section>
+
+<section class="card dashboard">
+  <h2 class="section-title">대시보드 화면 구성</h2>
+  <div class="screen">
+    <div class="widget">
+      <h3>1. 실시간 자막</h3>
+      <div class="client">[CLIENT]</div>
+      <div class="caption-lines">layout retake 재검토 요청<br>delivery 하루 지연 가능성<br>BG 수정본 목요일까지 필요</div>
+    </div>
+    <div class="widget">
+      <h3>2. 핵심 키워드</h3>
+      <div class="tags">
+        <span class="tag y">delivery</span><span class="tag">retake</span><span class="tag g">layout</span><span class="tag p">deadline</span><span class="tag y">approval</span><span class="tag g">asset</span><span class="tag p">render</span><span class="tag">issue</span>
+      </div>
+    </div>
+    <div class="widget">
+      <h3>3. 상태</h3>
+      <p>오디오 연결: ✅</p><p>AI 연결: ✅</p><p>지연 시간: 1.2s</p>
+    </div>
+    <div class="widget">
+      <h3>4. 액션 아이템</h3>
+      <ul class="todo"><li>BG 수정본 전달</li><li>layout 재확인</li><li>render issue 점검</li><li>금요일 최종 승인 준비</li></ul>
+    </div>
+    <div class="widget">
+      <h3>5. 회의 로그</h3>
+      <table><tr><td>10:42</td><td>delivery 하루 지연 가능성</td></tr><tr><td>10:45</td><td>layout retake 재검토 요청</td></tr><tr><td>10:51</td><td>BG 수정본 목요일까지 필요</td></tr><tr><td>10:55</td><td>금요일 최종 승인 예정</td></tr></table>
+    </div>
+    <div class="widget">
+      <h3>6. 화자 구분</h3>
+      <p>🟡 CLIENT</p><p>🔵 PD</p><p>🟢 TD</p><p>🟣 STAFF</p>
+    </div>
+  </div>
+</section>
+
+<section class="bottom">
+  <div class="card info"><h2>추천 MVP</h2><ul class="check"><li>Mac / Windows 입력 선택</li><li>실시간 자막</li><li>키워드 패널</li><li>TODO 패널</li><li>MD 리포트 생성</li></ul></div>
+  <div class="card info"><h2>기술 스택</h2><ul><li>Python</li><li>PyQt5 / PySide6</li><li>Gemini Live API</li><li>BlackHole</li><li>Voicemeeter</li><li>SQLite</li></ul></div>
+  <div class="card info"><h2>핵심 가치</h2><ul class="check"><li>회의 흐름 가시화</li><li>통역 부담 감소</li><li>일정/리테이크 누락 방지</li><li>회의 후 자동 정리</li></ul></div>
+</section>
+
+<div class="note"><b>운영 컨셉:</b> 이 시스템은 완벽한 자동 통역기가 아니라, 해외 미팅 내용을 실시간으로 구조화해서 참석자들이 회의 흐름을 놓치지 않도록 돕는 AI 회의 지휘 센터입니다.</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,4 @@
+schema_version: 1
+llm_provider: anthropic
+api_key: ENV
+preview_format: ascii

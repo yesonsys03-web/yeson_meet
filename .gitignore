@@ -1,0 +1,55 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Rust / Tauri
+target/
+
+# Compose volumes
+deploy/data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# VibeLign
+.vibelign/checkpoints/
+.vibelign/rust_checkpoints/
+.vibelign/rust_objects/
+.vibelign/scan_cache.json
+.vibelign/logs/
+.vibelign/reports/
+
+# Tool state (entire directories — heavy / per-machine)
+.vibelign/cache/
+.vibelign/docs_html/
+.vibelign/docs_visual/
+.vibelign/memory_audit.jsonl
+.omc/sessions/
+.omc/state/
+.omc/logs/
+
+# Generated build artifacts (markdown card HTML, etc.)
+generated/
+
+# Tauri build output (extra safety)
+apps/desktop/src-tauri/gen/

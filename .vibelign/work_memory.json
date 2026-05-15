@@ -1,0 +1,274 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-05-15T04:07:36.256483Z",
+  "recent_events": [
+    {
+      "time": "2026-05-15T03:31:43.119376Z",
+      "kind": "deleted",
+      "path": "deploy/data/postgres/global/pg_internal.init",
+      "message": "deploy/data/postgres/global/pg_internal.init deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
+    },
+    {
+      "time": "2026-05-15T03:31:43.123475Z",
+      "kind": "deleted",
+      "path": "deploy/data/postgres/base/1/pg_internal.init.93",
+      "message": "deploy/data/postgres/base/1/pg_internal.init.93 deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
+    },
+    {
+      "time": "2026-05-15T03:31:43.130074Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/1/pg_internal.init",
+      "message": "pg_internal.init에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T03:31:43.138439Z",
+      "kind": "moved",
+      "path": "deploy/data/postgres/base/1/pg_internal.init",
+      "message": "deploy/data/postgres/base/1/pg_internal.init moved",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T03:35:23.058114Z",
+      "kind": "deleted",
+      "path": "deploy/data/postgres/pg_logical/replorigin_checkpoint.tmp",
+      "message": "deploy/data/postgres/pg_logical/replorigin_checkpoint.tmp deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
+    },
+    {
+      "time": "2026-05-15T03:35:23.066266Z",
+      "kind": "moved",
+      "path": "deploy/data/postgres/pg_logical/replorigin_checkpoint",
+      "message": "deploy/data/postgres/pg_logical/replorigin_checkpoint moved",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T03:35:23.074257Z",
+      "kind": "deleted",
+      "path": "deploy/data/postgres/pg_logical/replorigin_checkpoint",
+      "message": "deploy/data/postgres/pg_logical/replorigin_checkpoint deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
+    },
+    {
+      "time": "2026-05-15T03:35:26.005349Z",
+      "kind": "modified",
+      "path": "deploy/data/postgres/global/pg_control",
+      "message": "deploy/data/postgres/global/pg_control modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T03:35:26.009835Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/1/2696",
+      "message": "2696에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T03:35:26.017239Z",
+      "kind": "modified",
+      "path": "deploy/data/postgres/base/1/2696",
+      "message": "deploy/data/postgres/base/1/2696 modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T03:35:26.024556Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/1/2619",
+      "message": "2619에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T03:35:26.031641Z",
+      "kind": "modified",
+      "path": "deploy/data/postgres/base/1/2619",
+      "message": "deploy/data/postgres/base/1/2619 modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T03:35:26.039003Z",
+      "kind": "modified",
+      "path": "deploy/data/postgres/base/1/2619_fsm",
+      "message": "deploy/data/postgres/base/1/2619_fsm modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T03:35:26.046643Z",
+      "kind": "modified",
+      "path": "deploy/data/postgres/base/1/2619_vm",
+      "message": "deploy/data/postgres/base/1/2619_vm modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T03:35:26.050698Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/1/1259",
+      "message": "1259에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T03:35:26.058098Z",
+      "kind": "modified",
+      "path": "deploy/data/postgres/base/1/1259",
+      "message": "deploy/data/postgres/base/1/1259 modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:03:48.772363Z",
+      "kind": "deleted",
+      "path": "apps/desktop/vite.config.ts.timestamp-1778817828759-97666f709d00f.mjs",
+      "message": "apps/desktop/vite.config.ts.timestamp-1778817828759-97666f709d00f.mjs deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
+    },
+    {
+      "time": "2026-05-15T04:07:36.238446Z",
+      "kind": "deleted",
+      "path": ".gitignore.tmp.3978.89f9d739a81a",
+      "message": ".gitignore.tmp.3978.89f9d739a81a deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
+    },
+    {
+      "time": "2026-05-15T04:07:36.246778Z",
+      "kind": "moved",
+      "path": ".gitignore",
+      "message": ".gitignore moved",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-15T04:07:36.256483Z",
+      "kind": "deleted",
+      "path": ".gitignore",
+      "message": ".gitignore deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
+    }
+  ],
+  "relevant_files": [
+    {
+      "path": "deploy/data/postgres/pg_logical/replorigin_checkpoint",
+      "why": "Recently deleted in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "deploy/data/postgres/global/pg_control",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "deploy/data/postgres/base/1/2696",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "deploy/data/postgres/base/1/2619",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "deploy/data/postgres/base/1/2619_fsm",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "deploy/data/postgres/base/1/2619_vm",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "deploy/data/postgres/base/1/1259",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "apps/desktop/vite.config.ts.timestamp-1778817828759-97666f709d00f.mjs",
+      "why": "Recently deleted in watch.",
+      "source": "watch"
+    },
+    {
+      "path": ".gitignore.tmp.3978.89f9d739a81a",
+      "why": "Recently deleted in watch.",
+      "source": "watch"
+    },
+    {
+      "path": ".gitignore",
+      "why": "Recently deleted in watch.",
+      "source": "watch"
+    }
+  ],
+  "warnings": [
+    {
+      "time": "2026-05-15T03:30:43.120303Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/1/pg_internal.init",
+      "message": "pg_internal.init에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T03:30:52.232399Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/global/pg_internal.init",
+      "message": "pg_internal.init에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T03:30:52.926917Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/16384/pg_internal.init",
+      "message": "pg_internal.init에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T03:31:23.091870Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/global/pg_internal.init",
+      "message": "pg_internal.init에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T03:31:23.119058Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/5/pg_internal.init",
+      "message": "pg_internal.init에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T03:31:43.103716Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/global/pg_internal.init",
+      "message": "pg_internal.init에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T03:31:43.130074Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/1/pg_internal.init",
+      "message": "pg_internal.init에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T03:35:26.009835Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/1/2696",
+      "message": "2696에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T03:35:26.024556Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/1/2619",
+      "message": "2619에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-15T03:35:26.050698Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/1/1259",
+      "message": "1259에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    }
+  ],
+  "decisions": [],
+  "verification": [],
+  "next_action": "",
+  "verification_updated_at": ""
+}

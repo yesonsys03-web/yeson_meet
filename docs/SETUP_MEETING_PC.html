@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>yeson-meet · 회의실 PC 셋업 가이드</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif;
+      background:
+        radial-gradient(circle at 5% -5%, rgba(59,130,246,.18), transparent 30%),
+        radial-gradient(circle at 95% -5%, rgba(168,85,247,.16), transparent 28%),
+        #f3f6fb;
+      min-height:100vh;
+    }
+    .glass{ background:rgba(255,255,255,.92); backdrop-filter: blur(8px); border:1px solid rgba(15,23,42,.08); }
+    .code{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .step-done{ opacity:.55; }
+    .step-done .step-title{ text-decoration: line-through; }
+    details summary{ cursor:pointer; user-select:none; }
+    details[open] summary .chev{ transform: rotate(90deg); }
+    .chev{ transition: transform .18s; display:inline-block; }
+    .os-tab{
+      flex:1; padding:14px 16px; border-radius:14px; font-weight:900;
+      text-align:center; cursor:pointer; border:2px solid transparent;
+      background:rgba(255,255,255,.7);
+    }
+    .os-tab.active-mac{ background:linear-gradient(180deg,#2563eb,#1e40af); color:white; border-color:#1e3a8a; box-shadow: 0 10px 25px rgba(37,99,235,.35); }
+    .os-tab.active-win{ background:linear-gradient(180deg,#16a34a,#15803d); color:white; border-color:#14532d; box-shadow: 0 10px 25px rgba(22,163,74,.35); }
+    @media print{
+      .no-print{ display:none !important; }
+      body{ background:white; }
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+/* ========== 부품 ========== */
+const useChecklist = (key) => {
+  const [done, setDone] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch { return {}; }
+  });
+  const toggle = (id) => setDone(d => {
+    const next = {...d, [id]: !d[id]};
+    localStorage.setItem(key, JSON.stringify(next));
+    return next;
+  });
+  const reset = () => { setDone({}); localStorage.removeItem(key); };
+  return { done, toggle, reset };
+};
+
+const CopyBtn = ({text}) => {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(()=>setCopied(false), 1500); }}
+      className="no-print text-[11px] font-bold px-2.5 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-white transition">
+      {copied ? "✓ 복사됨" : "📋 복사"}
+    </button>
+  );
+};
+
+const Code = ({children, copy}) => (
+  <div className="relative group">
+    <pre className="code bg-slate-900 text-slate-100 text-[12.5px] rounded-lg p-3 overflow-auto leading-relaxed">{children}</pre>
+    <div className="absolute top-2 right-2"><CopyBtn text={copy || children}/></div>
+  </div>
+);
+
+const Pill = ({color="slate", children}) => {
+  const p = {
+    blue:"bg-blue-50 text-blue-700 border-blue-200",
+    green:"bg-emerald-50 text-emerald-700 border-emerald-200",
+    amber:"bg-amber-50 text-amber-700 border-amber-200",
+    rose:"bg-rose-50 text-rose-700 border-rose-200",
+    violet:"bg-violet-50 text-violet-700 border-violet-200",
+    slate:"bg-slate-100 text-slate-700 border-slate-200",
+  }[color];
+  return <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border ${p}`}>{children}</span>;
+};
+
+const Step = ({id, n, title, est, tag, done, toggle, children, trouble}) => (
+  <div className={`glass rounded-2xl p-5 transition ${done[id] ? "step-done" : ""}`}>
+    <div className="flex items-start gap-3">
+      <label className="cursor-pointer pt-0.5 no-print">
+        <input type="checkbox" checked={!!done[id]} onChange={()=>toggle(id)}
+          className="w-5 h-5 rounded accent-emerald-600"/>
+      </label>
+      <div className="flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[12px] font-bold text-slate-400">STEP {n}</span>
+          {tag && <Pill color={tag.color}>{tag.label}</Pill>}
+          {est && <span className="text-[11px] text-slate-500">⏱ {est}</span>}
+        </div>
+        <h3 className="step-title font-extrabold text-slate-900 text-[16px] mt-0.5">{title}</h3>
+        <div className="text-[13px] text-slate-700 mt-2 space-y-2">{children}</div>
+        {trouble && (
+          <details className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3 no-print">
+            <summary className="text-[12px] font-bold text-amber-800"><span className="chev">▸</span> 트러블슈팅 ({trouble.length}건)</summary>
+            <div className="mt-2 space-y-2 text-[12px] text-slate-700">
+              {trouble.map((t,i)=>(
+                <div key={i} className="border-t border-amber-200 pt-2 first:border-0 first:pt-0">
+                  <div className="font-bold text-amber-900">증상: {t.symptom}</div>
+                  <div className="mt-1">→ {t.fix}</div>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
+    </div>
+  </div>
+);
+
+const Phase = ({n, icon, title, accent, children}) => (
+  <section className="space-y-3 mb-8">
+    <h2 className="text-[20px] font-black tracking-tight text-slate-900 flex items-center gap-2 mt-8">
+      <span className="text-2xl">{icon}</span>
+      <span className={accent==="mac" ? "text-blue-700" : "text-emerald-700"}>Phase {n}</span>
+      <span>·</span>
+      <span>{title}</span>
+    </h2>
+    <div className="space-y-3">{children}</div>
+  </section>
+);
+
+/* ========== Mac 단계 ========== */
+const macPhases = [
+  {
+    n:1, icon:"🔊", title:"BlackHole 가상 오디오 드라이버 설치",
+    steps:[
+      {
+        id:"mac-blackhole-dl", title:"BlackHole 2ch 다운로드 + 설치",
+        est:"5분", tag:{color:"blue", label:"오디오"},
+        content:(<>
+          <p>공식 사이트에서 <b>BlackHole 2ch</b> 무료 버전 받기 (이름 / 이메일 입력).</p>
+          <p>URL: <code className="bg-slate-100 px-1 rounded">https://existential.audio/blackhole/</code></p>
+          <p>다운로드한 .pkg 실행 → 설치 마법사 진행 → 비밀번호 입력.</p>
+        </>),
+        trouble:[
+          {symptom:"보안 경고로 차단됨", fix:"시스템 환경설정 → 개인정보 보호 및 보안 → 하단의 '확인 안 됨에도 열기' 클릭."},
+          {symptom:"여전히 안 열림", fix:"sudo spctl --master-disable (개발 한정, 끝나면 다시 enable). 회의실 PC 보안 정책 확인."},
+        ],
+      },
+      {
+        id:"mac-blackhole-check", title:"설치 확인",
+        est:"2분", tag:{color:"blue", label:"오디오"},
+        content:(<>
+          <p>Spotlight(⌘+Space) → "<b>Audio MIDI 설정</b>" 열기. 사이드바에 <b>BlackHole 2ch</b>가 보이면 OK.</p>
+        </>),
+        trouble:[
+          {symptom:"BlackHole이 안 보임", fix:"재부팅 권장. 그래도 안 보이면 사이드바 좌하단 + 버튼 → 새로고침."},
+        ],
+      },
+    ],
+  },
+  {
+    n:2, icon:"🎛️", title:"멀티 출력 장치 만들기",
+    steps:[
+      {
+        id:"mac-multi", title:"Audio MIDI에서 멀티 출력 장치 생성",
+        est:"5분", tag:{color:"blue", label:"오디오"},
+        content:(<>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>Audio MIDI 설정 열기.</li>
+            <li>좌하단 <b>+</b> 버튼 → <b>"여러 출력 장치 생성"</b>.</li>
+            <li>오른쪽 패널에서 <b>실제 스피커(또는 헤드셋)</b> + <b>BlackHole 2ch</b> 두 개 체크.</li>
+            <li>"드리프트 보정"은 BlackHole 항목에 체크.</li>
+            <li>장치 이름을 <b>yeson-meet Audio</b>로 변경 (사이드바에서 더블클릭).</li>
+          </ol>
+          <p>예시 결과:</p>
+          <div className="glass rounded-lg p-3 text-[12px] code">
+            yeson-meet Audio (멀티 출력 장치)<br/>
+            ├─ ✅ 외장 스피커 (사람이 들음)<br/>
+            └─ ✅ BlackHole 2ch (Python 앱이 받음)
+          </div>
+        </>),
+      },
+      {
+        id:"mac-default", title:"시스템 출력을 멀티 장치로 변경",
+        est:"1분", tag:{color:"blue", label:"오디오"},
+        content:(<>
+          <p>시스템 환경설정 → 사운드 → 출력 → <b>yeson-meet Audio</b> 선택.</p>
+          <p>또는 Audio MIDI에서 해당 장치 우클릭 → "이 장치를 사운드 출력으로 사용".</p>
+          <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-[12.5px] text-blue-900">
+            💡 이제 회의 소리가 동시에 <b>스피커</b>와 <b>BlackHole</b>로 흐릅니다. 사람은 듣고, 앱은 캡처.
+          </div>
+        </>),
+        trouble:[
+          {symptom:"소리가 안 들림", fix:"멀티 출력 장치 안에 실제 스피커가 체크되어 있는지 확인. 볼륨은 멀티 장치가 아니라 개별 스피커에서 조절."},
+        ],
+      },
+    ],
+  },
+  {
+    n:3, icon:"📦", title:"yeson-meet 데스크톱 앱 설치",
+    steps:[
+      {
+        id:"mac-dmg", title:"DMG 받기 + 설치",
+        est:"5분", tag:{color:"violet", label:"앱"},
+        content:(<>
+          <p>관리자에게 받은 다운로드 URL(예: <code className="bg-slate-100 px-1 rounded">https://&lt;SERVER_IP&gt;/downloads/yeson-meet-mac.dmg</code>)에서 DMG 다운로드.</p>
+          <p>마운트 후 <b>yeson-meet</b>을 <b>Applications</b>로 드래그.</p>
+        </>),
+        trouble:[
+          {symptom:"개발자 미확인 경고", fix:"우클릭 → 열기 → 다시 한 번 열기 클릭. 또는 시스템 환경설정 → 보안 → '확인 안 됨에도 열기'."},
+        ],
+      },
+      {
+        id:"mac-cert", title:"사내 root CA 인증서 신뢰 등록 (사내 CA 또는 Caddy internal 사용 시)",
+        est:"5분", tag:{color:"rose", label:"보안"},
+        content:(<>
+          <p>관리자에게 받은 <code className="bg-slate-100 px-1 rounded">root.crt</code> 파일을 더블클릭.</p>
+          <p>키체인 접근 → 시스템 → 가져온 인증서 더블클릭 → "이 인증서를 사용할 때" → <b>항상 신뢰</b>.</p>
+        </>),
+      },
+    ],
+  },
+  {
+    n:4, icon:"🚀", title:"첫 실행 + 등록",
+    steps:[
+      {
+        id:"mac-launch", title:"앱 실행 + 사내 서버 URL 입력",
+        est:"3분", tag:{color:"violet", label:"앱"},
+        content:(<>
+          <p>응용프로그램에서 yeson-meet 실행.</p>
+          <p>서버 URL 입력: <code className="bg-slate-100 px-1 rounded">https://&lt;SERVER_IP&gt;</code></p>
+          <p className="text-[11.5px] text-amber-700">⏭ <b>β-1 추가 기능</b>: 1분 튜토리얼이 자동 표시됨. MVP-α 시점에는 로그인 화면 바로 진입.</p>
+        </>),
+      },
+      {
+        id:"mac-login", title:"로그인 (관리자에게 받은 임시 계정 또는 본인 계정)",
+        est:"2분", tag:{color:"violet", label:"앱"},
+        content:(<>
+          <p>이메일 + 비밀번호 입력. 첫 로그인 시 비밀번호 변경 요구.</p>
+        </>),
+      },
+      {
+        id:"mac-device-key", title:"Device API Key 입력",
+        est:"3분", tag:{color:"amber", label:"등록"},
+        content:(<>
+          <p>관리자에게 받은 <b>1회성 Device API Key</b>를 입력 화면에 붙여넣기.</p>
+          <p>키는 macOS Keychain에 자동 저장됨. 평문 파일에 절대 X.</p>
+          <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-[12.5px] text-amber-800">
+            ⚠️ Gemini API Key는 입력 화면이 없음. <b>회의실 PC는 Gemini Key를 보유하지 않음</b> (모두 사내 서버 경유).
+          </div>
+        </>),
+      },
+    ],
+  },
+  {
+    n:5, icon:"🎤", title:"오디오 입력 설정 + 테스트",
+    steps:[
+      {
+        id:"mac-input", title:"앱 내 입력 장치 = BlackHole 2ch",
+        est:"2분", tag:{color:"blue", label:"오디오"},
+        content:(<>
+          <p>앱 설정 → 오디오 → 입력 장치 → <b>BlackHole 2ch</b> 선택.</p>
+          <p>샘플레이트 16kHz 권장. 채널 모노.</p>
+        </>),
+      },
+      {
+        id:"mac-mic-permission", title:"마이크 권한 허용",
+        est:"1분", tag:{color:"rose", label:"권한"},
+        content:(<>
+          <p>처음 캡처 시도 시 macOS가 마이크 권한을 요청. 허용.</p>
+          <p>또는 시스템 환경설정 → 개인정보 보호 → 마이크 → yeson-meet 체크.</p>
+        </>),
+        trouble:[
+          {symptom:"권한 후에도 무음", fix:"시스템 사운드 출력이 yeson-meet Audio(멀티 출력 장치)로 설정되어 있는지 재확인."},
+        ],
+      },
+      {
+        id:"mac-test", title:"자막 출력 확인 (영어 영상 재생)",
+        est:"5분", tag:{color:"green", label:"검증"},
+        content:(<>
+          <p><b>MVP-α 테스트 방법:</b></p>
+          <ol className="list-decimal pl-5 space-y-1 text-[12.5px]">
+            <li>YouTube 또는 Google Meet에서 영어 영상 재생.</li>
+            <li>시스템 출력이 yeson-meet Audio (멀티 출력 장치)로 설정되어 있어 자동으로 BlackHole 경유.</li>
+            <li>앱 라이브 콘솔에 한국어 자막이 1~2초 안에 흐르면 성공.</li>
+          </ol>
+          <p className="text-[11.5px] text-amber-700 mt-2">⏭ <b>β-1 추가 기능</b>: 사전 녹음된 영어 fixture를 재생하는 "모의 회의 모드" 도입. Gemini API 호출 없이 단축키/UI 연습 가능.</p>
+        </>),
+        trouble:[
+          {symptom:"자막이 안 나옴", fix:"앱 상태 패널에서 '오디오 OK' / '서버 OK' 확인. 큐 크기가 늘어나면 서버 연결 문제."},
+          {symptom:"자막이 끊김", fix:"네트워크 점검. 사내 서버까지 ping 응답 시간 확인."},
+        ],
+      },
+    ],
+  },
+];
+
+/* ========== Windows 단계 ========== */
+const winPhases = [
+  {
+    n:1, icon:"🔊", title:"Voicemeeter Banana 설치",
+    steps:[
+      {
+        id:"win-vm-dl", title:"Voicemeeter Banana 다운로드 + 설치",
+        est:"5분", tag:{color:"green", label:"오디오"},
+        content:(<>
+          <p>공식 사이트: <code className="bg-slate-100 px-1 rounded">https://vb-audio.com/Voicemeeter/banana.htm</code></p>
+          <p>설치 후 <b>재부팅 필수</b>.</p>
+          <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-[12.5px] text-blue-900">
+            💡 무료(donationware). 상업적 사용도 라이선스상 OK. 사내 표준 등록 권장.
+          </div>
+        </>),
+        trouble:[
+          {symptom:"설치 후 가상 오디오 장치 안 보임", fix:"재부팅 필수. 그래도 안 보이면 제어판 → 사운드 → 표시 안 됨 장치 보기 체크."},
+        ],
+      },
+    ],
+  },
+  {
+    n:2, icon:"🎛️", title:"오디오 라우팅 (가장 까다로운 단계)",
+    steps:[
+      {
+        id:"win-vm-output", title:"시스템 기본 재생 = Voicemeeter Input",
+        est:"3분", tag:{color:"green", label:"오디오"},
+        content:(<>
+          <p>설정 → 시스템 → 사운드 → 출력 장치 = <b>Voicemeeter Input (VB-Audio Voicemeeter VAIO)</b>.</p>
+        </>),
+      },
+      {
+        id:"win-vm-a1", title:"Voicemeeter A1 = 실제 스피커, B1 = Python 입력용 가상",
+        est:"5분", tag:{color:"green", label:"오디오"},
+        content:(<>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>Voicemeeter Banana 실행 (관리자 권한 권장).</li>
+            <li>우상단 <b>A1</b> 클릭 → 실제 스피커/헤드셋 선택.</li>
+            <li>B1은 가상 (별도 설정 없음, 자동으로 Voicemeeter Output으로 매핑).</li>
+            <li>VAIO 입력 채널에서 A1과 B1 모두 활성화 (LED 켜기).</li>
+          </ol>
+          <p>예시 결과:</p>
+          <div className="glass rounded-lg p-3 text-[12px] code">
+            Voicemeeter Input (시스템 출력)<br/>
+            ├─ A1 → 실제 스피커 (사람이 들음)<br/>
+            └─ B1 → Voicemeeter Output (Python 앱이 받음)
+          </div>
+        </>),
+        trouble:[
+          {symptom:"소리가 안 들림", fix:"VAIO 채널에서 A1이 활성화되어 있는지 확인. 마스터 페이더가 0이 아닌지."},
+          {symptom:"에코 발생", fix:"앱이 받는 소리에 본인 마이크가 섞임. B1에 본인 마이크 채널 보내지 않도록 설정."},
+        ],
+      },
+      {
+        id:"win-meet-output", title:"Google Meet / Zoom 출력 = Voicemeeter Input",
+        est:"2분", tag:{color:"green", label:"오디오"},
+        content:(<>
+          <p>Meet/Zoom 설정에서 스피커 = <b>Voicemeeter Input</b> 명시적으로 선택.</p>
+          <p>(기본값이 시스템과 동일하면 자동으로 따라감)</p>
+        </>),
+      },
+    ],
+  },
+  {
+    n:3, icon:"📦", title:"yeson-meet 데스크톱 앱 설치",
+    steps:[
+      {
+        id:"win-msi", title:"MSI 받기 + 설치",
+        est:"5분", tag:{color:"violet", label:"앱"},
+        content:(<>
+          <p>관리자에게 받은 다운로드 URL(예: <code className="bg-slate-100 px-1 rounded">https://&lt;SERVER_IP&gt;/downloads/yeson-meet-win.msi</code>)에서 MSI 다운로드.</p>
+          <p>MSI 실행 → 설치 마법사 진행.</p>
+        </>),
+        trouble:[
+          {symptom:"SmartScreen 차단", fix:"'추가 정보' 클릭 → '실행' 선택. 코드사인 인증서가 없는 PoC 단계에선 정상."},
+        ],
+      },
+      {
+        id:"win-cert", title:"사내 root CA 인증서 신뢰 등록",
+        est:"5분", tag:{color:"rose", label:"보안"},
+        content:(<>
+          <p>관리자에게 받은 <code className="bg-slate-100 px-1 rounded">root.crt</code>를 더블클릭.</p>
+          <p>"인증서 설치" → <b>로컬 컴퓨터</b> 저장소 → 모든 인증서를 다음 저장소에 → <b>신뢰할 수 있는 루트 인증 기관</b>.</p>
+        </>),
+      },
+    ],
+  },
+  {
+    n:4, icon:"🚀", title:"첫 실행 + 등록",
+    steps:[
+      {
+        id:"win-launch", title:"앱 실행 + 사내 서버 URL 입력",
+        est:"3분", tag:{color:"violet", label:"앱"},
+        content:(<>
+          <p>시작 메뉴 또는 바탕화면에서 yeson-meet 실행.</p>
+          <p>서버 URL: <code className="bg-slate-100 px-1 rounded">https://&lt;SERVER_IP&gt;</code></p>
+          <p className="text-[11.5px] text-amber-700">⏭ <b>β-1 추가 기능</b>: 1분 튜토리얼이 자동 표시됨. MVP-α 시점에는 로그인 화면 바로 진입.</p>
+        </>),
+      },
+      {
+        id:"win-login", title:"로그인",
+        est:"2분", tag:{color:"violet", label:"앱"},
+        content:(<>
+          <p>관리자에게 받은 계정 또는 본인 계정으로 로그인. 첫 로그인 시 비밀번호 변경.</p>
+        </>),
+      },
+      {
+        id:"win-device-key", title:"Device API Key 입력",
+        est:"3분", tag:{color:"amber", label:"등록"},
+        content:(<>
+          <p>관리자에게 받은 <b>1회성 Device API Key</b> 붙여넣기.</p>
+          <p>키는 Windows Credential Manager에 자동 저장. 평문 파일 X.</p>
+          <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-[12.5px] text-amber-800">
+            ⚠️ Gemini API Key 입력 화면 없음. <b>회의실 PC는 Gemini Key 미보유</b> (사내 서버 경유).
+          </div>
+        </>),
+      },
+    ],
+  },
+  {
+    n:5, icon:"🎤", title:"오디오 입력 설정 + 테스트",
+    steps:[
+      {
+        id:"win-input", title:"앱 내 입력 장치 = Voicemeeter Output",
+        est:"2분", tag:{color:"green", label:"오디오"},
+        content:(<>
+          <p>앱 설정 → 오디오 → 입력 → <b>Voicemeeter Output (VB-Audio Voicemeeter VAIO)</b> 선택.</p>
+          <p>샘플레이트 16kHz 권장. 채널 모노.</p>
+        </>),
+        trouble:[
+          {symptom:"Voicemeeter Output이 목록에 없음", fix:"제어판 → 사운드 → 녹음 탭 → 표시 안 됨 장치 보기 체크 → 활성화."},
+        ],
+      },
+      {
+        id:"win-mic-permission", title:"마이크 권한 허용",
+        est:"1분", tag:{color:"rose", label:"권한"},
+        content:(<>
+          <p>설정 → 개인 정보 → 마이크 → yeson-meet 토글 ON.</p>
+        </>),
+      },
+      {
+        id:"win-test", title:"자막 출력 확인 (영어 영상 재생)",
+        est:"5분", tag:{color:"green", label:"검증"},
+        content:(<>
+          <p><b>MVP-α 테스트 방법:</b></p>
+          <ol className="list-decimal pl-5 space-y-1 text-[12.5px]">
+            <li>YouTube 또는 Google Meet에서 영어 영상 재생.</li>
+            <li>시스템 출력 = Voicemeeter Input → A1 = 스피커 / B1 = 가상.</li>
+            <li>앱 라이브 콘솔에 한국어 자막이 1~2초 안에 흐르면 성공.</li>
+          </ol>
+          <p className="text-[11.5px] text-amber-700 mt-2">⏭ <b>β-1 추가 기능</b>: 사전 녹음 fixture를 재생하는 "모의 회의 모드" 도입.</p>
+        </>),
+        trouble:[
+          {symptom:"자막 안 나옴", fix:"상태 패널 '오디오/서버 OK' 확인. Voicemeeter 마스터 페이더와 VAIO B1 채널 활성 점검."},
+          {symptom:"자막 지연 ≥ 5초", fix:"사내 서버 핑 확인. 또는 다른 회의실 PC와 비교해 네트워크 문제 격리."},
+        ],
+      },
+    ],
+  },
+];
+
+/* ========== App ========== */
+const App = () => {
+  const [os, setOs] = useState(() => localStorage.getItem("yeson-meet-pc-os") || "win");
+  useEffect(() => { localStorage.setItem("yeson-meet-pc-os", os); }, [os]);
+
+  const phases = os === "mac" ? macPhases : winPhases;
+  const storageKey = `yeson-meet-setup-pc-${os}`;
+  const { done, toggle, reset } = useChecklist(storageKey);
+
+  const allIds = useMemo(() => phases.flatMap(p => p.steps.map(s => s.id)), [phases]);
+  const completed = allIds.filter(id => done[id]).length;
+  const total = allIds.length;
+  const pct = Math.round((completed/total) * 100);
+
+  return (
+    <div className="max-w-[1100px] mx-auto px-5 py-8">
+      <header className="mb-8">
+        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span className={os==="mac"?"text-blue-700":"text-emerald-700"}>시스템 부서용 회의실 PC 셋업 · 2026-05-15</span>
+        </div>
+        <h1 className="text-[36px] md:text-[44px] font-black tracking-tight text-slate-900 leading-tight mt-1">
+          yeson-meet <span className={os==="mac"?"text-blue-600":"text-emerald-600"}>회의실 PC 셋업</span>
+        </h1>
+        <p className="text-slate-500 mt-1"><b>Windows + Voicemeeter Banana</b>를 MVP-α 1순위로 권장. Mac + BlackHole은 2순위 검증 경로 · 회의실 PC 1대당 약 30~45분</p>
+      </header>
+
+      {/* OS 우선순위 배너 */}
+      <div className="rounded-2xl bg-emerald-50 border-2 border-emerald-400 p-4 mb-4 no-print">
+        <div className="flex items-start gap-3">
+          <span className="text-2xl">🪟</span>
+          <div className="text-[13px] text-emerald-900 leading-relaxed">
+            <b>MVP-α는 Windows + Voicemeeter 1순위.</b> 회의실 PC OS 우선순위가 <b>Windows 1순위 · Mac 2순위</b>로 결정됨(PRD §10). 신규 회의실은 Windows로, Mac은 2순위 검증·이월 가능 경로.
+          </div>
+        </div>
+      </div>
+
+      {/* OS 토글 */}
+      <div className="flex gap-3 mb-8 no-print">
+        <button onClick={()=>setOs("win")} className={`os-tab ${os==="win"?"active-win":""}`}>
+          <div className="text-2xl mb-1">🪟</div>
+          <div>Windows (Voicemeeter) · <b>1순위</b></div>
+        </button>
+        <button onClick={()=>setOs("mac")} className={`os-tab ${os==="mac"?"active-mac":""}`}>
+          <div className="text-2xl mb-1">🍎</div>
+          <div>Mac (BlackHole) · 2순위 검증</div>
+        </button>
+      </div>
+
+      {/* MVP 스코프 안내 */}
+      <div className="rounded-2xl bg-amber-50 border-2 border-amber-300 p-4 mb-6">
+        <div className="flex items-start gap-3">
+          <span className="text-2xl">🅰️</span>
+          <div className="text-[13px] text-amber-900 leading-relaxed">
+            <b>이 가이드는 MVP-α 시점 PC 셋업 기준.</b> 일부 단계 (1분 튜토리얼 · 모의 회의 모드 · 글자 크기 토글 등)는 <b>MVP-β-1, β-2</b> 시점에 정식 도입됨 — 단계별로 표시. MVP-α 시점에는 영어 영상 수동 재생으로 대체 테스트.
+          </div>
+        </div>
+      </div>
+
+      {/* 사전 준비 */}
+      <div className="glass rounded-2xl p-5 mb-8 border-l-4 border-amber-400">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-2xl">📋</span>
+          <h2 className="text-[16px] font-black text-slate-900">시작 전 준비 — 관리자에게 미리 받을 것</h2>
+        </div>
+        <ul className="grid md:grid-cols-2 gap-x-6 gap-y-1.5 text-[13px] text-slate-700">
+          <li>☐ 사내 서버 URL (<code className="bg-slate-100 px-1 rounded text-[11px]">https://&lt;SERVER_IP&gt;</code>)</li>
+          <li>☐ 회의실 이름 (예: "회의실A PC")</li>
+          <li>☐ <b>Device API Key</b> (1회성, 안전한 채널로)</li>
+          <li>☐ 사내 root CA 인증서 <code className="bg-slate-100 px-1 rounded text-[11px]">root.crt</code></li>
+          <li>☐ 운영자 계정 (이메일 + 임시 비밀번호)</li>
+          <li>☐ 다운로드 URL (DMG / MSI)</li>
+        </ul>
+        <div className="mt-3 rounded-lg bg-rose-50 border border-rose-200 p-3 text-[12.5px] text-rose-800">
+          🔐 <b>회의실 PC에는 절대 Gemini API Key를 두지 않습니다.</b> Device API Key만 입력. AI 호출은 모두 사내 서버 경유.
+        </div>
+      </div>
+
+      {/* Progress */}
+      <div className="glass rounded-2xl p-5 mb-8 sticky top-3 z-10 no-print">
+        <div className="flex items-center justify-between mb-2">
+          <span className="font-extrabold text-slate-900">
+            {os==="mac"?"🍎 Mac":"🪟 Windows"} 진행 — {completed}/{total} 완료 ({pct}%)
+          </span>
+          <button onClick={()=>{ if(confirm("이 OS의 진행 상태를 초기화할까요?")) reset(); }}
+            className="text-[11px] font-bold text-slate-500 hover:text-rose-600">↺ 진도 리셋</button>
+        </div>
+        <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
+          <div className={`h-full transition-all duration-300 ${os==="mac"?"bg-gradient-to-r from-blue-500 to-violet-500":"bg-gradient-to-r from-emerald-500 to-blue-500"}`} style={{width:`${pct}%`}}/>
+        </div>
+        <div className="text-[11px] text-slate-500 mt-2">체크 상태는 이 브라우저 · 이 OS 탭에 저장됨. Mac/Win 진도는 분리 관리.</div>
+      </div>
+
+      {/* Phases */}
+      {phases.map(p => (
+        <Phase key={p.n} n={p.n} icon={p.icon} title={p.title} accent={os}>
+          {p.steps.map((s,i)=>(
+            <Step key={s.id} id={s.id} n={`${p.n}.${i+1}`} title={s.title} est={s.est} tag={s.tag}
+              done={done} toggle={toggle} trouble={s.trouble}>
+              {s.content}
+            </Step>
+          ))}
+        </Phase>
+      ))}
+
+      {/* 다음 단계 */}
+      <div className="glass rounded-2xl p-5 mt-12 border-l-4 border-emerald-400">
+        <h3 className="font-extrabold text-slate-900 text-[16px] mb-2">✅ 셋업 완료 후</h3>
+        <ul className="text-[13px] text-slate-700 space-y-1 list-disc pl-5">
+          <li>관리자가 viewer 접속용 QR을 회의실 모니터에 띄울 수 있는지 확인.</li>
+          <li>다음 회의실 PC가 있으면 이 가이드 처음부터 다시 (진도 리셋).</li>
+          <li>이상 발견 시 사내 서버 셋업 가이드의 트러블슈팅도 참조.</li>
+        </ul>
+      </div>
+
+      <footer className="mt-16 pt-6 border-t border-slate-200 text-center text-[12px] text-slate-400">
+        <p>관련 문서: <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">docs/DEPLOY.md · docs/ARCHITECTURE.md</code></p>
+        <p className="mt-1">서버 셋업은 <b>SETUP_SERVER.html</b> 별도 가이드 참조.</p>
+        <p className="mt-3 no-print">
+          <button onClick={()=>window.print()} className="text-[11px] font-bold px-3 py-1 rounded bg-slate-700 text-white">🖨 인쇄용 보기</button>
+        </p>
+      </footer>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

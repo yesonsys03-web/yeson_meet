@@ -1,0 +1,2487 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>yeson-meet 기획안 뷰어</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif;
+      background:
+        radial-gradient(circle at 8% -5%, rgba(59,130,246,.18), transparent 30%),
+        radial-gradient(circle at 92% -5%, rgba(34,197,94,.16), transparent 28%),
+        radial-gradient(circle at 50% 110%, rgba(168,85,247,.10), transparent 30%),
+        #f3f6fb;
+      min-height:100vh;
+    }
+    .glass{
+      background:rgba(255,255,255,.85);
+      backdrop-filter: blur(8px);
+      border:1px solid rgba(15,23,42,.08);
+    }
+    .arrow-h{
+      position:relative;
+    }
+    .arrow-h::after{
+      content:"→";
+      position:absolute;
+      right:-22px; top:50%;
+      transform:translateY(-50%);
+      font-size:24px; font-weight:900; color:#64748b;
+    }
+    .arrow-v::after{
+      content:"↓";
+      display:block; text-align:center;
+      font-size:22px; font-weight:900; color:#64748b;
+      margin:6px 0;
+    }
+    .dot-line{
+      background-image:linear-gradient(90deg, rgba(100,116,139,.5) 50%, transparent 50%);
+      background-size:8px 1px; background-repeat:repeat-x;
+      height:1px;
+    }
+    .tab-active{
+      background: linear-gradient(180deg, #1e40af, #1d4ed8);
+      color:white;
+      box-shadow: 0 8px 20px rgba(29,78,216,.35);
+    }
+    .pill{
+      display:inline-flex; align-items:center; gap:4px;
+      padding:3px 9px; border-radius:999px; font-size:11.5px; font-weight:700;
+      border:1px solid; line-height:1;
+    }
+    .code{
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .scroll-fade{
+      mask-image: linear-gradient(180deg, #000 90%, transparent);
+    }
+    details summary{ cursor:pointer; }
+    details[open] summary .chev{ transform: rotate(90deg); }
+    .chev{ transition: transform .18s; display:inline-block; }
+
+    .prose-yeson { font-size: 14.5px; line-height: 1.75; color: #0f172a; }
+    .prose-yeson h1, .prose-yeson h2, .prose-yeson h3, .prose-yeson h4 { font-family: inherit; letter-spacing: -0.01em; }
+    .prose-yeson h1 { font-size: 28px; border-bottom: 2px solid rgba(15,23,42,0.1); padding-bottom: 12px; margin-bottom: 18px; font-weight: 800; }
+    .prose-yeson h2 { font-size: 21px; border-bottom: 1px solid rgba(15,23,42,0.08); padding-bottom: 8px; margin-top: 32px; margin-bottom: 14px; font-weight: 800; }
+    .prose-yeson h3 { font-size: 16.5px; margin-top: 24px; margin-bottom: 10px; font-weight: 700; }
+    .prose-yeson h4 { font-size: 14.5px; margin-top: 16px; margin-bottom: 8px; font-weight: 700; color: #334155; }
+    .prose-yeson p { margin: 8px 0; }
+    .prose-yeson pre { background: #0f172a; color: #f1f5f9; border-radius: 10px; padding: 14px 18px; font-size: 12.5px; line-height: 1.55; overflow-x: auto; margin: 12px 0; }
+    .prose-yeson pre code { background: transparent; color: inherit; padding: 0; }
+    .prose-yeson code { background: rgba(15,23,42,0.06); padding: 1.5px 6px; border-radius: 4px; font-size: 12.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .prose-yeson table { width: 100%; font-size: 13px; border-collapse: collapse; margin: 12px 0; }
+    .prose-yeson th, .prose-yeson td { border: 1px solid rgba(15,23,42,0.1); padding: 6px 10px; vertical-align: top; }
+    .prose-yeson th { background: rgba(15,23,42,0.04); font-weight: 700; text-align: left; }
+    .prose-yeson blockquote { border-left: 4px solid #0ea5e9; background: rgba(14,165,233,0.06); color: #0c4a6e; padding: 8px 14px; margin: 12px 0; border-radius: 0 8px 8px 0; }
+    .prose-yeson hr { border: 0; border-top: 1px solid rgba(15,23,42,0.1); margin: 24px 0; }
+    .prose-yeson ul, .prose-yeson ol { padding-left: 22px; margin: 8px 0; }
+    .prose-yeson li { margin: 3px 0; }
+    .prose-yeson a { color: #1d4ed8; text-decoration: underline; text-underline-offset: 2px; }
+    .prose-yeson strong { font-weight: 700; color: #0f172a; }
+    script[type="text/markdown"] { display: none; }
+  </style>
+</head>
+<body>
+  <script type="text/markdown" data-md="UI_DESIGN_SYSTEM">
+# UI_DESIGN_SYSTEM — yeson-meet
+
+> 최종 갱신: 2026-05-15
+> 대상: `apps/desktop`(Operator 콘솔), `apps/web`(Viewer), `packages/ui`(공통 컴포넌트)
+> **목적**: MVP-α 이후 회의 기록 검색·용어집·통계·키워드/액션 토글·모바일 native·사내 SDK 위젯 등 **확장 기능이 추가될 때 자막 메인 흐름을 깨지 않고 슬롯·토큰·composite·store slice를 추가만으로 끝나는 구조 보장**.
+
+---
+
+## 1. 5가지 확장성 원칙
+
+### 원칙 1 — 레이아웃은 5슬롯 컴포지션
+모든 페이지(Operator 라이브 콘솔 / Viewer / Admin / Glossary 등 미래 페이지 포함)는 다음 5개 슬롯으로만 구성한다.
+
+```
+┌────────────────────────────────────────────────┐
+│ Header         (제목 / LIVE / 상태 인디케이터) │
+├──────────────────────────────┬─────────────────┤
+│                              │                 │
+│ Main                         │  Side           │
+│  (자막 / 핵심 콘텐츠 70%+)    │  (폴딩 가능)     │
+│                              │  (β-3 키워드/액션) │
+│                              │                 │
+├──────────────────────────────┴─────────────────┤
+│ Footer         (단축키 힌트 / 회의 종료 버튼)   │
+└────────────────────────────────────────────────┘
+                Floating Overlay (전체 위에 떠 있음)
+                  (β-1 Slow-down 카드 / QR 풀스크린 등)
+```
+
+- **Main은 절대 안 밀린다.** 새 기능은 Side·Floating·Header·Footer 슬롯에만 들어갈 수 있음.
+- 자막 영역은 화면 비율 **최소 60%** 보장 (글자 크기 토글 시에도).
+- Side는 기본 폴딩, 토글로 펼침. 폴딩 시 Main 100%.
+
+### 원칙 2 — 디자인 토큰 → CSS 변수
+모든 색·spacing·radius·typography는 토큰으로 정의. 하드코딩된 Tailwind 값은 금지하고, 토큰 기반 Tailwind wrapper만 허용한다.
+
+```css
+/* packages/ui/src/tokens.css */
+:root {
+  /* Typography */
+  --ys-font-base:           14px;
+  --ys-font-subtitle-s:     24px;
+  --ys-font-subtitle-m:     32px;
+  --ys-font-subtitle-l:     44px;  /* MVP-α 기본 */
+  --ys-font-subtitle-xl:    56px;
+  --ys-font-subtitle-xxl:   72px;
+  --ys-font-subtitle-current: var(--ys-font-subtitle-l);
+  --ys-font-viewer-phone-default: 26px;
+  --ys-font-viewer-laptop-default: 30px;
+  --ys-font-family:         'Pretendard', 'Noto Sans KR', system-ui;
+  --ys-font-weight-subtitle: 700;
+  --ys-line-height-subtitle: 1.25;
+
+  /* Color (다크 기본) */
+  --ys-bg-base:             #0f172a;
+  --ys-bg-elevated:         #1e293b;
+  --ys-text-primary:        #f1f5f9;
+  --ys-text-muted:          #94a3b8;
+  --ys-accent:              #38bdf8;
+  --ys-danger:              #f43f5e;
+
+  /* Spacing scale (4의 배수) */
+  --ys-space-1: 4px;  --ys-space-2: 8px;  --ys-space-3: 12px;
+  --ys-space-4: 16px; --ys-space-6: 24px; --ys-space-8: 32px;
+
+  /* Radius */
+  --ys-radius-sm: 6px; --ys-radius-md: 10px; --ys-radius-lg: 16px;
+}
+
+/* 회의실 모드 (XXL 강제 + 사이드 폴딩) */
+[data-mode="meeting-room"] {
+  --ys-font-subtitle-current: var(--ys-font-subtitle-xxl);
+}
+
+/* 글자 크기 prop */
+[data-subtitle-size="s"] { --ys-font-subtitle-current: var(--ys-font-subtitle-s); }
+[data-subtitle-size="m"] { --ys-font-subtitle-current: var(--ys-font-subtitle-m); }
+[data-subtitle-size="l"] { --ys-font-subtitle-current: var(--ys-font-subtitle-l); }
+[data-subtitle-size="xl"] { --ys-font-subtitle-current: var(--ys-font-subtitle-xl); }
+[data-subtitle-size="xxl"] { --ys-font-subtitle-current: var(--ys-font-subtitle-xxl); }
+```
+
+- **글자 5단계 · 회의실 모드 · 라이트/다크 토글은 모두 토큰 변수 교체만으로 동작** → β-2 비용 최소화.
+- Tailwind는 토큰을 가져다 쓰는 wrapper로만 사용: `text-[length:var(--ys-font-subtitle-current)]`.
+
+### 원칙 3 — 컴포넌트 3층 분리
+
+```
+packages/ui/
+├── primitive/      ← shadcn/ui 그대로 (Button, Dialog, Tooltip 등)
+├── composite/      ← 도메인 합성 컴포넌트
+│   ├── SubtitleCard.tsx       (자막 한 줄 + partial→final 갱신)
+│   ├── SubtitleStream.tsx     (자막 목록 + 자동 스크롤)
+│   ├── SidePanel.tsx          (폴딩 가능 사이드 컨테이너)
+│   ├── ToggleBar.tsx          (viewer "더 보기" 토글)
+│   ├── KeywordChip.tsx        (β-3)
+│   ├── ActionItemRow.tsx      (β-3)
+│   ├── StatusIndicator.tsx    (오디오/AI/지연)
+│   ├── FloatingCard.tsx       (β-1 Slow-down)
+│   └── QrPoster.tsx           (회의 시작 QR 전체화면)
+└── layout/         ← 5슬롯 레이아웃 컨테이너
+    ├── AppShell.tsx           (Header + Main + Side + Footer + Overlay 슬롯)
+    └── ConsoleShell.tsx       (좌측 nav + AppShell 합성)
+```
+
+- **새 기능은 composite 추가만**. primitive 안 건드림.
+- 같은 composite를 Operator·Viewer·Admin이 재사용.
+- composite는 데이터 prop만 받고 store 직접 접근 X (테스트 용이성).
+
+### 원칙 4 — 라우팅 확장 자리 미리 박기
+
+**Operator (`apps/desktop`)** — 좌측 nav를 미리 5칸으로 잡되 MVP-α는 `meet`·`settings`만 활성.
+
+```
+/login
+/console
+  ├── /meet               ← MVP-α 활성 (라이브 콘솔)
+  ├── /history            ← placeholder, "준비 중" 화면 (β-1 이후)
+  ├── /glossary           ← placeholder (β-1)
+  ├── /admin              ← placeholder (β-7 운영 자동화)
+  └── /settings           ← MVP-α 시드 (글자 크기·로그아웃만)
+```
+
+**Viewer (`apps/web`)** — 토큰 단위 라우트 + 향후 sub-view.
+
+```
+/v/<token>                ← MVP-α 자막 풀스크린
+/v/<token>/keyword        ← β-3 "더 보기" 키워드 펼침
+/v/<token>/action         ← β-3 액션 펼침
+/v/<token>/log            ← β-3 회의 로그
+/v/?pin=<6자리>           ← β-3 PIN 입력
+```
+
+- **MVP-α placeholder는 Operator 비활성 라우트(`/console/{history,glossary,admin}`)에만 둔다.** Viewer β-3 sub-route는 문서상 예약만 하고 MVP-α 구현 범위에서는 제외한다.
+- Operator nav 메뉴 항목은 disabled 상태로 표시 (사용자가 미래 기능을 인지).
+- β 진입 시 Operator placeholder는 실제 페이지로 교체하고, Viewer sub-route는 β-3에서 예약한 경로대로 추가한다.
+
+### 원칙 5 — WS 단일 store + selector
+
+```typescript
+// packages/ui/store/index.ts (또는 apps별)
+import { create } from 'zustand';
+import type { DomainEvent } from '@yeson-meet/events';
+
+type MeetingStore = {
+  // 도메인 slice
+  utterances: Utterance[];
+  status: { audio_ok: boolean; ai_ok: boolean; latency_ms: number };
+
+  // β에서 추가될 slice는 MVP-α 타입에 넣지 않는다.
+  // β-3: keywords: Keyword[] / actions: ActionItem[]
+  // β-1: bookmarks: Bookmark[] / notes: Note[]
+
+  // actions
+  applyEvent: (e: DomainEvent) => void;
+};
+```
+
+- **WebSocket 이벤트는 단일 store에 적층**, 컴포넌트는 selector로 구독.
+- 새 이벤트(β-3 `keyword.detected` 등) 추가 시 **store slice 1개 + composite 1개 추가만**. 기존 뷰 안 건드림.
+- store는 도메인 이벤트 외 UI 상태(폴딩·글자 크기·토글)도 보관하지만 슬라이스 분리: `useMeetingStore` / `useUiStore`.
+
+---
+
+## 2. 슬라이스별 UI 도입 범위
+
+| Slice | Operator | Viewer | packages/ui |
+|---|---|---|---|
+| **0** | (없음) | "Hello yeson-meet" | primitive 빈 패키지 |
+| **1** | (없음) | `SubtitleStream` 1줄 표시 | `SubtitleCard`, `SubtitleStream` composite + `AppShell` 레이아웃 + 토큰 1차 정의 |
+| **2** | (없음) | 동일 | 오디오 상태 인디케이터 추가 |
+| **3** | (없음) | partial→final 갱신, `StatusIndicator` | 토큰 5단계 정의(사용은 β-2) |
+| **4** | `ConsoleShell` + `/console/meet` (자막 + Footer 종료 버튼), `QrPoster` | 종료 화면 | `ConsoleShell`, `QrPoster`, placeholder 페이지 4개 |
+| **5** | 다중 세션 안정화 | viewer backfill | (없음, 안정화만) |
+| **β-1** | 단축키 + `FloatingCard`(Slow-down) + 인라인 메모 | (없음) | `FloatingCard`, `NoteInline`, `Glossary*` |
+| **β-2** | 글자 5단계 토글, 회의실 모드 | 글자 크기 토글 | 토큰 변수 prop만 변경 (composite 변경 X) |
+| **β-3** | Side에 키워드/액션/로그 패널 | `ToggleBar` + `/v/<t>/keyword` 등 sub-route | `ToggleBar`, `KeywordChip`, `ActionItemRow` |
+| **β-4** | (사내 SDK 위젯 슬롯 가능) | (동일) | `SdkWidgetSlot` 인터페이스 |
+
+---
+
+## 3. 디자인 토큰 네이밍 규칙
+
+- 접두사 `--ys-` (yeson)
+- 분류: `font`, `bg`, `text`, `border`, `space`, `radius`, `shadow`, `accent`, `danger`, `success`
+- 단위는 항상 토큰 정의 안에 포함 (`px`, `ms` 등). 사용 시 단위 X.
+- 상태/모드는 data-attribute로 토글: `[data-mode="meeting-room"]`, `[data-subtitle-size="xxl"]`, `[data-theme="dark"]`.
+
+금지 사항:
+- composite 안에 **하드코딩 색·spacing·폰트 크기** 작성 금지
+- Tailwind `text-[40px]` 같은 임의 값 사용 금지 — 토큰 변수만
+- `useEffect`로 DOM에 직접 style 주입 금지 — data-attribute로
+
+---
+
+## 4. 접근성 / 가독성 강제 사항
+
+- 모든 텍스트 **최소 14px**. 12px 사용 자체 금지 (lint 룰 검토).
+- 자막은 항상 **Bold 700+**.
+- 대비비 **WCAG AAA (7:1) 이상** — 색 토큰 정의 시점에 검증.
+- 한 줄 글자 수 캡: 운영자 콘솔 ≤ 28자, 폰 ≤ 18자.
+- focus ring 항상 보이게 (운영자가 키보드만으로 운영 가능해야 함, PRD §1.1).
+
+---
+
+## 5. 디자이너 핸드오프 컨벤션
+
+(MVP-α 동안 디자이너 없이 개발자 1명 진행. β 이후 디자이너 합류 시.)
+
+- Figma 또는 Penpot 파일은 `docs/design/` 디렉토리에 export.
+- 토큰을 Figma Variables로 정의 → 코드 토큰과 1:1 매핑 (이름 동일).
+- composite는 Figma Components와 1:1 매핑 (이름 동일).
+- 새 기능 디자인 시 5슬롯 어디에 들어가는지 먼저 명시.
+
+---
+
+## 6. 변경 정책
+
+- 토큰 추가: 자유 (semver patch).
+- 토큰 이름 변경: 전체 grep + 코드/디자인 동시 변경 (semver minor).
+- 슬롯 추가: 매우 신중. 5슬롯으로 안 풀리는 케이스가 나오면 먼저 ARCH 회의 (semver major).
+- composite 시그니처 변경: 호출자 모두 업데이트 (semver minor).
+
+---
+
+## 참고
+
+- PRD §10 결정 로그 — UI 확장성 정책 행
+- ARCH §2.1 / §2.6 — Operator / Viewer 슬롯 적용
+- WORKFLOW_SOLO_AI §4 — Slice 4 락 항목
+- ROADMAP Slice 4 — `ConsoleShell` + 토큰 1차 정의 산출물
+
+</script>
+<script type="text/markdown" data-md="WORKFLOW_COLLABORATION">
+# WORKFLOW — 비코딩 팀 협업 가이드
+
+> 코드는 **개발자 1명(너) + Claude(AI)** 가 작성.  
+> 팀원은 **도메인 전문성 · 시스템 셋업 · QA**로 기여. 누구도 코드 만지지 않음.
+
+---
+
+## 0. 팀 구성
+
+| 역할 | 인원 | 코딩 | 가이드 |
+|---|---|---|---|
+| **개발자 (너)** | 1 | ✅ | `WORKFLOW_SOLO_AI.md` |
+| **시스템 부원** | 1~2 | ❌ | 이 문서 §1 + `SETUP_SERVER.html` + `SETUP_MEETING_PC.html` |
+| **번역 담당자** | 1~2 | ❌ | 이 문서 §2 (북극성 사용자) |
+| **PD / TD / Staff (참석자)** | 자유 | ❌ | 이 문서 §3 |
+
+→ **단일 책임자 = 너.** 갈등 시 결정도 너.
+
+---
+
+## 1. 시스템 부원 — 인프라 셋업 + 운영
+
+### 무엇을 하나
+- 사내 서버 구축 (`SETUP_SERVER.html` 인터랙티브 체크리스트 따라하기)
+- 회의실 PC 셋업 (`SETUP_MEETING_PC.html` Mac/Win 토글)
+- 운영 중 일상 작업: 재시작 / 백업 점검 / 디스크 사용량 모니터
+- 회의실 PC Device 등록 (관리자 UI 클릭)
+- Root CA 인증서를 클라이언트 PC·폰에 신뢰 등록
+
+### 코딩이 아닌 작업
+- **명령어 복사·붙여넣기** (가이드에 복사 버튼 있음)
+- 체크리스트 진도 표시 (localStorage 자동 저장)
+- 관리자 UI 클릭으로 발급/관리
+
+### 시작 시점
+**지금 당장.** 코드 진행과 무관하게 SETUP_SERVER Phase 1~5 + SETUP_MEETING_PC Phase 1~2는 즉시 가능.
+
+### 너에게 받을 정보 (사전 합의)
+- 서버 고정 IP 값 (`SERVER_HOST`)
+- 사내 git 저장소 URL
+- Gemini API Key (안전 채널)
+- 회의실 이름 목록 (Device 등록용)
+
+---
+
+## 2. 번역 담당자 — 북극성 사용자
+
+> **이 시스템의 핵심 사용자.** 너의 피드백이 가장 가치 큰 자산.
+
+### 무엇을 하나
+
+#### 📚 자막 품질 검수 (Slice 3 통과 직후 시작)
+- 영어 영상 → 한국어 자막 정확도 확인
+- "이 단어는 영어 유지가 맞다" / "이건 한국어 번역 필요"
+- 의역/직역 균형 의견
+
+#### 🗂️ 용어집(Glossary) 단어 제공
+- 사내 자주 쓰는 영어 용어 목록 (예: `layout` `retake` `BG` `delivery` `render`)
+- 한국어 매핑 또는 "영문 유지" 표시
+- → MVP-β-1 시점에 너(개발자)가 DB에 입력
+
+#### 🎙️ 실제 회의 사용 (Slice 4 통과 후)
+- 실제 클라이언트 영상 미팅에서 자막 보면서 통역
+- 자막이 도움 되는지 / 방해되는지 실시간 체감
+
+#### 💡 UX 피드백
+- 운영자 콘솔: "이 단축키 불편" / "글씨 작다"
+- 회의 진행: "시작이 복잡" / "리포트 검토 어렵다"
+- 실제 사용 시나리오 보고
+
+#### 📝 회의록 검수
+- 자동 생성 MD 리포트 검토
+- 누락된 액션 / 잘못 잡힌 키워드 표시
+- 다음 회의에서 개선될 부분 메모
+
+### 피드백 형식 (가벼움)
+- 사내 메신저 채널에 짧은 메시지
+- 또는 주 1회 정리 (3~5문항)
+
+### 시작 시점
+- **Slice 3 통과** = 첫 자막 품질 검수
+- **Slice 4 통과** = 모의 회의 진행 + 리포트 검수
+- **Slice 5 통과** = 실제 클라이언트 회의 시범 사용
+
+---
+
+## 3. PD / TD / Staff — Viewer 참석자
+
+### 무엇을 하나
+- 회의에 참석할 때 자기 폰/노트북으로 viewer 접속 (QR 스캔)
+- 자막 보면서 회의 흐름 따라가기
+
+### 피드백 항목
+- 자막 가독성 (글자 크기, 색, 속도)
+- 화면 구성 만족도
+- 실수로 화면 닫혔을 때 재진입 쉬운지
+- 네트워크 환경에서 안정 동작하는지 (사내 WiFi, 모바일 데이터)
+
+### 시작 시점
+- **Slice 4 통과** 후 시범 회의 참여
+- **Slice 5 통과** 후 정식 회의 참여
+
+---
+
+## 4. 피드백 수집 메커니즘 (간단)
+
+```
+사내 메신저 채널 1개 (#yeson-meet-피드백)
+   ├─ 시스템 부원: 셋업 막힘 / 운영 문제
+   ├─ 번역 담당자: 자막 품질 / UX / 용어집 단어
+   └─ 참석자: viewer 사용감
+
+주 1회 짧은 정리 (너 → 팀)
+   └─ 이번 주 피드백 N건 → 어떤 게 β 우선순위로 들어가는지 공유
+```
+
+복잡한 트래커 / 백로그 X. **소박하게 시작, 필요 시 도구 추가.**
+
+---
+
+## 5. 슬라이스별 팀 참여 시점
+
+| Slice | 너 (코딩) | 시스템 부원 | 번역 담당자 | 참석자 |
+|---|---|---|---|---|
+| **0 부트스트랩** | 모노레포 + Docker 골격 | Phase 1~4 (HW/OS/Docker/IP) 병렬 | (대기) | (대기) |
+| **1 fake fixture** | WS + viewer 1줄 자막 | Phase 5~6 (서버 기동) | (대기) | (대기) |
+| **2 실제 오디오** | 사이드카 캡처 | 회의실 PC 1대 audio 셋업 | (대기) | (대기) |
+| **3 Gemini** | 영→한 자막 동작 | 회의실 PC Root CA 등록 | **📚 첫 자막 검수** | (대기) |
+| **4 라이프사이클** | 회의 시작/종료 + 리포트 | (관망) | **🎙️ 모의 회의 진행** + 리포트 검수 | **📱 시범 viewer 접속** |
+| **5 운영** | 부서/권한/오프라인 큐 | 회의실 PC 추가 + 운영 모니터 | **🎬 실제 클라이언트 시범** | **📱 정식 viewer 사용** |
+
+---
+
+## 6. 너의 코디네이션 책임 (Slice별)
+
+| Slice | 너가 팀에 전달할 것 |
+|---|---|
+| **S0 시작** | 서버 IP / Gemini Key / git URL → 시스템 부원에 |
+| **S0 끝** | Device API Key 발급 절차 정리 완료 |
+| **S1 끝** | 시스템 부원 + 회의실 PC 1대로 viewer 접속 테스트 |
+| **S3 끝** | 번역 담당자에게 자막 품질 검수 요청 |
+| **S4 끝** | 번역 담당자에게 모의 회의 진행 요청 |
+| **S5 끝** | 시범 회의 일정 잡고 참석자 안내 |
+
+---
+
+## 7. 결정 권한 / 의사 결정
+
+| 누가 | 결정 |
+|---|---|
+| **너** | 기술 선택, 슬라이스 우선순위, 시점, API contract, β 우선순위 (최종) |
+| 번역 담당자 | 자막 품질 / 용어집 / UX 의견 입력 (최종 결정은 너) |
+| 시스템 부원 | 사내 인프라 정책 적용 (IP / 인증서 / 백업 위치) |
+| 모두 | 회의록 검수, 운영 시범 후기 |
+
+→ **명확한 단일 책임자.** 갈등 / 우선순위 충돌 시 결정은 너.
+
+---
+
+## 8. 미리 알아둘 함정
+
+| 함정 | 예방 |
+|---|---|
+| 팀원이 "내가 안다" 며 기술 결정에 끼어듦 | "기술은 너, 도메인은 팀" 경계 명확히 |
+| 너가 도메인 결정까지 떠안음 | 자막 품질 / 용어집은 번역 담당자가 최종. 너는 구현 |
+| 피드백이 흩어짐 (개인 톡 / 메일 / 회의 등) | 메신저 단일 채널 + 주 1회 정리 |
+| 시스템 부원이 코드 변경 요청 받음 | 너만 코드 수정. 시스템 부원은 운영만 |
+| 번역 담당자 부담 ↑ | 검수는 주 1~2회 정도. 매일 X |
+
+---
+
+## 9. 한 줄 요약
+
+> **너가 코딩한다. 팀은 도메인·인프라·QA로 기여한다. 누구도 다른 사람의 코드를 만지지 않는다.**  
+> 단순함이 핵심. 의식적으로 작게 유지.
+
+</script>
+<script type="text/markdown" data-md="WORKFLOW_SOLO_AI">
+# WORKFLOW — 1인 + AI 병렬 작업
+
+> 개발자 **혼자** 진행하되 **Claude(AI)를 팀처럼 운영**해서 병렬로 lane을 돌리는 프로세스.  
+> "사람 1명 + AI 여러 에이전트 동시" 모델.
+
+---
+
+## 0. 전제 / 역할 분담
+
+| 역할 | 책임 |
+|---|---|
+| **너 (개발자 1명)** | 의사결정, 검토, 머지, 시뮬레이션 검증, 시크릿 보관, 외부 협조 (시스템 부원 / Gemini Key 등) |
+| **Claude (AI 에이전트들)** | 코드 작성, 테스트, 1차 리뷰, 문서 동기화, 외부 SDK 조사 |
+
+→ **너의 시간은 "결정과 검증"에만 쓰고, 코드 작성·테스트는 AI가 한다.**
+
+---
+
+## 1. 슬라이스 단위 사이클 (반복)
+
+```
+[1] 슬라이스 시작
+     ↓
+[2] Plan ────── planner 에이전트가 lane별 분해 + 의존성 분석
+     ↓
+[3] Parallel Execute ── executor 에이전트 N개 single-message로 동시 dispatch
+     ├─ Lane A (server)   executor agent
+     ├─ Lane B (sidecar)  executor agent
+     ├─ Lane C (desktop)  executor agent
+     └─ Lane D (web)      executor agent
+     ↓
+[4] Review ──── code-reviewer 에이전트 + 너 빠른 검토
+     ↓
+[5] Verify ──── verifier 에이전트가 완료 기준 자동 검증
+     ↓
+[6] Merge & Tag — 너가 머지 + git tag mvp-alpha-s<N>
+     ↓
+[7] 다음 슬라이스
+```
+
+**각 슬라이스 1~3.5일.**
+
+---
+
+## 2. AI 에이전트 카탈로그 (어디서 어떻게 쓰는가)
+
+OMC 기준 사용 가능한 에이전트:
+
+| 에이전트 | 모델 | 언제 호출 | 입력 |
+|---|---|---|---|
+| `planner` | Opus | 슬라이스 시작 시 1회 | "Slice 1을 5 lane으로 분해" |
+| `executor` | Sonnet (간단) / Opus (복잡) | Lane별 1개씩, 병렬 | "Lane A: WS Hub + Auth + 5 테이블 마이그" |
+| `explore` | Sonnet | API 변경 영향 분석 | "X 모델 수정의 호출자 목록" |
+| `code-reviewer` | Sonnet | 머지 전 1차 리뷰 | 생성된 PR 또는 diff |
+| `verifier` | Opus | 슬라이스 종료 시 | "Slice 1 완료 기준 6개 모두 충족 검증" |
+| `debugger` | Sonnet | 테스트 실패 / 버그 | 스택 트레이스 + 재현 시나리오 |
+| `document-specialist` | Sonnet | 새 SDK 도입 | "google-genai Live API 사용법" |
+| `security-reviewer` | Opus | 인증 / 시크릿 / 외부 노출 변경 | 해당 PR |
+| `writer` | Haiku | 문서 동기화 | "PRD/ARCH에 Slice 3 변경 반영" |
+
+---
+
+## 3. Lane 병렬 dispatch — 핵심 패턴
+
+### 단일 메시지에 multiple Task 호출 = 동시 실행
+
+```
+너: "Slice 1 시작해줘"
+
+Claude:
+1) planner 에이전트 1회 호출 → 의존성 분해
+2) 동일 응답에 executor 3개 동시 dispatch:
+   - executor("Lane A: WS Hub + Auth + 5 테이블 마이그", model=opus)
+   - executor("Lane B: 가짜 자막 발생기", model=sonnet)
+   - executor("Lane D: viewer WS 구독 + 자막 1줄", model=sonnet)
+3) 결과 수집 → code-reviewer로 통과 검증
+4) verifier로 완료 기준 검증
+5) 너에게 머지 요청
+```
+
+### 병렬 가능 vs 순차 규칙
+
+| 조합 | 병렬? | 이유 |
+|---|---|---|
+| Lane A + B + D (Slice 1) | ✅ | 서로 다른 디렉토리 |
+| Lane A + E (Alembic + Docker) | ❌ | 둘 다 `apps/server/db/`와 `deploy/` 접점 |
+| Lane B + C (사이드카 + Tauri) | ⚠️ | Tauri sidecar IPC 인터페이스 합의 후 분리 |
+| 같은 디렉토리 두 lane | ❌ | 순차 |
+
+→ **planner 에이전트가 의존성 표를 먼저 만든다.** 그 표대로 dispatch.
+
+---
+
+## 4. API contract / 이벤트 스키마 — 단일 소스 정책
+
+**Claude가 임의 결정하면 lane 간 drift 발생.** 그래서 슬라이스 시작 시 너가 1차 락:
+
+| 슬라이스 | 락 인할 것 |
+|---|---|
+| S0 | 모노레포 구조, lint/CI, 환경변수 이름, **사이드카 ↔ 데스크톱 통신 방식**(Tauri IPC vs 127.0.0.1 WS), **사이드카 배포 방식**(uv dev / PyInstaller / Tauri externalBin) |
+| S1 | `events.py` DomainEvent 5종 (시작 시 1개만), 5 테이블 DDL, REST 3 엔드포인트, viewer GET `?since=<seq>` 시그니처 미리 박기 |
+| S2 | 오디오 청크 binary 포맷 (16kHz/mono/20ms) |
+| S3 | Gemini 응답 → DomainEvent 매핑, **`STTProvider` / `TranslationProvider` 인터페이스 시그니처**(구현체는 `GeminiLiveProvider` 1개), latency budget 4구간 분해 |
+| S4 | MD 리포트 포맷, 회의 종료 흐름, **5슬롯 레이아웃 컨테이너**(`AppShell` / `ConsoleShell`) + **디자인 토큰 1차 정의**(`packages/ui/src/tokens.css`) + **라우팅 placeholder**(`/console/{history,glossary,admin}` 빈 페이지). 상세 `docs/UI_DESIGN_SYSTEM.md` |
+| S5 | 부서/visibility 스키마, 오프라인 큐 재전송 프로토콜 |
+
+→ **이 락이 곧 lane별 executor 에이전트에게 주는 input.**
+
+---
+
+## 5. 너의 시간 보호 — 검증 자동화
+
+```
+자동 (Claude가 처리)
+├─ Lint (Ruff / ESLint / Prettier)
+├─ 타입 체크 (mypy / tsc --noEmit)
+├─ 단위 테스트 (pytest / vitest)
+├─ 통합 테스트 (Slice별)
+├─ code-reviewer 1차 리뷰
+└─ verifier 완료 기준 자동 검증
+
+너만 할 수 있는 것
+├─ 슬라이스 시작 시 의사결정 (5~15분)
+├─ 슬라이스 종료 시 PR/diff 검토 (10~30분)
+├─ 실제 회의 시뮬레이션 (Windows Voicemeeter 켜고 영어 영상 재생)
+└─ 막힘 시 결정 응답 (15분 이내)
+```
+
+→ **슬라이스 1~3.5일 중 너의 실제 시간은 총 1~3시간.**
+
+---
+
+## 6. Git 워크플로 (Solo)
+
+### 브랜치 (단순화)
+- `main` — 모든 작업, 또는 짧은 단명 브랜치
+- 브랜치 안 만들어도 됨 (Solo니까)
+
+### 태그 / 마일스톤
+```
+mvp-alpha-s0   ← Slice 0 완료
+mvp-alpha-s1   ← Slice 1 완료
+...
+mvp-alpha      ← Slice 5 완료
+mvp-beta-1     ← β-1 완료
+```
+
+### 슬라이스 시작/종료 의식
+- 시작: working tree clean 확인
+- 종료: `git add . && git commit && git tag mvp-alpha-s<N> && git push --tags`
+- 실패 시 롤백: `git reset --hard mvp-alpha-s<N-1>`
+
+---
+
+## 7. AI 병렬 작업에서 자주 발생하는 함정
+
+| 함정 | 예방 |
+|---|---|
+| 동일 파일 동시 수정 → 마지막 lane이 다른 lane 덮어씀 | planner의 의존성 표 먼저. 같은 파일 건드리는 lane은 순차로. |
+| API contract drift (server는 v1, client는 v0) | events.py 1곳에서 정의 → TypeScript 자동 export. 수동 동기화 금지. |
+| 테스트 누락 (executor가 시간 절약하려고) | executor 호출 시 "단위 테스트 + 통합 테스트 포함" 명시 |
+| Claude가 너에게 안 물어보고 결정 | 슬라이스 시작 시 "모호하면 물어볼 것" 명시 + 모호 항목 미리 답해두기 |
+| 너의 검토 병목 | 슬라이스를 작게(1~3.5일). 검토 시간 30분 안 넘게. |
+| 시크릿 leak (Claude가 .env에 실제 키 쓸 수도) | `.env`는 .gitignore + Claude에게 명시 "실제 키는 절대 적지 말 것" |
+| 임의 라이브러리 추가 | executor 호출 시 의존성 목록 사전 명시. 새 의존성은 너 승인 후 |
+| 사라진 컨텍스트 (대화 압축) | 결정 사항은 즉시 PRD/ARCH/ROADMAP에 박힘. 대화에만 두지 말 것 |
+
+---
+
+## 8. 첫 2.5~3.5주 시퀀스 (Solo + AI 가정)
+
+```
+Day 1~2 — Slice 0 부트스트랩 (2~2.5일)
+  너: planner agent로 lane 분해 + 산출물 확인
+  너: 사이드카 통신·배포 결정 2건 PRD §10에 박기
+  Claude: executor 3개 dispatch (모노레포 / Compose / Tauri+Vite 빈 골격)
+  너: docker compose up + tauri dev + vite dev 모두 확인
+  → tag s0
+
+Day 3~4 — Slice 1 (2일)
+  너: events.py 1개(utterance.transcribed) + 5 테이블 DDL 락 + `?since=<seq>` 시그니처
+  Claude: executor 3개 (Lane A: WS Hub+Auth+마이그 / Lane B: 가짜 발생기 / Lane D: viewer 1줄)
+  Claude: code-reviewer + verifier 자동
+  너: 가짜 자막이 viewer에 1초 안에 뜨는지 확인 → tag s1
+
+Day 5~6 — Slice 2 (1~2일)
+  Claude: document-specialist로 sounddevice 확인
+  Claude: executor 1개 (Lane B 단독)
+  너: Windows에서 Voicemeeter로 영어 영상 재생 → 서버 청크 카운트 확인 → tag s2
+
+Day 7~10 — Slice 3 (2.5~3.5일)
+  Claude: document-specialist로 google-genai 확인
+  Claude: executor 1개 (Lane A AI 모듈) — `STTProvider`/`TranslationProvider` 인터페이스 + `GeminiLiveProvider` 구현체
+  Claude: security-reviewer로 Gemini key 처리 검토
+  너: latency budget 4구간 분해 + 영어 영상 → 한국어 자막 viewer 확인 (P50 ≤ 2초) → tag s3
+
+Day 11~14 — Slice 4 (2.5~3.5일)
+  Claude: executor 3개 (Lane A: lifecycle API + MD / Lane C: operator UI + 5슬롯·토큰·placeholder / Lane D: 종료 화면)
+  너: 30분 모의 회의 완주 + 리포트 확인 → tag s4
+
+Day 15~17 — Slice 5 (2~3일)
+  Claude: executor 2개 (Lane A: 부서/visibility / Lane B: 오프라인 큐 영구)
+  Claude: verifier 부하 테스트 (30 viewer 시뮬)
+  너: 실제 끊김 시나리오 검증 → tag s5 == mvp-alpha
+```
+
+**총합: 약 2.5~3.5주.** 너의 실제 작업 시간(검토+시뮬레이션) ≈ 15~25시간.
+
+---
+
+## 9. 슬라이스별 너만 할 수 있는 일 체크리스트
+
+| Slice | 너가 직접 챙길 것 |
+|---|---|
+| S0 | Gemini API Key 발급 / 사내 git 저장소 생성 / 서버 IP 결정 |
+| S1 | events.py + DDL 락 결정 / 시드 어드민 비밀번호 |
+| S2 | Voicemeeter(Windows) 본인 PC 셋업 / 실제 오디오로 동작 확인. BlackHole(Mac)은 2순위 검증 |
+| S3 | Gemini Live 모델/프롬프트 검토 / 비용 모니터 / 실제 영어 영상으로 자막 품질 검증 |
+| S4 | MD 리포트 포맷 검수 / 30분 모의 회의 직접 진행 |
+| S5 | 회의실 PC 2대 + viewer 30 conn 부하 시뮬(Locust 또는 `websockets`) + 실 viewer 5~8대 검증 |
+| 시스템 부원 협조 | SETUP_SERVER / SETUP_MEETING_PC 진행 코디네이션 |
+
+---
+
+## 10. 막힘 / 실패 시 절차
+
+```
+1) Claude가 1차 디버깅 (debugger 에이전트)
+   ├─ 스택 트레이스 + 재현 시나리오 분석
+   └─ 가설 + 수정안 제시
+2) 너 검토 후 승인 → executor가 수정
+3) verifier 재실행
+4) 3회 이상 실패 시 → 너에게 직접 질문 (전제 의심 / 범위 축소 검토)
+5) 슬라이스 범위 축소가 답이면 ROADMAP에 즉시 박음 (β로 이동)
+```
+
+→ **3회 실패 = 사람이 개입할 신호. AI가 무한 시도 안 함.**
+
+---
+
+## 11. 한 줄 요약
+
+> **너는 결정·검토·시뮬레이션만 한다. 나머지는 Claude가 lane별 에이전트로 병렬 실행.**  
+> 슬라이스를 작게 자르고, 시작 시 락하고, 끝낼 때 태그하는 의식을 지키면 흔들림 없음.
+
+</script>
+
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useMemo } = React;
+
+/* ============= 작은 부품들 ============= */
+const Pill = ({color="slate", children}) => {
+  const palette = {
+    blue:"bg-blue-50 text-blue-700 border-blue-200",
+    green:"bg-emerald-50 text-emerald-700 border-emerald-200",
+    amber:"bg-amber-50 text-amber-700 border-amber-200",
+    rose:"bg-rose-50 text-rose-700 border-rose-200",
+    violet:"bg-violet-50 text-violet-700 border-violet-200",
+    slate:"bg-slate-100 text-slate-700 border-slate-200",
+    dark:"bg-slate-900 text-slate-100 border-slate-700",
+  };
+  return <span className={`pill ${palette[color]}`}>{children}</span>;
+};
+
+const Card = ({title, icon, accent="blue", children, className=""}) => {
+  const ring = {
+    blue:"from-blue-500/10",
+    green:"from-emerald-500/10",
+    amber:"from-amber-500/10",
+    rose:"from-rose-500/10",
+    violet:"from-violet-500/10",
+    slate:"from-slate-500/10",
+  }[accent];
+  return (
+    <div className={`glass rounded-2xl p-5 shadow-sm relative overflow-hidden ${className}`}>
+      <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${ring} to-transparent`}/>
+      {title && (
+        <h3 className="text-[15px] font-extrabold text-slate-800 mb-3 flex items-center gap-2">
+          {icon && <span className="text-lg">{icon}</span>}
+          {title}
+        </h3>
+      )}
+      <div className="text-[13.5px] text-slate-700 leading-relaxed">{children}</div>
+    </div>
+  );
+};
+
+const SectionTitle = ({n, icon, title, sub}) => (
+  <div className="mb-5">
+    <div className="flex items-center gap-3">
+      {n && <div className="w-8 h-8 rounded-xl bg-slate-900 text-white grid place-items-center font-extrabold text-sm">{n}</div>}
+      <div>
+        <h2 className="text-[22px] font-black tracking-tight text-slate-900 flex items-center gap-2">
+          {icon && <span>{icon}</span>}{title}
+        </h2>
+        {sub && <p className="text-sm text-slate-500 mt-0.5">{sub}</p>}
+      </div>
+    </div>
+  </div>
+);
+
+const KV = ({k, v, vColor}) => (
+  <div className="flex items-baseline justify-between gap-4 py-1.5 border-b border-slate-100 last:border-0">
+    <div className="text-slate-500 text-[12.5px]">{k}</div>
+    <div className={`text-[13px] font-semibold ${vColor||"text-slate-800"} text-right`}>{v}</div>
+  </div>
+);
+
+const Box = ({title, sub, color="slate", children, className=""}) => {
+  const palette = {
+    blue:"bg-blue-50 border-blue-300 text-blue-900",
+    green:"bg-emerald-50 border-emerald-300 text-emerald-900",
+    amber:"bg-amber-50 border-amber-300 text-amber-900",
+    rose:"bg-rose-50 border-rose-300 text-rose-900",
+    violet:"bg-violet-50 border-violet-300 text-violet-900",
+    dark:"bg-slate-900 border-slate-700 text-slate-100",
+    slate:"bg-white border-slate-300 text-slate-800",
+  };
+  return (
+    <div className={`rounded-xl border-2 p-3 ${palette[color]} ${className}`}>
+      {title && <div className="font-extrabold text-[13px]">{title}</div>}
+      {sub && <div className="text-[11.5px] opacity-75 mt-0.5">{sub}</div>}
+      {children && <div className="text-[12px] mt-2 opacity-90">{children}</div>}
+    </div>
+  );
+};
+
+/* ============= PRD ============= */
+const personas = [
+  {role:"운영자", dept:"PD / 번역부", color:"blue", icon:"🎙️",
+   action:"회의실 PC 데스크톱 앱 운영. 시작·종료, 회의록 검수, 발송 트리거."},
+  {role:"참석자", dept:"시스템 / TD / Staff", color:"green", icon:"📱",
+   action:"자기 PC/폰으로 viewer 접속. 실시간 자막·키워드·액션 시청."},
+  {role:"SDK 연동자", dept:"사내 PyQt5 툴 개발자", color:"violet", icon:"🔌",
+   action:"사내 자체 도구가 SDK로 회의 이벤트 구독. 액션 자동 반영."},
+  {role:"시스템 운영자", dept:"인프라", color:"amber", icon:"🛠️",
+   action:"사내 Ubuntu 서버 운영. 백업·인증·계정 관리."},
+];
+
+const mvpIn = [
+  ["모노레포 + Docker Compose 골격", "S0"],
+  ["사이드카 통신·배포 결정 락 (PRD §10)", "S0"],
+  ["WS /ws/sidecar + /ws/viewer + 인증", "S1"],
+  ["Fake fixture → viewer 자막 1줄", "S1"],
+  ["DB 5 테이블 + viewer ?since=<seq> 시그니처", "S1"],
+  ["실제 오디오 캡처 (Win Voicemeeter 1순위 · Mac BlackHole 2순위)", "S2"],
+  ["서버에서 Gemini Live 호출 (PC는 Key 없음)", "S3"],
+  ["STTProvider / TranslationProvider 인터페이스 + GeminiLiveProvider", "S3"],
+  ["latency budget 4구간 분해 (P50 ≤ 2초)", "S3"],
+  ["회의 시작/종료 + QR/URL", "S4"],
+  ["자막 패널 (큰 글씨 기본값)", "S4"],
+  ["AppShell/ConsoleShell 5슬롯 + 디자인 토큰 + 라우팅 placeholder", "S4"],
+  ["간소 MD 리포트", "S4"],
+  ["사용자 / 부서 / visibility (org 기본)", "S5"],
+  ["오프라인 큐 (SQLite, idempotent 재전송)", "S5"],
+  ["viewer 30 conn 시뮬 + 실 5~8대 안정 (PRD §8 30명 목표)", "S5"],
+];
+
+const mvpOut = [
+  "β-1: 단축키 / 용어집 / 북마크 / 메모 / Slow-down / 되감기",
+  "β-2: 5단계 폰트 토글 + 회의실 모니터 모드",
+  "β-3: 키워드 / 액션 추출 + viewer 더 보기 토글",
+  "β-4: yeson-meet-sdk 첫 릴리스 + PyQt5 PoC",
+  "β-5: 인스톨러 / 코드사인 / 자동 업데이트",
+  "β-6: Google / Dropbox 사용자별 opt-in",
+  "β-7: 백업 cron / Prometheus / Grafana",
+  "OUT: 외부 클라우드 저장 (사내 서버만)",
+  "OUT: 본인 마이크 캡처 (상대방만)",
+  "OUT: 화자 자동 구분 (Phase 5+)",
+  "OUT: 외부 클라이언트 폰 직접 참여 (LAN-only)",
+  "OUT: MCP 익스포트 / 자동 메일 발송",
+];
+
+const nfr = [
+  ["자막 지연 (캡처→화면)", "≤ 2.0초 (P50), ≤ 3.5초 (P95)"],
+  ["viewer 동시 접속", "회의당 30명"],
+  ["회의 데이터 보관", "기본 90일"],
+  ["회의실 PC ↔ 서버 끊김 허용", "30분 (로컬 큐)"],
+  ["인증 토큰 수명", "세션 종료 시 만료"],
+  ["폰 자막 글자 잘림", "1줄 ≤ 40자"],
+  ["사내 서버 가용률", "단일 노드 99%"],
+];
+
+const decisions = [
+  ["데스크톱 스택", "Tauri 2 + React + TS + Tailwind + shadcn/ui"],
+  ["사이드카 / 서버", "Python 3.12 + FastAPI + websockets + sounddevice + google-genai"],
+  ["데이터 SSOT", "Ubuntu 24.04 LTS 사내 서버"],
+  ["DB", "PostgreSQL 16"],
+  ["오브젝트 저장", "파일시스템 (확장: MinIO)"],
+  ["리버스 프록시", "Caddy + 사내 CA"],
+  ["인증", "JWT + Device API Key + Session Token (PIN은 β-3)"],
+  ["사내 SSO", "없음 가정. LDAP/SAML은 어댑터 추상화"],
+  ["Web 접근 모드", "MVP: LAN-only / 확장: Tunnel"],
+  ["외부 통합", "MVP 0개 (인터페이스만)"],
+  ["사내 통합", "yeson-meet-sdk (PyQt5 친화)"],
+  ["회의실 PC OS 우선순위", "★ Windows 1순위 · Mac 2순위"],
+  ["가상 오디오", "Win: Voicemeeter Banana / Mac: BlackHole (2순위)"],
+  ["Gemini 모델", "gemini-live-2.5-flash-preview"],
+  ["Gemini 호출 위치", "★ 사내 서버 단독 (API Key는 서버 1곳)"],
+  ["STT/번역 추상화", "★ STTProvider/TranslationProvider Protocol + GeminiLiveProvider 1개 (β 이후 WhisperLive fallback 검토)"],
+  ["UI 확장성 정책", "★ 5슬롯 + 디자인 토큰 + 3층 컴포넌트 + 라우팅 placeholder + zustand 단일 store"],
+  ["MVP-α 일정", "★ 약 12~16.5 영업일 (2.5~3.5주, 1인)"],
+  ["자막 정책", "최대 2줄 · 1줄 ≤40자 · 기술용어 영어 유지"],
+  ["키워드 카테고리", "schedule / retake / approval / issue / asset"],
+  ["외부 GitHub 레퍼런스", "sokuji · LiveCaptions-Translator · WhisperLive · whisper_streaming (참고만, 통째 이식 X)"],
+];
+
+const PRDView = () => (
+  <div className="space-y-8">
+    {/* Vision */}
+    <Card accent="blue">
+      <div className="flex items-start gap-4">
+        <div className="text-4xl">🎯</div>
+        <div>
+          <div className="text-xs font-bold text-blue-600 mb-1">VISION</div>
+          <p className="text-[18px] leading-relaxed text-slate-900">
+            해외 클라이언트 영상 미팅에서 참석자들이 회의 흐름을 놓치지 않도록 돕는 <b>AI 회의 이해 보조 시스템</b>.
+          </p>
+          <p className="text-sm text-slate-500 mt-2">
+            완벽한 자동 통역기가 아니라, <b className="text-slate-800">회의 내용을 실시간으로 구조화하는 보조 도구</b>.
+          </p>
+        </div>
+      </div>
+    </Card>
+
+    {/* 핵심 가치 / 비목표 */}
+    <div className="grid md:grid-cols-2 gap-5">
+      <Card title="핵심 가치" icon="✨" accent="green">
+        <ul className="space-y-2">
+          {["해외 클라이언트 영어 발화 실시간 이해",
+            "통역 담당자 부담 감소",
+            "키워드 / 일정 / 수정 / 승인 즉시 표시",
+            "회의 종료 후 자동 회의록",
+            "회의 데이터의 사내 자산화"].map((v,i)=>(
+            <li key={i} className="flex gap-2"><span className="text-emerald-600">✓</span>{v}</li>
+          ))}
+        </ul>
+      </Card>
+      <Card title="비목표 (안 하는 것)" icon="✋" accent="rose">
+        <ul className="space-y-2">
+          {["완벽한 동시통역기 X — 의역/요약 우선",
+            "본인 측 마이크 캡처 X (MVP)",
+            "외부 클라우드 저장 X — 모든 데이터 사내 서버",
+            "외부 클라이언트 회의 직접 참여 X (MVP)",
+            "화자 자동 구분 X (MVP)"].map((v,i)=>(
+            <li key={i} className="flex gap-2"><span className="text-rose-500">✕</span>{v}</li>
+          ))}
+        </ul>
+      </Card>
+    </div>
+
+    {/* 페르소나 */}
+    <div>
+      <SectionTitle n="01" title="사용자 페르소나" sub="누가 이 시스템을 쓰는가" />
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {personas.map((p,i)=>(
+          <div key={i} className="glass rounded-2xl p-4 shadow-sm">
+            <div className="text-3xl mb-2">{p.icon}</div>
+            <div className="font-extrabold text-slate-900">{p.role}</div>
+            <div className="text-xs text-slate-500 mb-2">{p.dept}</div>
+            <div className="text-[12.5px] text-slate-700 leading-snug">{p.action}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+
+    {/* 운영 시나리오 */}
+    <div>
+      <SectionTitle n="02" title="운영 시나리오" sub="회의 1회 흐름" />
+      <div className="glass rounded-2xl p-6">
+        <div className="grid md:grid-cols-4 gap-3 relative">
+          {[
+            {n:"1", t:"회의 시작", d:"데스크톱 앱 → 세션 생성 → QR/URL 표시 (PIN은 β-3)", c:"blue"},
+            {n:"2", t:"참석자 합류", d:"폰으로 QR 스캔 → viewer 진입 (PIN 입력은 β-3)", c:"violet"},
+            {n:"3", t:"회의 진행", d:"오디오 → 서버 Gemini → 자막/키워드/액션 실시간 fan-out", c:"green"},
+            {n:"4", t:"회의 종료", d:"종료 신호 → MD 리포트 생성 → viewer 종료 알림", c:"amber"},
+          ].map((s,i)=>(
+            <Box key={i} color={s.c} title={`${s.n}. ${s.t}`}>
+              {s.d}
+            </Box>
+          ))}
+        </div>
+        <div className="mt-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[12.5px]">
+          <b>네트워크 끊김 대비:</b> 회의실 PC가 결과를 로컬 SQLite 큐에 저장. 복구 시 idempotent 재전송. 회의는 끊기지 않음.
+        </div>
+      </div>
+    </div>
+
+    {/* 권한 모델 */}
+    <div>
+      <SectionTitle n="03" title="권한 모델" sub="누가 어떤 회의를 볼 수 있는가" />
+      <div className="glass rounded-2xl p-6">
+        <div className="grid md:grid-cols-3 gap-3">
+          <Box color="rose" title="private" sub="가장 좁음">
+            owner와 명시적 초대자만
+          </Box>
+          <Box color="amber" title="dept:{1,2}" sub="부서 단위">
+            지정 부서(시스템·번역 등) 전체
+          </Box>
+          <Box color="green" title="org (기본값)" sub="가장 넓음">
+            사내 전체 읽기 가능
+          </Box>
+        </div>
+        <p className="text-xs text-slate-500 mt-3">
+          User · Department · Session · Token 네 객체로 구성. 통합 바인딩은 <b>사용자 단위</b>(예: 개인 Google 연결).
+        </p>
+      </div>
+    </div>
+
+    {/* MVP IN/OUT */}
+    <div>
+      <SectionTitle n="04" title="MVP 스코프 — α / β / OUT" sub="MVP-α는 5 슬라이스로 2.5~3.5주. β와 OUT은 명시 분리." />
+      <div className="grid md:grid-cols-2 gap-5">
+        <div className="glass rounded-2xl p-5 border-2 border-emerald-200">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-2xl">🅰️</span>
+            <span className="font-black text-emerald-700">MVP-α (5 슬라이스, ~2.5~3.5주)</span>
+          </div>
+          <ul className="space-y-1.5">
+            {mvpIn.map(([f,where],i)=>(
+              <li key={i} className="flex items-center justify-between gap-3 text-[12.5px] py-1 border-b border-emerald-100 last:border-0">
+                <span className="text-slate-800">{f}</span>
+                <Pill color="green">{where}</Pill>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="glass rounded-2xl p-5 border-2 border-rose-200">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-2xl">🅱️</span>
+            <span className="font-black text-rose-700">MVP-β 묶음 + OUT</span>
+          </div>
+          <ul className="space-y-1.5">
+            {mvpOut.map((f,i)=>(
+              <li key={i} className="text-[12.5px] text-slate-700 py-1 border-b border-rose-100 last:border-0">
+                {f}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    {/* NFR */}
+    <div>
+      <SectionTitle n="05" title="비기능 요구사항" sub="성능·가용성·보안 목표" />
+      <Card>
+        <div className="divide-y divide-slate-100">
+          {nfr.map(([k,v],i)=> <KV key={i} k={k} v={v} vColor="text-slate-900"/>)}
+        </div>
+      </Card>
+    </div>
+
+    {/* Decisions */}
+    <div>
+      <SectionTitle n="06" title="결정 로그" sub="2026-05-15 기준 락인" />
+      <Card>
+        <div className="divide-y divide-slate-100">
+          {decisions.map(([k,v],i)=> <KV key={i} k={k} v={v} vColor="text-blue-700"/>)}
+        </div>
+      </Card>
+    </div>
+  </div>
+);
+
+/* ============= ARCHITECTURE ============= */
+const components = [
+  {n:"데스크톱 앱", icon:"🖥️", color:"blue", path:"apps/desktop",
+   desc:"Tauri 2 Rust shell + React UI. 운영자 콘솔. 사이드카 라이프사이클 관리."},
+  {n:"Python 사이드카", icon:"🐍", color:"violet", path:"apps/client_sidecar",
+   desc:"오디오 캡처 + 서버로 청크 push + 로컬 SQLite 큐. Gemini Key 보유 안 함."},
+  {n:"FastAPI 게이트웨이", icon:"⚡", color:"green", path:"apps/server",
+   desc:"REST + WS Hub + Gemini Live 클라이언트 + Auth + 통합 Hub. Gemini Key 단독 보유."},
+  {n:"PostgreSQL", icon:"🗄️", color:"amber", path:"docker volume",
+   desc:"세션·발화·키워드·액션·유저·부서·토큰."},
+  {n:"File Storage", icon:"📦", color:"slate", path:"/var/lib/yeson-meet/storage",
+   desc:"오디오·MD 리포트. Docker 볼륨. 확장 시 MinIO."},
+  {n:"Web Viewer", icon:"📱", color:"rose", path:"apps/web",
+   desc:"정적 Vite + React. Caddy가 서빙. 폰 우선."},
+  {n:"yeson-meet-sdk", icon:"🔌", color:"violet", path:"packages/sdk-python",
+   desc:"사내 PyQt5 툴용. WebSocket 구독 + Qt signal/slot 브리지."},
+];
+
+const ws_channels = [
+  ["/ws/sidecar", "회의실 PC", "Device API Key", "이벤트 push", "amber"],
+  ["/ws/operator", "데스크톱 앱", "JWT", "양방향", "blue"],
+  ["/ws/viewer", "참석자 브라우저", "Session Token", "읽기 전용", "rose"],
+  ["/ws/sdk", "사내 PyQt5 툴", "SDK Token", "구독 + 제한 push", "violet"],
+];
+
+const events = [
+  ["session.started", "세션 생성"],
+  ["utterance.transcribed", "발화 자막 (partial/final)"],
+  ["keyword.detected", "키워드 5카테고리"],
+  ["action.detected", "액션 아이템 (assignee, due 선택)"],
+  ["status.changed", "오디오/AI/지연/큐 상태"],
+  ["session.ended", "세션 종료"],
+  ["report.generated", "MD 리포트 생성 완료"],
+];
+
+const tables = [
+  ["department", "id, name", "amber"],
+  ["app_user", "id, email, name, password_hash, department_id, role", "blue"],
+  ["device", "id, name, api_key_hash", "violet"],
+  ["session", "id, owner_user_id, device_id, title, visibility, status, started_at, ended_at", "green"],
+  ["session_token", "session_id, token, pin, kind, expires_at", "rose"],
+  ["utterance", "session_id, seq, text_en, text_ko, started_at, ended_at, is_final", "blue"],
+  ["keyword", "session_id, utterance_id, text, category", "green"],
+  ["action_item", "session_id, utterance_id, text, assignee, due_at, status", "amber"],
+  ["report", "session_id, storage_path, generated_at", "slate"],
+  ["integration_binding", "user_id, provider, config_json, secret_ref, enabled", "violet"],
+];
+
+const Topology = () => (
+  <div className="glass rounded-2xl p-6">
+    <h3 className="font-extrabold text-slate-900 text-[15px] mb-4">시스템 토폴로지</h3>
+    <div className="grid md:grid-cols-3 gap-4 items-stretch">
+      {/* 회의실 PC */}
+      <div className="rounded-2xl border-2 border-blue-300 bg-blue-50/70 p-4">
+        <div className="text-xs font-bold text-blue-700 mb-1">회의실 PC</div>
+        <div className="font-extrabold text-slate-900 mb-3">Windows 1순위 / Mac 2순위</div>
+        <div className="space-y-2">
+          <Box color="blue" title="Tauri Desktop App" sub="Operator UI (React)" />
+          <Box color="blue" title="Python Sidecar" sub="🎙️ 캡처 · 📤 서버 push · 💾 큐 (Gemini Key 없음)" />
+        </div>
+      </div>
+
+      {/* 사내 서버 */}
+      <div className="rounded-2xl border-2 border-emerald-300 bg-emerald-50/70 p-4">
+        <div className="text-xs font-bold text-emerald-700 mb-1">사내 Linux 서버</div>
+        <div className="font-extrabold text-slate-900 mb-3">Docker Compose 1식</div>
+        <div className="space-y-2">
+          <Box color="green" title="Caddy" sub="HTTPS 리버스 프록시"/>
+          <Box color="green" title="FastAPI Gateway" sub="REST · WS Hub · ✦ Gemini Live (Key 보유) · Auth · Integration Hub"/>
+          <div className="grid grid-cols-2 gap-2">
+            <Box color="amber" title="PostgreSQL" sub="회의 메타"/>
+            <Box color="slate" title="File Storage" sub="오디오/리포트"/>
+          </div>
+        </div>
+      </div>
+
+      {/* 클라이언트들 */}
+      <div className="rounded-2xl border-2 border-rose-300 bg-rose-50/70 p-4">
+        <div className="text-xs font-bold text-rose-700 mb-1">사내 어디서나</div>
+        <div className="font-extrabold text-slate-900 mb-3">Viewer + SDK</div>
+        <div className="space-y-2">
+          <Box color="rose" title="Web Viewer (PC/폰)" sub="QR · 읽기 전용 (PIN은 β-3)"/>
+          <Box color="violet" title="사내 PyQt5 툴" sub="yeson-meet-sdk · Qt signal/slot"/>
+        </div>
+      </div>
+    </div>
+
+    <div className="mt-5 text-[12px] text-slate-600 flex flex-wrap gap-3 items-center justify-center">
+      <Pill color="blue">HTTPS POST (영구)</Pill>
+      <Pill color="green">WSS (실시간 push)</Pill>
+      <Pill color="amber">Device API Key</Pill>
+      <Pill color="rose">Session Token</Pill>
+      <Pill color="violet">SDK Token</Pill>
+    </div>
+    <div className="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[12.5px] text-center">
+      🔐 <b>Gemini API Key는 사내 서버 환경변수에만 존재.</b> 회의실 PC는 보유하지 않으며 Gemini를 직접 호출하지 않음. 모든 AI 호출은 서버를 경유.
+    </div>
+  </div>
+);
+
+const ArchView = () => (
+  <div className="space-y-8">
+    <Topology />
+
+    {/* Components */}
+    <div>
+      <SectionTitle n="01" title="컴포넌트별 책임" />
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {components.map((c,i)=>(
+          <Card key={i} accent={c.color}>
+            <div className="flex items-start gap-3">
+              <div className="text-3xl">{c.icon}</div>
+              <div className="flex-1">
+                <div className="font-extrabold text-slate-900">{c.n}</div>
+                <div className="text-[11px] font-mono text-slate-500 mb-2">{c.path}</div>
+                <div className="text-[12.5px] text-slate-700">{c.desc}</div>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+
+    {/* WebSocket 채널 */}
+    <div>
+      <SectionTitle n="02" title="WebSocket 채널" />
+      <Card>
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="text-left text-slate-500 text-[11.5px] uppercase tracking-wide">
+              <th className="py-2">경로</th><th>클라이언트</th><th>인증</th><th>권한</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ws_channels.map(([p,c,a,r,col],i)=>(
+              <tr key={i} className="border-t border-slate-100">
+                <td className="py-2 code text-slate-900">{p}</td>
+                <td><Pill color={col}>{c}</Pill></td>
+                <td className="text-slate-700">{a}</td>
+                <td className="text-slate-700">{r}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+
+    {/* 도메인 이벤트 */}
+    <div>
+      <SectionTitle n="03" title="도메인 이벤트" sub="WebSocket Hub가 fan-out 하는 메시지" />
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3">
+        {events.map(([t,d],i)=>(
+          <div key={i} className="glass rounded-xl p-3">
+            <div className="code text-[12px] text-blue-700 font-bold">{t}</div>
+            <div className="text-[12px] text-slate-600 mt-1">{d}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+
+    {/* 이벤트 흐름 */}
+    <div>
+      <SectionTitle n="04" title="회의 1 발화 흐름" />
+      <div className="glass rounded-2xl p-6">
+        <div className="grid md:grid-cols-5 gap-3 items-center">
+          <Box color="blue" title="1. 캡처" sub="회의실 PC · sounddevice"/>
+          <div className="text-center text-2xl text-slate-400 font-black hidden md:block">→</div>
+          <Box color="violet" title="2. AI 처리" sub="Gemini Live (WSS)"/>
+          <div className="text-center text-2xl text-slate-400 font-black hidden md:block">→</div>
+          <Box color="green" title="3. 서버 push" sub="POST + WS /sidecar"/>
+        </div>
+        <div className="text-center text-2xl text-slate-400 font-black my-2">↓</div>
+        <div className="grid md:grid-cols-3 gap-3 items-stretch">
+          <Box color="amber" title="4a. PostgreSQL 저장" sub="utterance · keyword · action"/>
+          <Box color="rose" title="4b. WS Hub fan-out" sub="모든 viewer · sdk 구독자"/>
+          <Box color="slate" title="4c. 사이드카 큐 비움" sub="idempotent ack"/>
+        </div>
+      </div>
+    </div>
+
+    {/* PostgreSQL 스키마 */}
+    <div>
+      <SectionTitle n="05" title="PostgreSQL 스키마 (10 테이블)" />
+      <div className="grid md:grid-cols-2 gap-3">
+        {tables.map(([t,c,col],i)=>(
+          <div key={i} className="glass rounded-xl p-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="code text-[13px] font-extrabold text-slate-900">{t}</span>
+              <Pill color={col}>table</Pill>
+            </div>
+            <div className="code text-[11px] text-slate-500 leading-snug break-words">{c}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+
+    {/* 인증 */}
+    <div>
+      <SectionTitle n="06" title="인증 흐름" sub="3가지 인증 주체" />
+      <div className="grid md:grid-cols-3 gap-4">
+        <Card accent="blue" title="① 사람 로그인" icon="👤">
+          <div className="space-y-2">
+            <div className="code text-[11.5px] bg-slate-900 text-slate-100 rounded-md p-2">POST /api/v1/auth/login</div>
+            <div className="text-[12.5px]">JWT HS256 (24h) + Refresh (30d, 회전).</div>
+            <Pill color="blue">데스크톱 앱</Pill>
+          </div>
+        </Card>
+        <Card accent="amber" title="② 회의실 PC" icon="🏷️">
+          <div className="space-y-2">
+            <div className="text-[12.5px]">관리자 UI에서 Device 생성 → API Key 평문 1회 발급. 서버는 sha256 해시만 저장.</div>
+            <Pill color="amber">키체인 저장</Pill>
+          </div>
+        </Card>
+        <Card accent="rose" title="③ Viewer" icon="🎟️">
+          <div className="space-y-2">
+            <div className="text-[12.5px]">MVP-α: 세션 생성 시 32바이트 토큰 발급, QR로 진입. β-3: 6자리 PIN 추가. 세션 종료 시 즉시 만료.</div>
+            <Pill color="rose">QR (PIN은 β-3)</Pill>
+          </div>
+        </Card>
+      </div>
+    </div>
+
+    {/* 통합 SDK */}
+    <div>
+      <SectionTitle n="07" title="사내 SDK (yeson-meet-sdk)" sub="PyQt5 사내 툴이 회의 컨텍스트를 흡수" />
+      <div className="grid md:grid-cols-2 gap-5">
+        <Card accent="violet" title="설계">
+          <ul className="space-y-1.5 text-[12.5px]">
+            <li>• <code className="bg-slate-100 px-1 rounded">MeetingClient</code> WebSocket 클라이언트</li>
+            <li>• 모든 DomainEvent dataclass 제공</li>
+            <li>• <code className="bg-slate-100 px-1 rounded">QtMeetingBridge</code> PyQt5 signal/slot 어댑터</li>
+            <li>• 자동 재연결 + 지수 백오프</li>
+            <li>• 토큰 keyring 저장</li>
+            <li>• semver 엄수. v0.1.0부터 시작</li>
+          </ul>
+        </Card>
+        <div className="rounded-2xl bg-slate-900 text-slate-100 p-5 code text-[12px] leading-relaxed overflow-auto">
+          <span className="text-pink-300">from</span> yeson_meet_sdk <span className="text-pink-300">import</span> MeetingClient, events<br/><br/>
+          client = MeetingClient(<br/>
+          {"  "}base_url=<span className="text-emerald-300">"https://&lt;SERVER_IP&gt;"</span>,<br/>
+          {"  "}token=os.environ[<span className="text-emerald-300">"YM_TOKEN"</span>],<br/>
+          )<br/><br/>
+          <span className="text-yellow-200">@client.on</span>(events.UtteranceTranscribed)<br/>
+          <span className="text-pink-300">async def</span> _(evt):<br/>
+          {"  "}print(evt.text_ko)<br/><br/>
+          <span className="text-slate-500"># PyQt5 시그널로 매핑</span><br/>
+          bridge = QtMeetingBridge(client)<br/>
+          bridge.action_item.connect(my_widget.add_todo)
+        </div>
+      </div>
+    </div>
+
+    {/* 폴더 구조 */}
+    <div>
+      <SectionTitle n="08" title="모노레포 폴더 구조" sub="Slice 0에서 만들어지는 실제 디렉토리/파일" />
+      <div className="glass rounded-2xl p-5 code text-[12px] text-slate-700 whitespace-pre leading-relaxed overflow-auto">
+{`yeson-meet/
+├── apps/
+│   ├── desktop/                  # Tauri 2 + React (operator UI)
+│   │   ├── src-tauri/            # Rust shell
+│   │   └── src/                  # React (packages/ui 재사용)
+│   ├── client_sidecar/           # Python: 오디오 캡처 + 서버 전송 + 큐
+│   │   ├── audio/                # sounddevice 캡처
+│   │   ├── transport/            # WSS audio + HTTPS meta
+│   │   ├── queue/                # 오프라인 SQLite 큐
+│   │   ├── recorder/             # 비상 WAV 녹음 (β-1+)
+│   │   ├── config/
+│   │   └── main.py
+│   ├── server/                   # FastAPI 사내 서버
+│   │   ├── auth/                 # JWT + Device Key + Session Token
+│   │   ├── api/v1/               # REST 엔드포인트
+│   │   ├── ws/                   # /ws/sidecar · /ws/operator · /ws/viewer · /ws/sdk
+│   │   ├── ai/                   # ★ Gemini Live 클라이언트 (서버에만)
+│   │   ├── domain/               # DomainEvent, Bus
+│   │   ├── db/                   # SQLAlchemy + Alembic
+│   │   │   ├── alembic.ini
+│   │   │   └── versions/
+│   │   ├── storage/              # 오디오/리포트 파일
+│   │   ├── integrations/         # Google opt-in, 사내 webhook (β-6)
+│   │   └── main.py
+│   └── web/                      # Vite + React + Tailwind (viewer)
+│       └── src/routes/v/         # /v/<token> 자막 페이지
+├── packages/
+│   ├── ui/                       # 공통 React 컴포넌트
+│   └── sdk-python/               # yeson-meet-sdk (β-4)
+│       └── yeson_meet_sdk/
+├── deploy/
+│   ├── docker-compose.yml        # postgres + server + caddy
+│   ├── Caddyfile                 # tls internal 또는 사내 CA
+│   ├── env.example
+│   ├── postgres/init.sql
+│   └── cron/                     # 백업 / 보관 만료 (β-7)
+├── docs/
+│   ├── PRD.md
+│   ├── ARCHITECTURE.md
+│   ├── ROADMAP.md
+│   ├── DEPLOY.md
+│   ├── PLAN_VIEWER.html
+│   ├── SETUP_SERVER.html
+│   └── SETUP_MEETING_PC.html
+├── pyproject.toml                # uv workspace (server · sidecar · sdk)
+├── pnpm-workspace.yaml           # ui · web · desktop
+├── .env.example
+├── .gitignore
+└── README.md`}
+      </div>
+      <div className="grid md:grid-cols-3 gap-3 mt-4">
+        <Card accent="blue" title="MVP-α에 만드는 것" >
+          <ul className="text-[12px] space-y-1">
+            <li>• 위 모든 디렉토리 (Slice 0)</li>
+            <li>• 서버 ai/, 사이드카 audio·transport·queue (S2~S3)</li>
+            <li>• Alembic 초기 마이그레이션 (S1)</li>
+          </ul>
+        </Card>
+        <Card accent="amber" title="β에서 채워지는 것">
+          <ul className="text-[12px] space-y-1">
+            <li>• <code className="bg-slate-100 px-1 rounded">recorder/</code> (β-1)</li>
+            <li>• <code className="bg-slate-100 px-1 rounded">sdk-python/</code> 본 구현 (β-4)</li>
+            <li>• <code className="bg-slate-100 px-1 rounded">deploy/cron/</code> (β-7)</li>
+          </ul>
+        </Card>
+        <Card accent="green" title="실제 파일 생성 시점">
+          <ul className="text-[12px] space-y-1">
+            <li>• Slice 0에서 모든 골격 디렉토리 + 빈 파일 생성</li>
+            <li>• 빈 디렉토리는 <code className="bg-slate-100 px-1 rounded">.gitkeep</code>으로 보존</li>
+          </ul>
+        </Card>
+      </div>
+    </div>
+  </div>
+);
+
+/* ============= ROADMAP ============= */
+const phases = [
+  {id:"S0", name:"부트스트랩 + 사이드카 결정 락", days:"2~2.5일", color:"slate", icon:"🧰", group:"α",
+   goal:"모노레포 + Docker Compose 골격 + 사이드카 결정 락 2건 PRD §10에 박기",
+   done:["docker compose up → /health 200","Tauri 빈 윈도우","Vite hello 페이지","sidecar entrypoint","사이드카 통신·배포 결정 PRD §10 반영"],
+   tasks:["pnpm + uv workspace","compose(postgres+server+caddy)","Caddyfile + env.example","Alembic 초기화","apps/* + packages/* 빈 골격","사이드카↔데스크톱 통신 결정(Tauri IPC vs 127.0.0.1 WS)","사이드카 배포 방식 결정(uv dev / PyInstaller / Tauri externalBin)"]},
+  {id:"S1", name:"Fake fixture → viewer 1줄", days:"2일", color:"blue", icon:"🪡", group:"α",
+   goal:"오디오·AI 없이 자막 1줄이 끝단 통과",
+   done:["sidecar 가짜 자막 → viewer 1초 안에","DB utterance 누적","viewer 새로고침 시 복원"],
+   tasks:["5 테이블 마이그레이션","어드민/Device/Token 시드","/auth/login JWT","Device + Session API","WS /ws/sidecar /ws/viewer","fake 자막 발생기","viewer 1줄 컴포넌트"]},
+  {id:"S2", name:"실제 오디오 캡처", days:"1~2일", color:"violet", icon:"🎙️", group:"α",
+   goal:"실제 BlackHole/Voicemeeter 청크가 서버에 도달",
+   done:["Mac/Win 모두 청크 카운트 정상","끊김 후 큐로 회복"],
+   tasks:["sounddevice 통합","16kHz mono 20ms 청크","WS binary push","서버 stub 카운트 로깅","Voicemeeter/VB-Cable 입력"]},
+  {id:"S3", name:"Gemini Live + STTProvider 추상화", days:"2.5~3.5일", color:"green", icon:"✦", group:"α",
+   goal:"실제 영어 → 한국어 자막 + Provider 인터페이스 분리",
+   done:["영어 1분 영상 → 한국어 자막","지연 P50 ≤ 2초 (4구간 budget 분해)","Gemini 끊김 시 5초 재연결","좀비 회의 3시간 자동 종료","partial→final 갱신 깜빡임 0"],
+   tasks:["providers.py — STTProvider/TranslationProvider Protocol","GeminiLiveProvider 구현체 (google-genai)","서버 세션별 Gemini WS + 백오프","정적 프롬프트(영→한, 2줄 캡, 혼합 언어 한국어 그대로)","응답 파싱 → utterance.transcribed","API Key health check + 운영자 알림","비용/지연 로깅","Gemini Key 서버 단독","latency budget 4구간 분해 문서","회의 시간 안전 타이머 (3h)","VAD/RMS 무음 차단 (비용 절감)"]},
+  {id:"S4", name:"라이프사이클 + UI 5슬롯", days:"2.5~3.5일", color:"amber", icon:"📋", group:"α",
+   goal:"30분 모의 회의 완주 + MD 리포트 + UI 확장성 자리 박기",
+   done:["회의 시작→진행→종료 한 사이클","MD 리포트 다운로드","viewer 3대 동시 정상","좀비 세션 5분 후 자동 종료","placeholder 페이지 + nav disabled 동작"],
+   tasks:["데스크톱 로그인","회의 시작/종료 UI","QR + URL","자막 패널 (큰 글씨 기본)","간소 MD 리포트","viewer 종료 화면","AppShell/ConsoleShell — 5슬롯 컴포지션","디자인 토큰 1차 정의 (--ys-* CSS 변수)","라우팅 placeholder /console/{history,glossary,admin}","zustand store 스켈레톤 (useMeetingStore/useUiStore)"]},
+  {id:"S5", name:"운영 가능 + 30 viewer 부하", days:"2~3일", color:"rose", icon:"🚀", group:"α",
+   goal:"다중 회의실 + 권한 격리 + 끊김 견딤 + 30명 viewer 부하 충족",
+   done:["visibility 권한 검증","끊김 5분 후 무손실","viewer 30 conn 시뮬 + 실 5~8대 → PRD §8 30명 목표 충족","끊김 35분 후 비상 WAV","viewer 백그라운드 ?since=<seq> backfill"],
+   tasks:["부서/role 모델 + 시드","visibility 미들웨어","오프라인 큐 영구 저장 + idempotent 재전송","30 viewer 부하 시뮬 (Locust 또는 websockets)","(session_id, seq) UNIQUE + ON CONFLICT","권한 스냅샷 (회의 시작 시점 고정)","연결 카운트 / IP·UA 로깅"]},
+  {id:"β-1", name:"번역자 UX 묶음", days:"~1주", color:"violet", icon:"⌨️", group:"β",
+   goal:"단축키 / 용어집 / 북마크 / 메모 / Slow-down / 되감기 / 가이드 / 모의 회의",
+   done:[],
+   tasks:["8개 단축키 시스템","glossary_term + GUI","Gemini 프롬프트 동적 주입","bookmark + B 키","note + N 키","Slow-down 카드 + S 키","10초 되감기 + R 키","1분 튜토리얼","BlackHole 자동 감지","모의 회의 모드","에러 사람 언어화"]},
+  {id:"β-2", name:"고시인성 5단계 폰트", days:"3~4일", color:"blue", icon:"👓", group:"β",
+   goal:"동적 폰트 토글 + 회의실 모니터 모드",
+   done:[],
+   tasks:["S/M/L/XL/XXL 5단계","회의실 모니터 XXL 모드","Pretendard 임베드","WCAG AAA 7:1 검증","12px 미만 금지","폰트 선호 저장·복원"]},
+  {id:"β-3", name:"키워드/액션 + viewer 토글", days:"4~5일", color:"green", icon:"🏷️", group:"β",
+   goal:"Gemini 추출 + viewer 더 보기 토글",
+   done:[],
+   tasks:["키워드 5카테고리","액션 추출 (assignee/due)","keyword + action_item 테이블","DomainEvent 추가","viewer 더 보기 토글","localStorage 저장","PIN 입력 페이지"]},
+  {id:"β-4", name:"yeson-meet-sdk v0.1", days:"3~4일", color:"violet", icon:"🔌", group:"β",
+   goal:"사내 PyQt5 툴 PoC 통합",
+   done:[],
+   tasks:["MeetingClient + events","QtMeetingBridge","토큰 keyring 저장","자동 재연결","사내 PyPI 배포","semver 0.1.0","PoC 통합"]},
+  {id:"β-5", name:"인스톨러 + 자동 업데이트", days:"3~4일", color:"amber", icon:"📦", group:"β",
+   goal:"MSI / DMG + 코드사인 + Updater",
+   done:[],
+   tasks:["Tauri MSI/DMG","PyInstaller sidecar","macOS 노타리","Win 코드사인","Tauri Updater","root CA 자동 배포"]},
+  {id:"β-6", name:"Google / Dropbox opt-in", days:"1주+", color:"rose", icon:"🌐", group:"β",
+   goal:"사용자별 개인 통합",
+   done:[],
+   tasks:["OAuth Testing 모듈","Calendar Inbound","Gmail App Password SMTP","Drive 폴더","Dropbox 폴더","통합 GUI"]},
+  {id:"β-7", name:"운영 자동화", days:"3~4일", color:"slate", icon:"💾", group:"β",
+   goal:"백업 / 만료 / 모니터링",
+   done:[],
+   tasks:["nightly 백업 cron","90일 만료 cron","Prometheus exporter","Grafana 대시보드","알림"]},
+];
+
+const risks = [
+  ["Gemini Live 시간당 비용 추정", "미산정", "Phase 1 후 실측"],
+  ["사내 서버 하드웨어", "미결정", "미니PC vs 사내 가상화"],
+  ["회의 음성 보관 법무·HR 검토", "미완료", "외부 배포 전 필수"],
+  ["Apple 노타리제이션", "Phase 5+", "외부 배포 시점"],
+  ["P3 SDK 첫 통합 PyQt5 툴 선정", "미결정", "Phase 3 시작 전"],
+];
+
+const RoadmapView = () => {
+  const [open, setOpen] = useState("S1");
+  return (
+    <div className="space-y-8">
+      {/* 타임라인 */}
+      <Card>
+        <h3 className="font-extrabold text-slate-900 mb-3 text-[15px]">전체 타임라인 (1인 기준)</h3>
+        <div className="mb-3">
+          <div className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider mb-1">MVP-α (필수, 약 2.5~3.5주)</div>
+          <div className="space-y-1">
+            {[
+              {n:"S0", w:"18%", c:"bg-slate-400", label:"2~2.5d"},
+              {n:"S1", w:"15%", c:"bg-blue-500", label:"2d"},
+              {n:"S2", w:"15%", c:"bg-violet-500", label:"1~2d"},
+              {n:"S3", w:"26%", c:"bg-emerald-500", label:"2.5~3.5d"},
+              {n:"S4", w:"26%", c:"bg-amber-500", label:"2.5~3.5d"},
+              {n:"S5", w:"22%", c:"bg-rose-500", label:"2~3d"},
+            ].map((b,i)=>(
+              <div key={i} className="flex items-center gap-3 text-[12px]">
+                <div className="w-12 font-bold text-slate-700">{b.n}</div>
+                <div className="flex-1 h-5 rounded bg-slate-100 overflow-hidden">
+                  <div className={`h-full ${b.c} text-white text-[10px] font-bold flex items-center justify-center`} style={{width:b.w}}>{b.label}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] font-bold text-amber-700 uppercase tracking-wider mb-1">MVP-β (이후, 우선순위 분리)</div>
+          <div className="space-y-1">
+            {[
+              {n:"β-1", w:"50%", c:"bg-violet-400", label:"~1w · 번역자 UX"},
+              {n:"β-2", w:"30%", c:"bg-blue-400", label:"3~4d · 폰트"},
+              {n:"β-3", w:"40%", c:"bg-green-400", label:"4~5d · 키워드/액션"},
+              {n:"β-4", w:"30%", c:"bg-violet-300", label:"3~4d · SDK"},
+              {n:"β-5", w:"30%", c:"bg-amber-400", label:"3~4d · 인스톨러"},
+              {n:"β-6", w:"55%", c:"bg-rose-400", label:"1w+ · 구글"},
+              {n:"β-7", w:"30%", c:"bg-slate-500", label:"3~4d · 자동화"},
+            ].map((b,i)=>(
+              <div key={i} className="flex items-center gap-3 text-[12px]">
+                <div className="w-12 font-bold text-slate-700">{b.n}</div>
+                <div className="flex-1 h-5 rounded bg-slate-100 overflow-hidden">
+                  <div className={`h-full ${b.c} text-white text-[10px] font-bold flex items-center justify-center`} style={{width:b.w}}>{b.label}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="mt-3 text-[12px] text-slate-600">
+          <b>MVP-α 합계:</b> 약 12~16.5 영업일 (2.5~3.5주, 1인). β는 α 완료 후 피드백 받고 우선순위 재정렬.
+        </div>
+      </Card>
+
+      {/* 팀 참여 매트릭스 */}
+      <Card>
+        <h3 className="font-extrabold text-slate-900 mb-3 text-[15px]">🤝 팀 참여 매트릭스 (비코딩 팀)</h3>
+        <p className="text-[12px] text-slate-600 mb-3">
+          슬라이스별로 시스템 부원 · 번역 담당자 · 참석자가 어디서 참여하는지. 누구도 코드 만지지 않음. 자세히는 <code className="bg-slate-100 px-1 rounded">docs/WORKFLOW_COLLABORATION.md</code>
+        </p>
+        <div className="overflow-auto">
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr className="text-left text-slate-500 text-[11px] uppercase tracking-wide">
+              <th className="py-1 w-[20%]">Slice</th>
+              <th className="py-1">🛠️ 시스템 부원</th>
+              <th className="py-1">🧭 번역 담당자 (북극성)</th>
+              <th className="py-1">📱 참석자</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[
+              ["S0 부트스트랩", "SETUP_SERVER Phase 1~4 (HW/OS/Docker/IP)", "—", "—"],
+              ["S1 fake fixture", "Phase 5~6 (서버 기동, /health 200)", "—", "—"],
+              ["S2 실제 오디오", "회의실 PC 1대 audio 셋업", "—", "—"],
+              ["S3 Gemini", "회의실 PC Root CA 신뢰 등록", "📚 첫 자막 품질 검수", "—"],
+              ["S4 라이프사이클", "(관망)", "🎙️ 모의 회의 + 리포트 검수", "시범 viewer 접속"],
+              ["S5 운영", "회의실 PC 추가 + 운영 모니터", "🎬 실제 클라이언트 시범", "정식 viewer 사용"],
+            ].map(([s,sys,tr,vw], i) => (
+              <tr key={i} className="border-t border-slate-100 align-top">
+                <td className="py-2 pr-3 font-bold text-slate-900">{s}</td>
+                <td className="py-2 pr-3 text-slate-700">{sys}</td>
+                <td className="py-2 pr-3 text-slate-700">{tr}</td>
+                <td className="py-2 text-slate-700">{vw}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        </div>
+      </Card>
+
+      {/* Phase 카드들 */}
+      <div className="space-y-4">
+        {phases.map((p,i)=>{
+          const isOpen = open === p.id;
+          return (
+            <div key={i} className={`glass rounded-2xl p-5 transition ${isOpen?"ring-2 ring-blue-300":""}`}>
+              <button onClick={()=>setOpen(isOpen?null:p.id)} className="w-full flex items-center gap-4 text-left">
+                <div className="text-3xl">{p.icon}</div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Pill color={p.group==="α"?"green":"amber"}>{p.group==="α"?"MVP-α":"MVP-β"}</Pill>
+                    <span className="font-black text-slate-900 text-[16px]">{p.id} · {p.name}</span>
+                    <Pill color={p.color==="dark"?"slate":p.color}>{p.days}</Pill>
+                  </div>
+                  <div className="text-[13px] text-slate-600 mt-0.5">{p.goal}</div>
+                </div>
+                <span className="chev text-slate-500 text-lg">›</span>
+              </button>
+              {isOpen && (
+                <div className="mt-4 grid md:grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-[11.5px] font-bold text-slate-500 uppercase mb-2">작업</div>
+                    <ul className="space-y-1">
+                      {p.tasks.map((t,j)=>(
+                        <li key={j} className="text-[12.5px] text-slate-700 flex gap-2"><span className="text-slate-400">▸</span>{t}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <div className="text-[11.5px] font-bold text-slate-500 uppercase mb-2">완료 기준</div>
+                    {p.done.length ? (
+                      <ul className="space-y-1">
+                        {p.done.map((d,j)=>(
+                          <li key={j} className="text-[12.5px] text-slate-700 flex gap-2"><span className="text-emerald-600">✓</span>{d}</li>
+                        ))}
+                      </ul>
+                    ) : <p className="text-[12.5px] text-slate-400">우선순위 분리, 별도 항목으로 추적</p>}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 위험 */}
+      <div>
+        <SectionTitle title="위험 / 미해결 항목" icon="⚠️" />
+        <Card>
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="text-left text-slate-500 text-[11.5px] uppercase tracking-wide">
+                <th className="py-2">항목</th><th>상태</th><th>비고</th>
+              </tr>
+            </thead>
+            <tbody>
+              {risks.map(([k,s,m],i)=>(
+                <tr key={i} className="border-t border-slate-100">
+                  <td className="py-2 text-slate-900 font-medium">{k}</td>
+                  <td><Pill color={s.includes("미")?"rose":"amber"}>{s}</Pill></td>
+                  <td className="text-slate-600">{m}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+/* ============= DEPLOY ============= */
+const compose_services = [
+  {n:"caddy", role:"리버스 프록시 + HTTPS + 정적 서빙", port:"80/443", color:"green"},
+  {n:"server", role:"FastAPI Gateway", port:"8000", color:"blue"},
+  {n:"postgres", role:"PostgreSQL 16", port:"내부", color:"amber"},
+  {n:"web (build)", role:"Vite 빌드 → caddy 정적 볼륨", port:"-", color:"rose"},
+];
+
+const setup_mac = [
+  "BlackHole 설치",
+  "Audio MIDI: 멀티 출력 = 실제 스피커 + BlackHole",
+  "시스템 출력 = 멀티 출력 장치",
+  "Google Meet 출력 = 시스템 출력",
+  "데스크톱 앱 DMG 설치 + 로그인",
+  "기기 등록 (Device API Key 입력)",
+  "Sidecar 입력 장치 = BlackHole",
+];
+const setup_win = [
+  "Voicemeeter Banana 설치",
+  "기본 출력 = Voicemeeter Input",
+  "A1 = 실제 스피커, B1 = 가상 출력",
+  "Google Meet 출력 = Voicemeeter Input",
+  "데스크톱 앱 MSI 설치 + 로그인",
+  "기기 등록 (Device API Key 입력)",
+  "Sidecar 입력 장치 = Voicemeeter Output",
+];
+
+const security = [
+  "JWT_SECRET / DB_PASSWORD / GEMINI_API_KEY 32바이트+ 랜덤",
+  ".env 절대 git 커밋 X",
+  "HTTPS 강제 (Caddy auto-redirect)",
+  "PostgreSQL 외부 노출 X (Docker 내부망만)",
+  "SSH key-only, password 비활성화",
+  "ufw 80/443/SSH만 허용",
+  "fail2ban SSH 보호",
+  "unattended-upgrades 활성화",
+  "백업 NAS 측 암호화",
+  "보관 만료 자동 삭제 cron 활성화",
+  "회의 오디오 보관 정책 법무·HR 승인",
+];
+
+const DeployView = () => (
+  <div className="space-y-8">
+    {/* 하드웨어 */}
+    <div>
+      <SectionTitle n="01" title="하드웨어 권장" icon="🖥️" sub="단일 노드 Ubuntu Server" />
+      <div className="grid md:grid-cols-3 gap-4">
+        <Card accent="slate" title="최소 사양">
+          <ul className="space-y-1 text-[12.5px]">
+            <li>• 4코어 / 8GB / 256GB SSD</li>
+            <li>• 유선 1Gbps</li>
+          </ul>
+        </Card>
+        <Card accent="blue" title="권장 사양">
+          <ul className="space-y-1 text-[12.5px]">
+            <li>• 8코어 / 16GB / 1TB NVMe</li>
+            <li>• 유선 1Gbps · 고정 IP</li>
+            <li>• 사내 NAS / 외장 백업</li>
+          </ul>
+        </Card>
+        <Card accent="green" title="추천 미니PC">
+          <ul className="space-y-1 text-[12.5px]">
+            <li>• Beelink / Minisforum / Intel NUC</li>
+            <li>• ₩50~80만원대 충분</li>
+            <li>• 저소음 · 저전력 · 24/7 OK</li>
+          </ul>
+        </Card>
+      </div>
+    </div>
+
+    {/* Docker Compose */}
+    <div>
+      <SectionTitle n="02" title="Docker Compose 구성" icon="🐳" sub="deploy/docker-compose.yml" />
+      <div className="glass rounded-2xl p-5">
+        <div className="grid md:grid-cols-4 gap-3">
+          {compose_services.map((s,i)=>(
+            <Box key={i} color={s.color} title={s.n} sub={`port: ${s.port}`}>
+              {s.role}
+            </Box>
+          ))}
+        </div>
+        <div className="mt-4 rounded-xl bg-slate-900 text-slate-100 p-4 code text-[11.5px] overflow-auto">
+{`# .env 핵심값
+SERVER_HOST=<운영자 결정 사내 고정 IP>
+DB_PASSWORD=<32바이트+ 랜덤>
+JWT_SECRET=<32바이트+ 랜덤>
+GEMINI_API_KEY=<발급된 키>
+ACCESS_MODE=lan`}
+        </div>
+      </div>
+    </div>
+
+    {/* 회의실 PC 셋업 */}
+    <div>
+      <SectionTitle n="03" title="회의실 PC 셋업" icon="🎧" />
+      <div className="grid md:grid-cols-2 gap-5">
+        <Card accent="blue" title="Mac">
+          <ol className="space-y-1.5 text-[12.5px] list-decimal pl-4">
+            {setup_mac.map((s,i)=><li key={i}>{s}</li>)}
+          </ol>
+          <div className="mt-3 text-[11px] text-slate-500">
+            <Pill color="blue">BlackHole</Pill> 가상 오디오 드라이버
+          </div>
+        </Card>
+        <Card accent="green" title="Windows">
+          <ol className="space-y-1.5 text-[12.5px] list-decimal pl-4">
+            {setup_win.map((s,i)=><li key={i}>{s}</li>)}
+          </ol>
+          <div className="mt-3 text-[11px] text-slate-500">
+            <Pill color="green">Voicemeeter Banana</Pill> 실무 추천
+          </div>
+        </Card>
+      </div>
+    </div>
+
+    {/* 운영 SOP */}
+    <div>
+      <SectionTitle n="04" title="회의 1회 운영 흐름" icon="🔁" />
+      <div className="glass rounded-2xl p-6">
+        <ol className="space-y-2 text-[13px]">
+          {[
+            "데스크톱 앱 실행 (자동 시작 가능)",
+            "로그인 (저장된 자격증명)",
+            "회의 시작 → 제목 · 클라이언트 라벨 · visibility 선택",
+            "QR을 회의실 모니터에 크게 표시",
+            "참석자가 폰으로 QR 스캔 (PIN 입력은 β-3 추가)",
+            "회의 진행 — 운영자가 자막 검수, 필요 시 일시정지",
+            "회의 종료 → MD 리포트 자동 생성",
+            "리포트 검수 후 수동 공유 (Gmail draft 등)",
+          ].map((s,i)=>(
+            <li key={i} className="flex gap-3">
+              <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-[11px] font-bold grid place-items-center shrink-0">{i+1}</span>
+              {s}
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
+
+    {/* 일상 운영 */}
+    <div>
+      <SectionTitle n="05" title="일상 운영 / 백업 / 업데이트" icon="🛠️" />
+      <div className="grid md:grid-cols-3 gap-4">
+        <Card accent="blue" title="일상 운영">
+          <ul className="text-[12px] code space-y-1">
+            <li>docker compose up -d</li>
+            <li>docker compose logs -f server</li>
+            <li>curl -k https://&lt;SERVER_IP&gt;/api/v1/health</li>
+          </ul>
+        </Card>
+        <Card accent="amber" title="백업 (nightly cron)">
+          <ul className="text-[12px] space-y-1">
+            <li>• pg_dump → NAS 압축 저장</li>
+            <li>• storage rsync</li>
+            <li>• 30일 이상 백업 정리</li>
+          </ul>
+        </Card>
+        <Card accent="green" title="업데이트">
+          <ul className="text-[12px] code space-y-1">
+            <li>git checkout v0.x.y</li>
+            <li>docker compose build</li>
+            <li>alembic upgrade head</li>
+            <li>docker compose up -d</li>
+          </ul>
+        </Card>
+      </div>
+    </div>
+
+    {/* 보안 체크 */}
+    <div>
+      <SectionTitle n="06" title="보안 체크리스트" icon="🔒" />
+      <Card>
+        <div className="grid md:grid-cols-2 gap-2">
+          {security.map((s,i)=>(
+            <label key={i} className="flex items-start gap-2 text-[12.5px] text-slate-700">
+              <input type="checkbox" className="mt-0.5 accent-emerald-600" />
+              <span>{s}</span>
+            </label>
+          ))}
+        </div>
+      </Card>
+    </div>
+
+    {/* 장애 대응 */}
+    <div>
+      <SectionTitle n="07" title="장애 대응 빠른 점검" icon="🚨" />
+      <Card>
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr className="text-left text-slate-500 text-[11px] uppercase tracking-wide">
+              <th className="py-2">증상</th><th>점검 포인트</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[
+              ["회의실 PC가 서버 못 찾음", "사내 DNS · TLS 인증서 · 방화벽"],
+              ["viewer 접속 후 자막 안 옴", "WS 로그 · 토큰 만료 · sidecar 연결"],
+              ["자막 지연 ≥5초", "Gemini 연결 · 큐 길이 · CPU"],
+              ["재시작 후 데이터 없음", "Docker 볼륨 마운트 확인"],
+              ["디스크 가득", "보관 단축 · NAS 이전 · 오래된 회의 삭제"],
+              ["토큰 동작 X (PIN은 β-3)", "시스템 시간(NTP) · session.status"],
+            ].map(([a,b],i)=>(
+              <tr key={i} className="border-t border-slate-100">
+                <td className="py-2 text-slate-900 font-medium">{a}</td>
+                <td className="text-slate-600">{b}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+
+    {/* 외부 배포 시 메모 */}
+    <Card accent="rose" title="Phase 5+ 외부 배포 시 변경점" icon="🌐">
+      <div className="grid md:grid-cols-2 gap-3 text-[12.5px]">
+        <ul className="space-y-1">
+          <li>• ACCESS_MODE=tunnel</li>
+          <li>• Cloudflare Tunnel / ngrok</li>
+          <li>• Google OAuth Production verification</li>
+        </ul>
+        <ul className="space-y-1">
+          <li>• 사내 SSO / 매직링크 추가</li>
+          <li>• macOS notarization · Win 코드사인</li>
+          <li>• 회의 데이터 외부 노출 정책 재검토</li>
+        </ul>
+      </div>
+    </Card>
+  </div>
+);
+
+/* ============= EDGE CASES ============= */
+const EDGE_DATA = [
+  {id:"infra", title:"Slice 0~1 — 인프라", icon:"🧰", color:"slate", rows:[
+    ["Root CA 미등록 폰 첫 접속", "viewer 인증서 경고", "셋업 가이드 명시 + 첫 진입 시 .crt 다운로드"],
+    ["회의실 PC NTP 미동기", "토큰 검증 실패", "사이드카 부팅 시 시계 동기 검증 + 경고"],
+    ["Docker 컨테이너 재시작", "진행 중 회의 끊김", "restart: unless-stopped + 사이드카 백오프"],
+    ["Caddy 자체 CA 재발급", "클라이언트 캐시 mismatch", "./data/caddy 볼륨 영구 보존, 절대 삭제 X"],
+  ]},
+  {id:"audio", title:"Slice 2 — 오디오 캡처", icon:"🎙️", color:"violet", rows:[
+    ["BlackHole/Voicemeeter 비활성", "무음만 캡처", "시작 시 입력 enum 검증, 침묵 5초 감지 시 경고"],
+    ["회의 중 헤드셋 연결/해제", "시스템 출력 자동 전환", "멀티 출력 강제, 변경 감지 시 alert"],
+    ["샘플레이트/채널 mismatch", "Gemini 거부 / 품질 저하", "16kHz mono 강제 리샘플"],
+    ["무음 60초+", "빈 청크 무한 push, 비용 낭비", "VAD 또는 RMS 임계값으로 무음 차단"],
+    ["클리핑 (오버 볼륨)", "인식 저하", "사이드카 RMS 모니터, 경고"],
+    ["사이드카 프로세스 죽음", "회의 정지", "Tauri sidecar lifecycle (재시작)"],
+  ]},
+  {id:"gemini", title:"Slice 3 — Gemini Live (가장 많은 엣지)", icon:"✦", color:"green", rows:[
+    ["API Key 무효/만료", "모든 회의 정지", "서버 시작 시 health check + 운영자 알림"],
+    ["Quota 초과", "회의 중 끊김", "응답 코드 모니터, viewer '일시 정지' + alert"],
+    ["Gemini 응답 ≥10초 지연", "자막 멈춤", "타임아웃 + 이전 자막 유지"],
+    ["Gemini WS 세션 만료 (장기 회의)", "끊김", "자동 재연결 + 세션 회전, 큐 보존"],
+    ["partial → final 갱신", "자막 깜빡임", "is_final 플래그로 마지막 partial 교체 (seq 키)"],
+    ["응답 JSON 깨짐", "자막 누락", "강건한 파서 + 로그, 다음 응답 정상 처리"],
+    ["빠른 발화 / 겹침", "순서 꼬임", "seq 단조 증가 + started_at 보조"],
+    ["비영어 발화 (한국어 섞임)", "프롬프트 가정 어긋남", "프롬프트에 '혼합 한국어 그대로' 명시"],
+    ["동시 회의 → Gemini 한도", "회의 시작 실패", "활성 세션 카운트, 한도 초과 거부"],
+    ["비용 폭주 (좀비 세션)", "청구 충격", "회의 시간 타이머 + N시간 자동 종료"],
+  ]},
+  {id:"lifecycle", title:"Slice 4 — 회의 라이프사이클", icon:"📋", color:"amber", rows:[
+    ["운영자가 종료 안 하고 앱 종료", "좀비 세션", "sidecar disconnect 감지 N분 후 자동 종료"],
+    ["데스크톱 앱 충돌", "데이터 손실 위험", "서버가 마스터, 앱 재실행 시 활성 세션 복원"],
+    ["같은 Device 두 회의 동시 시도", "충돌", "Device당 1회의 제한, '라이브 중' 표시"],
+    ["종료 시 큐 잔여", "마지막 발화 손실", "flush 대기 (max 30s), timeout 시 강제 종료"],
+    ["MD 리포트 생성 실패", "다운로드 불가", "재시도 가능한 백그라운드 job"],
+    ["1시간+ 회의 큰 리포트", "메모리/크기", "streaming 생성"],
+    ["QR 회의실 모니터 거리 (2~4m)", "폰 카메라 스캔 실패", "QR 전체 화면 모드"],
+  ]},
+  {id:"ops", title:"Slice 5 — 다중 viewer / 권한 / 오프라인", icon:"🚀", color:"rose", rows:[
+    ["viewer 백그라운드 (탭 비활성)", "WS suspend", "onfocus 재연결 + ?since=<seq> 따라잡기"],
+    ["새 viewer 진입 과거 자막", "메모리 폭주", "최근 N=50건 + '전체 보기' 옵션"],
+    ["토큰 회의 종료 전 만료", "갑자기 끊김", "토큰 수명 = 세션 종료까지 (절대 시간 X)"],
+    ["토큰 leak (외부 공유)", "사외 노출", "LAN 격리 1차 방어 + β-3 PIN + audit log"],
+    ["30명 동시 viewer", "WS Hub 부하", "FastAPI WS pool 검증, 부하 테스트 (완료 기준)"],
+    ["끊김 30분 초과", "큐 디스크 가득", "30분+ 큐는 비상 WAV dump + alert"],
+    ["재전송 중복", "DB 중복", "(session_id, seq) UNIQUE + ON CONFLICT"],
+    ["시계 어긋남", "정렬 꼬임", "seq 우선 정렬, started_at은 표시용"],
+    ["권한 변경 (부서 이동) 회의 중", "viewer 차단?", "진행 회의는 시작 시 권한 스냅샷"],
+    ["같은 token 다중 viewer", "카운트 모호", "connection_id 카운트, IP/UA 로깅"],
+  ]},
+  {id:"security", title:"보안 / 운영 (슬라이스 무관)", icon:"🔒", color:"blue", rows:[
+    ["로그 시크릿 노출", "키 leak", "Pydantic SecretStr + 로깅 필터"],
+    ["약한 비밀번호", "무차별 대입", "최소 12자 + fail2ban / 앱 rate limit"],
+    ["백업 중 DB 락", "회의 끊김", "pg_dump (락 최소) + 야간"],
+    ["디스크 가득", "회의 시작 실패", "사용량 모니터 80% 알림"],
+    ["VLAN 격리 / AP isolation", "폰 접근 불가", "셋업 가이드에 네트워크 정책 확인 단계"],
+    ["고정 IP 미설정", "QR/Device 무효", "셋업 24h 후 IP 재확인"],
+    ["Gemini 약관 변경", "데이터 정책 위배", "Phase 별 약관 재검토"],
+  ]},
+  {id:"integrity", title:"데이터 무결성", icon:"🗄️", color:"slate", rows:[
+    ["session 시작 전 청크 push", "고아 데이터", "session.status=live 검증 후 수락"],
+    ["종료된 session에 청크 push", "잔여 큐 늦게 도달", "ended_at 이후 청크 drop + 로그"],
+    ["utterance.seq 점프 (gap)", "표시 정상, 백엔드 gap", "gap만 로그, 표시 영향 없음"],
+    ["MD 리포트 생성 중 새 발화", "일관성", "종료 시점 snapshot 기준"],
+    ["보관 만료 vs DB", "파일 없음 / DB 있음", "파일만 삭제, DB는 텍스트 메타만 N년 보존 옵션"],
+  ]},
+];
+
+const EdgeTable = ({title, icon, color, rows}) => (
+  <Card accent={color}>
+    <h3 className="text-[14px] font-extrabold text-slate-900 mb-3 flex items-center gap-2">
+      <span className="text-xl">{icon}</span>{title}
+    </h3>
+    <div className="overflow-auto">
+    <table className="w-full text-[12.5px]">
+      <thead>
+        <tr className="text-left text-slate-500 text-[10.5px] uppercase tracking-wide">
+          <th className="py-1 w-[32%]">케이스</th>
+          <th className="py-1 w-[28%]">영향</th>
+          <th className="py-1">처리</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(([c, i, h], idx) => (
+          <tr key={idx} className="border-t border-slate-100 align-top">
+            <td className="py-2 pr-3 text-slate-900 font-medium">{c}</td>
+            <td className="py-2 pr-3 text-slate-600">{i}</td>
+            <td className="py-2 text-slate-700">{h}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+    </div>
+  </Card>
+);
+
+const EdgeCasesView = () => (
+  <div className="space-y-8">
+    {/* Hero */}
+    <Card accent="amber">
+      <div className="flex items-start gap-4">
+        <div className="text-4xl">⚠️</div>
+        <div>
+          <div className="text-xs font-bold text-amber-700 mb-1">EDGE CASES · 운영 함정</div>
+          <p className="text-[18px] leading-relaxed text-slate-900">
+            구현 들어가기 전 인지하면 운영 사고를 줄이는 항목들.
+          </p>
+          <p className="text-sm text-slate-500 mt-2">
+            슬라이스·영역별 정리. 자세한 처리 전략은 <code className="bg-slate-100 px-1 rounded">ARCHITECTURE.md §12</code> 참조.
+          </p>
+        </div>
+      </div>
+    </Card>
+
+    {/* 우선순위 요약 */}
+    <div>
+      <SectionTitle n="01" title="우선순위 요약" sub="MVP-α 안에 반드시 처리 / 권장 / β로 미룸" />
+      <div className="grid md:grid-cols-3 gap-4">
+        <Card accent="rose" title="🔴 MVP-α 안에 반드시">
+          <ol className="text-[12.5px] space-y-1 list-decimal pl-4">
+            <li>사이드카 ↔ 서버 재연결 + 오프라인 큐</li>
+            <li>Gemini WS 세션 재연결</li>
+            <li><code className="bg-slate-100 px-1 rounded text-[11px]">(session_id, seq) UNIQUE</code> idempotency</li>
+            <li>회의 종료 시 큐 flush + 좀비 자동 종료</li>
+            <li>viewer 백그라운드 복귀 따라잡기</li>
+            <li>회의 시간 안전 타이머 (N시간 자동 종료)</li>
+          </ol>
+        </Card>
+        <Card accent="amber" title="🟡 권장 (없으면 불안)">
+          <ol className="text-[12.5px] space-y-1 list-decimal pl-4">
+            <li>Caddy CA 볼륨 보존 정책</li>
+            <li>디스크 사용량 80% 알림</li>
+            <li>NTP 동기 검증</li>
+            <li>partial → final 자막 안정화</li>
+            <li>VAD로 무음 청크 차단 (비용 절감)</li>
+          </ol>
+        </Card>
+        <Card accent="green" title="🟢 β 또는 운영 중 대응">
+          <ol className="text-[12.5px] space-y-1 list-decimal pl-4">
+            <li>UX 함정 (β-1: 단축키 / 가이드 / 용어집)</li>
+            <li>비영어 혼합 발화 프롬프트 정제</li>
+            <li>30명+ 부하 (Slice 5 검증 시)</li>
+          </ol>
+        </Card>
+      </div>
+    </div>
+
+    {/* 영역별 상세 */}
+    <div>
+      <SectionTitle n="02" title="영역별 상세" sub="슬라이스 흐름순. 각 표는 케이스 / 영향 / 처리" />
+      <div className="space-y-4">
+        {EDGE_DATA.map(s => <EdgeTable key={s.id} title={s.title} icon={s.icon} color={s.color} rows={s.rows}/>)}
+      </div>
+    </div>
+
+    {/* 푸터 안내 */}
+    <Card accent="blue">
+      <div className="text-[12.5px] text-slate-700">
+        💡 <b>구현 흐름 권장</b>: 각 슬라이스 시작 전에 해당 영역 표를 다시 한 번 훑기. 🔴 항목은 슬라이스의 <b>완료 기준</b>에 직접 박힘 (ROADMAP 참조).
+      </div>
+    </Card>
+  </div>
+);
+
+/* ============= TRANSLATOR UX ============= */
+const TranslatorUXView = () => (
+  <div className="space-y-8">
+    {/* MVP-β 비전 콜아웃 */}
+    <div className="rounded-2xl bg-amber-50 border-2 border-amber-300 p-4">
+      <div className="flex items-start gap-3">
+        <span className="text-2xl">⚠️</span>
+        <div className="text-[13px] text-amber-900 leading-relaxed">
+          <b>이 탭은 MVP-β 비전이다.</b> 여기 나오는 단축키 · 용어집 · 북마크 · 메모 · Slow-down 카드 · 10초 되감기 · 5단계 폰트 토글 · viewer "더 보기" 토글은 모두 <b>MVP-β-1, β-2, β-3</b> 묶음. <b>MVP-α</b>에는 의도적으로 포함하지 않음 — α viewer는 자막만, α 운영자 콘솔은 큰 글씨 기본값만. PRD §7 / ROADMAP 참조.
+        </div>
+      </div>
+    </div>
+
+    {/* Hero */}
+    <Card accent="violet">
+      <div className="flex items-start gap-4">
+        <div className="text-5xl">🧭</div>
+        <div>
+          <div className="text-xs font-bold text-violet-600 mb-1">북극성 사용자 · NORTH STAR</div>
+          <p className="text-[20px] leading-relaxed text-slate-900 font-bold">
+            번역 담당자가 회의 중 인지 부담 없이 쓸 수 있어야 한다.
+          </p>
+          <p className="text-sm text-slate-500 mt-2">
+            번역 담당자는 회의 중 동시에 4가지를 한다 — 영어 듣기 · 한국어로 통역 · 흐름 파악 · 메모.
+            UI가 작업을 <b className="text-rose-600">추가</b>하면 안 되고, <b className="text-emerald-600">덜어줘야</b> 한다.
+          </p>
+        </div>
+      </div>
+    </Card>
+
+    {/* 단계별 UX */}
+    <div>
+      <SectionTitle n="01" title="단계별 사용성 목표" icon="🪜" />
+      <div className="grid md:grid-cols-3 gap-4">
+        <Card accent="blue" title="🕐 회의 전">
+          <p className="font-bold text-blue-700 text-[12.5px] mb-2">목표: 30초 안에 회의 시작</p>
+          <ul className="text-[12.5px] space-y-1">
+            <li>• 자동 로그인 (저장된 자격증명)</li>
+            <li>• 최근 회의 템플릿 (제목·라벨 미리 채움)</li>
+            <li>• "회의 시작" 한 번 → 즉시 QR</li>
+            <li>• 오디오/AI 자동 점검</li>
+          </ul>
+        </Card>
+        <Card accent="green" title="🎙️ 회의 중">
+          <p className="font-bold text-emerald-700 text-[12.5px] mb-2">목표: 자막에 집중. UI에 손 안 가도 됨</p>
+          <ul className="text-[12.5px] space-y-1">
+            <li>• 자막이 메인. 사이드는 폴딩</li>
+            <li>• 한 키 단축키 (마우스 거의 X)</li>
+            <li>• 정상은 안 보임 · 문제만 부각</li>
+            <li>• AI 지연 graceful · 화면 안 멈춤</li>
+          </ul>
+        </Card>
+        <Card accent="amber" title="📄 회의 후">
+          <p className="font-bold text-amber-700 text-[12.5px] mb-2">목표: 한 번에 정리/배포</p>
+          <ul className="text-[12.5px] space-y-1">
+            <li>• 종료 → 리포트 자동 미리보기</li>
+            <li>• 부서별 배포 한 클릭</li>
+            <li>• 영어/한국어 동시 export</li>
+            <li>• 북마크/메모 자동 반영</li>
+          </ul>
+        </Card>
+      </div>
+    </div>
+
+    {/* 회의 중 화면 와이어프레임 */}
+    <div>
+      <SectionTitle n="02" title="회의 중 화면 와이어프레임" icon="🖥️" sub="자막이 70% · 나머지는 보조" />
+      <div className="glass rounded-2xl p-5">
+        <div className="rounded-xl bg-slate-900 text-slate-100 p-4 code text-[11px]">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-700 mb-3">
+            <span>yeson-meet · <span className="text-yellow-300">CLIENT-A</span> · 14:32</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span> LIVE</span>
+          </div>
+          <div className="mb-3">
+            <div className="text-[10px] text-slate-400 mb-1">[CLIENT] · 12초 전</div>
+            <div className="bg-slate-800 rounded-lg p-4 text-[30px] font-bold text-slate-200 leading-snug">
+              layout 수정본 목요일 전 확정 가능?<br/>
+              delivery 하루 지연 가능성
+            </div>
+          </div>
+          <div className="mb-4">
+            <div className="text-[10px] text-emerald-400 mb-1 flex items-center gap-1">[CURRENT] <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span></div>
+            <div className="bg-emerald-900/40 border border-emerald-500/40 rounded-lg p-4 text-[30px] font-bold text-emerald-100 leading-snug">
+              render 문제로 BG 수정본 금요일까지...<span className="animate-pulse">▍</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="bg-slate-800 rounded p-2">
+              <div className="text-yellow-300 text-[10px] mb-1">핵심 키워드</div>
+              <div className="space-y-0.5 text-slate-300 text-[10.5px]">
+                <div>#layout</div><div>#delivery</div><div>#render</div>
+              </div>
+            </div>
+            <div className="bg-slate-800 rounded p-2">
+              <div className="text-emerald-300 text-[10px] mb-1">액션 아이템</div>
+              <div className="space-y-0.5 text-slate-300 text-[10.5px]">
+                <div>□ BG 수정본 전달</div><div>□ retake 재확인</div>
+              </div>
+            </div>
+            <div className="bg-slate-800 rounded p-2">
+              <div className="text-violet-300 text-[10px] mb-1">북마크 / 로그</div>
+              <div className="space-y-0.5 text-slate-300 text-[10.5px]">
+                <div className="text-yellow-300">★ 14:25 retake</div>
+                <div>14:28 deadline</div>
+              </div>
+            </div>
+          </div>
+          <div className="bg-slate-800/50 rounded px-2 py-1.5 text-[10px] text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
+            <span><kbd className="bg-slate-700 px-1 rounded">Space</kbd> 일시정지</span>
+            <span><kbd className="bg-slate-700 px-1 rounded">B</kbd> 북마크</span>
+            <span><kbd className="bg-slate-700 px-1 rounded">N</kbd> 메모</span>
+            <span><kbd className="bg-slate-700 px-1 rounded">S</kbd> Slow down</span>
+            <span><kbd className="bg-slate-700 px-1 rounded">G</kbd> 용어집</span>
+            <span><kbd className="bg-slate-700 px-1 rounded">⌘±</kbd> 크기</span>
+            <span><kbd className="bg-slate-700 px-1 rounded">R</kbd> 되감기</span>
+          </div>
+        </div>
+        <p className="text-[11.5px] text-slate-500 mt-3 text-center">
+          ↑ 회의 중 운영자가 보는 화면. 자막 영역이 70%, 사이드 패널은 폴딩 가능. 단축키 안내가 항상 보임.
+        </p>
+      </div>
+    </div>
+
+    {/* 단축키 cheatsheet */}
+    <div>
+      <SectionTitle n="03" title="한 키 단축키" icon="⌨️" sub="회의 중 마우스 없이 운영 가능" />
+      <div className="grid md:grid-cols-3 lg:grid-cols-4 gap-3">
+        {[
+          {k:"Space", a:"일시정지 / 재개"},
+          {k:"B", a:"북마크 (현재 시점 마킹)"},
+          {k:"N", a:"인라인 메모 추가"},
+          {k:"S", a:'"더 천천히" 카드 표시'},
+          {k:"G", a:"용어집 열기"},
+          {k:"R", a:"마지막 10초 되감기"},
+          {k:"⌘ +/−", a:"자막 글자 크기"},
+          {k:"⌘ E", a:"회의 종료 (확인 후)"},
+        ].map((s,i)=>(
+          <div key={i} className="glass rounded-xl p-3 flex items-center gap-3">
+            <kbd className="bg-slate-900 text-white font-mono font-bold px-3 py-2 rounded-lg text-[13px] min-w-[64px] text-center">{s.k}</kbd>
+            <div className="text-[12.5px] text-slate-700">{s.a}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+
+    {/* 4가지 핵심 기능 */}
+    <div>
+      <SectionTitle n="04" title="번역자 도움 기능 (MVP-β 비전)" icon="✨" />
+      <div className="grid md:grid-cols-2 gap-4">
+        <Card accent="blue" title="📚 용어집 (Glossary)">
+          <p className="text-[12.5px] mb-2">사내 자주 쓰는 영어 용어를 미리 등록 → Gemini 프롬프트에 자동 주입 → 자막에 일관 적용.</p>
+          <div className="bg-slate-50 rounded p-2 text-[11.5px] code text-slate-700 leading-relaxed">
+            layout → 영문 유지<br/>
+            retake → 영문 유지<br/>
+            CMS → 사내 시스템<br/>
+            BG → 배경
+          </div>
+        </Card>
+        <Card accent="amber" title="★ 북마크 (Bookmark)">
+          <p className="text-[12.5px] mb-2"><kbd className="bg-slate-100 px-1 rounded text-[11px]">B</kbd> 한 번 → 현재 시점 마킹. 회의록에 자동 강조. viewer에는 안 보임 (운영자 전용).</p>
+          <p className="text-[11.5px] text-amber-700"><b>"이거 다시 들어야겠다"</b> 순간 즉시 찍기.</p>
+        </Card>
+        <Card accent="violet" title="📝 인라인 메모">
+          <p className="text-[12.5px] mb-2"><kbd className="bg-slate-100 px-1 rounded text-[11px]">N</kbd> → 짧은 메모를 현재 발화에 첨부. 회의록 자동 포함.</p>
+          <p className="text-[11.5px] text-violet-700">통역하면서 떠오른 보완점·뉘앙스를 흐름 끊지 않고 기록.</p>
+        </Card>
+        <Card accent="rose" title='🐢 "Please slow down" 카드'>
+          <p className="text-[12.5px] mb-2"><kbd className="bg-slate-100 px-1 rounded text-[11px]">S</kbd> → 회의실 모니터에 큰 시각 알림. 클라이언트가 즉시 인지.</p>
+          <p className="text-[11.5px] text-rose-700">번역자가 말로 "잠시만요" 하지 않아도 됨. viewer에도 표시.</p>
+        </Card>
+      </div>
+    </div>
+
+    {/* 인지 부담 최소화 5원칙 */}
+    <div>
+      <SectionTitle n="05" title="인지 부담 최소화 5원칙" icon="🧠" />
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {[
+          {p:"정상은 보이지 않는다", d:"오디오·AI·서버 상태는 정상일 때 숨김. 문제일 때만 부각.", c:"blue"},
+          {p:"자막이 메인, 나머지는 보조", d:"자막 면적 70%+. 사이드 패널은 폴딩 가능.", c:"green"},
+          {p:"한 키 우선, 마우스 보조", d:"빈번한 작업은 모두 단축키. 마우스 없이도 운영 가능.", c:"violet"},
+          {p:"모달 없음, 인라인 우선", d:"메모/북마크/용어 모두 화면 안에서 즉시 처리. 흐름 끊지 않음.", c:"amber"},
+          {p:"AI 지연을 인간이 모르게", d:"이전 자막 유지 + 부드러운 인디케이터. 화면 깜빡임 X.", c:"rose"},
+          {p:"회복은 한 번에", d:"오류 시 1-click 복구 버튼. 기술 용어 X. 사람 언어로.", c:"slate"},
+        ].map((p,i)=>(
+          <div key={i} className="glass rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-6 h-6 rounded-full bg-slate-900 text-white text-[11px] font-bold grid place-items-center shrink-0">{i+1}</span>
+              <span className="font-extrabold text-slate-900 text-[13px]">{p.p}</span>
+            </div>
+            <p className="text-[12px] text-slate-600 ml-8">{p.d}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+
+    {/* 고시인성 디자인 */}
+    <div>
+      <SectionTitle n="06" title="고시인성 디자인 (High Visibility)" icon="👓" sub="작업자 연령대 고려 — 큰 글씨가 옵션이 아니라 기본" />
+
+      {/* 글자 크기 스케일 */}
+      <Card title="자막 글자 크기 5단계" accent="blue">
+        <div className="grid md:grid-cols-5 gap-3 items-end">
+          <div className="rounded-lg bg-slate-900 text-slate-100 p-3 text-center">
+            <div className="text-[18px] font-bold leading-tight">layout</div>
+            <div className="text-[10px] text-slate-400 mt-2">S · 24px</div>
+          </div>
+          <div className="rounded-lg bg-slate-900 text-slate-100 p-3 text-center">
+            <div className="text-[24px] font-bold leading-tight">layout</div>
+            <div className="text-[10px] text-slate-400 mt-2">M · 32px</div>
+          </div>
+          <div className="rounded-lg bg-blue-700 text-white p-3 text-center ring-4 ring-blue-300">
+            <div className="text-[32px] font-bold leading-tight">layout</div>
+            <div className="text-[10px] text-blue-100 mt-2 font-bold">L · 44px (기본)</div>
+          </div>
+          <div className="rounded-lg bg-slate-900 text-slate-100 p-3 text-center">
+            <div className="text-[40px] font-bold leading-tight">layout</div>
+            <div className="text-[10px] text-slate-400 mt-2">XL · 56px</div>
+          </div>
+          <div className="rounded-lg bg-slate-900 text-slate-100 p-3 text-center">
+            <div className="text-[48px] font-black leading-tight">layout</div>
+            <div className="text-[10px] text-slate-400 mt-2">XXL · 72px</div>
+          </div>
+        </div>
+        <p className="text-[12.5px] text-slate-600 mt-4 text-center">
+          <kbd className="bg-slate-200 px-1.5 rounded text-[11px]">⌘ +/−</kbd> 로 단계 이동 · 기본 <b>L (44px)</b> · 회의실 대형 모니터엔 <b>XXL (72px)</b>
+        </p>
+      </Card>
+
+      {/* 사용 환경별 권장 */}
+      <div className="grid md:grid-cols-3 gap-3 mt-4">
+        <Card accent="blue" title="🖥️ 운영자 콘솔">
+          <ul className="text-[12.5px] space-y-1">
+            <li>• 자막 기본 <b>44px (L)</b></li>
+            <li>• 키워드/액션 <b>16~18px</b></li>
+            <li>• 거리 50~80cm 가정</li>
+            <li>• 패널 최소 폰트 14px</li>
+          </ul>
+        </Card>
+        <Card accent="amber" title="📺 회의실 대형 모니터">
+          <ul className="text-[12.5px] space-y-1">
+            <li>• 자막 기본 <b>56~72px (XL~XXL)</b></li>
+            <li>• 거리 2~4m 가정</li>
+            <li>• 사이드 패널 폴딩 권장</li>
+            <li>• 큰 화면 모드 토글</li>
+          </ul>
+        </Card>
+        <Card accent="green" title="📱 폰 viewer">
+          <ul className="text-[12.5px] space-y-1">
+            <li>• 자막 기본 <b>26px</b></li>
+            <li>• 토글: 22 / 28 / 32px</li>
+            <li>• 한 줄 ≤ 18자 자동 줄바꿈</li>
+            <li>• 키워드/액션 16px</li>
+          </ul>
+        </Card>
+      </div>
+
+      {/* 타이포 원칙 */}
+      <Card title="타이포그래피 원칙" accent="violet" className="mt-4">
+        <ul className="text-[12.5px] space-y-1.5">
+          <li>• 폰트: <b>Pretendard</b> 또는 <b>Noto Sans KR</b> (한글 가독성 최상)</li>
+          <li>• 자막은 항상 <b>Bold 700+</b>. 본문은 SemiBold 600.</li>
+          <li>• 줄간격 <b>1.5 이상</b> (자막은 1.2~1.3 허용, 시각적 안정).</li>
+          <li>• 한 줄 글자 수 캡: 운영자 콘솔 ≤ 28자, 폰 ≤ 18자.</li>
+          <li>• 대비비 <b>WCAG AAA (7:1)</b> 이상. 다크 모드 기본 (<code className="bg-slate-100 px-1 rounded">#0f172a</code> 배경 + <code className="bg-slate-100 px-1 rounded">#f1f5f9</code> 글씨).</li>
+          <li>• <b className="text-rose-600">금지: 어디서든 14px 미만.</b> 상태 표시·메타 정보도 최소 14px.</li>
+          <li>• 사용자별 폰트 크기 선호 저장 (다음 회의에서 자동 복원).</li>
+        </ul>
+      </Card>
+    </div>
+
+    {/* Viewer 화면 — 자막만 */}
+    <div>
+      <SectionTitle n="07" title="Viewer 화면 — 자막만" icon="📱" sub="참석자는 자막만 본다. 다른 건 모두 제거." />
+      <Card>
+        <p className="text-[13px] text-slate-700 mb-4">
+          <b>참석자(시스템/TD/Staff)는 회의 내용을 실시간으로 따라가기만 하면 된다.</b> 기본 화면은 <b>자막 풀스크린</b>. 우상단 <b className="text-blue-600">"더 보기" 토글</b>을 누르면 키워드·액션·로그가 펼쳐진다. 대부분의 참석자는 토글을 만질 일이 없다.
+        </p>
+
+        <div className="rounded-xl bg-slate-900 p-6 min-h-[320px] flex flex-col">
+          {/* 미니 헤더 */}
+          <div className="flex items-center justify-between text-slate-400 text-[12px] mb-4">
+            <span>CLIENT-A · 14:32</span>
+            <span className="flex items-center gap-3">
+              <span className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                LIVE
+              </span>
+              <button className="bg-blue-600 text-white px-2.5 py-1 rounded text-[11px] font-bold">더 보기 ▾</button>
+            </span>
+          </div>
+
+          {/* 자막 — 매우 크게 */}
+          <div className="flex-1 flex flex-col justify-center gap-6 px-2">
+            <div className="text-slate-400 text-[22px] font-bold leading-snug opacity-60">
+              layout 수정본 목요일 전 확정 가능?
+            </div>
+            <div className="text-white text-[40px] font-black leading-snug">
+              render 문제로 BG 수정본<br/>
+              금요일까지 필요...<span className="animate-pulse">▍</span>
+            </div>
+          </div>
+
+          {/* 미니 컨트롤 */}
+          <div className="flex justify-end gap-2 mt-4 text-[11px]">
+            <button className="bg-slate-700 text-slate-200 px-2.5 py-1 rounded">A−</button>
+            <button className="bg-slate-700 text-slate-200 px-2.5 py-1 rounded">A+</button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid md:grid-cols-2 gap-3">
+          <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3">
+            <div className="text-[12px] font-bold text-emerald-700 mb-1">📌 기본 (자막 모드)</div>
+            <ul className="text-[12px] text-slate-700 space-y-0.5">
+              <li>• 자막 (크고 굵게)</li>
+              <li>• 회의 제목 + LIVE 인디케이터</li>
+              <li>• 글자 크기 토글 (3단계)</li>
+              <li>• <b>"더 보기" 토글 버튼</b></li>
+            </ul>
+          </div>
+          <div className="rounded-lg bg-blue-50 border border-blue-200 p-3">
+            <div className="text-[12px] font-bold text-blue-700 mb-1">⇕ "더 보기" 토글 시 추가 노출</div>
+            <ul className="text-[12px] text-slate-700 space-y-0.5">
+              <li>• 핵심 키워드</li>
+              <li>• 액션 아이템</li>
+              <li>• 회의 로그</li>
+              <li>• 상세 상태</li>
+            </ul>
+            <p className="text-[11px] text-blue-700 mt-2">필요할 때만 펼침. 다시 접으면 자막 풀스크린으로 복귀.</p>
+          </div>
+        </div>
+
+        <ul className="text-[12.5px] space-y-1 mt-4 text-slate-700">
+          <li>• 폰 자막 기본 <b>26px</b>, 노트북 <b>30px</b>. 토글 3단계.</li>
+          <li>• <b>다크 모드 강제.</b> 회의실 환경 가독성.</li>
+          <li>• 회의 종료 시 <b>"회의 종료됨"</b> 큰 메시지로 전환.</li>
+          <li>• 한 줄 캡: 폰 ≤18자, 노트북 ≤28자. 초과 시 자동 줄바꿈.</li>
+        </ul>
+      </Card>
+    </div>
+
+    {/* 첫 실행 가이드 */}
+    <Card accent="green" title="🎓 첫 실행 가이드 + 모의 회의 모드">
+      <div className="grid md:grid-cols-3 gap-4 text-[12.5px]">
+        <div>
+          <div className="font-bold text-emerald-700 mb-1">1. 1분 튜토리얼</div>
+          <p className="text-slate-600">화면 위에 단계별 화살표 안내. 스킵 가능. 두 번째 실행부터 자동 생략.</p>
+        </div>
+        <div>
+          <div className="font-bold text-emerald-700 mb-1">2. 오디오 자동 점검</div>
+          <p className="text-slate-600">BlackHole/Voicemeeter 미설치 자동 감지 + 가이드 영상 링크 + 클릭 한 번으로 설정.</p>
+        </div>
+        <div>
+          <div className="font-bold text-emerald-700 mb-1">3. 모의 회의 모드</div>
+          <p className="text-slate-600">사전 녹음 영어 회의 재생. Gemini API 호출 없이 단축키/UI 연습.</p>
+        </div>
+      </div>
+    </Card>
+
+    {/* 셋업/장애 자동화 */}
+    <Card accent="slate" title="🛡️ 셋업·장애 — 번역자가 직접 해결 가능">
+      <ul className="text-[12.5px] space-y-1.5">
+        <li>• 첫 실행 시 BlackHole/Voicemeeter 자동 감지. 미설치면 클릭 한 번으로 가이드.</li>
+        <li>• 서버 연결 실패 시 <b>"관리자에게 알리기"</b> 버튼 — 사내 메신저로 자동 통지.</li>
+        <li>• 마이크 무음 5초 이상 → 시각 경고 + 입력 장치 확인 가이드.</li>
+        <li>• AI 지연 ≥5초 → 자막 fade + 로딩 표시. 화면 끊지 않음.</li>
+        <li>• 회의 자동 백업 — 실수로 종료해도 마지막 회의 복구 가능.</li>
+        <li>• 모든 에러 메시지는 사람 언어로. "JWT 만료" X → "다시 로그인이 필요해요" O.</li>
+      </ul>
+    </Card>
+  </div>
+);
+
+
+/* ============= MARKDOWN-BASED VIEWS ============= */
+const MarkdownView = ({mdKey}) => {
+  const html = React.useMemo(() => {
+    const el = document.querySelector(`script[data-md="${mdKey}"]`);
+    if (!el) return '<p>문서를 찾을 수 없습니다.</p>';
+    return marked.parse(el.textContent.trim());
+  }, [mdKey]);
+  return (
+    <div className="glass rounded-2xl p-6 md:p-10 prose-yeson" dangerouslySetInnerHTML={{__html: html}} />
+  );
+};
+
+/* ============= APP ============= */
+const tabs = [
+  {id:"prd", label:"PRD", icon:"📝", sub:"제품 정의 · MVP 스코프"},
+  {id:"ux", label:"번역자 UX", icon:"🧭", sub:"북극성 · 단축키 · 와이어프레임"},
+  {id:"arch", label:"Architecture", icon:"🏛️", sub:"토폴로지 · 스키마 · 이벤트"},
+  {id:"ui", label:"UI Design", icon:"🎨", sub:"5슬롯 · 토큰 · 3층 컴포넌트"},
+  {id:"edge", label:"엣지케이스", icon:"⚠️", sub:"운영 함정 · 슬라이스별 우선순위"},
+  {id:"roadmap", label:"Roadmap", icon:"🗺️", sub:"Slice 0~5 + β"},
+  {id:"deploy", label:"Deploy", icon:"🚀", sub:"사내 서버 운영"},
+  {id:"team", label:"Workflow · Team", icon:"👥", sub:"비코딩 팀 협업"},
+  {id:"solo", label:"Workflow · Solo+AI", icon:"🤖", sub:"1인 + AI 병렬"},
+];
+
+const App = () => {
+  const [tab, setTab] = useState("prd");
+  return (
+    <div className="max-w-[1280px] mx-auto px-5 py-8">
+      {/* Header */}
+      <header className="mb-8">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-bold text-blue-700 uppercase tracking-wider">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              결정사항 락인 완료 · 2026-05-15
+            </div>
+            <h1 className="text-[34px] md:text-[44px] font-black tracking-tight text-slate-900 leading-tight mt-1">
+              yeson-meet <span className="text-blue-600">기획안 뷰어</span>
+            </h1>
+            <p className="text-slate-500 mt-1">AI 해외 미팅 실시간 통역 대시보드 — 회의실 PC + 사내 서버 + LAN viewer + 사내 SDK</p>
+          </div>
+          <div className="flex gap-2">
+            <Pill color="blue">Tauri 2</Pill>
+            <Pill color="violet">Python · FastAPI</Pill>
+            <Pill color="green">PostgreSQL</Pill>
+            <Pill color="amber">Docker Compose</Pill>
+            <Pill color="rose">Gemini Live</Pill>
+          </div>
+        </div>
+      </header>
+
+      {/* Tabs */}
+      <nav className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-9 gap-2 mb-8">
+        {tabs.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            className={`px-4 py-3 rounded-xl text-left transition ${tab===t.id?"tab-active":"glass hover:bg-white"}`}>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">{t.icon}</span>
+              <span className="font-black text-[15px]">{t.label}</span>
+            </div>
+            <div className={`text-[11.5px] mt-0.5 ${tab===t.id?"text-blue-100":"text-slate-500"}`}>{t.sub}</div>
+          </button>
+        ))}
+      </nav>
+
+      {/* Content */}
+      <main>
+        {tab==="prd" && <PRDView/>}
+        {tab==="ux" && <TranslatorUXView/>}
+        {tab==="arch" && <ArchView/>}
+        {tab==="ui" && <MarkdownView mdKey="UI_DESIGN_SYSTEM"/>}
+        {tab==="edge" && <EdgeCasesView/>}
+        {tab==="roadmap" && <RoadmapView/>}
+        {tab==="deploy" && <DeployView/>}
+        {tab==="team" && <MarkdownView mdKey="WORKFLOW_COLLABORATION"/>}
+        {tab==="solo" && <MarkdownView mdKey="WORKFLOW_SOLO_AI"/>}
+      </main>
+
+      {/* Footer */}
+      <footer className="mt-16 pt-6 border-t border-slate-200 text-center text-[12px] text-slate-400">
+        <p>원본 문서: <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">docs/PRD.md · ARCHITECTURE.md · ROADMAP.md · DEPLOY.md · UI_DESIGN_SYSTEM.md · WORKFLOW_*.md</code></p>
+        <p className="mt-1">이 뷰어 자체도 한 파일(<code>docs/PLAN_VIEWER.html</code>)에 React + Tailwind via CDN — 더블클릭으로 바로 열림.</p>
+      </footer>
+    </div>
+  );
+};
+
+marked.setOptions({ gfm: true, breaks: false });
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

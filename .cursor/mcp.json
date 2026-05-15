@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vibelign": {
+      "command": "/Users/usabatch/.local/bin/vibelign-mcp",
+      "args": []
+    }
+  }
+}
