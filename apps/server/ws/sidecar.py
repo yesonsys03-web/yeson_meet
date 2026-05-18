@@ -1,3 +1,4 @@
+# === ANCHOR: SIDECAR_START ===
 """Sidecar WebSocket router (/ws/sidecar). Implemented in S1-L1.
 
 Sidecar (capture device) connects with ?key=<device_api_key>&session=<external_uuid>,
@@ -9,6 +10,8 @@ S2: receive loop upgraded to dict dispatch — binary frames → audio_stats, te
 """
 from __future__ import annotations
 
+import os
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
@@ -17,6 +20,9 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from apps.server.auth.device import hash_api_key
+from apps.server.ai.gemini_live import GeminiLiveProvider
+from apps.server.ai.live_session import AudioLiveSession
+from apps.server.ai.providers import STTProvider, TranslatedUtterance
 from apps.server.db.models import Device, Session, Utterance
 from apps.server.db.session import AsyncSessionLocal
 from apps.server.domain.events import UtteranceTranscribed, serialize
@@ -33,6 +39,13 @@ from apps.server.ws.control_messages import (
 router = APIRouter()
 
 
+def create_ai_provider() -> STTProvider | None:
+    """Return the S3 provider when Gemini is configured, otherwise keep S2 count-only mode."""
+    if not os.environ.get("GEMINI_API_KEY"):
+        return None
+    return GeminiLiveProvider()
+
+
 def _handle_control(session_id: UUID, ctrl: ControlMessage) -> None:
     """Dispatch a control message to in-memory audio_stats. No DB writes."""
     if isinstance(ctrl, AudioStarted):
@@ -41,6 +54,42 @@ def _handle_control(session_id: UUID, ctrl: ControlMessage) -> None:
         audio_stats.note_seq(session_id, ctrl.seq)
     elif isinstance(ctrl, AudioStopped):
         audio_stats.mark_stopped(session_id, ctrl.reason)
+
+
+async def _persist_and_publish_ai_utterance(
+    session_pk: int,
+    session_uuid: UUID,
+    utterance: TranslatedUtterance,
+) -> None:
+    evt = UtteranceTranscribed(
+        session_id=session_uuid,
+        occurred_at=datetime.now(timezone.utc),
+        seq=utterance.seq,
+        speaker=utterance.speaker,
+        text_en=utterance.text_en,
+        text_ko=utterance.text_ko,
+        started_at=utterance.started_at,
+        ended_at=utterance.ended_at,
+        is_final=utterance.is_final,
+    )
+    async with AsyncSessionLocal() as db:
+        stmt = (
+            pg_insert(Utterance)
+            .values(
+                session_id=session_pk,
+                seq=evt.seq,
+                speaker=evt.speaker,
+                text_en=evt.text_en,
+                text_ko=evt.text_ko,
+                started_at=evt.started_at,
+                ended_at=evt.ended_at,
+                is_final=evt.is_final,
+            )
+            .on_conflict_do_nothing(index_elements=["session_id", "seq"])
+        )
+        await db.execute(stmt)
+        await db.commit()
+    await bus.publish(session_uuid, serialize(evt))
 
 
 @router.websocket("/ws/sidecar")
@@ -79,6 +128,7 @@ async def ws_sidecar(ws: WebSocket) -> None:
         session_pk = meeting.id
 
     await ws.accept()
+    ai_session: AudioLiveSession | None = None
     try:
         while True:
             msg = await ws.receive()
@@ -91,6 +141,20 @@ async def ws_sidecar(ws: WebSocket) -> None:
                 try:
                     control = parse_control_message(text)
                     _handle_control(session_uuid, control)  # in-process log + audio_stats hooks
+                    if isinstance(control, AudioStarted) and ai_session is None:
+                        provider = create_ai_provider()
+                        if provider is not None:
+                            new_ai_session = AudioLiveSession(
+                                provider=provider,
+                                on_utterance=lambda utterance: _persist_and_publish_ai_utterance(
+                                    session_pk, session_uuid, utterance
+                                ),
+                            )
+                            await new_ai_session.start()
+                            ai_session = new_ai_session
+                    elif isinstance(control, AudioStopped) and ai_session is not None:
+                        await ai_session.stop()
+                        ai_session = None
                     continue
                 except ValueError:
                     pass
@@ -121,8 +185,14 @@ async def ws_sidecar(ws: WebSocket) -> None:
                 await bus.publish(session_uuid, serialize(evt))
             elif "bytes" in msg and msg["bytes"] is not None:
                 audio_stats.record(session_uuid, len(msg["bytes"]))
+                if ai_session is not None:
+                    await ai_session.push_audio(msg["bytes"])
     except WebSocketDisconnect:
         return
+    finally:
+        if ai_session is not None:
+            await ai_session.stop()
     # NOTE(s4-session-lifecycle): do not audio_stats.discard() here — admin
     # view + tests rely on snapshot surviving sidecar disconnect to show final
     # totals. Session-end eviction is owned by S4 /api/v1/sessions/{id}/end.
+# === ANCHOR: SIDECAR_END ===
