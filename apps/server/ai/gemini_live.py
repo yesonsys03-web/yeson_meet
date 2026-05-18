@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import os
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from apps.server.ai.providers import TranslatedUtterance
 
@@ -26,11 +26,29 @@ English, keep the Korean as-is and translate only the English parts.
 """
 
 
+class GeminiConfigHealth(TypedDict):
+    configured: bool
+    status: Literal["configured", "missing_api_key"]
+    model: str
+    input_sample_rate: int
+
+
 @dataclass(frozen=True)
 class LiveText:
     input_text: str
     output_text: str
     turn_complete: bool
+
+
+def gemini_config_health() -> GeminiConfigHealth:
+    """Return non-secret Gemini Live configuration health."""
+    configured = bool(os.environ.get("GEMINI_API_KEY"))
+    return {
+        "configured": configured,
+        "status": "configured" if configured else "missing_api_key",
+        "model": os.environ.get(MODEL_ENV, DEFAULT_MODEL),
+        "input_sample_rate": INPUT_SAMPLE_RATE,
+    }
 
 
 def extract_live_text(message: Any) -> LiveText:

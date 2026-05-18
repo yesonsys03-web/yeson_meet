@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,14 +14,22 @@ from apps.server.api.v1.health import router as health_router
 from apps.server.api.v1.sessions import router as sessions_router
 from apps.server.api.v1.utterances import router as utterances_router
 from apps.server.api.v1.audio_stats import router as audio_stats_router
+from apps.server.ai.gemini_live import gemini_config_health
 from apps.server.ws.sidecar import router as ws_sidecar_router
 from apps.server.ws.viewer import router as ws_viewer_router
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Alembic upgrade is run via deploy script or compose entrypoint; do not run here
     # to keep dev/prod start identical. Health endpoint stays cheap.
+    gemini_health = gemini_config_health()
+    if gemini_health["configured"]:
+        logger.info("Gemini Live configured", extra={"model": gemini_health["model"]})
+    else:
+        logger.warning("Gemini Live disabled: GEMINI_API_KEY is not configured")
     yield
 
 
