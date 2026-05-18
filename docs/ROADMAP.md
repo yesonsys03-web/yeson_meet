@@ -138,18 +138,18 @@
 - [ ] **latency budget 4구간 분해 문서**: 캡처→서버 WSS / 서버→Gemini / Gemini→파싱 / 서버→viewer (P50 ≤ 2초 미달 시 partial subtitle 전략 즉시 도입)
 - [~] 🔴 **API Key health check** — 서버 시작 시 + 실패 시 운영자 알림 (ARCH §12.3)  ← `/api/v1/health/ai` + startup log 완료, 운영자 알림 미완료
 - 🔴 **회의 시간 안전 타이머** — 회의당 최대 N시간 (기본 3h) 도달 시 자동 종료 + alert (좀비 세션 비용 방지)
-- 🟡 **partial→final 자막 안정화** — `is_final` 플래그 + viewer가 `seq` 키로 마지막 partial 교체
+- [~] 🟡 **partial→final 자막 안정화** — `is_final` 플래그 + viewer가 `seq` 키로 마지막 partial 교체  ← viewer state upsert 로직 + web build 검증 완료, 실제 화면 깜빡임 E2E 미완료
 - 🟡 **VAD 또는 RMS 임계값으로 무음 청크 차단** (비용 절감)
 - [x] 시스템 프롬프트에 "혼합 언어 한국어 그대로 두기" 명시
 
-> 2026-05-18 코드 진행: `STTProvider`/`TranslationProvider` 인터페이스, `GeminiLiveProvider` lazy SDK adapter, sidecar audio→AI session wiring, AI utterance DB persist + viewer bus fan-out, Gemini config health endpoint, provider disconnect retry/backoff, AI publish latency structured log 구현. 검증: `uv run pytest apps/server/tests -v` → 13 passed / 4 skipped, `uv run pytest apps/client_sidecar/tests -q` → 14 passed. 실제 Gemini API Key 기반 1분 영상·viewer 지연 검증은 아직 미완료.
+> 2026-05-18 코드 진행: `STTProvider`/`TranslationProvider` 인터페이스, `GeminiLiveProvider` lazy SDK adapter, sidecar audio→AI session wiring, AI utterance DB persist + viewer bus fan-out, Gemini config health endpoint, provider disconnect retry/backoff, AI publish latency structured log, viewer partial→final seq replacement 구현. 검증: `uv run pytest apps/server/tests -v` → 13 passed / 4 skipped, `uv run pytest apps/client_sidecar/tests -q` → 14 passed, `pnpm --filter @yeson-meet/web build` → pass. 실제 Gemini API Key 기반 1분 영상·viewer 지연 검증은 아직 미완료.
 
 ### 완료 기준
 - [ ] 영어 1분 영상 재생 → 한국어 자막 viewer에 흐름
 - [ ] 자막 지연 P50 ≤ 2초
 - [~] Gemini 세션 끊김 → 5초 안에 재연결, 자막 일부 손실 외 회의 진행 유지  ← provider disconnect retry 단위 검증 완료, 실제 Gemini WS 끊김 E2E 미완료
 - [ ] 좀비 회의 자동 종료 (3시간 도달 테스트)
-- [ ] partial→final 갱신 시 viewer 깜빡임 없음
+- [~] partial→final 갱신 시 viewer 깜빡임 없음  ← 동일 `seq` final이 partial을 교체하는 상태 로직 검증 완료, 브라우저 시각 E2E 미완료
 
 ---
 

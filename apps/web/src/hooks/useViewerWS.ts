@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { UtteranceTranscribed } from "../types/events";
 import { fetchBackfill, viewerWsUrl } from "../lib/api";
+import { latestUtterance, upsertUtterance } from "../lib/utterances";
 
 export type ViewerState = {
   utterances: UtteranceTranscribed[];
@@ -28,8 +29,10 @@ export function useViewerWS(token: string): ViewerState {
       try {
         const backfill = await fetchBackfill(token, null);
         if (!active) return;
-        const sorted = [...backfill].sort((a, b) => a.seq - b.seq);
-        const last = sorted[sorted.length - 1] ?? null;
+        const sorted = [...backfill]
+          .sort((a, b) => a.seq - b.seq)
+          .reduce<UtteranceTranscribed[]>(upsertUtterance, []);
+        const last = latestUtterance(sorted);
         if (last) lastSeqRef.current = last.seq;
         setState((s) => ({
           ...s,
@@ -56,13 +59,16 @@ export function useViewerWS(token: string): ViewerState {
         try {
           const evt = JSON.parse(e.data) as UtteranceTranscribed;
           if (evt.type !== "utterance.transcribed") return;
-          if (evt.seq <= lastSeqRef.current) return; // dedupe / out-of-order safety
-          lastSeqRef.current = evt.seq;
-          setState((s) => ({
-            ...s,
-            utterances: [...s.utterances, evt].slice(-50),
-            latest: evt,
-          }));
+          if (evt.seq < lastSeqRef.current) return; // out-of-order safety; equal seq may replace partial
+          lastSeqRef.current = Math.max(lastSeqRef.current, evt.seq);
+          setState((s) => {
+            const utterances = upsertUtterance(s.utterances, evt);
+            return {
+              ...s,
+              utterances,
+              latest: latestUtterance(utterances),
+            };
+          });
         } catch {}
       };
       ws.onclose = () => {
