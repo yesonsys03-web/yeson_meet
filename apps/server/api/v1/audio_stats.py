@@ -1,3 +1,4 @@
+# === ANCHOR: AUDIO_STATS_START ===
 """S2 audio chunk telemetry endpoint.
 
 In-memory counters via apps.server.ws.audio_stats. Resets on server restart.
@@ -21,10 +22,12 @@ router = APIRouter(tags=["audio-stats"])
 
 
 @router.get("/sessions/{external_id}/audio_stats")
+# === ANCHOR: AUDIO_STATS_GET_AUDIO_STATS_START ===
 async def get_audio_stats(
     external_id: UUID,
     _operator: Annotated[AppUser, Depends(require_operator)],
     db: Annotated[AsyncSession, Depends(get_session)],
+# === ANCHOR: AUDIO_STATS_GET_AUDIO_STATS_END ===
 ) -> dict:
     """Return current in-memory audio-chunk telemetry for a session.
 
@@ -52,3 +55,4 @@ async def get_audio_stats(
         }
     snap["session_id"] = str(external_id)
     return snap
+# === ANCHOR: AUDIO_STATS_END ===

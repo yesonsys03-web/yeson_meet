@@ -1,3 +1,4 @@
+# === ANCHOR: DEPS_START ===
 """FastAPI auth dependencies."""
 from __future__ import annotations
 
@@ -13,9 +14,11 @@ from apps.server.db.models import AppUser, Device
 from apps.server.db.session import get_session
 
 
+# === ANCHOR: DEPS_GET_CURRENT_USER_START ===
 async def get_current_user(
     authorization: Annotated[str | None, Header()] = None,
     db: Annotated[AsyncSession, Depends(get_session)] = ...,
+# === ANCHOR: DEPS_GET_CURRENT_USER_END ===
 ) -> AppUser:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token")
@@ -39,25 +42,31 @@ async def get_current_user(
     return user
 
 
+# === ANCHOR: DEPS_REQUIRE_ADMIN_START ===
 async def require_admin(
     user: Annotated[AppUser, Depends(get_current_user)],
+# === ANCHOR: DEPS_REQUIRE_ADMIN_END ===
 ) -> AppUser:
     if user.role != "admin":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin only")
     return user
 
 
+# === ANCHOR: DEPS_REQUIRE_OPERATOR_START ===
 async def require_operator(
     user: Annotated[AppUser, Depends(get_current_user)],
+# === ANCHOR: DEPS_REQUIRE_OPERATOR_END ===
 ) -> AppUser:
     if user.role not in ("admin", "operator"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Operator only")
     return user
 
 
+# === ANCHOR: DEPS_DEVICE_FROM_KEY_START ===
 async def device_from_key(
     key: Annotated[str, Query()],
     db: Annotated[AsyncSession, Depends(get_session)] = ...,
+# === ANCHOR: DEPS_DEVICE_FROM_KEY_END ===
 ) -> Device:
     """Resolve a Device from a plaintext API key (hash-first single lookup)."""
     hashed = hash_api_key(key)
@@ -72,3 +81,4 @@ async def device_from_key(
     if device is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid device key")
     return device
+# === ANCHOR: DEPS_END ===

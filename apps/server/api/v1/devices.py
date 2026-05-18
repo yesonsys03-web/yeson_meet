@@ -1,3 +1,4 @@
+# === ANCHOR: DEVICES_START ===
 """Devices router stub. Body implemented in S1-L1 (POST /devices)."""
 from __future__ import annotations
 
@@ -15,21 +16,27 @@ from apps.server.db.session import get_session
 router = APIRouter(tags=["devices"], prefix="/devices")
 
 
+# === ANCHOR: DEVICES_DEVICECREATEIN_START ===
 class DeviceCreateIn(BaseModel):
     name: str
+# === ANCHOR: DEVICES_DEVICECREATEIN_END ===
 
 
+# === ANCHOR: DEVICES_DEVICECREATEOUT_START ===
 class DeviceCreateOut(BaseModel):
     id: int
     name: str
     api_key: str
+# === ANCHOR: DEVICES_DEVICECREATEOUT_END ===
 
 
 @router.post("", response_model=DeviceCreateOut, status_code=status.HTTP_201_CREATED)
+# === ANCHOR: DEVICES_CREATE_DEVICE_START ===
 async def create_device(
     body: DeviceCreateIn,
     _admin: Annotated[AppUser, Depends(require_admin)],
     db: Annotated[AsyncSession, Depends(get_session)],
+# === ANCHOR: DEVICES_CREATE_DEVICE_END ===
 ) -> DeviceCreateOut:
     plaintext = generate_api_key()
     device = Device(
@@ -41,3 +48,4 @@ async def create_device(
     await db.flush()
     await db.commit()
     return DeviceCreateOut(id=device.id, name=device.name, api_key=plaintext)
+# === ANCHOR: DEVICES_END ===

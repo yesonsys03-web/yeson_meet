@@ -1,3 +1,4 @@
+# === ANCHOR: SEED_START ===
 """Seed Slice 1 demo data (admin user, device, session, viewer token).
 
 Run with::
@@ -36,20 +37,27 @@ VIEWER_URL_BASE = "http://localhost:5173/v/"
 TOKEN_TTL_HOURS = 24
 
 
+# === ANCHOR: SEED__SHA256_HEX_START ===
 def _sha256_hex(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+# === ANCHOR: SEED__SHA256_HEX_END ===
 
 
+# === ANCHOR: SEED__GEN_API_KEY_START ===
 def _gen_api_key() -> str:
     """32-byte base64url API key (plaintext returned to caller)."""
     return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii").rstrip("=")
+# === ANCHOR: SEED__GEN_API_KEY_END ===
 
 
+# === ANCHOR: SEED__GEN_VIEWER_TOKEN_START ===
 def _gen_viewer_token() -> str:
     """32-byte URL-safe base64 token."""
     return secrets.token_urlsafe(32)
+# === ANCHOR: SEED__GEN_VIEWER_TOKEN_END ===
 
 
+# === ANCHOR: SEED_SEED_START ===
 async def seed() -> dict[str, str]:
     admin_password = os.environ.get("ADMIN_PASSWORD", "change-me-now")
 
@@ -136,8 +144,10 @@ async def seed() -> dict[str, str]:
             "VIEWER_TOKEN": viewer_token,
             "VIEWER_URL": f"{VIEWER_URL_BASE}{viewer_token}",
         }
+# === ANCHOR: SEED_SEED_END ===
 
 
+# === ANCHOR: SEED__MAIN_START ===
 async def _main() -> None:
     out = await seed()
     for key in (
@@ -149,7 +159,9 @@ async def _main() -> None:
         "VIEWER_URL",
     ):
         print(f"{key}={out[key]}")
+# === ANCHOR: SEED__MAIN_END ===
 
 
 if __name__ == "__main__":
     asyncio.run(_main())
+# === ANCHOR: SEED_END ===

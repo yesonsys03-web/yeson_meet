@@ -1,3 +1,4 @@
+# === ANCHOR: AUDIO_STATS_START ===
 """Per-session in-memory audio chunk counters.
 
 In-process only (single-node assumption per ARCH §1). Reset on server restart.
@@ -14,6 +15,7 @@ from uuid import UUID
 
 
 @dataclass
+# === ANCHOR: AUDIO_STATS_AUDIOSTATS_START ===
 class AudioStats:
     total_bytes: int = 0
     total_chunks: int = 0
@@ -23,13 +25,18 @@ class AudioStats:
     stopped_at: datetime | None = None
     stopped_reason: str | None = None
     _recent_chunk_times: Deque[float] = field(default_factory=lambda: deque(maxlen=200))
+# === ANCHOR: AUDIO_STATS_AUDIOSTATS_END ===
 
 
+# === ANCHOR: AUDIO_STATS_AUDIOSTATSREGISTRY_START ===
 class AudioStatsRegistry:
+    # === ANCHOR: AUDIO_STATS___INIT___START ===
     def __init__(self) -> None:
         self._sessions: dict[UUID, AudioStats] = {}
         self._lock = RLock()
+    # === ANCHOR: AUDIO_STATS___INIT___END ===
 
+    # === ANCHOR: AUDIO_STATS_RECORD_START ===
     def record(self, session_id: UUID, n_bytes: int) -> None:
         now = time.monotonic()
         with self._lock:
@@ -38,30 +45,40 @@ class AudioStatsRegistry:
             s.total_chunks += 1
             s.last_chunk_at = now
             s._recent_chunk_times.append(now)
+    # === ANCHOR: AUDIO_STATS_RECORD_END ===
 
+    # === ANCHOR: AUDIO_STATS_MARK_STARTED_START ===
     def mark_started(self, session_id: UUID, sample_rate: int, channels: int, started_at: datetime) -> None:
         with self._lock:
             s = self._sessions.setdefault(session_id, AudioStats())
             s.started_at = started_at
+    # === ANCHOR: AUDIO_STATS_MARK_STARTED_END ===
 
+    # === ANCHOR: AUDIO_STATS_NOTE_SEQ_START ===
     def note_seq(self, session_id: UUID, seq: int) -> None:
         with self._lock:
             s = self._sessions.setdefault(session_id, AudioStats())
             s.last_seq = seq
+    # === ANCHOR: AUDIO_STATS_NOTE_SEQ_END ===
 
+    # === ANCHOR: AUDIO_STATS_MARK_STOPPED_START ===
     def mark_stopped(self, session_id: UUID, reason: str | None) -> None:
         with self._lock:
             s = self._sessions.setdefault(session_id, AudioStats())
             s.stopped_at = datetime.now(timezone.utc)
             s.stopped_reason = reason
+    # === ANCHOR: AUDIO_STATS_MARK_STOPPED_END ===
 
+    # === ANCHOR: AUDIO_STATS_DISCARD_START ===
     def discard(self, session_id: UUID) -> None:
         """Evict a session entry. Call from /ws/sidecar disconnect path to
         bound memory in long-running servers (P1: unbounded dict growth).
         """
         with self._lock:
             self._sessions.pop(session_id, None)
+    # === ANCHOR: AUDIO_STATS_DISCARD_END ===
 
+    # === ANCHOR: AUDIO_STATS_SNAPSHOT_START ===
     def snapshot(self, session_id: UUID) -> dict | None:
         with self._lock:
             s = self._sessions.get(session_id)
@@ -69,6 +86,7 @@ class AudioStatsRegistry:
                 return None
             now = time.monotonic()
             # chunks per second over the last 1s window
+# === ANCHOR: AUDIO_STATS_AUDIOSTATSREGISTRY_END ===
             one_sec_ago = now - 1.0
             cps = sum(1 for t in s._recent_chunk_times if t >= one_sec_ago)
             age_ms = int((now - s.last_chunk_at) * 1000) if s.last_chunk_at else None
@@ -82,6 +100,8 @@ class AudioStatsRegistry:
                 "stopped_reason": s.stopped_reason,
                 "age_ms": age_ms,
             }
+    # === ANCHOR: AUDIO_STATS_SNAPSHOT_END ===
 
 
 audio_stats = AudioStatsRegistry()
+# === ANCHOR: AUDIO_STATS_END ===

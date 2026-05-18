@@ -1,3 +1,4 @@
+# === ANCHOR: AUTH_START ===
 """Auth router stub. Body implemented in S1-L1 (POST /auth/login)."""
 from __future__ import annotations
 
@@ -16,15 +17,19 @@ from apps.server.db.session import get_session
 router = APIRouter(tags=["auth"], prefix="/auth")
 
 
+# === ANCHOR: AUTH_LOGININ_START ===
 class LoginIn(BaseModel):
     email: str
     password: str
+# === ANCHOR: AUTH_LOGININ_END ===
 
 
 @router.post("/login", response_model=TokenPair)
+# === ANCHOR: AUTH_LOGIN_START ===
 async def login(
     body: LoginIn,
     db: Annotated[AsyncSession, Depends(get_session)],
+# === ANCHOR: AUTH_LOGIN_END ===
 ) -> TokenPair:
     user = (
         await db.execute(
@@ -40,3 +45,4 @@ async def login(
         )
     sub = str(user.id)
     return TokenPair(access_token=create_access(sub), refresh_token=create_refresh(sub))
+# === ANCHOR: AUTH_END ===

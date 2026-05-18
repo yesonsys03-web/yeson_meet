@@ -1,3 +1,4 @@
+# === ANCHOR: MODELS_START ===
 """SQLAlchemy 2.0 ORM models for yeson-meet (Slice 1).
 
 Locked in PRD §10: only 5 tables in Slice 1. department / role / glossary /
@@ -28,6 +29,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from .base import Base
 
 
+# === ANCHOR: MODELS_APPUSER_START ===
 class AppUser(Base):
     __tablename__ = "app_user"
 
@@ -44,8 +46,10 @@ class AppUser(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+# === ANCHOR: MODELS_APPUSER_END ===
 
 
+# === ANCHOR: MODELS_DEVICE_START ===
 class Device(Base):
     __tablename__ = "device"
 
@@ -58,8 +62,10 @@ class Device(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+# === ANCHOR: MODELS_DEVICE_END ===
 
 
+# === ANCHOR: MODELS_SESSION_START ===
 class Session(Base):
     __tablename__ = "session"
 
@@ -90,8 +96,10 @@ class Session(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+# === ANCHOR: MODELS_SESSION_END ===
 
 
+# === ANCHOR: MODELS_SESSIONTOKEN_START ===
 class SessionToken(Base):
     __tablename__ = "session_token"
 
@@ -110,8 +118,10 @@ class SessionToken(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+# === ANCHOR: MODELS_SESSIONTOKEN_END ===
 
 
+# === ANCHOR: MODELS_UTTERANCE_START ===
 class Utterance(Base):
     __tablename__ = "utterance"
 
@@ -139,3 +149,5 @@ class Utterance(Base):
         UniqueConstraint("session_id", "seq", name="uq_utterance_session_seq"),
         Index("idx_utterance_session_started", "session_id", "started_at"),
     )
+# === ANCHOR: MODELS_UTTERANCE_END ===
+# === ANCHOR: MODELS_END ===

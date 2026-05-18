@@ -1,3 +1,4 @@
+// === ANCHOR: ADMINAUDIOSTATS_START ===
 import { useEffect, useState } from "react";
 
 type Snapshot = {
@@ -12,20 +13,26 @@ type Snapshot = {
   age_ms: number | null;
 };
 
+// === ANCHOR: ADMINAUDIOSTATS_API_BASE_START ===
 const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
 
+// === ANCHOR: ADMINAUDIOSTATS_FMTBYTES_START ===
 function fmtBytes(b: number): string {
   if (b < 1024) return `${b} B`;
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
+// === ANCHOR: ADMINAUDIOSTATS_API_BASE_END ===
 }
+// === ANCHOR: ADMINAUDIOSTATS_FMTBYTES_END ===
 
+// === ANCHOR: ADMINAUDIOSTATS_ADMINAUDIOSTATS_START ===
 export function AdminAudioStats({ sessionId, token }: { sessionId: string; token: string }) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
+    // === ANCHOR: ADMINAUDIOSTATS_POLL_START ===
     async function poll() {
       try {
         const u = new URL(
@@ -36,13 +43,16 @@ export function AdminAudioStats({ sessionId, token }: { sessionId: string; token
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // === ANCHOR: ADMINAUDIOSTATS_DATA_START ===
         const data = (await res.json()) as Snapshot;
         if (active) {
           setSnap(data);
           setError(null);
         }
+        // === ANCHOR: ADMINAUDIOSTATS_DATA_END ===
       } catch (e) {
         if (active) setError(String(e));
+    // === ANCHOR: ADMINAUDIOSTATS_POLL_END ===
       }
     }
     poll();
@@ -87,7 +97,9 @@ export function AdminAudioStats({ sessionId, token }: { sessionId: string; token
             </div>
           )}
         </div>
+// === ANCHOR: ADMINAUDIOSTATS_ADMINAUDIOSTATS_END ===
       )}
     </main>
   );
 }
+// === ANCHOR: ADMINAUDIOSTATS_END ===

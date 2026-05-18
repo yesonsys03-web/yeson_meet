@@ -1,3 +1,4 @@
+# === ANCHOR: 0001_INITIAL_START ===
 """Slice 1 initial schema: 5 tables.
 
 Revision ID: 0001_initial
@@ -17,6 +18,7 @@ branch_labels = None
 depends_on = None
 
 
+# === ANCHOR: 0001_INITIAL_UPGRADE_START ===
 def upgrade() -> None:
     op.create_table(
         "app_user",
@@ -117,8 +119,10 @@ def upgrade() -> None:
     op.create_index(
         "idx_utterance_session_started", "utterance", ["session_id", "started_at"], unique=False
     )
+# === ANCHOR: 0001_INITIAL_UPGRADE_END ===
 
 
+# === ANCHOR: 0001_INITIAL_DOWNGRADE_START ===
 def downgrade() -> None:
     op.drop_index("idx_utterance_session_started", table_name="utterance")
     op.drop_table("utterance")
@@ -126,3 +130,5 @@ def downgrade() -> None:
     op.drop_table("session")
     op.drop_table("device")
     op.drop_table("app_user")
+# === ANCHOR: 0001_INITIAL_DOWNGRADE_END ===
+# === ANCHOR: 0001_INITIAL_END ===
