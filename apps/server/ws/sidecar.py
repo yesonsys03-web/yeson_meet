@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import replace
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -27,6 +28,10 @@ from apps.server.ai.providers import STTProvider, TranslatedUtterance
 from apps.server.db.models import Device, Session, Utterance
 from apps.server.db.session import AsyncSessionLocal
 from apps.server.domain.events import UtteranceTranscribed, serialize
+from apps.server.ops.session_safety import (
+    enforce_meeting_duration_limit,
+    session_started_at_exceeds_max_duration,
+)
 from apps.server.ws.audio_stats import audio_stats
 from apps.server.ws.bus import bus
 from apps.server.ws.control_messages import (
@@ -39,6 +44,34 @@ from apps.server.ws.control_messages import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class AISequenceNormalizer:
+    """Keep provider subtitle seq values monotonic across Live reconnects."""
+
+    def __init__(self) -> None:
+        self._offset = 0
+        self._last_provider_seq = 0
+        self._last_assigned_seq = 0
+        self._last_assigned_final = False
+        self._provider_to_assigned: dict[int, int] = {}
+
+    def normalize(self, utterance: TranslatedUtterance) -> TranslatedUtterance:
+        if utterance.seq <= self._last_provider_seq and self._last_assigned_final:
+            self._offset = self._last_assigned_seq
+            self._last_provider_seq = 0
+            self._provider_to_assigned.clear()
+
+        assigned_seq = self._provider_to_assigned.setdefault(
+            utterance.seq,
+            self._offset + utterance.seq,
+        )
+        self._last_provider_seq = max(self._last_provider_seq, utterance.seq)
+        self._last_assigned_seq = max(self._last_assigned_seq, assigned_seq)
+        self._last_assigned_final = utterance.is_final
+        if assigned_seq == utterance.seq:
+            return utterance
+        return replace(utterance, seq=assigned_seq)
 
 
 def _elapsed_ms(start: datetime, end: datetime) -> int:
@@ -91,7 +124,17 @@ async def _persist_and_publish_ai_utterance(
                 ended_at=evt.ended_at,
                 is_final=evt.is_final,
             )
-            .on_conflict_do_nothing(index_elements=["session_id", "seq"])
+            .on_conflict_do_update(
+                index_elements=["session_id", "seq"],
+                set_={
+                    "speaker": evt.speaker,
+                    "text_en": evt.text_en,
+                    "text_ko": evt.text_ko,
+                    "started_at": evt.started_at,
+                    "ended_at": evt.ended_at,
+                    "is_final": evt.is_final,
+                },
+            )
         )
         await db.execute(stmt)
         await db.commit()
@@ -140,10 +183,15 @@ async def ws_sidecar(ws: WebSocket) -> None:
         if meeting is None or meeting.status == "ended":
             await ws.close(code=status.WS_1008_POLICY_VIOLATION)
             return
+        if await enforce_meeting_duration_limit(db, meeting):
+            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
         session_pk = meeting.id
+        meeting_started_at = meeting.started_at
 
     await ws.accept()
     ai_session: AudioLiveSession | None = None
+    ai_sequence_normalizer = AISequenceNormalizer()
     try:
         while True:
             msg = await ws.receive()
@@ -162,7 +210,9 @@ async def ws_sidecar(ws: WebSocket) -> None:
                             new_ai_session = AudioLiveSession(
                                 provider=provider,
                                 on_utterance=lambda utterance: _persist_and_publish_ai_utterance(
-                                    session_pk, session_uuid, utterance
+                                    session_pk,
+                                    session_uuid,
+                                    ai_sequence_normalizer.normalize(utterance),
                                 ),
                             )
                             await new_ai_session.start()
@@ -199,6 +249,17 @@ async def ws_sidecar(ws: WebSocket) -> None:
                     await db.commit()
                 await bus.publish(session_uuid, serialize(evt))
             elif "bytes" in msg and msg["bytes"] is not None:
+                if session_started_at_exceeds_max_duration(meeting_started_at):
+                    async with AsyncSessionLocal() as db:
+                        meeting = (
+                            await db.execute(
+                                select(Session).where(Session.id == session_pk)
+                            )
+                        ).scalar_one_or_none()
+                        if meeting is not None:
+                            await enforce_meeting_duration_limit(db, meeting)
+                    await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+                    return
                 audio_stats.record(session_uuid, len(msg["bytes"]))
                 if ai_session is not None:
                     await ai_session.push_audio(msg["bytes"])

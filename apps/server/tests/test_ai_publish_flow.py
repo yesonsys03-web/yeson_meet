@@ -14,7 +14,40 @@ from apps.server.ai.providers import TranslatedUtterance
 from apps.server.auth.password import hash_password
 from apps.server.db.models import AppUser, Session, Utterance
 from apps.server.ws.bus import bus
-from apps.server.ws.sidecar import _persist_and_publish_ai_utterance
+from apps.server.ws.sidecar import AISequenceNormalizer, _persist_and_publish_ai_utterance
+
+
+def test_ai_sequence_normalizer_offsets_restarted_provider_sequences() -> None:
+    normalizer = AISequenceNormalizer()
+    now = datetime.now(timezone.utc)
+    first_partial = TranslatedUtterance(
+        seq=1,
+        text_en="First",
+        text_ko="첫 번째",
+        started_at=now,
+        ended_at=now,
+        is_final=False,
+    )
+    first_final = TranslatedUtterance(
+        seq=1,
+        text_en="First",
+        text_ko="첫 번째",
+        started_at=now,
+        ended_at=now,
+        is_final=True,
+    )
+    restarted_partial = TranslatedUtterance(
+        seq=1,
+        text_en="Second",
+        text_ko="두 번째",
+        started_at=now,
+        ended_at=now,
+        is_final=False,
+    )
+
+    assert normalizer.normalize(first_partial).seq == 1
+    assert normalizer.normalize(first_final).seq == 1
+    assert normalizer.normalize(restarted_partial).seq == 2
 
 
 @pytest.mark.asyncio
