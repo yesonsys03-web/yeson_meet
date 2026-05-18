@@ -4,6 +4,18 @@
 
 ## 1. macOS (Intel Mac, S2 PoC 우선)
 
+### 1.0 진행 로그
+
+| 시간 | 단계 | 상태 | 근거 |
+|---|---|---|---|
+| 2026-05-18 | Intel Mac 확인 | 완료 | `uname -m` → `x86_64`, CPU → Intel Core i9-9900K |
+| 2026-05-18 | BlackHole 2ch 인식 | 완료 | 재부팅 후 `system_profiler SPAudioDataType` → `BlackHole 2ch`, `sounddevice.query_devices()` → index `8 BlackHole 2ch` |
+| 2026-05-18 | BlackHole 2ch 설치 | 차단 | `brew install --cask blackhole-2ch` 다운로드 성공 후 macOS 관리자 암호 입력 필요로 중단 |
+| 2026-05-18 | BlackHole GUI 설치 | 완료(사용자 확인) | cached pkg를 `open`으로 실행했고 Installer가 restart 필요 메시지 표시 |
+| 2026-05-18 | 설치 후 재확인 | 완료 | macOS restart 후 OS/Python 양쪽에서 BlackHole 2ch 인식 확인 |
+| 2026-05-18 | sidecar→server 청크 E2E | 완료 | session `8390b139-5ff9-42f7-95ac-0c4aa8047c02`: 65초 폴링 `chunks_per_sec_1s=50`, peak `51`, top-up 후 `total_chunks=3522`, `total_bytes=2254080`, `age_ms=2` |
+| 2026-05-18 | 사용자 직접 재현 | 완료 | Multi-Output Device + BlackHole 2ch로 `chunks/sec=49~51`, `total_chunks=26306`, `total_bytes=16835840`, `age_ms=2~22` 확인 |
+
 ### 1.1 BlackHole 2ch 설치
 
 1. https://existential.audio/blackhole/ → BlackHole 2ch 다운로드 (Apple Silicon은 16ch도 OK)

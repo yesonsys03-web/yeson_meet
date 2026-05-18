@@ -117,7 +117,7 @@
 
 ### 완료 기준 (tag `s2_test`, 2026-05-18 코드 ship)
 - [ ] Windows 회의실 PC에서 영어 영상 1분 재생 → 서버 로그에 약 3000개 청크(20ms × 50/sec × 60s) 수신  ← **시스템 부원 협조 단계 대기 (PRD §10 락)**, SETUP_MEETING_PC.md §2 placeholder
-- [ ] Mac에서 동일 통과 (MVP-α 2순위, 일정 압박 시 β로 이월 가능)  ← **Intel Mac + BlackHole manual 검증 대기**, PRD §10 락에서 S2 PoC는 Mac 통과로 인정, 절차는 SETUP_MEETING_PC.md §1.1~1.4
+- [x] Mac에서 동일 통과 (MVP-α 2순위, 일정 압박 시 β로 이월 가능)  ← **Intel Mac + BlackHole S2 PoC 통과 (2026-05-18)**: session `8390b139-5ff9-42f7-95ac-0c4aa8047c02`, AI-run `chunks_per_sec_1s=50~51` / `total_chunks=3522`, 사용자 직접 재현 `chunks/sec=49~51` / `total_chunks=26306`, 절차는 SETUP_MEETING_PC.md §1.1~1.4
 - [~] 네트워크 끊김 5초 → 큐 누적 → 복구 시 흘림 없이 재전송  ← **부분 구현**: sidecar audio_ws 지수 백오프 재연결(1→30s) + 메모리-only `asyncio.Queue` (≈40s 버퍼) + drop counter 로그. 큐 영구화는 **Slice 5 SQLite로 위임** (audio_ws.py docstring + PRD §10 락 명시)
 
 > 코드/문서 ship 상태: sidecar pytest 14/14, server pytest 4 passed + 4 skipped (binary 테스트 deadlock은 [TODO(s3-test-infra)](apps/server/tests/test_ws_sidecar_binary.py)). code-reviewer P0 0건·P1 3건 fix 반영, verifier APPROVE.
