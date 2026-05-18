@@ -1,7 +1,9 @@
+// === ANCHOR: SUBTITLEVIEW_START ===
 import { useViewerWS } from "../hooks/useViewerWS";
 
+// === ANCHOR: SUBTITLEVIEW_SUBTITLEVIEW_START ===
 export function SubtitleView({ token }: { token: string }) {
-  const { latest, connected, error } = useViewerWS(token);
+  const { latest, connected, ended, error } = useViewerWS(token);
 
   return (
     <main className="min-h-screen bg-slate-900 text-slate-100 flex flex-col">
@@ -14,11 +16,18 @@ export function SubtitleView({ token }: { token: string }) {
               (connected ? "bg-emerald-400" : "bg-amber-400 animate-pulse")
             }
           />
-          <span className="opacity-70">{connected ? "LIVE" : "CONNECTING"}</span>
+          <span className="opacity-70">
+            {ended ? "ENDED" : connected ? "LIVE" : "CONNECTING"}
+          </span>
         </div>
       </header>
       <section className="flex-1 flex items-center justify-center px-8">
-        {error ? (
+        {ended ? (
+          <div className="text-center space-y-4">
+            <div className="text-5xl font-bold">회의 종료됨</div>
+            <div className="text-xl text-slate-400">자막 기록이 저장되었습니다.</div>
+          </div>
+        ) : error ? (
           <div className="text-rose-400 text-2xl">{error}</div>
         ) : !latest ? (
           <div className="text-slate-400 text-3xl">자막을 기다리는 중…</div>
@@ -32,3 +41,5 @@ export function SubtitleView({ token }: { token: string }) {
     </main>
   );
 }
+// === ANCHOR: SUBTITLEVIEW_SUBTITLEVIEW_END ===
+// === ANCHOR: SUBTITLEVIEW_END ===
