@@ -1,6 +1,6 @@
 # ROADMAP — yeson-meet
 
-> 최종 갱신: 2026-05-14  
+> 최종 갱신: 2026-05-18
 > 단위: 1인 풀타임 기준 영업일. 검토/대기 시간 제외.  
 > **MVP-α** 5 슬라이스 + **MVP-β** 7 묶음으로 분리. β는 우선순위에 따라 선택적으로 진행.
 
@@ -141,6 +141,8 @@
 - 🟡 **partial→final 자막 안정화** — `is_final` 플래그 + viewer가 `seq` 키로 마지막 partial 교체
 - 🟡 **VAD 또는 RMS 임계값으로 무음 청크 차단** (비용 절감)
 - 시스템 프롬프트에 "혼합 언어 한국어 그대로 두기" 명시
+
+> 2026-05-18 코드 진행: `STTProvider`/`TranslationProvider` 인터페이스, `GeminiLiveProvider` lazy SDK adapter, sidecar audio→AI session wiring, AI utterance DB persist + viewer bus fan-out 1차 구현. 검증: `uv run pytest apps/server/tests -v` → 9 passed / 4 skipped, `uv run pytest apps/client_sidecar/tests -q` → 14 passed. 실제 Gemini API Key 기반 1분 영상·viewer 지연 검증은 아직 미완료.
 
 ### 완료 기준
 - [ ] 영어 1분 영상 재생 → 한국어 자막 viewer에 흐름
