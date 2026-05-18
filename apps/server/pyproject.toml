@@ -17,6 +17,7 @@ dependencies = [
   "websockets>=13.1",
   "python-multipart>=0.0.12",
   "psycopg[binary]>=3.2",
+  "google-genai>=2.4.0",
 ]
 
 [build-system]
