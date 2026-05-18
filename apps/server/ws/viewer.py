@@ -1,3 +1,4 @@
+# === ANCHOR: VIEWER_START ===
 """Viewer WebSocket router (/ws/viewer). Implemented in S1-L1.
 
 Viewer (browser) connects with ?token=<session_token>, server resolves the
@@ -20,6 +21,7 @@ router = APIRouter()
 
 
 @router.websocket("/ws/viewer")
+# === ANCHOR: VIEWER_WS_VIEWER_START ===
 async def ws_viewer(ws: WebSocket) -> None:
     token = ws.query_params.get("token")
     if not token:
@@ -42,14 +44,28 @@ async def ws_viewer(ws: WebSocket) -> None:
         meeting = (
             await db.execute(select(Session).where(Session.id == token_row.session_id))
         ).scalar_one_or_none()
-        if meeting is None or meeting.status == "ended":
+        if meeting is None:
             await ws.close(code=status.WS_1008_POLICY_VIOLATION)
             return
         session_uuid = meeting.external_id
+        session_status = meeting.status
+        ended_at = meeting.ended_at
 
     await ws.accept()
+    if session_status == "ended" and ended_at is not None:
+        await ws.send_json(
+            {
+                "type": "session.ended",
+                "session_id": str(session_uuid),
+                "occurred_at": ended_at.isoformat(),
+                "ended_at": ended_at.isoformat(),
+            }
+        )
+        await ws.close()
+        return
     q = bus.subscribe(session_uuid)
 
+    # === ANCHOR: VIEWER__DRAIN_INCOMING_START ===
     async def _drain_incoming() -> None:
         # Read-only stream; drop anything the viewer sends.
         try:
@@ -57,6 +73,7 @@ async def ws_viewer(ws: WebSocket) -> None:
                 await ws.receive_text()
         except WebSocketDisconnect:
             return
+    # === ANCHOR: VIEWER__DRAIN_INCOMING_END ===
 
     drain = asyncio.create_task(_drain_incoming())
     try:
@@ -66,5 +83,7 @@ async def ws_viewer(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         return
     finally:
+# === ANCHOR: VIEWER_WS_VIEWER_END ===
         bus.unsubscribe(session_uuid, q)
         drain.cancel()
+# === ANCHOR: VIEWER_END ===
