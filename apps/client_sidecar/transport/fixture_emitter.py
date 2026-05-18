@@ -1,3 +1,4 @@
+# === ANCHOR: FIXTURE_EMITTER_START ===
 """Fixture utterance generator. 1초마다 PRD 부록 B sample round-robin 발화.
 
 Slice 1: 오디오 캡처/Gemini 호출 없이 자막 fan-out 골격만 검증.
@@ -28,6 +29,7 @@ FIXTURES: list[tuple[str, str]] = [
 ]
 
 
+# === ANCHOR: FIXTURE_EMITTER_FIXTURE_STREAM_START ===
 async def fixture_stream(session_id: UUID, interval_seconds: float = 1.0) -> AsyncIterator[dict]:
     """Yield one UtteranceTranscribed JSON dict per `interval_seconds`."""
     seq = 0
@@ -48,3 +50,5 @@ async def fixture_stream(session_id: UUID, interval_seconds: float = 1.0) -> Asy
         )
         yield evt.to_json_dict()
         await asyncio.sleep(interval_seconds)
+# === ANCHOR: FIXTURE_EMITTER_FIXTURE_STREAM_END ===
+# === ANCHOR: FIXTURE_EMITTER_END ===

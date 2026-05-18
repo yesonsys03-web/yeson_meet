@@ -1,3 +1,4 @@
+# === ANCHOR: AUDIO_WS_START ===
 """S2 audio mode WebSocket sender: audio.started + binary chunks + chunk_meta + audio.stopped.
 
 Reconnects with exponential backoff (1→30s). Memory-only queue (Slice 5 will add SQLite).
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 CHUNK_META_INTERVAL = 50  # emit chunk_meta every N chunks (≈1s)
 
 
+# === ANCHOR: AUDIO_WS_STREAM_AUDIO_START ===
 async def stream_audio(url: str, chunks: AsyncIterator[bytes]) -> None:
     """Connect, send audio.started, stream binary chunks, periodic chunk_meta, audio.stopped on exit."""
     backoff = 1.0
@@ -71,12 +73,18 @@ async def stream_audio(url: str, chunks: AsyncIterator[bytes]) -> None:
             logger.warning("audio ws closed: %s — reconnect in %.1fs", e, backoff)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
+# === ANCHOR: AUDIO_WS_STREAM_AUDIO_END ===
 
 
+# === ANCHOR: AUDIO_WS__ISO_NOW_START ===
 def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+# === ANCHOR: AUDIO_WS__ISO_NOW_END ===
 
 
+# === ANCHOR: AUDIO_WS__SAFE_URL_START ===
 def _safe_url(url: str) -> str:
     # mask api key in query string for logs
     return url.split("?")[0] + "?key=<redacted>"
+# === ANCHOR: AUDIO_WS__SAFE_URL_END ===
+# === ANCHOR: AUDIO_WS_END ===

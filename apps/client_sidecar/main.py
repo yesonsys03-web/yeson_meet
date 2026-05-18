@@ -1,3 +1,4 @@
+# === ANCHOR: MAIN_START ===
 """Sidecar entrypoint with mode dispatch (S2)."""
 from __future__ import annotations
 
@@ -10,14 +11,17 @@ from uuid import UUID
 from apps.client_sidecar.config.constants import SERVER_WS_BASE, SERVER_WS_PATH
 
 
+# === ANCHOR: MAIN__REQUIRED_ENV_START ===
 def _required_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
         sys.stderr.write(f"missing env var: {name}\n")
         sys.exit(2)
     return value
+# === ANCHOR: MAIN__REQUIRED_ENV_END ===
 
 
+# === ANCHOR: MAIN_FIXTURE_MAIN_START ===
 async def fixture_main() -> None:
     """S1 fixture mode — 1Hz PRD 부록 B fixtures over text frames."""
     from apps.client_sidecar.transport.fixture_emitter import fixture_stream
@@ -28,8 +32,10 @@ async def fixture_main() -> None:
     url = f"{SERVER_WS_BASE}{SERVER_WS_PATH}?key={api_key}&session={session_id}"
     print(f"sidecar fixture mode → {url}")
     await send_events(url, fixture_stream(session_id))
+# === ANCHOR: MAIN_FIXTURE_MAIN_END ===
 
 
+# === ANCHOR: MAIN_AUDIO_MAIN_START ===
 async def audio_main() -> None:
     """S2 audio mode — sounddevice BlackHole capture → 16kHz mono PCM s16le WS push."""
     from apps.client_sidecar.audio.capture import capture_chunks
@@ -46,8 +52,10 @@ async def audio_main() -> None:
 
     chunks = capture_chunks(device)
     await stream_audio(url, chunks)
+# === ANCHOR: MAIN_AUDIO_MAIN_END ===
 
 
+# === ANCHOR: MAIN_MAIN_START ===
 async def main() -> None:
     mode = os.environ.get("YESON_SIDECAR_MODE", "audio").lower()
     if mode == "fixture":
@@ -57,12 +65,16 @@ async def main() -> None:
     else:
         sys.stderr.write(f"unknown YESON_SIDECAR_MODE: {mode!r} (must be 'fixture' or 'audio')\n")
         sys.exit(2)
+# === ANCHOR: MAIN_MAIN_END ===
 
 
+# === ANCHOR: MAIN_RUN_START ===
 def run() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     asyncio.run(main())
+# === ANCHOR: MAIN_RUN_END ===
 
 
 if __name__ == "__main__":
     run()
+# === ANCHOR: MAIN_END ===

@@ -1,3 +1,4 @@
+# === ANCHOR: SERVER_WS_START ===
 """WebSocket client for the yeson-meet server /ws/sidecar endpoint.
 
 Backoff schedule: 1s, 2s, 4s, 8s, 16s, 30s (capped at 30s).
@@ -15,6 +16,7 @@ from websockets.exceptions import ConnectionClosed
 logger = logging.getLogger(__name__)
 
 
+# === ANCHOR: SERVER_WS_SEND_EVENTS_START ===
 async def send_events(url: str, events: AsyncIterator[dict]) -> None:
     """Connect to server WS, stream events as JSON. Auto-reconnect with backoff."""
     backoff = 1.0
@@ -31,3 +33,5 @@ async def send_events(url: str, events: AsyncIterator[dict]) -> None:
             logger.warning("ws closed: %s — reconnect in %.1fs", e, backoff)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
+# === ANCHOR: SERVER_WS_SEND_EVENTS_END ===
+# === ANCHOR: SERVER_WS_END ===

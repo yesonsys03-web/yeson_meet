@@ -1,3 +1,4 @@
+# === ANCHOR: EVENT_SCHEMA_START ===
 """Sidecar-side mirror of apps/server/domain/events.py.
 
 SSOT lives in apps/server/domain/events.py (Pydantic). This dataclass mirror
@@ -18,6 +19,7 @@ EVENT_VERSION = "1"
 
 
 @dataclass(frozen=True, slots=True)
+# === ANCHOR: EVENT_SCHEMA_UTTERANCETRANSCRIBED_START ===
 class UtteranceTranscribed:
     session_id: UUID
     occurred_at: datetime
@@ -30,10 +32,14 @@ class UtteranceTranscribed:
     is_final: bool = False
     type: str = "utterance.transcribed"
 
+    # === ANCHOR: EVENT_SCHEMA_TO_JSON_DICT_START ===
     def to_json_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["session_id"] = str(self.session_id)
         d["occurred_at"] = self.occurred_at.isoformat()
         d["started_at"] = self.started_at.isoformat()
         d["ended_at"] = self.ended_at.isoformat()
+# === ANCHOR: EVENT_SCHEMA_UTTERANCETRANSCRIBED_END ===
         return d
+    # === ANCHOR: EVENT_SCHEMA_TO_JSON_DICT_END ===
+# === ANCHOR: EVENT_SCHEMA_END ===

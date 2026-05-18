@@ -1,3 +1,4 @@
+# === ANCHOR: DEVICE_START ===
 """BlackHole input device discovery."""
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import sounddevice as sd
 logger = logging.getLogger(__name__)
 
 
+# === ANCHOR: DEVICE_FIND_INPUT_DEVICE_START ===
 def find_input_device(name_regex: str, index_override: int | None = None) -> dict[str, Any]:
     """Locate a sounddevice input device matching ``name_regex``.
 
@@ -49,3 +51,5 @@ def find_input_device(name_regex: str, index_override: int | None = None) -> dic
     logger.info("audio device (regex match): [%d] %s native_rate=%s ch=%d",
                 idx, dev["name"], dev["default_samplerate"], dev["max_input_channels"])
     return dev
+# === ANCHOR: DEVICE_FIND_INPUT_DEVICE_END ===
+# === ANCHOR: DEVICE_END ===
