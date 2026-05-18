@@ -365,6 +365,10 @@ Session.visibility 값:
 | **Slice 1 — DB 테이블 5종** | **🔒 Slice 1 락 (2026-05-15)**: `app_user / device / session / session_token / utterance`. 컬럼은 ARCH §3 초안 그대로 (department/role은 S5, glossary/bookmark/note는 β-1, keyword/action_item은 β-3에서 추가). Alembic 단일 마이그레이션 파일 `0001_initial.py`로 묶음 |
 | **Slice 1 — REST 엔드포인트 3개** | **🔒 Slice 1 락 (2026-05-15)**: ① `POST /api/v1/auth/login` (email+password → JWT 24h + refresh 30d). ② `POST /api/v1/devices` (admin JWT, 1회성 API Key 평문 반환, sha256만 DB 저장). ③ `POST /api/v1/sessions` (operator JWT → viewer_url 반환). 그 외 `/api/v1/sessions/{id}/end`, `/report` 등은 S4 |
 | **Slice 1 — viewer 백필 시그니처** | **🔒 Slice 1 락 (2026-05-15)**: `GET /api/v1/sessions/{id}/utterances?since=<seq>&limit=50` — 응답은 `{utterances: [{seq, text_en, text_ko, started_at, is_final, ...}]}`. `since` 생략 시 최근 50개, `since=N` 지정 시 `seq > N` 필터. S5 viewer 백그라운드 복귀 따라잡기와 호환 (`(session_id, seq) UNIQUE` 활용) |
+| **Slice 2 — Mac BlackHole PoC 우선** | **🔒 Slice 2 락 (2026-05-15)**: Solo dev S2 PoC 검증은 **Intel Mac + BlackHole** 경로로 먼저 통과. ROADMAP §S2 완료 기준 1번(Windows 회의실 PC에서 영어 영상 1분 재생 → 3000 청크 수신)은 시스템 부원 협조 시점에 별도 검증. MVP-α 정식 우선순위 (Windows 1순위, Mac 2순위)는 유지하되, S2 PoC 완료 기준은 Mac 통과로 인정 |
+| **Slice 2 — 오디오 청크 바이너리 포맷** | **🔒 Slice 2 락 (2026-05-15)**: 16 kHz / mono / **PCM signed int16 little-endian** / 20 ms 프레임 = **320 samples = 640 bytes per chunk**. 모든 오디오는 WebSocket **binary frame** (`ws.send_bytes`)으로 송신. 입력 디바이스의 native sample-rate/채널은 sidecar에서 16kHz mono로 강제 리샘플 후 송신 |
+| **Slice 2 — Sidecar 모드 스위치** | **🔒 Slice 2 락 (2026-05-15)**: 환경변수 `YESON_SIDECAR_MODE=fixture\|audio` (default `audio`부터 S2). `fixture`는 S1 PRD 부록 B 5종 round-robin 유지 (β-1 모의 회의 모드 토대). `audio`는 sounddevice 캡처. **모드 mid-session 전환 금지** (재시작 필요) |
+| **Slice 2 — Sidecar↔Server WS 프로토콜 확장** | **🔒 Slice 2 락 (2026-05-15)**: 동일 `/ws/sidecar` connection에서 **binary frame = 오디오 청크**, **text frame = JSON 제어 메시지**. 제어 메시지 type 락 (S2 진입시): `audio.started` (sample_rate, channels, format, started_at) / `chunk_meta` (선택, seq + started_at, S3에서 본격 사용) / `audio.stopped`. S2 서버는 binary 청크 카운트/바이트만 로깅 (Gemini 호출 X, DB save X — S3). 시간 동기는 server 도착 시각 기준 (sidecar 시계 신뢰 X) |
 
 ---
 

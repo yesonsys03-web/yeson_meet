@@ -50,9 +50,55 @@
       "category": "service",
       "anchors": [],
       "anchor_spans": [],
-      "line_count": 1,
+      "line_count": 2,
       "imports": [],
       "imported_by": []
+    },
+    "apps/client_sidecar/audio/capture.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 101,
+      "imports": [
+        "apps/client_sidecar/audio/resample.py",
+        "apps/client_sidecar/audio/rms.py",
+        "apps/client_sidecar/config/audio.py"
+      ],
+      "imported_by": [
+        "apps/client_sidecar/main.py"
+      ]
+    },
+    "apps/client_sidecar/audio/device.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 51,
+      "imports": [],
+      "imported_by": [
+        "apps/client_sidecar/main.py"
+      ]
+    },
+    "apps/client_sidecar/audio/resample.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 26,
+      "imports": [
+        "apps/client_sidecar/config/audio.py"
+      ],
+      "imported_by": [
+        "apps/client_sidecar/audio/capture.py"
+      ]
+    },
+    "apps/client_sidecar/audio/rms.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 34,
+      "imports": [],
+      "imported_by": [
+        "apps/client_sidecar/audio/capture.py"
+      ]
     },
     "apps/client_sidecar/config/__init__.py": {
       "category": "service",
@@ -61,6 +107,19 @@
       "line_count": 1,
       "imports": [],
       "imported_by": []
+    },
+    "apps/client_sidecar/config/audio.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 21,
+      "imports": [],
+      "imported_by": [
+        "apps/client_sidecar/audio/capture.py",
+        "apps/client_sidecar/audio/resample.py",
+        "apps/client_sidecar/main.py",
+        "apps/client_sidecar/transport/audio_ws.py"
+      ]
     },
     "apps/client_sidecar/config/constants.py": {
       "category": "service",
@@ -74,7 +133,7 @@
           "end": 15
         }
       ],
-      "line_count": 15,
+      "line_count": 20,
       "imports": [],
       "imported_by": [
         "apps/client_sidecar/main.py"
@@ -82,26 +141,17 @@
     },
     "apps/client_sidecar/main.py": {
       "category": "entry",
-      "anchors": [
-        "MAIN",
-        "MAIN_RUN"
-      ],
-      "anchor_spans": [
-        {
-          "name": "MAIN",
-          "start": 1,
-          "end": 26
-        },
-        {
-          "name": "MAIN_RUN",
-          "start": 15,
-          "end": 21,
-          "signature": "def run() -> None:"
-        }
-      ],
-      "line_count": 26,
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 68,
       "imports": [
-        "apps/client_sidecar/config/constants.py"
+        "apps/client_sidecar/config/constants.py",
+        "apps/client_sidecar/transport/fixture_emitter.py",
+        "apps/client_sidecar/transport/server_ws.py",
+        "apps/client_sidecar/audio/capture.py",
+        "apps/client_sidecar/audio/device.py",
+        "apps/client_sidecar/config/audio.py",
+        "apps/client_sidecar/transport/audio_ws.py"
       ],
       "imported_by": []
     },
@@ -120,6 +170,50 @@
       "line_count": 1,
       "imports": [],
       "imported_by": []
+    },
+    "apps/client_sidecar/transport/audio_ws.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 82,
+      "imports": [
+        "apps/client_sidecar/config/audio.py"
+      ],
+      "imported_by": [
+        "apps/client_sidecar/main.py"
+      ]
+    },
+    "apps/client_sidecar/transport/event_schema.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 39,
+      "imports": [],
+      "imported_by": [
+        "apps/client_sidecar/transport/fixture_emitter.py"
+      ]
+    },
+    "apps/client_sidecar/transport/fixture_emitter.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 50,
+      "imports": [
+        "apps/client_sidecar/transport/event_schema.py"
+      ],
+      "imported_by": [
+        "apps/client_sidecar/main.py"
+      ]
+    },
+    "apps/client_sidecar/transport/server_ws.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 33,
+      "imports": [],
+      "imported_by": [
+        "apps/client_sidecar/main.py"
+      ]
     },
     "apps/desktop/src-tauri/build.rs": {
       "category": "ui",
@@ -253,6 +347,51 @@
       "imports": [],
       "imported_by": []
     },
+    "apps/server/api/v1/audio_stats.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 54,
+      "imports": [
+        "apps/server/auth/deps.py",
+        "apps/server/db/models.py",
+        "apps/server/db/session.py",
+        "apps/server/ws/audio_stats.py"
+      ],
+      "imported_by": [
+        "apps/server/main.py"
+      ]
+    },
+    "apps/server/api/v1/auth.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 42,
+      "imports": [
+        "apps/server/auth/jwt.py",
+        "apps/server/auth/password.py",
+        "apps/server/db/models.py",
+        "apps/server/db/session.py"
+      ],
+      "imported_by": [
+        "apps/server/main.py"
+      ]
+    },
+    "apps/server/api/v1/devices.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 43,
+      "imports": [
+        "apps/server/auth/deps.py",
+        "apps/server/auth/device.py",
+        "apps/server/db/models.py",
+        "apps/server/db/session.py"
+      ],
+      "imported_by": [
+        "apps/server/main.py"
+      ]
+    },
     "apps/server/api/v1/health.py": {
       "category": "service",
       "anchors": [
@@ -278,13 +417,103 @@
         "apps/server/main.py"
       ]
     },
+    "apps/server/api/v1/sessions.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 64,
+      "imports": [
+        "apps/server/auth/deps.py",
+        "apps/server/db/models.py",
+        "apps/server/db/session.py"
+      ],
+      "imported_by": [
+        "apps/server/main.py"
+      ]
+    },
+    "apps/server/api/v1/utterances.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 110,
+      "imports": [
+        "apps/server/auth/deps.py",
+        "apps/server/db/models.py",
+        "apps/server/db/session.py"
+      ],
+      "imported_by": [
+        "apps/server/main.py"
+      ]
+    },
+    "apps/server/auth/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 1,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/server/auth/deps.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 74,
+      "imports": [
+        "apps/server/auth/device.py",
+        "apps/server/auth/jwt.py",
+        "apps/server/db/models.py",
+        "apps/server/db/session.py"
+      ],
+      "imported_by": [
+        "apps/server/api/v1/audio_stats.py",
+        "apps/server/api/v1/devices.py",
+        "apps/server/api/v1/sessions.py",
+        "apps/server/api/v1/utterances.py"
+      ]
+    },
+    "apps/server/auth/device.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 17,
+      "imports": [],
+      "imported_by": [
+        "apps/server/api/v1/devices.py",
+        "apps/server/auth/deps.py",
+        "apps/server/ws/sidecar.py"
+      ]
+    },
+    "apps/server/auth/jwt.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 50,
+      "imports": [],
+      "imported_by": [
+        "apps/server/api/v1/auth.py",
+        "apps/server/auth/deps.py"
+      ]
+    },
+    "apps/server/auth/password.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 15,
+      "imports": [],
+      "imported_by": [
+        "apps/server/api/v1/auth.py",
+        "apps/server/db/seed.py"
+      ]
+    },
     "apps/server/db/__init__.py": {
       "category": "service",
       "anchors": [],
       "anchor_spans": [],
       "line_count": 0,
       "imports": [],
-      "imported_by": []
+      "imported_by": [
+        "apps/server/db/alembic/env.py"
+      ]
     },
     "apps/server/db/alembic/env.py": {
       "category": "service",
@@ -299,36 +528,123 @@
         {
           "name": "ENV",
           "start": 1,
-          "end": 64
+          "end": 67
         },
         {
           "name": "ENV_RUN_MIGRATIONS_OFFLINE",
-          "start": 24,
-          "end": 30,
+          "start": 27,
+          "end": 33,
           "signature": "def run_migrations_offline() -> None:"
         },
         {
           "name": "ENV_DO_RUN_MIGRATIONS",
-          "start": 33,
-          "end": 38,
+          "start": 36,
+          "end": 41,
           "signature": "def do_run_migrations(connection: Connection) -> None:"
         },
         {
           "name": "ENV_RUN_ASYNC_MIGRATIONS",
-          "start": 41,
-          "end": 51,
+          "start": 44,
+          "end": 54,
           "signature": "async def run_async_migrations() -> None:"
         },
         {
           "name": "ENV_RUN_MIGRATIONS_ONLINE",
-          "start": 54,
-          "end": 57,
+          "start": 57,
+          "end": 60,
           "signature": "def run_migrations_online() -> None:"
         }
       ],
-      "line_count": 64,
+      "line_count": 67,
+      "imports": [
+        "apps/server/db/base.py",
+        "apps/server/db/__init__.py"
+      ],
+      "imported_by": []
+    },
+    "apps/server/db/alembic/versions/0001_initial.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 128,
       "imports": [],
       "imported_by": []
+    },
+    "apps/server/db/base.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 8,
+      "imports": [],
+      "imported_by": [
+        "apps/server/db/alembic/env.py"
+      ]
+    },
+    "apps/server/db/models.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 141,
+      "imports": [],
+      "imported_by": [
+        "apps/server/api/v1/audio_stats.py",
+        "apps/server/api/v1/auth.py",
+        "apps/server/api/v1/devices.py",
+        "apps/server/api/v1/sessions.py",
+        "apps/server/api/v1/utterances.py",
+        "apps/server/auth/deps.py",
+        "apps/server/db/seed.py",
+        "apps/server/ws/sidecar.py",
+        "apps/server/ws/viewer.py"
+      ]
+    },
+    "apps/server/db/seed.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 155,
+      "imports": [
+        "apps/server/auth/password.py",
+        "apps/server/db/models.py",
+        "apps/server/db/session.py"
+      ],
+      "imported_by": []
+    },
+    "apps/server/db/session.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 21,
+      "imports": [],
+      "imported_by": [
+        "apps/server/api/v1/audio_stats.py",
+        "apps/server/api/v1/auth.py",
+        "apps/server/api/v1/devices.py",
+        "apps/server/api/v1/sessions.py",
+        "apps/server/api/v1/utterances.py",
+        "apps/server/auth/deps.py",
+        "apps/server/db/seed.py",
+        "apps/server/ws/sidecar.py",
+        "apps/server/ws/viewer.py"
+      ]
+    },
+    "apps/server/domain/__init__.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 0,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/server/domain/events.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 48,
+      "imports": [],
+      "imported_by": [
+        "apps/server/ws/sidecar.py"
+      ]
     },
     "apps/server/integrations/__init__.py": {
       "category": "service",
@@ -348,18 +664,25 @@
         {
           "name": "MAIN",
           "start": 1,
-          "end": 20
+          "end": 57
         },
         {
           "name": "MAIN_RUN",
-          "start": 10,
-          "end": 15,
+          "start": 47,
+          "end": 52,
           "signature": "def run() -> None:"
         }
       ],
-      "line_count": 20,
+      "line_count": 57,
       "imports": [
-        "apps/server/api/v1/health.py"
+        "apps/server/api/v1/auth.py",
+        "apps/server/api/v1/devices.py",
+        "apps/server/api/v1/health.py",
+        "apps/server/api/v1/sessions.py",
+        "apps/server/api/v1/utterances.py",
+        "apps/server/api/v1/audio_stats.py",
+        "apps/server/ws/sidecar.py",
+        "apps/server/ws/viewer.py"
       ],
       "imported_by": []
     },
@@ -370,6 +693,70 @@
       "line_count": 1,
       "imports": [],
       "imported_by": []
+    },
+    "apps/server/ws/audio_stats.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 80,
+      "imports": [],
+      "imported_by": [
+        "apps/server/api/v1/audio_stats.py",
+        "apps/server/ws/sidecar.py"
+      ]
+    },
+    "apps/server/ws/bus.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 39,
+      "imports": [],
+      "imported_by": [
+        "apps/server/ws/sidecar.py",
+        "apps/server/ws/viewer.py"
+      ]
+    },
+    "apps/server/ws/control_messages.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 38,
+      "imports": [],
+      "imported_by": [
+        "apps/server/ws/sidecar.py"
+      ]
+    },
+    "apps/server/ws/sidecar.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 125,
+      "imports": [
+        "apps/server/auth/device.py",
+        "apps/server/db/models.py",
+        "apps/server/db/session.py",
+        "apps/server/domain/events.py",
+        "apps/server/ws/audio_stats.py",
+        "apps/server/ws/bus.py",
+        "apps/server/ws/control_messages.py"
+      ],
+      "imported_by": [
+        "apps/server/main.py"
+      ]
+    },
+    "apps/server/ws/viewer.py": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 70,
+      "imports": [
+        "apps/server/db/models.py",
+        "apps/server/db/session.py",
+        "apps/server/ws/bus.py"
+      ],
+      "imported_by": [
+        "apps/server/main.py"
+      ]
     },
     "apps/web/postcss.config.js": {
       "category": "other",
@@ -396,13 +783,64 @@
         {
           "name": "APP",
           "start": 1,
-          "end": 9
+          "end": 32,
+          "signature": "function parseViewerToken(): string | null {"
         }
       ],
-      "line_count": 9,
-      "imports": [],
+      "line_count": 32,
+      "imports": [
+        "apps/web/src/components/SubtitleView.tsx",
+        "apps/web/src/components/AdminAudioStats.tsx"
+      ],
       "imported_by": [
         "apps/web/src/main.tsx"
+      ]
+    },
+    "apps/web/src/components/AdminAudioStats.tsx": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 93,
+      "imports": [],
+      "imported_by": [
+        "apps/web/src/App.tsx"
+      ]
+    },
+    "apps/web/src/components/SubtitleView.tsx": {
+      "category": "ui",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 34,
+      "imports": [
+        "apps/web/src/hooks/useViewerWS.ts"
+      ],
+      "imported_by": [
+        "apps/web/src/App.tsx"
+      ]
+    },
+    "apps/web/src/hooks/useViewerWS.ts": {
+      "category": "ui",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 87,
+      "imports": [
+        "apps/web/src/types/events.ts",
+        "apps/web/src/lib/api.ts"
+      ],
+      "imported_by": [
+        "apps/web/src/components/SubtitleView.tsx"
+      ]
+    },
+    "apps/web/src/lib/api.ts": {
+      "category": "service",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 25,
+      "imports": [
+        "apps/web/src/types/events.ts"
+      ],
+      "imported_by": [
+        "apps/web/src/hooks/useViewerWS.ts"
       ]
     },
     "apps/web/src/main.tsx": {
@@ -423,6 +861,17 @@
       ],
       "imported_by": []
     },
+    "apps/web/src/types/events.ts": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 19,
+      "imports": [],
+      "imported_by": [
+        "apps/web/src/hooks/useViewerWS.ts",
+        "apps/web/src/lib/api.ts"
+      ]
+    },
     "apps/web/src/vite-env.d.ts": {
       "category": "other",
       "anchors": [
@@ -432,10 +881,10 @@
         {
           "name": "VITE_ENV_D",
           "start": 1,
-          "end": 3
+          "end": 12
         }
       ],
-      "line_count": 3,
+      "line_count": 12,
       "imports": [],
       "imported_by": []
     },
@@ -464,10 +913,10 @@
         {
           "name": "VITE_CONFIG",
           "start": 1,
-          "end": 9
+          "end": 16
         }
       ],
-      "line_count": 9,
+      "line_count": 16,
       "imports": [],
       "imported_by": []
     },
@@ -574,14 +1023,10 @@
   "core_modules": [],
   "service_modules": [],
   "large_files": [],
-  "file_count": 32,
+  "file_count": 68,
   "anchor_index": {
     "apps/client_sidecar/config/constants.py": [
       "CONSTANTS"
-    ],
-    "apps/client_sidecar/main.py": [
-      "MAIN",
-      "MAIN_RUN"
     ],
     "apps/desktop/src-tauri/build.rs": [
       "BUILD"
@@ -653,46 +1098,46 @@
   },
   "recently_changed": [
     {
-      "path": "packages/ui/src/index.ts",
-      "mtime": 1778821183.91927
-    },
-    {
-      "path": "packages/sdk-python/yeson_meet_sdk/__init__.py",
-      "mtime": 1778821183.9164743
-    },
-    {
-      "path": "generate_md_cards.py",
-      "mtime": 1778821183.9136088
-    },
-    {
-      "path": "apps/web/vite.config.ts",
-      "mtime": 1778821183.9095902
-    },
-    {
-      "path": "apps/web/tailwind.config.ts",
-      "mtime": 1778821183.907424
-    },
-    {
-      "path": "apps/web/src/vite-env.d.ts",
-      "mtime": 1778821183.9052813
-    },
-    {
-      "path": "apps/web/src/main.tsx",
-      "mtime": 1778821183.9030051
+      "path": "apps/server/db/session.py",
+      "mtime": 1779070383.0816681
     },
     {
       "path": "apps/web/src/App.tsx",
-      "mtime": 1778821183.900708
+      "mtime": 1778835968.9433732
     },
     {
-      "path": "apps/web/postcss.config.js",
-      "mtime": 1778821183.898479
+      "path": "apps/web/src/components/AdminAudioStats.tsx",
+      "mtime": 1778835939.1374865
     },
     {
       "path": "apps/server/main.py",
-      "mtime": 1778821183.8961067
+      "mtime": 1778835925.898075
+    },
+    {
+      "path": "apps/server/api/v1/audio_stats.py",
+      "mtime": 1778835918.4019418
+    },
+    {
+      "path": "apps/client_sidecar/main.py",
+      "mtime": 1778835914.2686331
+    },
+    {
+      "path": "apps/client_sidecar/audio/__init__.py",
+      "mtime": 1778835901.497897
+    },
+    {
+      "path": "apps/client_sidecar/transport/audio_ws.py",
+      "mtime": 1778835900.0903218
+    },
+    {
+      "path": "apps/client_sidecar/audio/capture.py",
+      "mtime": 1778835891.0914495
+    },
+    {
+      "path": "apps/client_sidecar/audio/rms.py",
+      "mtime": 1778835877.6640522
     }
   ],
   "generated_at": "2026-05-14T01:23:03.651301Z",
-  "updated_at": "2026-05-15T05:02:58.297625Z"
+  "updated_at": "2026-05-18T02:15:34.045618Z"
 }

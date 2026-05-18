@@ -4,10 +4,6 @@
     "apps/client_sidecar/config/constants.py": [
       "CONSTANTS"
     ],
-    "apps/client_sidecar/main.py": [
-      "MAIN",
-      "MAIN_RUN"
-    ],
     "apps/desktop/src-tauri/build.rs": [
       "BUILD"
     ],
@@ -80,12 +76,6 @@
     "apps/client_sidecar/config/constants.py": {
       "anchors": [
         "CONSTANTS"
-      ]
-    },
-    "apps/client_sidecar/main.py": {
-      "anchors": [
-        "MAIN",
-        "MAIN_RUN"
       ]
     },
     "apps/desktop/src-tauri/build.rs": {

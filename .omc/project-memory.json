@@ -1,19 +1,40 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1778803457726,
+  "lastScanned": 1779064195765,
   "projectRoot": "/Users/usabatch/coding/yeson_dev/yeson_meet",
   "techStack": {
-    "languages": [],
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "pyproject.toml"
+        ]
+      }
+    ],
     "frameworks": [],
-    "packageManager": null,
+    "packageManager": "pnpm",
     "runtime": null
   },
   "build": {
     "buildCommand": null,
-    "testCommand": null,
-    "lintCommand": null,
+    "testCommand": "pytest",
+    "lintCommand": "ruff check",
     "devCommand": null,
-    "scripts": {}
+    "scripts": {
+      "dev:web": "pnpm --filter @yeson-meet/web dev",
+      "dev:desktop": "pnpm --filter @yeson-meet/desktop tauri:dev",
+      "build:web": "pnpm --filter @yeson-meet/web build"
+    }
   },
   "conventions": {
     "namingStyle": null,
@@ -22,7 +43,7 @@
     "fileOrganization": null
   },
   "structure": {
-    "isMonorepo": false,
+    "isMonorepo": true,
     "workspaces": [],
     "mainDirectories": [
       "docs"
@@ -31,326 +52,233 @@
   },
   "customNotes": [],
   "directoryMap": {
+    "apps": {
+      "path": "apps",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1779064195724,
+      "keyFiles": []
+    },
+    "deploy": {
+      "path": "deploy",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1779064195725,
+      "keyFiles": [
+        "Caddyfile",
+        "docker-compose.yml",
+        "env.example"
+      ]
+    },
     "docs": {
       "path": "docs",
       "purpose": "Documentation",
-      "fileCount": 9,
-      "lastAccessed": 1778803457673,
+      "fileCount": 20,
+      "lastAccessed": 1779064195732,
       "keyFiles": [
+        "ARCHITECTURE.html",
         "ARCHITECTURE.md",
+        "DEPLOY.html",
         "DEPLOY.md",
-        "PLAN_VIEWER.html",
-        "PRD.md",
-        "ROADMAP.md"
+        "PLAN_VIEWER.bak.html"
       ]
+    },
+    "generated": {
+      "path": "generated",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1779064195733,
+      "keyFiles": []
+    },
+    "packages": {
+      "path": "packages",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1779064195734,
+      "keyFiles": []
     },
     "vibelign_exports": {
       "path": "vibelign_exports",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1778803457678,
+      "lastAccessed": 1779064195735,
+      "keyFiles": []
+    },
+    "deploy/data": {
+      "path": "deploy/data",
+      "purpose": "Data files",
+      "fileCount": 1,
+      "lastAccessed": 1779064195738,
       "keyFiles": []
     }
   },
   "hotPaths": [
     {
-      "path": "docs/ROADMAP.md",
-      "accessCount": 13,
-      "lastAccessed": 1778821344324,
+      "path": "apps/server/tests/test_ws_sidecar_binary.py",
+      "accessCount": 12,
+      "lastAccessed": 1779070968240,
       "type": "file"
     },
     {
-      "path": "docs/ARCHITECTURE.md",
-      "accessCount": 12,
-      "lastAccessed": 1778821344841,
+      "path": "apps/server/ws/sidecar.py",
+      "accessCount": 7,
+      "lastAccessed": 1779071172271,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/tests/conftest.py",
+      "accessCount": 6,
+      "lastAccessed": 1779069934957,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/ws/audio_stats.py",
+      "accessCount": 6,
+      "lastAccessed": 1779071116651,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/audio/capture.py",
+      "accessCount": 5,
+      "lastAccessed": 1779071196207,
       "type": "file"
     },
     {
       "path": "docs/PRD.md",
-      "accessCount": 11,
-      "lastAccessed": 1778821345383,
+      "accessCount": 4,
+      "lastAccessed": 1779070898322,
       "type": "file"
     },
     {
-      "path": "docs/WORKFLOW_SOLO_AI.md",
-      "accessCount": 10,
-      "lastAccessed": 1778821346087,
+      "path": "apps/client_sidecar/transport/audio_ws.py",
+      "accessCount": 3,
+      "lastAccessed": 1779070869492,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/config/audio.py",
+      "accessCount": 3,
+      "lastAccessed": 1779070874395,
+      "type": "file"
+    },
+    {
+      "path": "apps/server/db/session.py",
+      "accessCount": 2,
+      "lastAccessed": 1779069922987,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/audio/rms.py",
+      "accessCount": 2,
+      "lastAccessed": 1779070843169,
+      "type": "file"
+    },
+    {
+      "path": "apps/client_sidecar/audio/device.py",
+      "accessCount": 2,
+      "lastAccessed": 1779070843598,
       "type": "file"
     },
     {
       "path": ".vibelign/project_map.json",
-      "accessCount": 10,
-      "lastAccessed": 1778823297089,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/pyproject.toml",
-      "accessCount": 10,
-      "lastAccessed": 1778823344128,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/main.py",
-      "accessCount": 8,
-      "lastAccessed": 1778823325041,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/config/constants.py",
-      "accessCount": 7,
-      "lastAccessed": 1778823331553,
-      "type": "file"
-    },
-    {
-      "path": "pyproject.toml",
-      "accessCount": 7,
-      "lastAccessed": 1778823348856,
-      "type": "file"
-    },
-    {
-      "path": "docs/DEPLOY.md",
-      "accessCount": 6,
-      "lastAccessed": 1778818171541,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/Dockerfile",
-      "accessCount": 6,
-      "lastAccessed": 1778821504169,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/db/alembic.ini",
-      "accessCount": 6,
-      "lastAccessed": 1778821851731,
+      "accessCount": 2,
+      "lastAccessed": 1779070864502,
       "type": "file"
     },
     {
       "path": "apps/client_sidecar/main.py",
-      "accessCount": 6,
-      "lastAccessed": 1778823331108,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/db/alembic/env.py",
-      "accessCount": 6,
-      "lastAccessed": 1778823342584,
-      "type": "file"
-    },
-    {
-      "path": "apps/web/vite.config.ts",
-      "accessCount": 6,
-      "lastAccessed": 1778823344007,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/pyproject.toml",
-      "accessCount": 6,
-      "lastAccessed": 1778823348420,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/api/v1/health.py",
-      "accessCount": 5,
-      "lastAccessed": 1778822481640,
-      "type": "file"
-    },
-    {
-      "path": "docs/PLAN_VIEWER.bak.html",
-      "accessCount": 4,
-      "lastAccessed": 1778810037027,
-      "type": "file"
-    },
-    {
-      "path": "README.md",
-      "accessCount": 4,
-      "lastAccessed": 1778813557404,
-      "type": "file"
-    },
-    {
-      "path": "apps/web/package.json",
-      "accessCount": 4,
-      "lastAccessed": 1778821860045,
-      "type": "file"
-    },
-    {
-      "path": "docs/UI_DESIGN_SYSTEM.md",
-      "accessCount": 3,
-      "lastAccessed": 1778813006689,
-      "type": "file"
-    },
-    {
-      "path": "tsconfig.base.json",
-      "accessCount": 3,
-      "lastAccessed": 1778813254667,
-      "type": "file"
-    },
-    {
-      "path": "pnpm-workspace.yaml",
-      "accessCount": 3,
-      "lastAccessed": 1778821361427,
-      "type": "file"
-    },
-    {
-      "path": "docs/SETUP_MEETING_PC.html",
       "accessCount": 2,
-      "lastAccessed": 1778810957963,
+      "lastAccessed": 1779070870152,
       "type": "file"
     },
     {
-      "path": "package.json",
+      "path": "apps/server/ws/control_messages.py",
       "accessCount": 2,
-      "lastAccessed": 1778813253901,
+      "lastAccessed": 1779070875601,
       "type": "file"
     },
     {
-      "path": "apps/web/tsconfig.json",
+      "path": "docs/SETUP_MEETING_PC.md",
       "accessCount": 2,
-      "lastAccessed": 1778821859489,
+      "lastAccessed": 1779070876078,
       "type": "file"
     },
     {
-      "path": "AI_Meeting_Dashboard_Mac_Windows_Workflow.md",
-      "accessCount": 1,
-      "lastAccessed": 1778806234806,
+      "path": "apps/client_sidecar/audio/resample.py",
+      "accessCount": 2,
+      "lastAccessed": 1779070905169,
       "type": "file"
     },
     {
-      "path": "docs/WORKFLOW_COLLABORATION.md",
-      "accessCount": 1,
-      "lastAccessed": 1778806438429,
+      "path": "apps/server/api/v1/audio_stats.py",
+      "accessCount": 2,
+      "lastAccessed": 1779070905545,
       "type": "file"
     },
     {
-      "path": "docs/PLAN_VIEWER.html",
-      "accessCount": 1,
-      "lastAccessed": 1778808758486,
+      "path": "apps/web/src/App.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1779070910786,
       "type": "file"
     },
     {
-      "path": "docs/SETUP_SERVER.html",
-      "accessCount": 1,
-      "lastAccessed": 1778810860018,
+      "path": "apps/web/src/components/AdminAudioStats.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1779070967838,
       "type": "file"
     },
     {
-      "path": ".nvmrc",
+      "path": "apps/server/tests/test_ws_flow.py",
       "accessCount": 1,
-      "lastAccessed": 1778812888061,
-      "type": "file"
-    },
-    {
-      "path": ".python-version",
-      "accessCount": 1,
-      "lastAccessed": 1778812889023,
-      "type": "file"
-    },
-    {
-      "path": ".editorconfig",
-      "accessCount": 1,
-      "lastAccessed": 1778812889974,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/__init__.py",
-      "accessCount": 1,
-      "lastAccessed": 1778812919549,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/api/__init__.py",
-      "accessCount": 1,
-      "lastAccessed": 1778812920537,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/api/v1/__init__.py",
-      "accessCount": 1,
-      "lastAccessed": 1778812922371,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/db/__init__.py",
-      "accessCount": 1,
-      "lastAccessed": 1778812923346,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/ws/__init__.py",
-      "accessCount": 1,
-      "lastAccessed": 1778812929746,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/ai/__init__.py",
-      "accessCount": 1,
-      "lastAccessed": 1778812930889,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/integrations/__init__.py",
-      "accessCount": 1,
-      "lastAccessed": 1778812931460,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/__init__.py",
-      "accessCount": 1,
-      "lastAccessed": 1778812933046,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/config/__init__.py",
-      "accessCount": 1,
-      "lastAccessed": 1778812934024,
+      "lastAccessed": 1779064315972,
       "type": "file"
     },
     {
       "path": "apps/client_sidecar/audio/__init__.py",
       "accessCount": 1,
-      "lastAccessed": 1778812936855,
+      "lastAccessed": 1779064398226,
       "type": "file"
     },
     {
-      "path": "apps/client_sidecar/transport/__init__.py",
+      "path": "apps/client_sidecar/pyproject.toml",
       "accessCount": 1,
-      "lastAccessed": 1778812937829,
+      "lastAccessed": 1779064398447,
       "type": "file"
     },
     {
-      "path": "apps/client_sidecar/queue/__init__.py",
+      "path": "apps/server/main.py",
       "accessCount": 1,
-      "lastAccessed": 1778812938832,
+      "lastAccessed": 1779064398575,
       "type": "file"
     },
     {
-      "path": "apps/server/db/alembic/script.py.mako",
+      "path": "apps/client_sidecar/tests/test_audio_main_smoke.py",
       "accessCount": 1,
-      "lastAccessed": 1778812942350,
+      "lastAccessed": 1779070884696,
       "type": "file"
     },
     {
-      "path": "apps/server/.dockerignore",
+      "path": "apps/client_sidecar/tests/test_resample.py",
       "accessCount": 1,
-      "lastAccessed": 1778812943510,
+      "lastAccessed": 1779070885173,
       "type": "file"
     },
     {
-      "path": "apps/web/tailwind.config.ts",
+      "path": "apps/client_sidecar/tests/test_rms.py",
       "accessCount": 1,
-      "lastAccessed": 1778812960207,
+      "lastAccessed": 1779070891216,
       "type": "file"
     },
     {
-      "path": "apps/web/postcss.config.js",
+      "path": "apps/client_sidecar/tests/test_device_select.py",
       "accessCount": 1,
-      "lastAccessed": 1778812961552,
+      "lastAccessed": 1779070891661,
       "type": "file"
     },
     {
-      "path": "apps/web/index.html",
+      "path": "docs/ROADMAP.md",
       "accessCount": 1,
-      "lastAccessed": 1778812962442,
+      "lastAccessed": 1779070910331,
       "type": "file"
     }
   ],

@@ -12,6 +12,7 @@ from apps.server.api.v1.devices import router as devices_router
 from apps.server.api.v1.health import router as health_router
 from apps.server.api.v1.sessions import router as sessions_router
 from apps.server.api.v1.utterances import router as utterances_router
+from apps.server.api.v1.audio_stats import router as audio_stats_router
 from apps.server.ws.sidecar import router as ws_sidecar_router
 from apps.server.ws.viewer import router as ws_viewer_router
 
@@ -38,6 +39,7 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(devices_router, prefix="/api/v1")
 app.include_router(sessions_router, prefix="/api/v1")
 app.include_router(utterances_router, prefix="/api/v1")
+app.include_router(audio_stats_router, prefix="/api/v1")
 app.include_router(ws_sidecar_router)
 app.include_router(ws_viewer_router)
 

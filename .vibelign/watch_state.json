@@ -2,12 +2,12 @@
   ".omc/state/hud-stdin-cache.json": {
     "path": ".omc/state/hud-stdin-cache.json",
     "lines": 1,
-    "sha1": "cf5aa24bb421902b1ef42c3dfdf00195abb6e0bf"
+    "sha1": "795451302b437d93a6a011995b48e77a6f1d3d66"
   },
   ".omc/state/idle-notif-cooldown.json": {
     "path": ".omc/state/idle-notif-cooldown.json",
     "lines": 3,
-    "sha1": "383c2965ad0631a8f25990c82f81eaca71ed801a"
+    "sha1": "6db6430e4bc8678d6a632262277f40f9de15e3c8"
   },
   "opencode.json": {
     "path": "opencode.json",
@@ -21,8 +21,8 @@
   },
   ".omc/state/subagent-tracking.json": {
     "path": ".omc/state/subagent-tracking.json",
-    "lines": 105,
-    "sha1": "f0ca639d03aa69e29cce3b2bcfba83e68b06c0e9"
+    "lines": 7,
+    "sha1": "248943e5c2cc0e1748c9112c68909c3172c932b5"
   },
   "pnpm-workspace.yaml": {
     "path": "pnpm-workspace.yaml",
@@ -361,13 +361,13 @@
   },
   "deploy/data/postgres/global/pg_control": {
     "path": "deploy/data/postgres/global/pg_control",
-    "lines": 3,
-    "sha1": "f79f0c79f8e54af493b7e81caaaef3e6368b3ba9"
+    "lines": 5,
+    "sha1": "60aeb238b12e47be4b5bc483136ccb0b736acc4a"
   },
   "deploy/data/postgres/pg_xact/0000": {
     "path": "deploy/data/postgres/pg_xact/0000",
     "lines": 1,
-    "sha1": "e9826ee768d60f485d044733fa582aec0539265c"
+    "sha1": "35813bfd2eeaf48b3be5387f17783064da5aef52"
   },
   "deploy/data/postgres/pg_subtrans/0000": {
     "path": "deploy/data/postgres/pg_subtrans/0000",
@@ -5633,5 +5633,450 @@
     "path": "generate_md_cards.py",
     "lines": 240,
     "sha1": "6cd038d42f6d3c4ecf8ac2e8fe084c85ccda9c6b"
+  },
+  ".omc/state/agent-replay-4e5c9e03-1336-4462-86e6-dfc36803a89e.jsonl": {
+    "path": ".omc/state/agent-replay-4e5c9e03-1336-4462-86e6-dfc36803a89e.jsonl",
+    "lines": 13,
+    "sha1": "7fa46265d4bdd05323151e5501ba55c4c408a65d"
+  },
+  "deploy/data/postgres/pg_wal/000000010000000000000002": {
+    "path": "deploy/data/postgres/pg_wal/000000010000000000000002",
+    "lines": 211725,
+    "sha1": "0012f50e486b7d8bc88e8e2656b2b202e1c1b844"
+  },
+  ".omc/state/last-tool-error.json": {
+    "path": ".omc/state/last-tool-error.json",
+    "lines": 7,
+    "sha1": "7bd289ec92c7e98bbc5f452fe9cfe5f39b4d9948"
+  },
+  "deploy/data/postgres/base/16479/2608": {
+    "path": "deploy/data/postgres/base/16479/2608",
+    "lines": 3657,
+    "sha1": "2bd629650d0ca5865023095d80d3a5a463458f1e"
+  },
+  "deploy/data/postgres/base/16479/2840": {
+    "path": "deploy/data/postgres/base/16479/2840",
+    "lines": 837,
+    "sha1": "89c30d625f6cf34d6769df7c1a5db5286080e0f8"
+  },
+  "deploy/data/postgres/base/16479/2620": {
+    "path": "deploy/data/postgres/base/16479/2620",
+    "lines": 19,
+    "sha1": "dc220a6350fa16a1101d5f6e65fadb67b737d4f7"
+  },
+  "deploy/data/postgres/base/16479/2704": {
+    "path": "deploy/data/postgres/base/16479/2704",
+    "lines": 741,
+    "sha1": "a7c187100cb0fb754be8b11a9b49bb1e8952b309"
+  },
+  "deploy/data/postgres/base/16479/2608_fsm": {
+    "path": "deploy/data/postgres/base/16479/2608_fsm",
+    "lines": 1,
+    "sha1": "199948b83fc41e60845ae28815ae543aa260bafa"
+  },
+  "deploy/data/postgres/base/16479/2673": {
+    "path": "deploy/data/postgres/base/16479/2673",
+    "lines": 1267,
+    "sha1": "b239b4dc21763c93a28fff99255a92b321319aad"
+  },
+  "deploy/data/postgres/base/16479/2659": {
+    "path": "deploy/data/postgres/base/16479/2659",
+    "lines": 2040,
+    "sha1": "852d4bad4489e3bee2bc8c1eace6979ca2b4d370"
+  },
+  "deploy/data/postgres/base/16479/2656": {
+    "path": "deploy/data/postgres/base/16479/2656",
+    "lines": 14,
+    "sha1": "fe56ceb9bf6fd0da37c3a876b3450b3921b04f6f"
+  },
+  "deploy/data/postgres/base/16479/2610": {
+    "path": "deploy/data/postgres/base/16479/2610",
+    "lines": 261,
+    "sha1": "02b37d1ffc35e6569a88176b8241652f7bbf274d"
+  },
+  "deploy/data/postgres/base/16479/2663": {
+    "path": "deploy/data/postgres/base/16479/2663",
+    "lines": 597,
+    "sha1": "f6dd418bd8a67af55dbbd14df58f861d7dae2816"
+  },
+  "deploy/data/postgres/base/16479/2657": {
+    "path": "deploy/data/postgres/base/16479/2657",
+    "lines": 9,
+    "sha1": "ac88fabed9c1887fb7ac300d891946182da228d9"
+  },
+  "deploy/data/postgres/base/16479/2664": {
+    "path": "deploy/data/postgres/base/16479/2664",
+    "lines": 143,
+    "sha1": "fea511129e4831a9971305b9b67d2634a1b0ab8c"
+  },
+  "deploy/data/postgres/base/16479/2665": {
+    "path": "deploy/data/postgres/base/16479/2665",
+    "lines": 102,
+    "sha1": "6fd61defdb9a2b402f9c9048e17a686a73acf72b"
+  },
+  "deploy/data/postgres/base/16479/1259": {
+    "path": "deploy/data/postgres/base/16479/1259",
+    "lines": 2268,
+    "sha1": "5bb17acce8df707bc8b925866b3df2d8a87ae45d"
+  },
+  "deploy/data/postgres/base/16479/1259_fsm": {
+    "path": "deploy/data/postgres/base/16479/1259_fsm",
+    "lines": 5,
+    "sha1": "620f3829088668f0193ffda0fe58a889f3b4c1a6"
+  },
+  "deploy/data/postgres/base/16479/1259_vm": {
+    "path": "deploy/data/postgres/base/16479/1259_vm",
+    "lines": 1,
+    "sha1": "a9ecf34f4ee80dd33777a7e5c87466cf73fd61e1"
+  },
+  "deploy/data/postgres/base/16479/2658": {
+    "path": "deploy/data/postgres/base/16479/2658",
+    "lines": 1844,
+    "sha1": "3f2f3383e219f040a78b90953687b5ea9cfae1b3"
+  },
+  "deploy/data/postgres/base/16479/2658_fsm": {
+    "path": "deploy/data/postgres/base/16479/2658_fsm",
+    "lines": 1,
+    "sha1": "c740da0a58e52500d5026b11f495cf7fc9aab992"
+  },
+  "deploy/data/postgres/base/16479/2701": {
+    "path": "deploy/data/postgres/base/16479/2701",
+    "lines": 10,
+    "sha1": "9ee596d0b2d1956de35c2f3a93c5d2cce566b81f"
+  },
+  "deploy/data/postgres/base/16479/2662": {
+    "path": "deploy/data/postgres/base/16479/2662",
+    "lines": 653,
+    "sha1": "7b9bedc34aa56572d714fcfdb25581d8a83f5013"
+  },
+  "deploy/data/postgres/base/16479/2604": {
+    "path": "deploy/data/postgres/base/16479/2604",
+    "lines": 5,
+    "sha1": "ec84aa75b4977c7e8a961696862de55f2d1094b4"
+  },
+  "deploy/data/postgres/base/16479/2224": {
+    "path": "deploy/data/postgres/base/16479/2224",
+    "lines": 19,
+    "sha1": "8060497e6e1c1467b22b4e0ff94ce38b1920aea7"
+  },
+  "deploy/data/postgres/base/16479/2224_vm": {
+    "path": "deploy/data/postgres/base/16479/2224_vm",
+    "lines": 1,
+    "sha1": "70384c2c0cfafd9412f529afce6a3b13f6556cd5"
+  },
+  "deploy/data/postgres/base/16479/2667": {
+    "path": "deploy/data/postgres/base/16479/2667",
+    "lines": 48,
+    "sha1": "191165dfe340529a6ce0b7b26f4bdbeed64c7091"
+  },
+  "deploy/data/postgres/base/16479/2606": {
+    "path": "deploy/data/postgres/base/16479/2606",
+    "lines": 409,
+    "sha1": "24c95bd39d360d071e818825ee77772591b201b4"
+  },
+  "deploy/data/postgres/base/16479/2678": {
+    "path": "deploy/data/postgres/base/16479/2678",
+    "lines": 86,
+    "sha1": "54273647f5f666c3d9ee08ce41dfeb66ac652386"
+  },
+  "deploy/data/postgres/base/16479/2679": {
+    "path": "deploy/data/postgres/base/16479/2679",
+    "lines": 132,
+    "sha1": "50cd0ddd5616753618263deb1ddcf78fd3b2a63d"
+  },
+  "deploy/data/postgres/base/16479/2579": {
+    "path": "deploy/data/postgres/base/16479/2579",
+    "lines": 39,
+    "sha1": "cac6d84c3e238facfc6617de663d189c0e1dcbc8"
+  },
+  "deploy/data/postgres/base/16479/2699": {
+    "path": "deploy/data/postgres/base/16479/2699",
+    "lines": 33,
+    "sha1": "53469d5651df6b26534605576b8cdd7fc19c97da"
+  },
+  "deploy/data/postgres/base/16479/3455": {
+    "path": "deploy/data/postgres/base/16479/3455",
+    "lines": 397,
+    "sha1": "49ccba0421584bb93539e9e6c7984fe260a22966"
+  },
+  "deploy/data/postgres/base/16479/2703": {
+    "path": "deploy/data/postgres/base/16479/2703",
+    "lines": 323,
+    "sha1": "ec503c9fd33b39243561bebd7f8e317f1ba36cc3"
+  },
+  "deploy/data/postgres/base/16479/1249": {
+    "path": "deploy/data/postgres/base/16479/1249",
+    "lines": 4524,
+    "sha1": "3c057d0e467a4c811ead2d36f868b350fbe1a545"
+  },
+  "deploy/data/postgres/base/16479/1249_fsm": {
+    "path": "deploy/data/postgres/base/16479/1249_fsm",
+    "lines": 2,
+    "sha1": "95eb75aada74d8509df23036d2a101a623906b1d"
+  },
+  "deploy/data/postgres/base/16479/1249_vm": {
+    "path": "deploy/data/postgres/base/16479/1249_vm",
+    "lines": 1,
+    "sha1": "84d8f71aff1076f7960025936c1e764f1bdbd4b7"
+  },
+  "deploy/data/postgres/base/16479/2674": {
+    "path": "deploy/data/postgres/base/16479/2674",
+    "lines": 910,
+    "sha1": "7f8075d99753d5e5a8f03fb58d322d59421cb9a5"
+  },
+  "deploy/data/postgres/base/16479/2674_fsm": {
+    "path": "deploy/data/postgres/base/16479/2674_fsm",
+    "lines": 1,
+    "sha1": "36f2c0f3c41f2cb558c1a6321134498f1c5a4b6e"
+  },
+  "deploy/data/postgres/base/16479/2702": {
+    "path": "deploy/data/postgres/base/16479/2702",
+    "lines": 16,
+    "sha1": "5dd7d54d58df45649123c9bd1c3b678958a20299"
+  },
+  "deploy/data/postgres/base/16479/2619": {
+    "path": "deploy/data/postgres/base/16479/2619",
+    "lines": 4218,
+    "sha1": "a48944bdac6c27223379e3a542aaf6382a6da317"
+  },
+  "deploy/data/postgres/base/16479/2666": {
+    "path": "deploy/data/postgres/base/16479/2666",
+    "lines": 39,
+    "sha1": "4a012aef228cf1dd75fa774497b7d64e170601d9"
+  },
+  "deploy/data/postgres/base/16479/5002": {
+    "path": "deploy/data/postgres/base/16479/5002",
+    "lines": 5,
+    "sha1": "381b4c85a85a48fa3cd73f634dd7739ba8e5680e"
+  },
+  "deploy/data/postgres/base/16479/1247": {
+    "path": "deploy/data/postgres/base/16479/1247",
+    "lines": 1901,
+    "sha1": "5b21c3ded7653bdc46da44f4cdfaaa635d2f02bb"
+  },
+  "deploy/data/postgres/base/16479/1247_vm": {
+    "path": "deploy/data/postgres/base/16479/1247_vm",
+    "lines": 1,
+    "sha1": "e2980606f81aaf5c83c32a06e60c82e429661591"
+  },
+  "deploy/data/postgres/base/16479/2620_fsm": {
+    "path": "deploy/data/postgres/base/16479/2620_fsm",
+    "lines": 1,
+    "sha1": "36f2c0f3c41f2cb558c1a6321134498f1c5a4b6e"
+  },
+  "deploy/data/postgres/base/16479/2620_vm": {
+    "path": "deploy/data/postgres/base/16479/2620_vm",
+    "lines": 1,
+    "sha1": "18266d4d707debd59e93b94d950c5261ea77d779"
+  },
+  "deploy/data/postgres/base/16479/2608_vm": {
+    "path": "deploy/data/postgres/base/16479/2608_vm",
+    "lines": 1,
+    "sha1": "b44dc34dd459781a0a2c52a0206aefde6980c3e7"
+  },
+  "deploy/data/postgres/base/16479/2659_fsm": {
+    "path": "deploy/data/postgres/base/16479/2659_fsm",
+    "lines": 1,
+    "sha1": "36f2c0f3c41f2cb558c1a6321134498f1c5a4b6e"
+  },
+  "deploy/data/postgres/base/16479/2840_fsm": {
+    "path": "deploy/data/postgres/base/16479/2840_fsm",
+    "lines": 31,
+    "sha1": "94523dfcf59cf233bb945b1064460973b5a8d297"
+  },
+  "deploy/data/postgres/base/16479/2610_fsm": {
+    "path": "deploy/data/postgres/base/16479/2610_fsm",
+    "lines": 1,
+    "sha1": "84e5a582be871ef937693644687712376f9e01be"
+  },
+  "deploy/data/postgres/base/16479/2610_vm": {
+    "path": "deploy/data/postgres/base/16479/2610_vm",
+    "lines": 1,
+    "sha1": "70384c2c0cfafd9412f529afce6a3b13f6556cd5"
+  },
+  "deploy/data/postgres/base/16479/2696": {
+    "path": "deploy/data/postgres/base/16479/2696",
+    "lines": 557,
+    "sha1": "e6b5ca2483ad3001c0e6536a2cc6ccc600a8fee2"
+  },
+  "deploy/data/postgres/base/16479/2604_fsm": {
+    "path": "deploy/data/postgres/base/16479/2604_fsm",
+    "lines": 1,
+    "sha1": "8395a92d797cf359786df243517b0b75cf368b28"
+  },
+  "deploy/data/postgres/base/16479/2604_vm": {
+    "path": "deploy/data/postgres/base/16479/2604_vm",
+    "lines": 1,
+    "sha1": "9c982d8c3185f800a76a08bdc3d9958f495ec3e9"
+  },
+  "deploy/data/postgres/base/16479/2841": {
+    "path": "deploy/data/postgres/base/16479/2841",
+    "lines": 2,
+    "sha1": "2ba0e61d3c910c1e27b1322760b2394acd732e67"
+  },
+  "deploy/data/postgres/base/16479/2606_fsm": {
+    "path": "deploy/data/postgres/base/16479/2606_fsm",
+    "lines": 1,
+    "sha1": "1c3fac07508199f8413172c3dcd8ebb163a523b0"
+  },
+  "deploy/data/postgres/base/16479/2606_vm": {
+    "path": "deploy/data/postgres/base/16479/2606_vm",
+    "lines": 1,
+    "sha1": "8eecf6d479ebd3af5777ac3c117e4a63fbcaa461"
+  },
+  "deploy/data/postgres/base/16479/2619_fsm": {
+    "path": "deploy/data/postgres/base/16479/2619_fsm",
+    "lines": 3,
+    "sha1": "755e00b5ea7c89af56f1744359622ec3885c12cc"
+  },
+  "deploy/data/postgres/base/16479/2619_vm": {
+    "path": "deploy/data/postgres/base/16479/2619_vm",
+    "lines": 2,
+    "sha1": "cba198d70771736bc9a284942a4659ea0841db48"
+  },
+  "deploy/data/postgres/base/16479/2224_fsm": {
+    "path": "deploy/data/postgres/base/16479/2224_fsm",
+    "lines": 1,
+    "sha1": "9e37194cbb0606e12669543a50cfcf3b1a7a38db"
+  },
+  "apps/server/db/session.py": {
+    "path": "apps/server/db/session.py",
+    "lines": 21,
+    "sha1": "51af3d49668c9722674d5672f0227e490305db62"
+  },
+  "apps/server/tests/conftest.py": {
+    "path": "apps/server/tests/conftest.py",
+    "lines": 125,
+    "sha1": "5898a72a76e348a225b7f4d672a54407f7c9782e"
+  },
+  "deploy/data/postgres/base/16479/18894": {
+    "path": "deploy/data/postgres/base/16479/18894",
+    "lines": 4,
+    "sha1": "c950c281a70a65e824ed07c2506c5a1ca5f5b928"
+  },
+  "deploy/data/postgres/base/16479/18903": {
+    "path": "deploy/data/postgres/base/16479/18903",
+    "lines": 1,
+    "sha1": "feb08abb8b322f82d49c1c7baa3771d6767732e0"
+  },
+  "deploy/data/postgres/base/16479/18904": {
+    "path": "deploy/data/postgres/base/16479/18904",
+    "lines": 1,
+    "sha1": "c982c6d8c26a1107d536c668a812602a01d75633"
+  },
+  "deploy/data/postgres/base/16479/18906": {
+    "path": "deploy/data/postgres/base/16479/18906",
+    "lines": 1,
+    "sha1": "67674d3729d5ba860bfb0ba29cac8ebbbd7de241"
+  },
+  "deploy/data/postgres/base/16479/18908": {
+    "path": "deploy/data/postgres/base/16479/18908",
+    "lines": 3,
+    "sha1": "5a1ac8e56a482fbbea30b3f42b8ed7f98eda376c"
+  },
+  "deploy/data/postgres/base/16479/18915": {
+    "path": "deploy/data/postgres/base/16479/18915",
+    "lines": 2,
+    "sha1": "74c31dc6284822636852227c5fd8184636b1a837"
+  },
+  "deploy/data/postgres/base/16479/18917": {
+    "path": "deploy/data/postgres/base/16479/18917",
+    "lines": 2,
+    "sha1": "79cf38b716ae4194b2f69a002d9cfbf724e908b8"
+  },
+  "deploy/data/postgres/base/16479/18919": {
+    "path": "deploy/data/postgres/base/16479/18919",
+    "lines": 3,
+    "sha1": "bf01904aac5d03eb1d414864f0eebfd93707b0ab"
+  },
+  "deploy/data/postgres/base/16479/18929": {
+    "path": "deploy/data/postgres/base/16479/18929",
+    "lines": 1,
+    "sha1": "5c5efd3126004ba25cf9fc946b5eee606e437113"
+  },
+  "deploy/data/postgres/base/16479/18930": {
+    "path": "deploy/data/postgres/base/16479/18930",
+    "lines": 2,
+    "sha1": "5e79e80840f2a149b7f9233cd834134015a03ebf"
+  },
+  "deploy/data/postgres/base/16479/18932": {
+    "path": "deploy/data/postgres/base/16479/18932",
+    "lines": 3,
+    "sha1": "86432c6da4000f4229688dee8a8f7746424415e1"
+  },
+  "deploy/data/postgres/base/16479/18944": {
+    "path": "deploy/data/postgres/base/16479/18944",
+    "lines": 3,
+    "sha1": "82657b2effa686ebc6edfd3f312ac00bd3188cbb"
+  },
+  "deploy/data/postgres/base/16479/18951": {
+    "path": "deploy/data/postgres/base/16479/18951",
+    "lines": 1,
+    "sha1": "281186ddc8f3ed1c6587df1a8263d7ce65ad36a8"
+  },
+  "deploy/data/postgres/base/16479/18952": {
+    "path": "deploy/data/postgres/base/16479/18952",
+    "lines": 2,
+    "sha1": "90ab1aea39be783b71637458baeafeb854fd36b4"
+  },
+  "deploy/data/postgres/base/16479/18954": {
+    "path": "deploy/data/postgres/base/16479/18954",
+    "lines": 2,
+    "sha1": "bc7209b7d9a1e4d0a3db245b6f7652bf51341c67"
+  },
+  "deploy/data/postgres/base/16479/18961": {
+    "path": "deploy/data/postgres/base/16479/18961",
+    "lines": 4,
+    "sha1": "d6ab1508881763c2a98403e301454a51c9fa264b"
+  },
+  "deploy/data/postgres/base/16479/18968": {
+    "path": "deploy/data/postgres/base/16479/18968",
+    "lines": 1,
+    "sha1": "9fd833595dc9fcde2a6137a9b5d4af977faee160"
+  },
+  "deploy/data/postgres/base/16479/18969": {
+    "path": "deploy/data/postgres/base/16479/18969",
+    "lines": 1,
+    "sha1": "53d538fbb9890cafcbc36b79fe6848888e7442b6"
+  },
+  "deploy/data/postgres/base/16479/18971": {
+    "path": "deploy/data/postgres/base/16479/18971",
+    "lines": 1,
+    "sha1": "3cd29d9dab0d91be2db0f489ed304f7bbe3e1baf"
+  },
+  "deploy/data/postgres/base/16479/18978": {
+    "path": "deploy/data/postgres/base/16479/18978",
+    "lines": 8,
+    "sha1": "506a3d1bdf89aad8476a43523ef133e5ab69088a"
+  },
+  "deploy/data/postgres/base/16479/18895": {
+    "path": "deploy/data/postgres/base/16479/18895",
+    "lines": 8,
+    "sha1": "01e0ec86068064b36767b011af81b812392889ca"
+  },
+  "deploy/data/postgres/base/16479/18909": {
+    "path": "deploy/data/postgres/base/16479/18909",
+    "lines": 3,
+    "sha1": "7e5894b5a1ca6a9d67a13becd2c7ff8c77e2b956"
+  },
+  "deploy/data/postgres/base/16479/18920": {
+    "path": "deploy/data/postgres/base/16479/18920",
+    "lines": 7,
+    "sha1": "c637777861f780b0e9dabd77985740723ea176f2"
+  },
+  "deploy/data/postgres/base/16479/18945": {
+    "path": "deploy/data/postgres/base/16479/18945",
+    "lines": 3,
+    "sha1": "be33577db51d44c3357df22d56e48efd2c6f376d"
+  },
+  "deploy/data/postgres/base/16479/18962": {
+    "path": "deploy/data/postgres/base/16479/18962",
+    "lines": 16,
+    "sha1": "3fd45e86ec91462824f737844ca641aee7786a05"
+  },
+  "deploy/data/postgres/base/16479/pg_internal.init": {
+    "path": "deploy/data/postgres/base/16479/pg_internal.init",
+    "lines": 1989,
+    "sha1": "09f26c84af166c5fda75c776ef264573b4cf04b7"
   }
 }

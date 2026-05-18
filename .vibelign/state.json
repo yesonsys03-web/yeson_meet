@@ -5,6 +5,5 @@
   "last_scan_at": "2026-05-15T05:29:11.835540+00:00",
   "last_anchor_run_at": null,
   "last_guard_run_at": "2026-05-15T05:02:28.200693+00:00",
-  "engine_used": "python",
-  "last_fallback_reason": "RUST_ENGINE_UNAVAILABLE: rust engine binary missing"
+  "engine_used": "rust"
 }
