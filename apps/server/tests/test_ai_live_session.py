@@ -36,6 +36,30 @@ class FakeProvider:
 # === ANCHOR: TEST_AI_LIVE_SESSION_FAKEPROVIDER_END ===
 
 
+class FlakyProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def stream(
+        self,
+        audio: AsyncIterator[bytes],
+        lang_hint: str,
+    ) -> AsyncIterator[TranslatedUtterance]:
+        self.calls += 1
+        if self.calls == 1:
+            raise ConnectionError("provider disconnected")
+        async for chunk in audio:
+            yield TranslatedUtterance(
+                seq=1,
+                text_en=f"recovered {len(chunk)} bytes",
+                text_ko="복구됨",
+                started_at=datetime.now(timezone.utc),
+                ended_at=datetime.now(timezone.utc),
+                is_final=True,
+            )
+            return
+
+
 # === ANCHOR: TEST_AI_LIVE_SESSION_TEST_AUDIO_LIVE_SESSION_PUSHES_CHUNKS_TO_PROVIDER_AND_EMITS_UTTERANCE_START ===
 @pytest.mark.asyncio
 async def test_audio_live_session_pushes_chunks_to_provider_and_emits_utterance() -> None:
@@ -74,4 +98,28 @@ async def test_audio_live_session_rejects_push_before_start() -> None:
     with pytest.raises(RuntimeError, match="not started"):
         await session.push_audio(b"\x00" * 640)
 # === ANCHOR: TEST_AI_LIVE_SESSION_TEST_AUDIO_LIVE_SESSION_REJECTS_PUSH_BEFORE_START_END ===
+
+
+@pytest.mark.asyncio
+async def test_audio_live_session_retries_provider_disconnect() -> None:
+    provider = FlakyProvider()
+    emitted: list[TranslatedUtterance] = []
+    session = AudioLiveSession(
+        provider=provider,
+        on_utterance=emitted.append,
+        reconnect_delays=(0.0,),
+    )
+
+    await session.start()
+    await session.push_audio(b"\x02" * 640)
+
+    for _ in range(20):
+        if emitted:
+            break
+        await asyncio.sleep(0.01)
+
+    await session.stop()
+
+    assert provider.calls >= 2
+    assert emitted[0].text_en == "recovered 640 bytes"
 # === ANCHOR: TEST_AI_LIVE_SESSION_END ===
