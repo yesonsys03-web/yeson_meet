@@ -132,21 +132,23 @@
 - [x] 서버 `apps/server/ai/providers.py` — `STTProvider` / `TranslationProvider` 인터페이스 (ARCH §2.3.1)
 - [x] 서버 `apps/server/ai/gemini_live.py` — `GeminiLiveProvider` 구현체 (`google-genai` WebSocket 클라이언트)
 - [~] 회의 세션별 Gemini WS 유지 (재연결 + 백오프)  ← `AudioLiveSession` provider disconnect retry/backoff 구현·테스트 완료, 실제 Gemini 장기 세션 회전은 실측 전
-- [x] 청크 → Provider → 응답 파싱 → `utterance.transcribed` 이벤트 발행
+- [x] 청크 → Provider → 응답 파싱 → `utterance.transcribed` 이벤트 발행  ← 실제 Gemini key 기반 local synthetic E2E 통과(2026-05-18, 서버+테스트 sidecar 동일 개발 머신), 59.37초 synthetic 영어 오디오 8발화 → viewer seq 1~8 / DB utterance 8개 저장. LAN 회의실 PC↔서버 분리 실측은 완료 기준에 별도 유지
 - [x] 시스템 프롬프트 정적 (영→한, 2줄 캡, 기술 용어 영문 유지)
-- [~] 비용/지연 단순 로그 (Prometheus는 β-7)  ← AI publish latency structured log 완료, Gemini 비용/토큰 추정 로그 미완료
-- [ ] **latency budget 4구간 분해 문서**: 캡처→서버 WSS / 서버→Gemini / Gemini→파싱 / 서버→viewer (P50 ≤ 2초 미달 시 partial subtitle 전략 즉시 도입)
-- [~] 🔴 **API Key health check** — 서버 시작 시 + 실패 시 운영자 알림 (ARCH §12.3)  ← `/api/v1/health/ai` + startup log 완료, 운영자 알림 미완료
-- 🔴 **회의 시간 안전 타이머** — 회의당 최대 N시간 (기본 3h) 도달 시 자동 종료 + alert (좀비 세션 비용 방지)
-- [~] 🟡 **partial→final 자막 안정화** — `is_final` 플래그 + viewer가 `seq` 키로 마지막 partial 교체  ← viewer state upsert 로직 + web build 검증 완료, 실제 화면 깜빡임 E2E 미완료
-- 🟡 **VAD 또는 RMS 임계값으로 무음 청크 차단** (비용 절감)
+- [~] 비용/지연 단순 로그 (Prometheus는 β-7)  ← AI publish latency structured log + Gemini usage token/cost structured log 완료, 실제 Gemini 응답 usage metadata/E2E 비용 검증은 미완료
+- [x] **latency budget 4구간 분해 문서**: 캡처→서버 WSS / 서버→Gemini / Gemini→파싱 / 서버→viewer (P50 ≤ 2초 미달 시 partial subtitle 전략 즉시 도입)  ← ARCH §5.3 문서화 + local synthetic E2E 계측 완료: phrase-end→first viewer subtitle P50 1419.8ms / max 1522.3ms, server→viewer P50 5.2ms. 실제 LAN 구간은 회의실 PC 분리 검증 필요
+- [x] 🔴 **API Key health check** — 서버 시작 시 + 실패 시 운영자 알림 (ARCH §12.3)  ← `/api/v1/health/ai` + startup log + `/api/v1/operator/alerts` critical alert 완료
+- [~] 🔴 **회의 시간 안전 타이머** — 회의당 최대 N시간 (기본 3h) 도달 시 자동 종료 + alert (좀비 세션 비용 방지)  ← sidecar 오디오 ingress에서 `YESON_MEETING_MAX_DURATION_HOURS` 초과 세션 자동 종료 + operator alert 단위 검증 완료, background scheduler/3시간 E2E는 미완료
+- [~] 🟡 **partial→final 자막 안정화** — `is_final` 플래그 + viewer가 `seq` 키로 마지막 partial 교체  ← viewer state upsert + Gemini provider seq 재시작 보정(`AISequenceNormalizer`) 검증 완료, 1분 E2E에서 seq 1~8 partial/final 수신·DB 저장 완료. 브라우저 시각 깜빡임 E2E는 미완료
+- [~] 🟡 **VAD 또는 RMS 임계값으로 무음 청크 차단** (비용 절감)  ← sidecar RMS silence gate 구현·단위 검증 완료 (`YESON_RMS_DBFS_THRESHOLD`, `YESON_RMS_SILENCE_GATE_ENABLED`), 실제 회의실 threshold 튜닝 미완료
 - [x] 시스템 프롬프트에 "혼합 언어 한국어 그대로 두기" 명시
 
-> 2026-05-18 코드 진행: `STTProvider`/`TranslationProvider` 인터페이스, `GeminiLiveProvider` lazy SDK adapter, sidecar audio→AI session wiring, AI utterance DB persist + viewer bus fan-out, Gemini config health endpoint, provider disconnect retry/backoff, AI publish latency structured log, viewer partial→final seq replacement 구현. 검증: `uv run pytest apps/server/tests -v` → 13 passed / 4 skipped, `uv run pytest apps/client_sidecar/tests -q` → 14 passed, `pnpm --filter @yeson-meet/web build` → pass. 실제 Gemini API Key 기반 1분 영상·viewer 지연 검증은 아직 미완료.
+> 2026-05-18 코드 진행: `STTProvider`/`TranslationProvider` 인터페이스, `GeminiLiveProvider` lazy SDK adapter, sidecar audio→AI session wiring, AI utterance DB persist + viewer bus fan-out, Gemini config health endpoint, provider disconnect retry/backoff, AI publish latency structured log, Gemini usage token/cost structured log, viewer partial→final seq replacement, Gemini Live model/env 정정(`gemini-3.1-flash-live-preview`), AUDIO + `output_audio_transcription` 기반 실시간 transcript fan-out, `audio_stream_end` 전달, provider seq 재시작 보정, sidecar RMS silence gate 구현. 검증: `uv run pytest apps/server/tests -v` → 22 passed / 4 skipped, `uv run pytest apps/client_sidecar/tests -q` → 18 passed, `pnpm --filter @yeson-meet/web build` → pass, `git diff --check` → clean. 실제 Gemini API Key 기반 local synthetic E2E(서버+테스트 sidecar 동일 개발 머신)에서 59.37초 synthetic 영어 오디오 viewer seq 1~8 / DB utterance 8개 저장, phrase-end→first viewer subtitle P50 1419.8ms / max 1522.3ms. 단, LAN 회의실 PC↔서버 분리 지연·브라우저 렌더·실제 오디오 라우팅은 아직 별도 검증 필요.
 
 ### 완료 기준
-- [ ] 영어 1분 영상 재생 → 한국어 자막 viewer에 흐름
-- [ ] 자막 지연 P50 ≤ 2초
+- [x] 영어 1분 synthetic 오디오 → 한국어 자막 viewer에 흐름  ← local synthetic E2E 통과: viewer WS 16개 partial/final 이벤트 수신, DB utterance seq 1~8 저장
+- [~] 실제 회의실 PC↔서버 LAN 분리 환경에서 영어 1분 영상 재생 → 한국어 자막 viewer에 흐름  ← Mac BlackHole 청크 전송은 검증 완료(S2), Gemini 포함 LAN 분리 E2E는 미완료
+- [x] local synthetic 자막 지연 P50 ≤ 2초  ← wall-clock phrase-end→first viewer subtitle P50 1419.8ms / max 1522.3ms, server→viewer P50 5.2ms / max 82.4ms
+- [ ] LAN 분리 환경 자막 지연 P50 ≤ 2초
 - [~] Gemini 세션 끊김 → 5초 안에 재연결, 자막 일부 손실 외 회의 진행 유지  ← provider disconnect retry 단위 검증 완료, 실제 Gemini WS 끊김 E2E 미완료
 - [ ] 좀비 회의 자동 종료 (3시간 도달 테스트)
 - [~] partial→final 갱신 시 viewer 깜빡임 없음  ← 동일 `seq` final이 partial을 교체하는 상태 로직 검증 완료, 브라우저 시각 E2E 미완료

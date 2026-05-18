@@ -59,6 +59,79 @@ uv run python -m apps.client_sidecar.main
 - 청크 누락: Drift Correction 미설정 시 발생 가능 → Audio MIDI Setup 재확인
 - 무음: Multi-Output Device가 시스템 출력으로 선택됐는지 확인 (control center에서 음원 라우팅 확인)
 
+### 1.5 LAN 분리 Gemini E2E 지연 검증 (S3 완료 기준)
+
+목적: local synthetic E2E가 아니라 **회의실 PC(sidecar) ↔ 서버 ↔ viewer(폰/브라우저)**가 분리된 실제 LAN에서 자막 지연 P50 ≤ 2초를 확인한다.
+
+#### 네트워크 전제
+
+- 회의실 PC는 서버와 유선 LAN 연결(10Gb NIC link-up이면 충분, 대역폭 병목 아님).
+- viewer 폰/노트북은 회의실 Wi-Fi/AP에 접속하되, 서버의 HTTPS/WSS 주소에 접근 가능해야 한다.
+- 게스트 Wi-Fi 또는 AP client isolation이 켜져 있으면 viewer가 서버에 접근하지 못할 수 있다.
+- 서버와 회의실 PC는 NTP/자동 시간 동기화가 켜져 있어야 latency 로그 비교가 가능하다.
+
+#### 서버에서 준비
+
+```bash
+# 1) 서버 + DB + Caddy 기동
+docker compose --env-file .env -f deploy/docker-compose.yml up -d
+
+# 2) Gemini health 확인 — 키 값은 출력하지 않고 configured 여부만 확인
+curl -fsS http://127.0.0.1:8000/api/v1/health/ai
+
+# 3) 운영자 로그인/세션 생성/device key 발급
+# TODO(S4): 데스크톱 UI가 붙기 전까지는 seed 또는 API 호출로 발급.
+# 산출물로 아래 3개 값을 회의실 PC/폰 테스트에 사용한다.
+# - YESON_DEVICE_API_KEY=<plaintext-device-key>
+# - YESON_SESSION_ID=<session-uuid>
+# - VIEWER_URL=https://<server-host>/v/<viewer-token>
+```
+
+#### 회의실 PC에서 실행
+
+```bash
+# SERVER_WS_BASE는 서버 주소 기준. Caddy/TLS 경유 시 wss://<server-host> 사용.
+SERVER_WS_BASE=wss://<server-host> \
+YESON_DEVICE_API_KEY=<plaintext-device-key> \
+YESON_SESSION_ID=<session-uuid> \
+YESON_SIDECAR_MODE=audio \
+uv run python -m apps.client_sidecar.main
+```
+
+1. 회의실 PC 출력 장치를 Multi-Output Device(스피커 + BlackHole)로 설정한다.
+2. 영어 1분 영상 또는 동일 문장을 6~10회 반복한 테스트 음원을 재생한다.
+3. 폰/노트북에서 `VIEWER_URL`을 열고 자막이 partial→final로 갱신되는지 본다.
+
+#### 합격 기준과 기록 값
+
+- 서버 `/api/v1/health/ai`가 `configured: true`.
+- sidecar 로그에 `audio ws connected`가 보이고 약 50 chunks/sec가 유지된다.
+- viewer에서 한국어 자막이 1분 동안 끊기지 않고 흐른다.
+- DB utterance `seq`가 발화 수만큼 단조 증가한다(예: 8발화면 seq 1~8).
+- 발화 종료 시점 → 첫 viewer 자막 표시 P50 ≤ 2초.
+- 기록 예시:
+
+```text
+date: 2026-..-..
+network: meeting PC wired 10GbE, viewer phone on <AP name>
+server_host: <server-host>
+session_id: <uuid>
+audio_source: 1min English test video / repeated phrase
+chunks_per_sec_1s: min/median/max
+db_utterance_count: N
+viewer_seq_range: 1..N
+phrase_end_to_first_subtitle_p50_ms: NNNN
+phrase_end_to_first_subtitle_max_ms: NNNN
+notes: Wi-Fi AP, browser/device, any drops
+```
+
+#### 실패 시 먼저 볼 곳
+
+- viewer 접속 실패: 폰이 서버 URL을 열 수 있는지, 게스트 Wi-Fi/client isolation 여부 확인.
+- chunks/sec가 50보다 낮음: 회의실 PC CPU, BlackHole/Voicemeeter 라우팅, Drift Correction 확인.
+- 자막만 늦음: 서버→Gemini 외부망 품질, Gemini Live 로그, partial transcript 수신 여부 확인.
+- DB `seq`가 덮어써짐: provider seq 재시작 보정(`AISequenceNormalizer`)이 적용된 서버 이미지인지 확인.
+
 ## 2. Windows (1순위 검증 — 시스템 부원 협조 단계, placeholder)
 
 > ROADMAP §S2 정식 완료 기준은 Windows 회의실 PC + Voicemeeter Banana. 본 섹션은 시스템 부원이 진행 시 채워짐.

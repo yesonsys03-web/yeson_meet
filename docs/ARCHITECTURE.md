@@ -328,7 +328,22 @@ class ReportGenerated(DomainEvent):
 
 **핵심**: 오디오 청크는 회의실 PC → 서버로만 흐름. Gemini와의 통신은 서버가 단독으로 책임.
 
-### 5.3 메시지 포맷
+### 5.3 Slice 3 latency budget (capture → viewer)
+
+목표는 **캡처 시점부터 viewer 화면 표시까지 P50 ≤ 2.0초**다. 실측은 영어 1분 영상 E2E에서 발화 단위로 기록하고, 4구간 중 어느 구간이 budget을 초과하는지 먼저 분리한다.
+
+| 구간 | 목표 P50 | 측정 기준 | 초과 시 조치 |
+|---|---:|---|---|
+| 1. 캡처 → 서버 WSS | ≤ 150ms | sidecar chunk 생성/전송 시각 → server binary frame 수신 시각 | 회의실 PC CPU, Voicemeeter/BlackHole 라우팅, sidecar queue/backoff 확인 |
+| 2. 서버 → Gemini | ≤ 250ms | server 수신 시각 → Gemini Live send 완료 | Gemini WS 재연결 상태, chunk batch/flush 지연 확인 |
+| 3. Gemini → 파싱 | ≤ 1,300ms | Gemini 응답 도착 → `TranslatedUtterance` 파싱 완료 | partial 응답 우선 표시, prompt/모델/네트워크 상태 확인 |
+| 4. 서버 → viewer | ≤ 300ms | `utterance.transcribed` 발생 → viewer WS 수신/렌더 | Hub fan-out, DB write, viewer reconnect/backfill 확인 |
+
+운영 기준: E2E P50이 2.0초를 넘거나 3구간(Gemini→파싱)이 반복적으로 1.3초를 넘으면 **partial subtitle 전략을 즉시 켠다**. 이미 같은 `seq`의 partial→final 교체를 지원하므로, final만 기다리지 말고 partial을 viewer에 먼저 fan-out한다.
+
+2026-05-18 S3 local synthetic 실측: 실제 `GEMINI_API_KEY`가 주입된 서버에서, 서버와 테스트 sidecar가 같은 개발 머신에 있는 상태로 59.37초 synthetic 영어 오디오(8발화)를 `/ws/sidecar`로 전송하고 `/ws/viewer`로 수신했다. 결과는 viewer partial/final 이벤트 16개, DB utterance seq 1~8 저장, phrase-end→first viewer subtitle P50 **1419.8ms** / max **1522.3ms**, server→viewer P50 **5.2ms** / max **82.4ms**로 local synthetic 목표(P50 ≤ 2.0초)를 통과했다. 이 수치는 Gemini 처리 + 서버 fan-out 검증 근거이며, 실제 회의실 PC↔서버 LAN 분리 환경의 캡처→서버 WSS 지연, Wi-Fi/스위치 jitter, TLS/Caddy 경유, 브라우저 렌더 지연은 별도 실측해야 한다.
+
+### 5.4 메시지 포맷
 
 모든 WS 메시지는 JSON 문자열.
 
@@ -558,16 +573,17 @@ yeson-meet/
 ### 12.3 Slice 3 — Gemini Live (가장 많은 엣지)
 | 케이스 | 영향 | 처리 |
 |---|---|---|
-| API Key 무효/만료 | 모든 회의 정지 | 서버 시작 시 health check + 운영자 알림 |
+| API Key 무효/만료 | 모든 회의 정지 | 서버 시작 시 health check + `/api/v1/operator/alerts` critical 알림 |
 | Quota 초과 | 회의 중 끊김 | 응답 코드 모니터, viewer "AI 일시 정지" + alert |
 | Gemini 응답 ≥10초 지연 | 자막 멈춤 | 타임아웃 + 이전 자막 유지 |
+| usage metadata 누락 | 비용 추정 불가 | token/cost 로그는 best-effort, 응답에 usage metadata가 없으면 E2E 비용 검증에서 보완 |
 | Gemini WS 세션 만료 (장기 회의) | 끊김 | 자동 재연결 + 세션 회전, 끊김 동안 큐 보존 |
 | partial → final 갱신 | 자막 깜빡임 | `is_final` 플래그로 마지막 partial 교체 (`seq` 키) |
 | 응답 JSON 깨짐 | 자막 누락 | 강건한 파서 + 로그, 다음 응답 정상 처리 |
 | 빠른 발화 / 겹침 | 순서 꼬임 | `seq` 단조 증가 + `started_at` 보조 |
 | 비영어 발화 (한국어 섞임) | 프롬프트 가정 어긋남 | 시스템 프롬프트에 "혼합 언어 한국어 그대로" 명시 |
 | 동시 회의 → Gemini 한도 | 회의 시작 실패 | 활성 세션 카운트, 한도 초과 거부 |
-| 비용 폭주 (좀비 세션) | 청구 충격 | 회의 시간 타이머 + N시간 자동 종료 |
+| 비용 폭주 (좀비 세션) | 청구 충격 | `YESON_MEETING_MAX_DURATION_HOURS` 초과 시 sidecar ingress 차단 + 자동 종료 + operator alert |
 
 ### 12.4 Slice 4 — 회의 라이프사이클
 | 케이스 | 영향 | 처리 |
