@@ -2,6 +2,7 @@
 from fastapi import APIRouter
 
 from apps.server.ai.gemini_live import GeminiConfigHealth, gemini_config_health
+from apps.server.ops.alerts import sync_gemini_config_alert
 
 router = APIRouter(tags=["health"])
 
@@ -15,5 +16,7 @@ async def health() -> dict[str, str]:
 
 @router.get("/health/ai")
 async def ai_health() -> dict[str, GeminiConfigHealth]:
-    return {"gemini": gemini_config_health()}
+    gemini = gemini_config_health()
+    sync_gemini_config_alert(gemini["configured"])
+    return {"gemini": gemini}
 # === ANCHOR: HEALTH_END ===
