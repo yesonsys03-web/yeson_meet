@@ -71,13 +71,13 @@
 - `apps/server/db/alembic.ini` + `versions/` 빈 폴더
 - **결정 락 2건 PRD §10에 박기**: ① 사이드카 ↔ 데스크톱 통신 방식 (Tauri IPC vs 127.0.0.1 WS) ② 사이드카 배포 방식 (uv dev / PyInstaller / Tauri externalBin)
 
-### 완료 기준
-- [ ] `docker compose up -d` → `curl -sk https://<SERVER_IP>/api/v1/health` returns `{"status":"ok"}`
-- [ ] `pnpm --filter desktop tauri dev` → 빈 윈도우 뜸
-- [ ] `pnpm --filter web dev` → "Hello yeson-meet" 페이지 브라우저에서 보임
-- [ ] `uv run python -m apps.client_sidecar.main` → "sidecar started" 콘솔 출력
-- [ ] `docker compose down -v` 후 다시 up — 정상 기동
-- [ ] 🔴 사이드카 통신·배포 결정 2건 PRD §10 결정 로그에 반영됨
+### 완료 기준 (tag `web_test`, 2026-05-15)
+- [x] `docker compose up -d` → `curl -sk https://<SERVER_IP>/api/v1/health` returns `{"status":"ok"}`
+- [x] `pnpm --filter desktop tauri dev` → 빈 윈도우 뜸
+- [x] `pnpm --filter web dev` → "Hello yeson-meet" 페이지 브라우저에서 보임
+- [x] `uv run python -m apps.client_sidecar.main` → "sidecar started" 콘솔 출력
+- [x] `docker compose down -v` 후 다시 up — 정상 기동
+- [x] 🔴 사이드카 통신·배포 결정 2건 PRD §10 결정 로그에 반영됨
 
 ---
 
@@ -96,10 +96,10 @@
 - Sidecar: 가짜 자막 발생기 (1초마다 `utterance.transcribed` JSON 발행)
 - Viewer: WS 구독 → 자막 1줄 표시
 
-### 완료 기준
-- [ ] Sidecar 실행 → 1초마다 viewer에 자막 텍스트가 ≤ 200ms 안에 표시
-- [ ] DB의 `utterance` 테이블에 발화가 누적
-- [ ] viewer 새로고침 시 마지막 N개 복원 (단순 GET `/api/v1/sessions/{id}/utterances`)
+### 완료 기준 (tag `s1_test`, 2026-05-15)
+- [x] Sidecar 실행 → 1초마다 viewer에 자막 텍스트가 ≤ 200ms 안에 표시
+- [x] DB의 `utterance` 테이블에 발화가 누적
+- [x] viewer 새로고침 시 마지막 N개 복원 (단순 GET `/api/v1/sessions/{id}/utterances`)
 
 ---
 
@@ -115,10 +115,12 @@
 - 서버: 청크 수신 → 단순 카운트 로깅 (총 바이트 / 초당 청크 수)
 - 테스트 페이지: "초당 N 청크 수신 중 / 총 X MB"
 
-### 완료 기준
-- [ ] Windows 회의실 PC에서 영어 영상 1분 재생 → 서버 로그에 약 3000개 청크(20ms × 50/sec × 60s) 수신
-- [ ] Mac에서 동일 통과 (MVP-α 2순위, 일정 압박 시 β로 이월 가능)
-- [ ] 네트워크 끊김 5초 → 큐 누적 → 복구 시 흘림 없이 재전송
+### 완료 기준 (tag `s2_test`, 2026-05-18 코드 ship)
+- [ ] Windows 회의실 PC에서 영어 영상 1분 재생 → 서버 로그에 약 3000개 청크(20ms × 50/sec × 60s) 수신  ← **시스템 부원 협조 단계 대기 (PRD §10 락)**, SETUP_MEETING_PC.md §2 placeholder
+- [ ] Mac에서 동일 통과 (MVP-α 2순위, 일정 압박 시 β로 이월 가능)  ← **Intel Mac + BlackHole manual 검증 대기**, PRD §10 락에서 S2 PoC는 Mac 통과로 인정, 절차는 SETUP_MEETING_PC.md §1.1~1.4
+- [~] 네트워크 끊김 5초 → 큐 누적 → 복구 시 흘림 없이 재전송  ← **부분 구현**: sidecar audio_ws 지수 백오프 재연결(1→30s) + 메모리-only `asyncio.Queue` (≈40s 버퍼) + drop counter 로그. 큐 영구화는 **Slice 5 SQLite로 위임** (audio_ws.py docstring + PRD §10 락 명시)
+
+> 코드/문서 ship 상태: sidecar pytest 14/14, server pytest 4 passed + 4 skipped (binary 테스트 deadlock은 [TODO(s3-test-infra)](apps/server/tests/test_ws_sidecar_binary.py)). code-reviewer P0 0건·P1 3건 fix 반영, verifier APPROVE.
 
 ---
 
