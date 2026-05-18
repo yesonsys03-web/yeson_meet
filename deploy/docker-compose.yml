@@ -31,6 +31,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-yeson}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-yeson_meet}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET required}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_LIVE_MODEL: ${GEMINI_LIVE_MODEL:-gemini-3.1-flash-live-preview}
       ACCESS_MODE: ${ACCESS_MODE:-lan}
       SERVER_HOST: ${SERVER_HOST:-localhost}
       STORAGE_ROOT: /var/lib/yeson-meet/storage
