@@ -1,146 +1,146 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-18T02:15:33.168407Z",
+  "updated_at": "2026-05-18T23:51:09.954486Z",
   "recent_events": [
     {
-      "time": "2026-05-18T02:15:32.995175Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/2703",
-      "message": "deploy/data/postgres/base/16479/2703 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T02:15:33.009374Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/1249",
-      "message": "1249에 앵커가 없습니다",
-      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
-    },
-    {
-      "time": "2026-05-18T02:15:33.018204Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/1249",
-      "message": "deploy/data/postgres/base/16479/1249 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T02:15:33.026554Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/1249_fsm",
-      "message": "deploy/data/postgres/base/16479/1249_fsm modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T02:15:33.035352Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/1249_vm",
-      "message": "deploy/data/postgres/base/16479/1249_vm modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T02:15:33.045505Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/18908",
-      "message": "deploy/data/postgres/base/16479/18908 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T02:15:33.050496Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/2674",
-      "message": "2674이 740줄에서 910줄로 늘었습니다",
-      "action": "데이터·UI 조각은 `*.ts`/하위 컴포넌트로 옮기세요."
-    },
-    {
-      "time": "2026-05-18T02:15:33.052263Z",
+      "time": "2026-05-18T23:47:49.408463Z",
       "kind": "warning",
       "path": "deploy/data/postgres/base/16479/2674",
       "message": "2674에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T02:15:33.060220Z",
+      "time": "2026-05-18T23:47:49.415364Z",
       "kind": "modified",
       "path": "deploy/data/postgres/base/16479/2674",
       "message": "deploy/data/postgres/base/16479/2674 modified",
       "action": "Review the latest change and refresh transfer handoff if needed."
     },
     {
-      "time": "2026-05-18T02:15:33.070342Z",
+      "time": "2026-05-18T23:47:49.423415Z",
       "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/2674_fsm",
-      "message": "deploy/data/postgres/base/16479/2674_fsm modified",
+      "path": "deploy/data/postgres/base/16479/23662",
+      "message": "deploy/data/postgres/base/16479/23662 modified",
       "action": "Review the latest change and refresh transfer handoff if needed."
     },
     {
-      "time": "2026-05-18T02:15:33.078413Z",
+      "time": "2026-05-18T23:47:49.431293Z",
       "kind": "modified",
       "path": "deploy/data/postgres/base/16479/2702",
       "message": "deploy/data/postgres/base/16479/2702 modified",
       "action": "Review the latest change and refresh transfer handoff if needed."
     },
     {
-      "time": "2026-05-18T02:15:33.086110Z",
+      "time": "2026-05-18T23:47:49.437890Z",
       "kind": "warning",
       "path": "deploy/data/postgres/base/16479/2619",
       "message": "2619에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T02:15:33.092906Z",
+      "time": "2026-05-18T23:47:49.445193Z",
       "kind": "modified",
       "path": "deploy/data/postgres/base/16479/2619",
       "message": "deploy/data/postgres/base/16479/2619 modified",
       "action": "Review the latest change and refresh transfer handoff if needed."
     },
     {
-      "time": "2026-05-18T02:15:33.105692Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/2619_fsm",
-      "message": "deploy/data/postgres/base/16479/2619_fsm modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T02:15:33.129344Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/18954",
-      "message": "deploy/data/postgres/base/16479/18954 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T02:15:33.137580Z",
+      "time": "2026-05-18T23:47:49.453284Z",
       "kind": "modified",
       "path": "deploy/data/postgres/base/16479/2666",
       "message": "deploy/data/postgres/base/16479/2666 modified",
       "action": "Review the latest change and refresh transfer handoff if needed."
     },
     {
-      "time": "2026-05-18T02:15:33.146506Z",
+      "time": "2026-05-18T23:47:49.461103Z",
       "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/18904",
-      "message": "deploy/data/postgres/base/16479/18904 modified",
+      "path": "deploy/data/postgres/base/16479/23655",
+      "message": "deploy/data/postgres/base/16479/23655 modified",
       "action": "Review the latest change and refresh transfer handoff if needed."
     },
     {
-      "time": "2026-05-18T02:15:33.156294Z",
+      "time": "2026-05-18T23:47:49.468339Z",
       "kind": "modified",
       "path": "deploy/data/postgres/base/16479/5002",
       "message": "deploy/data/postgres/base/16479/5002 modified",
       "action": "Review the latest change and refresh transfer handoff if needed."
     },
     {
-      "time": "2026-05-18T02:15:33.161660Z",
+      "time": "2026-05-18T23:47:49.476179Z",
+      "kind": "modified",
+      "path": "deploy/data/postgres/base/16479/23645",
+      "message": "deploy/data/postgres/base/16479/23645 modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-18T23:47:49.483900Z",
+      "kind": "modified",
+      "path": "deploy/data/postgres/base/16479/23607",
+      "message": "deploy/data/postgres/base/16479/23607 modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-18T23:47:49.488188Z",
       "kind": "warning",
       "path": "deploy/data/postgres/base/16479/1247",
       "message": "1247에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T02:15:33.168407Z",
+      "time": "2026-05-18T23:47:49.495776Z",
       "kind": "modified",
       "path": "deploy/data/postgres/base/16479/1247",
       "message": "deploy/data/postgres/base/16479/1247 modified",
       "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-18T23:47:51.424593Z",
+      "kind": "commit",
+      "path": "git/b0c1038d47b7",
+      "message": "feat: gate silent sidecar audio chunks Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
+      "action": ""
+    },
+    {
+      "time": "2026-05-18T23:48:16.142872Z",
+      "kind": "commit",
+      "path": "git/fd45858b9d54",
+      "message": "feat: stream Gemini Live transcript partials Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
+      "action": ""
+    },
+    {
+      "time": "2026-05-18T23:49:20.045219Z",
+      "kind": "commit",
+      "path": "git/be0ec9485cd2",
+      "message": "feat: expose operator alerts Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
+      "action": ""
+    },
+    {
+      "time": "2026-05-18T23:49:42.258260Z",
+      "kind": "commit",
+      "path": "git/4f356f528a66",
+      "message": "feat: enforce meeting duration safety Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
+      "action": ""
+    },
+    {
+      "time": "2026-05-18T23:50:12.112297Z",
+      "kind": "commit",
+      "path": "git/bb5d1ebc6b4d",
+      "message": "docs(roadmap): document Slice 3 validation Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
+      "action": ""
+    },
+    {
+      "time": "2026-05-18T23:50:38.724785Z",
+      "kind": "commit",
+      "path": "git/6fc4102bca73",
+      "message": "chore: add sidecar VibeLign anchors Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
+      "action": ""
+    },
+    {
+      "time": "2026-05-18T23:51:09.954486Z",
+      "kind": "commit",
+      "path": "git/fa3f2ba8d40f",
+      "message": "chore: add server VibeLign anchors Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
+      "action": ""
     }
   ],
   "relevant_files": [
@@ -150,7 +150,7 @@
       "source": "watch"
     },
     {
-      "path": "deploy/data/postgres/base/16479/2674_fsm",
+      "path": "deploy/data/postgres/base/16479/23662",
       "why": "Recently modified in watch.",
       "source": "watch"
     },
@@ -165,27 +165,27 @@
       "source": "watch"
     },
     {
-      "path": "deploy/data/postgres/base/16479/2619_fsm",
-      "why": "Recently modified in watch.",
-      "source": "watch"
-    },
-    {
-      "path": "deploy/data/postgres/base/16479/18954",
-      "why": "Recently modified in watch.",
-      "source": "watch"
-    },
-    {
       "path": "deploy/data/postgres/base/16479/2666",
       "why": "Recently modified in watch.",
       "source": "watch"
     },
     {
-      "path": "deploy/data/postgres/base/16479/18904",
+      "path": "deploy/data/postgres/base/16479/23655",
       "why": "Recently modified in watch.",
       "source": "watch"
     },
     {
       "path": "deploy/data/postgres/base/16479/5002",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "deploy/data/postgres/base/16479/23645",
+      "why": "Recently modified in watch.",
+      "source": "watch"
+    },
+    {
+      "path": "deploy/data/postgres/base/16479/23607",
       "why": "Recently modified in watch.",
       "source": "watch"
     },
@@ -197,70 +197,70 @@
   ],
   "warnings": [
     {
-      "time": "2026-05-18T02:15:32.868070Z",
+      "time": "2026-05-18T23:47:49.168390Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/16479/2662",
+      "message": "2662에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-18T23:47:49.250693Z",
       "kind": "warning",
       "path": "deploy/data/postgres/base/16479/2606",
       "message": "2606에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T02:15:32.887282Z",
+      "time": "2026-05-18T23:47:49.278296Z",
       "kind": "warning",
       "path": "deploy/data/postgres/base/16479/2678",
       "message": "2678에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T02:15:32.907200Z",
+      "time": "2026-05-18T23:47:49.288071Z",
       "kind": "warning",
       "path": "deploy/data/postgres/base/16479/2679",
       "message": "2679에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T02:15:32.957500Z",
+      "time": "2026-05-18T23:47:49.321856Z",
       "kind": "warning",
       "path": "deploy/data/postgres/base/16479/3455",
       "message": "3455에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T02:15:32.987278Z",
+      "time": "2026-05-18T23:47:49.339392Z",
       "kind": "warning",
       "path": "deploy/data/postgres/base/16479/2703",
       "message": "2703에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T02:15:33.009374Z",
+      "time": "2026-05-18T23:47:49.373930Z",
       "kind": "warning",
       "path": "deploy/data/postgres/base/16479/1249",
       "message": "1249에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T02:15:33.050496Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/2674",
-      "message": "2674이 740줄에서 910줄로 늘었습니다",
-      "action": "데이터·UI 조각은 `*.ts`/하위 컴포넌트로 옮기세요."
-    },
-    {
-      "time": "2026-05-18T02:15:33.052263Z",
+      "time": "2026-05-18T23:47:49.408463Z",
       "kind": "warning",
       "path": "deploy/data/postgres/base/16479/2674",
       "message": "2674에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T02:15:33.086110Z",
+      "time": "2026-05-18T23:47:49.437890Z",
       "kind": "warning",
       "path": "deploy/data/postgres/base/16479/2619",
       "message": "2619에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T02:15:33.161660Z",
+      "time": "2026-05-18T23:47:49.488188Z",
       "kind": "warning",
       "path": "deploy/data/postgres/base/16479/1247",
       "message": "1247에 앵커가 없습니다",

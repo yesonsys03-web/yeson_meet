@@ -274,5 +274,1319 @@
     "description": "버튼이나 창처럼 화면을 만드는 데 필요한 여러 조각을 한데 모아 정리해 놓은 목록입니다.",
     "_source": "ai",
     "_content_hash": "3ed11735b2f7ab72"
+  },
+  "TEST_AI_LIVE_SESSION___INIT": {
+    "intent": "실시간 테스트 초기 설정",
+    "aliases": [
+      "테스트 시작 준비",
+      "초기화 설정",
+      "session start setup"
+    ],
+    "description": "실시간 대화 테스트를 시작하기 위해 필요한 기본 재료들을 준비하는 구역입니다.",
+    "_source": "ai",
+    "_content_hash": "88fe906a88bde7aa"
+  },
+  "TEST_AI_LIVE_SESSION_STREAM": {
+    "intent": "음성 데이터 전송 테스트",
+    "aliases": [
+      "소리 정보 보내기",
+      "오디오 전송 테스트",
+      "audio streaming test"
+    ],
+    "description": "사용자의 목소리 데이터를 테스트 환경으로 끊김 없이 보내는 기능을 담당합니다.",
+    "_source": "ai",
+    "_content_hash": "d361590c9b7402eb"
+  },
+  "TEST_AI_LIVE_SESSION_EMIT": {
+    "intent": "번역 결과 출력 테스트",
+    "aliases": [
+      "결과 확인하기",
+      "번역 문장 출력",
+      "output result check"
+    ],
+    "description": "변환된 문장이 제대로 화면에 표시되는지 확인하는 통로입니다.",
+    "_source": "ai",
+    "_content_hash": "fef0f8803cdb401d"
+  },
+  "TEST_AI_LIVE_SESSION_TEST_AUDIO_LIVE_SESSION_REJECTS_PUSH_BEFORE": {
+    "intent": "순서 오류 예외 처리",
+    "aliases": [
+      "준비 전 입력 막기",
+      "순서 확인 테스트",
+      "prevent early input"
+    ],
+    "description": "시스템이 준비되기 전에 데이터를 보내면 안 된다고 차단하는 안전장치를 검사합니다.",
+    "_source": "ai",
+    "_content_hash": "da39a3ee5e6b4b0d"
+  },
+  "PROVIDERS_TRANSLATEDUTTERANCE": {
+    "intent": "번역 문장 데이터 틀",
+    "aliases": [
+      "번역 결과 모양",
+      "문장 데이터 구조",
+      "translated sentence format"
+    ],
+    "description": "번역된 문장, 시간, 화자 정보를 담는 일정한 데이터 양식입니다.",
+    "_source": "ai",
+    "_content_hash": "72478eb4f6b26dae"
+  },
+  "PROVIDERS_STREAM": {
+    "intent": "번역 서비스 통신 연결",
+    "aliases": [
+      "번역기 연결",
+      "소리 스트림 처리",
+      "translation service connection"
+    ],
+    "description": "실제 번역 업체와 데이터를 주고받으며 실시간으로 소리를 처리하는 핵심 통로입니다.",
+    "_source": "ai",
+    "_content_hash": "df4db61022017f78"
+  },
+  "PROVIDERS_TRANSLATE": {
+    "intent": "개별 문장 번역 실행",
+    "aliases": [
+      "번역기 돌리기",
+      "문장 언어 변환",
+      "single sentence translate"
+    ],
+    "description": "입력받은 텍스트를 원하는 언어로 실시간으로 바꿔주는 번역기 본체입니다.",
+    "_source": "ai",
+    "_content_hash": "61cb11f844ff3904"
+  },
+  "LIVE_SESSION___INIT": {
+    "intent": "실시간 대화 세션 시작",
+    "aliases": [
+      "세션 만들기",
+      "대화 시작 설정",
+      "create live session"
+    ],
+    "description": "번역기를 가동하고 대화할 준비를 마치는 실시간 세션의 시작점입니다.",
+    "_source": "ai",
+    "_content_hash": "a9dc24bcbdb77c18"
+  },
+  "LIVE_SESSION_PUSH_AUDIO": {
+    "intent": "오디오 데이터 입력",
+    "aliases": [
+      "목소리 보내기",
+      "데이터 전달",
+      "upload audio chunk"
+    ],
+    "description": "마이크에서 들어온 음성 조각들을 번역기가 처리하도록 대기열에 담아줍니다.",
+    "_source": "ai",
+    "_content_hash": "d15e857b101a525f"
+  },
+  "LIVE_SESSION_STOP": {
+    "intent": "세션 종료 및 정리",
+    "aliases": [
+      "대화 끝내기",
+      "연결 해제",
+      "terminate session"
+    ],
+    "description": "진행 중인 대화를 안전하게 멈추고 연결된 모든 작업을 깨끗이 마무리합니다.",
+    "_source": "ai",
+    "_content_hash": "8f31f95559115de6"
+  },
+  "LIVE_SESSION__AUDIO_STREAM": {
+    "intent": "오디오 데이터 흐름 관리",
+    "aliases": [
+      "소리 이어주기",
+      "음성 처리 통로",
+      "audio flow pipeline"
+    ],
+    "description": "입력된 소리 조각들을 차례대로 하나씩 꺼내어 번역기에게 전달하는 흐름을 관리합니다.",
+    "_source": "ai",
+    "_content_hash": "9ef044fa47f82f6b"
+  },
+  "LIVE_SESSION__RUN": {
+    "intent": "번역 반복 실행 관리",
+    "aliases": [
+      "실시간 처리 작동",
+      "대화 실행 관리",
+      "manage continuous translation"
+    ],
+    "description": "들어오는 소리를 계속 번역하고, 번역된 결과가 나올 때마다 알려주는 전체 작동기입니다.",
+    "_source": "ai",
+    "_content_hash": "344584369fee25ff"
+  },
+  "PROVIDERS_STTPROVIDER": {
+    "intent": "providers sttprovider",
+    "aliases": [
+      "providers sttprovider",
+      "provider stream"
+    ],
+    "description": "providers sttprovider",
+    "_source": "code"
+  },
+  "PROVIDERS_TRANSLATIONPROVIDER": {
+    "intent": "providers translationprovider",
+    "aliases": [
+      "providers translationprovider",
+      "translation provider translate"
+    ],
+    "description": "providers translationprovider",
+    "_source": "code"
+  },
+  "TEST_AI_LIVE_SESSION_FAKEPROVIDER": {
+    "intent": "test ai live session fakeprovider",
+    "aliases": [
+      "test ai live session fakeprovider",
+      "fake provider init stream"
+    ],
+    "description": "test ai live session fakeprovider",
+    "_source": "code"
+  },
+  "SIDECAR": {
+    "intent": "실시간 데이터 중계 처리",
+    "aliases": [
+      "장치 연결 통로",
+      "실시간 정보 전달",
+      "device data stream",
+      "realtime bridge"
+    ],
+    "description": "외부 기기에서 들어오는 음성 정보를 실시간으로 받아 다른 사용자에게 전달하는 역할을 합니다.",
+    "_source": "ai",
+    "_content_hash": "eacca3e6d0423d39"
+  },
+  "GEMINI_LIVE": {
+    "intent": "AI 대화 기능 연결",
+    "aliases": [
+      "제미나이 연동",
+      "AI 대화 도구",
+      "ai model connector",
+      "chat service bridge"
+    ],
+    "description": "구글의 인공지능 모델인 제미나이를 사용하여 대화 기능을 구현하고 연결하는 구역입니다.",
+    "_source": "ai",
+    "_content_hash": "fefb77be2e06a8cb"
+  },
+  "TEST_AI_PUBLISH_FLOW": {
+    "intent": "데이터 저장 흐름 검사",
+    "aliases": [
+      "대화 저장 테스트",
+      "전송 흐름 확인",
+      "data save verification",
+      "flow test"
+    ],
+    "description": "AI가 생성한 대화 내용이 데이터베이스에 잘 저장되고 전달되는지 확인하는 테스트 구역입니다.",
+    "_source": "ai",
+    "_content_hash": "55d0ce4cc0e01c67"
+  },
+  "TEST_GEMINI_LIVE": {
+    "intent": "AI 응답 해석 검사",
+    "aliases": [
+      "대화 내용 읽기 테스트",
+      "AI 응답 분석 확인",
+      "text extraction test",
+      "response parser check"
+    ],
+    "description": "인공지능이 보내준 대화 내용에서 우리가 필요한 글자 정보만 올바르게 뽑아내는지 확인합니다.",
+    "_source": "ai",
+    "_content_hash": "669b3369e4b79d94"
+  },
+  "WEB_UTTERANCES": {
+    "intent": "web utterances",
+    "aliases": [
+      "web utterances",
+      "function existing index"
+    ],
+    "description": "web utterances",
+    "_source": "code"
+  },
+  "SESSIONS__VIEWER_BASE": {
+    "intent": "화면 주소 설정",
+    "aliases": [
+      "뷰어 연결 주소",
+      "viewer connection url",
+      "웹 화면 위치"
+    ],
+    "description": "사용자가 접속할 화면의 기본 인터넷 주소를 설정하는 곳입니다.",
+    "_source": "ai",
+    "_content_hash": "b60ddf68011f1dd9"
+  },
+  "SESSIONS__STORAGE_ROOT": {
+    "intent": "데이터 저장 위치",
+    "aliases": [
+      "파일 저장 경로",
+      "file storage path",
+      "데이터가 쌓이는 곳"
+    ],
+    "description": "회의 기록과 같은 데이터 파일들을 컴퓨터 어디에 저장할지 정합니다.",
+    "_source": "ai",
+    "_content_hash": "79de0d0b1aed3c4b"
+  },
+  "SESSIONS_SESSIONCREATEIN": {
+    "intent": "회의 생성 정보 양식",
+    "aliases": [
+      "회의 만들기 입력값",
+      "new session request form",
+      "회의 생성 규칙"
+    ],
+    "description": "새로운 회의를 만들 때 필요한 정보들이 무엇인지 정해둔 설계도입니다.",
+    "_source": "ai",
+    "_content_hash": "c7fef7a881018f18"
+  },
+  "SESSIONS_SESSIONCREATEOUT": {
+    "intent": "회의 생성 결과값",
+    "aliases": [
+      "회의 생성 완료 정보",
+      "session creation result",
+      "회의 생성 후 응답"
+    ],
+    "description": "회의를 성공적으로 만들었을 때 사용자에게 돌려줄 정보를 정의합니다.",
+    "_source": "ai",
+    "_content_hash": "9a70ee193eea6387"
+  },
+  "SESSIONS_SESSIONENDOUT": {
+    "intent": "회의 종료 결과값",
+    "aliases": [
+      "회의 마침 정보",
+      "session closure details",
+      "회의 결과 보고서 안내"
+    ],
+    "description": "회의를 종료한 후 그 결과나 보고서 위치 등을 알려주는 정보입니다.",
+    "_source": "ai",
+    "_content_hash": "5a855168065b31a7"
+  },
+  "SESSIONS_CREATE_SESSION": {
+    "intent": "회의 생성 기능",
+    "aliases": [
+      "회의 만들기 버튼 기능",
+      "start new meeting",
+      "새 회의 시작하기"
+    ],
+    "description": "실제로 새로운 회의를 시작하도록 명령을 실행하는 핵심 기능입니다.",
+    "_source": "ai",
+    "_content_hash": "8eef27994d4357b2"
+  },
+  "SESSIONS__GET_OPERATOR_SESSION_OR_404": {
+    "intent": "회의 정보 가져오기",
+    "aliases": [
+      "회의 정보 찾기",
+      "find meeting session",
+      "특정 회의 불러오기"
+    ],
+    "description": "회의 고유 번호를 사용하여 데이터베이스에서 회의 정보를 찾아냅니다.",
+    "_source": "ai",
+    "_content_hash": "cff8fd5acd90f737"
+  },
+  "SESSIONS__SESSION_UTTERANCES": {
+    "intent": "대화 내용 조회",
+    "aliases": [
+      "회의 발언 목록",
+      "list of meeting utterances",
+      "대화 기록 불러오기"
+    ],
+    "description": "특정 회의에서 오고 간 대화 내용을 순서대로 모두 가져오는 기능입니다.",
+    "_source": "ai",
+    "_content_hash": "d697e0a0e3ed9ed7"
+  },
+  "SESSIONS_END_SESSION": {
+    "intent": "회의 종료 기능",
+    "aliases": [
+      "회의 끝내기",
+      "terminate meeting",
+      "회의 마감하기"
+    ],
+    "description": "진행 중인 회의를 마무리하고 결과를 정리하는 상태로 변경합니다.",
+    "_source": "ai",
+    "_content_hash": "2d9d5a55ecf2f22e"
+  },
+  "SESSIONS_DOWNLOAD_SESSION_REPORT": {
+    "intent": "보고서 다운로드",
+    "aliases": [
+      "결과 파일 받기",
+      "fetch meeting report",
+      "회의 요약 내려받기"
+    ],
+    "description": "회의가 끝난 후 생성된 보고서 파일을 내려받을 수 있게 합니다.",
+    "_source": "ai",
+    "_content_hash": "6c6689dea86ef9b4"
+  },
+  "EVENTS_DOMAINEVENT": {
+    "intent": "이벤트 기본 규칙",
+    "aliases": [
+      "사건 기록 공통 양식",
+      "base event template",
+      "이벤트 기본 틀"
+    ],
+    "description": "회의 중에 일어나는 모든 사건을 기록하기 위한 기본 규칙입니다.",
+    "_source": "ai",
+    "_content_hash": "5e073f5002bea6d7"
+  },
+  "EVENTS_UTTERANCETRANSCRIBED": {
+    "intent": "음성 변환 기록",
+    "aliases": [
+      "말하기 기록 저장",
+      "record transcribed speech",
+      "대화 내용 문자화"
+    ],
+    "description": "누가 무슨 말을 했는지, 한국어로는 무엇인지 등 대화 정보를 기록합니다.",
+    "_source": "ai",
+    "_content_hash": "0b7316765ad8237f"
+  },
+  "EVENTS_SESSIONENDED": {
+    "intent": "회의 종료 사건",
+    "aliases": [
+      "회의 끝남 이벤트",
+      "meeting ended record",
+      "회의 완료 기록"
+    ],
+    "description": "회의가 종료되었다는 사실을 시스템에 기록하는 정보입니다.",
+    "_source": "ai",
+    "_content_hash": "eccfe9fa9717c428"
+  },
+  "EVENTS_SERIALIZE": {
+    "intent": "데이터 변환",
+    "aliases": [
+      "데이터 모양 바꾸기",
+      "convert event to data",
+      "기록 형식 변환"
+    ],
+    "description": "기록된 사건 정보를 컴퓨터가 이해하기 쉬운 문자열 형태로 바꿉니다.",
+    "_source": "ai",
+    "_content_hash": "8f661567520969ee"
+  },
+  "REPORTS_BUILD_SESSION_REPORT": {
+    "intent": "보고서 문서 생성",
+    "aliases": [
+      "요약 보고서 만들기",
+      "generate session document",
+      "회의 보고서 작성"
+    ],
+    "description": "회의 정보와 대화 내용을 모아 보기 좋은 문서 형태로 정리합니다.",
+    "_source": "ai",
+    "_content_hash": "f9d4eda1db1ae73b"
+  },
+  "REPORTS_REPORT_PATH": {
+    "intent": "보고서 저장 경로",
+    "aliases": [
+      "보고서 위치 찾기",
+      "determine report path",
+      "파일 저장 경로 계산"
+    ],
+    "description": "회의 보고서를 어디에 저장할지 그 주소를 계산하는 도구입니다.",
+    "_source": "ai",
+    "_content_hash": "87f23deaa816884f"
+  },
+  "REPORTS_WRITE_SESSION_REPORT": {
+    "intent": "보고서 파일 작성",
+    "aliases": [
+      "보고서 저장하기",
+      "save meeting report",
+      "파일로 기록하기"
+    ],
+    "description": "완성된 보고서 내용을 실제로 파일 형태로 저장하는 기능입니다.",
+    "_source": "ai",
+    "_content_hash": "97d91ea0c3b0d902"
+  },
+  "CAPTURE__ENQUEUE": {
+    "intent": "capture enqueue",
+    "aliases": [
+      "capture enqueue",
+      "enqueue"
+    ],
+    "description": "capture enqueue",
+    "_source": "code"
+  },
+  "CAPTURE__CALLBACK": {
+    "intent": "capture callback",
+    "aliases": [
+      "capture callback",
+      "callback"
+    ],
+    "description": "capture callback",
+    "_source": "code"
+  },
+  "DEVICE_FIND_INPUT_DEVICE": {
+    "intent": "device find input device",
+    "aliases": [
+      "device find input device",
+      "find input device this"
+    ],
+    "description": "device find input device",
+    "_source": "code"
+  },
+  "RESAMPLE___INIT": {
+    "intent": "resample init",
+    "aliases": [
+      "resample init",
+      "init"
+    ],
+    "description": "resample init",
+    "_source": "code"
+  },
+  "RESAMPLE_PROCESS": {
+    "intent": "resample process",
+    "aliases": [
+      "resample process",
+      "process"
+    ],
+    "description": "resample process",
+    "_source": "code"
+  },
+  "RMS_RMS_DBFS": {
+    "intent": "rms rms dbfs",
+    "aliases": [
+      "rms rms dbfs",
+      "rms dbfs"
+    ],
+    "description": "rms rms dbfs",
+    "_source": "code"
+  },
+  "RMS___INIT": {
+    "intent": "rms init",
+    "aliases": [
+      "rms init",
+      "init"
+    ],
+    "description": "rms init",
+    "_source": "code"
+  },
+  "RMS_OBSERVE": {
+    "intent": "rms observe",
+    "aliases": [
+      "rms observe",
+      "observe"
+    ],
+    "description": "rms observe",
+    "_source": "code"
+  },
+  "RMS_SHOULD_GATE_SILENCE": {
+    "intent": "rms should gate silence",
+    "aliases": [
+      "rms should gate silence",
+      "should gate silence"
+    ],
+    "description": "rms should gate silence",
+    "_source": "code"
+  },
+  "AUDIO": {
+    "intent": "audio",
+    "aliases": [
+      "audio"
+    ],
+    "description": "audio",
+    "_source": "code"
+  },
+  "MAIN__REQUIRED_ENV": {
+    "intent": "main required env",
+    "aliases": [
+      "main required env",
+      "메인화면",
+      "required env"
+    ],
+    "description": "main required env",
+    "_source": "code"
+  },
+  "MAIN_FIXTURE_MAIN": {
+    "intent": "main fixture main",
+    "aliases": [
+      "main fixture main",
+      "메인화면",
+      "fixture main"
+    ],
+    "description": "main fixture main",
+    "_source": "code"
+  },
+  "MAIN_AUDIO_MAIN": {
+    "intent": "main audio main",
+    "aliases": [
+      "main audio main",
+      "메인화면",
+      "audio main"
+    ],
+    "description": "main audio main",
+    "_source": "code"
+  },
+  "MAIN_MAIN": {
+    "intent": "main main",
+    "aliases": [
+      "main main",
+      "메인화면",
+      "main"
+    ],
+    "description": "main main",
+    "_source": "code"
+  },
+  "AUDIO_WS_STREAM_AUDIO": {
+    "intent": "audio ws stream audio",
+    "aliases": [
+      "audio ws stream audio",
+      "stream audio"
+    ],
+    "description": "audio ws stream audio",
+    "_source": "code"
+  },
+  "AUDIO_WS__ISO_NOW": {
+    "intent": "audio ws iso now",
+    "aliases": [
+      "audio ws iso now",
+      "iso now"
+    ],
+    "description": "audio ws iso now",
+    "_source": "code"
+  },
+  "AUDIO_WS__SAFE_URL": {
+    "intent": "audio ws safe url",
+    "aliases": [
+      "audio ws safe url",
+      "safe url"
+    ],
+    "description": "audio ws safe url",
+    "_source": "code"
+  },
+  "EVENT_SCHEMA_TO_JSON_DICT": {
+    "intent": "event schema to json dict",
+    "aliases": [
+      "event schema to json dict",
+      "to json dict"
+    ],
+    "description": "event schema to json dict",
+    "_source": "code"
+  },
+  "FIXTURE_EMITTER_FIXTURE_STREAM": {
+    "intent": "fixture emitter fixture stream",
+    "aliases": [
+      "fixture emitter fixture stream",
+      "fixture stream"
+    ],
+    "description": "fixture emitter fixture stream",
+    "_source": "code"
+  },
+  "SERVER_WS_SEND_EVENTS": {
+    "intent": "server ws send events",
+    "aliases": [
+      "server ws send events",
+      "서버",
+      "send events"
+    ],
+    "description": "server ws send events",
+    "_source": "code"
+  },
+  "AUDIO_STATS_GET_AUDIO_STATS": {
+    "intent": "audio stats get audio stats",
+    "aliases": [
+      "audio stats get audio stats",
+      "조회",
+      "get audio stats"
+    ],
+    "description": "audio stats get audio stats",
+    "_source": "code"
+  },
+  "AUTH_LOGININ": {
+    "intent": "authentication loginin",
+    "aliases": [
+      "auth authentication loginin",
+      "토큰",
+      "로그인",
+      "login in"
+    ],
+    "description": "authentication loginin",
+    "_source": "code"
+  },
+  "AUTH_LOGIN": {
+    "intent": "authentication login",
+    "aliases": [
+      "auth authentication login",
+      "토큰",
+      "로그인",
+      "login"
+    ],
+    "description": "authentication login",
+    "_source": "code"
+  },
+  "DEVICES_DEVICECREATEIN": {
+    "intent": "devices devicecreatein",
+    "aliases": [
+      "devices devicecreatein",
+      "중복",
+      "device create in"
+    ],
+    "description": "devices devicecreatein",
+    "_source": "code"
+  },
+  "DEVICES_DEVICECREATEOUT": {
+    "intent": "devices devicecreateout",
+    "aliases": [
+      "devices devicecreateout",
+      "중복",
+      "device create out"
+    ],
+    "description": "devices devicecreateout",
+    "_source": "code"
+  },
+  "DEVICES_CREATE_DEVICE": {
+    "intent": "devices create device",
+    "aliases": [
+      "devices create device",
+      "중복",
+      "create device"
+    ],
+    "description": "devices create device",
+    "_source": "code"
+  },
+  "OPERATOR_ALERTS_OPERATORALERTOUT": {
+    "intent": "operator alerts operatoralertout",
+    "aliases": [
+      "operator alerts operatoralertout",
+      "operator alert out"
+    ],
+    "description": "operator alerts operatoralertout",
+    "_source": "code"
+  },
+  "OPERATOR_ALERTS_LIST_OPERATOR_ALERTS": {
+    "intent": "operator alerts list operator alerts",
+    "aliases": [
+      "operator alerts list operator alerts",
+      "list operator alerts"
+    ],
+    "description": "operator alerts list operator alerts",
+    "_source": "code"
+  },
+  "UTTERANCES_UTTERANCEOUT": {
+    "intent": "utterances utteranceout",
+    "aliases": [
+      "utterances utteranceout",
+      "utterance out"
+    ],
+    "description": "utterances utteranceout",
+    "_source": "code"
+  },
+  "UTTERANCES_UTTERANCELISTOUT": {
+    "intent": "utterances utterancelistout",
+    "aliases": [
+      "utterances utterancelistout",
+      "utterance list out"
+    ],
+    "description": "utterances utterancelistout",
+    "_source": "code"
+  },
+  "UTTERANCES__LIST_UTTERANCES": {
+    "intent": "utterances list utterances",
+    "aliases": [
+      "utterances list utterances",
+      "list utterances"
+    ],
+    "description": "utterances list utterances",
+    "_source": "code"
+  },
+  "UTTERANCES__TO_OUT": {
+    "intent": "utterances to out",
+    "aliases": [
+      "utterances to out",
+      "to out"
+    ],
+    "description": "utterances to out",
+    "_source": "code"
+  },
+  "UTTERANCES_LIST_SESSION_UTTERANCES": {
+    "intent": "utterances list session utterances",
+    "aliases": [
+      "utterances list session utterances",
+      "list session utterances"
+    ],
+    "description": "utterances list session utterances",
+    "_source": "code"
+  },
+  "UTTERANCES_LIST_VIEWER_UTTERANCES": {
+    "intent": "utterances list viewer utterances",
+    "aliases": [
+      "utterances list viewer utterances",
+      "list viewer utterances"
+    ],
+    "description": "utterances list viewer utterances",
+    "_source": "code"
+  },
+  "DEPS_GET_CURRENT_USER": {
+    "intent": "deps get current user",
+    "aliases": [
+      "deps get current user",
+      "조회",
+      "사용자",
+      "get current user"
+    ],
+    "description": "deps get current user",
+    "_source": "code"
+  },
+  "DEPS_REQUIRE_ADMIN": {
+    "intent": "deps require admin",
+    "aliases": [
+      "deps require admin",
+      "require admin"
+    ],
+    "description": "deps require admin",
+    "_source": "code"
+  },
+  "DEPS_REQUIRE_OPERATOR": {
+    "intent": "deps require operator",
+    "aliases": [
+      "deps require operator",
+      "require operator"
+    ],
+    "description": "deps require operator",
+    "_source": "code"
+  },
+  "DEPS_DEVICE_FROM_KEY": {
+    "intent": "deps device from key",
+    "aliases": [
+      "deps device from key",
+      "device from key"
+    ],
+    "description": "deps device from key",
+    "_source": "code"
+  },
+  "DEVICE_GENERATE_API_KEY": {
+    "intent": "device generate api key",
+    "aliases": [
+      "device generate api key",
+      "발급",
+      "generate api key"
+    ],
+    "description": "device generate api key",
+    "_source": "code"
+  },
+  "DEVICE_HASH_API_KEY": {
+    "intent": "device hash api key",
+    "aliases": [
+      "device hash api key",
+      "평문",
+      "해시",
+      "hash api key"
+    ],
+    "description": "device hash api key",
+    "_source": "code"
+  },
+  "DEVICE_VERIFY_API_KEY": {
+    "intent": "device verify api key",
+    "aliases": [
+      "device verify api key",
+      "verify api key"
+    ],
+    "description": "device verify api key",
+    "_source": "code"
+  },
+  "JWT__SECRET": {
+    "intent": "jwt secret",
+    "aliases": [
+      "jwt secret",
+      "secret isn is"
+    ],
+    "description": "jwt secret",
+    "_source": "code"
+  },
+  "JWT_TOKENPAIR": {
+    "intent": "jwt tokenpair",
+    "aliases": [
+      "jwt tokenpair",
+      "토큰",
+      "발급",
+      "token pair"
+    ],
+    "description": "jwt tokenpair",
+    "_source": "code"
+  },
+  "JWT_CREATE_TOKEN": {
+    "intent": "jwt create token",
+    "aliases": [
+      "jwt create token",
+      "중복",
+      "토큰",
+      "발급",
+      "create token"
+    ],
+    "description": "jwt create token",
+    "_source": "code"
+  },
+  "JWT_CREATE_ACCESS": {
+    "intent": "jwt create access",
+    "aliases": [
+      "jwt create access",
+      "중복",
+      "create access"
+    ],
+    "description": "jwt create access",
+    "_source": "code"
+  },
+  "JWT_CREATE_REFRESH": {
+    "intent": "jwt create refresh",
+    "aliases": [
+      "jwt create refresh",
+      "중복",
+      "create refresh"
+    ],
+    "description": "jwt create refresh",
+    "_source": "code"
+  },
+  "JWT_DECODE_TOKEN": {
+    "intent": "jwt decode token",
+    "aliases": [
+      "jwt decode token",
+      "토큰",
+      "발급",
+      "decode token"
+    ],
+    "description": "jwt decode token",
+    "_source": "code"
+  },
+  "PASSWORD_HASH_PASSWORD": {
+    "intent": "password hash password",
+    "aliases": [
+      "password hash password",
+      "비밀번호",
+      "평문",
+      "해시",
+      "hash password"
+    ],
+    "description": "password hash password",
+    "_source": "code"
+  },
+  "PASSWORD_VERIFY_PASSWORD": {
+    "intent": "password verify password",
+    "aliases": [
+      "password verify password",
+      "비밀번호",
+      "verify password"
+    ],
+    "description": "password verify password",
+    "_source": "code"
+  },
+  "0001_INITIAL_UPGRADE": {
+    "intent": "0001 initial upgrade",
+    "aliases": [
+      "0001 initial upgrade",
+      "upgrade"
+    ],
+    "description": "0001 initial upgrade",
+    "_source": "code"
+  },
+  "0001_INITIAL_DOWNGRADE": {
+    "intent": "0001 initial downgrade",
+    "aliases": [
+      "0001 initial downgrade",
+      "downgrade"
+    ],
+    "description": "0001 initial downgrade",
+    "_source": "code"
+  },
+  "BASE_BASE": {
+    "intent": "base base",
+    "aliases": [
+      "base base",
+      "base"
+    ],
+    "description": "base base",
+    "_source": "code"
+  },
+  "MODELS_APPUSER": {
+    "intent": "models appuser",
+    "aliases": [
+      "models appuser",
+      "서버",
+      "사용자",
+      "app user"
+    ],
+    "description": "models appuser",
+    "_source": "code"
+  },
+  "MODELS_DEVICE": {
+    "intent": "models device",
+    "aliases": [
+      "models device",
+      "device"
+    ],
+    "description": "models device",
+    "_source": "code"
+  },
+  "MODELS_SESSION": {
+    "intent": "models session",
+    "aliases": [
+      "models session",
+      "session"
+    ],
+    "description": "models session",
+    "_source": "code"
+  },
+  "MODELS_SESSIONTOKEN": {
+    "intent": "models sessiontoken",
+    "aliases": [
+      "models sessiontoken",
+      "토큰",
+      "발급",
+      "session token"
+    ],
+    "description": "models sessiontoken",
+    "_source": "code"
+  },
+  "MODELS_UTTERANCE": {
+    "intent": "models utterance",
+    "aliases": [
+      "models utterance",
+      "utterance"
+    ],
+    "description": "models utterance",
+    "_source": "code"
+  },
+  "SEED__SHA256_HEX": {
+    "intent": "seed sha256 hex",
+    "aliases": [
+      "seed sha256 hex",
+      "sha 256 hex"
+    ],
+    "description": "seed sha256 hex",
+    "_source": "code"
+  },
+  "SEED__GEN_API_KEY": {
+    "intent": "seed gen api key",
+    "aliases": [
+      "seed gen api key",
+      "gen api key"
+    ],
+    "description": "seed gen api key",
+    "_source": "code"
+  },
+  "SEED__GEN_VIEWER_TOKEN": {
+    "intent": "seed gen viewer token",
+    "aliases": [
+      "seed gen viewer token",
+      "토큰",
+      "발급",
+      "gen viewer token"
+    ],
+    "description": "seed gen viewer token",
+    "_source": "code"
+  },
+  "SEED_SEED": {
+    "intent": "seed seed",
+    "aliases": [
+      "seed seed",
+      "seed"
+    ],
+    "description": "seed seed",
+    "_source": "code"
+  },
+  "SEED__MAIN": {
+    "intent": "seed main",
+    "aliases": [
+      "seed main",
+      "메인화면",
+      "main"
+    ],
+    "description": "seed main",
+    "_source": "code"
+  },
+  "SESSION_GET_SESSION": {
+    "intent": "session get session",
+    "aliases": [
+      "session get session",
+      "조회",
+      "get session"
+    ],
+    "description": "session get session",
+    "_source": "code"
+  },
+  "ALERTS_AS_DICT": {
+    "intent": "alerts as dict",
+    "aliases": [
+      "alerts as dict",
+      "as dict"
+    ],
+    "description": "alerts as dict",
+    "_source": "code"
+  },
+  "ALERTS___INIT": {
+    "intent": "alerts init",
+    "aliases": [
+      "alerts init",
+      "init"
+    ],
+    "description": "alerts init",
+    "_source": "code"
+  },
+  "ALERTS_RAISE_ALERT": {
+    "intent": "alerts raise alert",
+    "aliases": [
+      "alerts raise alert",
+      "raise alert"
+    ],
+    "description": "alerts raise alert",
+    "_source": "code"
+  },
+  "ALERTS_RESOLVE": {
+    "intent": "alerts resolve",
+    "aliases": [
+      "alerts resolve",
+      "resolve"
+    ],
+    "description": "alerts resolve",
+    "_source": "code"
+  },
+  "ALERTS_ACTIVE": {
+    "intent": "alerts active",
+    "aliases": [
+      "alerts active",
+      "active"
+    ],
+    "description": "alerts active",
+    "_source": "code"
+  },
+  "ALERTS_RESET": {
+    "intent": "alerts reset",
+    "aliases": [
+      "alerts reset",
+      "reset"
+    ],
+    "description": "alerts reset",
+    "_source": "code"
+  },
+  "ALERTS_SYNC_GEMINI_CONFIG_ALERT": {
+    "intent": "alerts sync gemini config alert",
+    "aliases": [
+      "alerts sync gemini config alert",
+      "설정",
+      "sync gemini config alert"
+    ],
+    "description": "alerts sync gemini config alert",
+    "_source": "code"
+  },
+  "ALERTS_RAISE_MEETING_MAX_DURATION_ALERT": {
+    "intent": "alerts raise meeting max duration",
+    "aliases": [
+      "alerts raise meeting max duration alert",
+      "raise meeting max duration"
+    ],
+    "description": "alerts raise meeting max duration",
+    "_source": "code"
+  },
+  "SESSION_SAFETY_MEETING_MAX_DURATION": {
+    "intent": "session safety meeting max duration",
+    "aliases": [
+      "session safety meeting max duration",
+      "meeting max duration"
+    ],
+    "description": "session safety meeting max duration",
+    "_source": "code"
+  },
+  "SESSION_SAFETY_ENFORCE_MEETING_DURATION_LIMIT": {
+    "intent": "session safety enforce meeting duration",
+    "aliases": [
+      "session safety enforce meeting duration limit",
+      "enforce meeting duration limit"
+    ],
+    "description": "session safety enforce meeting duration",
+    "_source": "code"
+  },
+  "SESSION_SAFETY__AS_UTC": {
+    "intent": "session safety as utc",
+    "aliases": [
+      "session safety as utc",
+      "as utc"
+    ],
+    "description": "session safety as utc",
+    "_source": "code"
+  },
+  "AUDIO_STATS_AUDIOSTATS": {
+    "intent": "audio stats audiostats",
+    "aliases": [
+      "audio stats audiostats",
+      "audio stats"
+    ],
+    "description": "audio stats audiostats",
+    "_source": "code"
+  },
+  "AUDIO_STATS___INIT": {
+    "intent": "audio stats init",
+    "aliases": [
+      "audio stats init",
+      "init"
+    ],
+    "description": "audio stats init",
+    "_source": "code"
+  },
+  "AUDIO_STATS_RECORD": {
+    "intent": "audio stats record",
+    "aliases": [
+      "audio stats record",
+      "record"
+    ],
+    "description": "audio stats record",
+    "_source": "code"
+  },
+  "AUDIO_STATS_NOTE_SEQ": {
+    "intent": "audio stats note seq",
+    "aliases": [
+      "audio stats note seq",
+      "note seq"
+    ],
+    "description": "audio stats note seq",
+    "_source": "code"
+  },
+  "AUDIO_STATS_MARK_STOPPED": {
+    "intent": "audio stats mark stopped",
+    "aliases": [
+      "audio stats mark stopped",
+      "mark stopped"
+    ],
+    "description": "audio stats mark stopped",
+    "_source": "code"
+  },
+  "AUDIO_STATS_DISCARD": {
+    "intent": "audio stats discard",
+    "aliases": [
+      "audio stats discard",
+      "discard"
+    ],
+    "description": "audio stats discard",
+    "_source": "code"
+  },
+  "AUDIO_STATS_SNAPSHOT": {
+    "intent": "audio stats snapshot",
+    "aliases": [
+      "audio stats snapshot",
+      "snapshot"
+    ],
+    "description": "audio stats snapshot",
+    "_source": "code"
+  },
+  "BUS___INIT": {
+    "intent": "bus init",
+    "aliases": [
+      "bus init",
+      "init"
+    ],
+    "description": "bus init",
+    "_source": "code"
+  },
+  "BUS_SUBSCRIBE": {
+    "intent": "bus subscribe",
+    "aliases": [
+      "bus subscribe",
+      "subscribe"
+    ],
+    "description": "bus subscribe",
+    "_source": "code"
+  },
+  "BUS_UNSUBSCRIBE": {
+    "intent": "bus unsubscribe",
+    "aliases": [
+      "bus unsubscribe",
+      "unsubscribe"
+    ],
+    "description": "bus unsubscribe",
+    "_source": "code"
+  },
+  "BUS_PUBLISH": {
+    "intent": "bus publish",
+    "aliases": [
+      "bus publish"
+    ],
+    "description": "bus publish",
+    "_source": "code"
+  },
+  "CONTROL_MESSAGES_AUDIOSTARTED": {
+    "intent": "control messages audiostarted",
+    "aliases": [
+      "control messages audiostarted",
+      "audio started"
+    ],
+    "description": "control messages audiostarted",
+    "_source": "code"
+  },
+  "CONTROL_MESSAGES_CHUNKMETA": {
+    "intent": "control messages chunkmeta",
+    "aliases": [
+      "control messages chunkmeta",
+      "chunk meta"
+    ],
+    "description": "control messages chunkmeta",
+    "_source": "code"
+  },
+  "CONTROL_MESSAGES_AUDIOSTOPPED": {
+    "intent": "control messages audiostopped",
+    "aliases": [
+      "control messages audiostopped",
+      "audio stopped"
+    ],
+    "description": "control messages audiostopped",
+    "_source": "code"
+  },
+  "CONTROL_MESSAGES_PARSE_CONTROL_MESSAGE": {
+    "intent": "control messages parse control message",
+    "aliases": [
+      "control messages parse control message",
+      "parse control message"
+    ],
+    "description": "control messages parse control message",
+    "_source": "code"
+  },
+  "VIEWER__DRAIN_INCOMING": {
+    "intent": "viewer drain incoming",
+    "aliases": [
+      "viewer drain incoming",
+      "drain incoming"
+    ],
+    "description": "viewer drain incoming",
+    "_source": "code"
+  },
+  "ADMINAUDIOSTATS_FMTBYTES": {
+    "intent": "adminaudiostats fmtbytes",
+    "aliases": [
+      "adminaudiostats fmtbytes",
+      "fmt bytes"
+    ],
+    "description": "adminaudiostats fmtbytes",
+    "_source": "code"
+  },
+  "ADMINAUDIOSTATS_DATA": {
+    "intent": "adminaudiostats data",
+    "aliases": [
+      "adminaudiostats data",
+      "data"
+    ],
+    "description": "adminaudiostats data",
+    "_source": "code"
+  },
+  "SUBTITLEVIEW_SUBTITLEVIEW": {
+    "intent": "subtitleview subtitleview",
+    "aliases": [
+      "subtitleview subtitleview",
+      "function"
+    ],
+    "description": "subtitleview subtitleview",
+    "_source": "code"
+  },
+  "USEVIEWERWS_CONNECT": {
+    "intent": "useviewerws connect",
+    "aliases": [
+      "useviewerws connect",
+      "connect url evt utterances"
+    ],
+    "description": "useviewerws connect",
+    "_source": "code"
+  },
+  "API_BODY": {
+    "intent": "api body",
+    "aliases": [
+      "api body",
+      "body"
+    ],
+    "description": "api body",
+    "_source": "code"
+  },
+  "API_BASE": {
+    "intent": "api base",
+    "aliases": [
+      "api base",
+      "base"
+    ],
+    "description": "api base",
+    "_source": "code"
+  },
+  "EVENTS": {
+    "intent": "events",
+    "aliases": [
+      "events",
+      "const type"
+    ],
+    "description": "events",
+    "_source": "code"
   }
 }

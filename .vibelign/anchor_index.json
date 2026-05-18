@@ -1,8 +1,62 @@
 {
   "schema_version": 1,
   "anchors": {
+    "apps/client_sidecar/audio/capture.py": [
+      "CAPTURE",
+      "CAPTURE_CAPTURE_CHUNKS",
+      "CAPTURE__ENQUEUE",
+      "CAPTURE__CALLBACK"
+    ],
+    "apps/client_sidecar/audio/device.py": [
+      "DEVICE",
+      "DEVICE_FIND_INPUT_DEVICE"
+    ],
+    "apps/client_sidecar/audio/resample.py": [
+      "RESAMPLE",
+      "RESAMPLE_RESAMPLER",
+      "RESAMPLE___INIT__",
+      "RESAMPLE_PROCESS"
+    ],
+    "apps/client_sidecar/audio/rms.py": [
+      "RMS",
+      "RMS_RMS_DBFS",
+      "RMS_RMSLOGGER",
+      "RMS___INIT__",
+      "RMS_OBSERVE",
+      "RMS_SHOULD_GATE_SILENCE"
+    ],
+    "apps/client_sidecar/config/audio.py": [
+      "AUDIO"
+    ],
     "apps/client_sidecar/config/constants.py": [
       "CONSTANTS"
+    ],
+    "apps/client_sidecar/main.py": [
+      "MAIN",
+      "MAIN__REQUIRED_ENV",
+      "MAIN_FIXTURE_MAIN",
+      "MAIN_AUDIO_MAIN",
+      "MAIN_MAIN",
+      "MAIN_RUN"
+    ],
+    "apps/client_sidecar/transport/audio_ws.py": [
+      "AUDIO_WS",
+      "AUDIO_WS_STREAM_AUDIO",
+      "AUDIO_WS__ISO_NOW",
+      "AUDIO_WS__SAFE_URL"
+    ],
+    "apps/client_sidecar/transport/event_schema.py": [
+      "EVENT_SCHEMA",
+      "EVENT_SCHEMA_UTTERANCETRANSCRIBED",
+      "EVENT_SCHEMA_TO_JSON_DICT"
+    ],
+    "apps/client_sidecar/transport/fixture_emitter.py": [
+      "FIXTURE_EMITTER",
+      "FIXTURE_EMITTER_FIXTURE_STREAM"
+    ],
+    "apps/client_sidecar/transport/server_ws.py": [
+      "SERVER_WS",
+      "SERVER_WS_SEND_EVENTS"
     ],
     "apps/desktop/src-tauri/build.rs": [
       "BUILD"
@@ -22,9 +76,96 @@
     "apps/desktop/vite.config.ts": [
       "VITE_CONFIG"
     ],
+    "apps/server/ai/gemini_live.py": [
+      "GEMINI_LIVE"
+    ],
+    "apps/server/ai/live_session.py": [
+      "LIVE_SESSION",
+      "LIVE_SESSION_AUDIOLIVESESSION",
+      "LIVE_SESSION_START",
+      "LIVE_SESSION_PUSH_AUDIO",
+      "LIVE_SESSION_STOP",
+      "LIVE_SESSION__AUDIO_STREAM",
+      "LIVE_SESSION__RUN"
+    ],
+    "apps/server/ai/providers.py": [
+      "PROVIDERS",
+      "PROVIDERS_TRANSLATEDUTTERANCE",
+      "PROVIDERS_STTPROVIDER",
+      "PROVIDERS_TRANSLATIONPROVIDER"
+    ],
+    "apps/server/api/v1/audio_stats.py": [
+      "AUDIO_STATS",
+      "AUDIO_STATS_GET_AUDIO_STATS"
+    ],
+    "apps/server/api/v1/auth.py": [
+      "AUTH",
+      "AUTH_LOGININ",
+      "AUTH_LOGIN"
+    ],
+    "apps/server/api/v1/devices.py": [
+      "DEVICES",
+      "DEVICES_DEVICECREATEIN",
+      "DEVICES_DEVICECREATEOUT",
+      "DEVICES_CREATE_DEVICE"
+    ],
     "apps/server/api/v1/health.py": [
       "HEALTH",
       "HEALTH_HEALTH"
+    ],
+    "apps/server/api/v1/operator_alerts.py": [
+      "OPERATOR_ALERTS",
+      "OPERATOR_ALERTS_OPERATORALERTOUT",
+      "OPERATOR_ALERTS_LIST_OPERATOR_ALERTS"
+    ],
+    "apps/server/api/v1/sessions.py": [
+      "SESSIONS",
+      "SESSIONS__VIEWER_BASE",
+      "SESSIONS__STORAGE_ROOT",
+      "SESSIONS_SESSIONCREATEIN",
+      "SESSIONS_SESSIONCREATEOUT",
+      "SESSIONS_SESSIONENDOUT",
+      "SESSIONS_CREATE_SESSION",
+      "SESSIONS__GET_OPERATOR_SESSION_OR_404",
+      "SESSIONS__SESSION_UTTERANCES",
+      "SESSIONS_END_SESSION",
+      "SESSIONS_DOWNLOAD_SESSION_REPORT"
+    ],
+    "apps/server/api/v1/utterances.py": [
+      "UTTERANCES",
+      "UTTERANCES_UTTERANCEOUT",
+      "UTTERANCES_UTTERANCELISTOUT",
+      "UTTERANCES__LIST_UTTERANCES",
+      "UTTERANCES__TO_OUT",
+      "UTTERANCES_LIST_SESSION_UTTERANCES",
+      "UTTERANCES_LIST_VIEWER_UTTERANCES"
+    ],
+    "apps/server/auth/deps.py": [
+      "DEPS",
+      "DEPS_GET_CURRENT_USER",
+      "DEPS_REQUIRE_ADMIN",
+      "DEPS_REQUIRE_OPERATOR",
+      "DEPS_DEVICE_FROM_KEY"
+    ],
+    "apps/server/auth/device.py": [
+      "DEVICE",
+      "DEVICE_GENERATE_API_KEY",
+      "DEVICE_HASH_API_KEY",
+      "DEVICE_VERIFY_API_KEY"
+    ],
+    "apps/server/auth/jwt.py": [
+      "JWT",
+      "JWT__SECRET",
+      "JWT_TOKENPAIR",
+      "JWT_CREATE_TOKEN",
+      "JWT_CREATE_ACCESS",
+      "JWT_CREATE_REFRESH",
+      "JWT_DECODE_TOKEN"
+    ],
+    "apps/server/auth/password.py": [
+      "PASSWORD",
+      "PASSWORD_HASH_PASSWORD",
+      "PASSWORD_VERIFY_PASSWORD"
     ],
     "apps/server/db/alembic/env.py": [
       "ENV",
@@ -33,9 +174,106 @@
       "ENV_RUN_ASYNC_MIGRATIONS",
       "ENV_RUN_MIGRATIONS_ONLINE"
     ],
+    "apps/server/db/alembic/versions/0001_initial.py": [
+      "0001_INITIAL",
+      "0001_INITIAL_UPGRADE",
+      "0001_INITIAL_DOWNGRADE"
+    ],
+    "apps/server/db/base.py": [
+      "BASE",
+      "BASE_BASE"
+    ],
+    "apps/server/db/models.py": [
+      "MODELS",
+      "MODELS_APPUSER",
+      "MODELS_DEVICE",
+      "MODELS_SESSION",
+      "MODELS_SESSIONTOKEN",
+      "MODELS_UTTERANCE"
+    ],
+    "apps/server/db/seed.py": [
+      "SEED",
+      "SEED__SHA256_HEX",
+      "SEED__GEN_API_KEY",
+      "SEED__GEN_VIEWER_TOKEN",
+      "SEED_SEED",
+      "SEED__MAIN"
+    ],
+    "apps/server/db/session.py": [
+      "SESSION",
+      "SESSION_GET_SESSION"
+    ],
+    "apps/server/domain/events.py": [
+      "EVENTS",
+      "EVENTS_DOMAINEVENT",
+      "EVENTS_UTTERANCETRANSCRIBED",
+      "EVENTS_SESSIONENDED",
+      "EVENTS_SERIALIZE"
+    ],
+    "apps/server/domain/reports.py": [
+      "REPORTS",
+      "REPORTS_BUILD_SESSION_REPORT",
+      "REPORTS_REPORT_PATH",
+      "REPORTS_WRITE_SESSION_REPORT"
+    ],
     "apps/server/main.py": [
       "MAIN",
       "MAIN_RUN"
+    ],
+    "apps/server/ops/alerts.py": [
+      "ALERTS",
+      "ALERTS_OPERATORALERT",
+      "ALERTS_AS_DICT",
+      "ALERTS_OPERATORALERTSTORE",
+      "ALERTS___INIT__",
+      "ALERTS_RAISE_ALERT",
+      "ALERTS_RESOLVE",
+      "ALERTS_ACTIVE",
+      "ALERTS_RESET",
+      "ALERTS_SYNC_GEMINI_CONFIG_ALERT",
+      "ALERTS_RAISE_MEETING_MAX_DURATION_ALERT"
+    ],
+    "apps/server/ops/session_safety.py": [
+      "SESSION_SAFETY",
+      "SESSION_SAFETY_MEETING_MAX_DURATION",
+      "SESSION_SAFETY_SESSION_STARTED_AT_EXCEEDS_MAX_DURATION",
+      "SESSION_SAFETY_ENFORCE_MEETING_DURATION_LIMIT",
+      "SESSION_SAFETY__AS_UTC"
+    ],
+    "apps/server/ws/audio_stats.py": [
+      "AUDIO_STATS",
+      "AUDIO_STATS_AUDIOSTATS",
+      "AUDIO_STATS_AUDIOSTATSREGISTRY",
+      "AUDIO_STATS___INIT__",
+      "AUDIO_STATS_RECORD",
+      "AUDIO_STATS_MARK_STARTED",
+      "AUDIO_STATS_NOTE_SEQ",
+      "AUDIO_STATS_MARK_STOPPED",
+      "AUDIO_STATS_DISCARD",
+      "AUDIO_STATS_SNAPSHOT"
+    ],
+    "apps/server/ws/bus.py": [
+      "BUS",
+      "BUS_INMEMORYBUS",
+      "BUS___INIT__",
+      "BUS_SUBSCRIBE",
+      "BUS_UNSUBSCRIBE",
+      "BUS_PUBLISH"
+    ],
+    "apps/server/ws/control_messages.py": [
+      "CONTROL_MESSAGES",
+      "CONTROL_MESSAGES_AUDIOSTARTED",
+      "CONTROL_MESSAGES_CHUNKMETA",
+      "CONTROL_MESSAGES_AUDIOSTOPPED",
+      "CONTROL_MESSAGES_PARSE_CONTROL_MESSAGE"
+    ],
+    "apps/server/ws/sidecar.py": [
+      "SIDECAR"
+    ],
+    "apps/server/ws/viewer.py": [
+      "VIEWER",
+      "VIEWER_WS_VIEWER",
+      "VIEWER__DRAIN_INCOMING"
     ],
     "apps/web/postcss.config.js": [
       "POSTCSS_CONFIG"
@@ -43,8 +281,40 @@
     "apps/web/src/App.tsx": [
       "APP"
     ],
+    "apps/web/src/components/AdminAudioStats.tsx": [
+      "ADMINAUDIOSTATS",
+      "ADMINAUDIOSTATS_API_BASE",
+      "ADMINAUDIOSTATS_FMTBYTES",
+      "ADMINAUDIOSTATS_ADMINAUDIOSTATS",
+      "ADMINAUDIOSTATS_POLL",
+      "ADMINAUDIOSTATS_DATA"
+    ],
+    "apps/web/src/components/SubtitleView.tsx": [
+      "SUBTITLEVIEW",
+      "SUBTITLEVIEW_SUBTITLEVIEW"
+    ],
+    "apps/web/src/hooks/useViewerWS.ts": [
+      "USEVIEWERWS",
+      "USEVIEWERWS_USEVIEWERWS",
+      "USEVIEWERWS_START",
+      "USEVIEWERWS_CONNECT"
+    ],
+    "apps/web/src/lib/api.ts": [
+      "API",
+      "API_API_BASE",
+      "API_FETCHBACKFILL",
+      "API_BODY",
+      "API_VIEWERWSURL",
+      "API_BASE"
+    ],
+    "apps/web/src/lib/utterances.ts": [
+      "WEB_UTTERANCES"
+    ],
     "apps/web/src/main.tsx": [
       "MAIN"
+    ],
+    "apps/web/src/types/events.ts": [
+      "EVENTS"
     ],
     "apps/web/src/vite-env.d.ts": [
       "VITE_ENV_D"
@@ -73,9 +343,83 @@
     ]
   },
   "files": {
+    "apps/client_sidecar/audio/capture.py": {
+      "anchors": [
+        "CAPTURE",
+        "CAPTURE_CAPTURE_CHUNKS",
+        "CAPTURE__ENQUEUE",
+        "CAPTURE__CALLBACK"
+      ]
+    },
+    "apps/client_sidecar/audio/device.py": {
+      "anchors": [
+        "DEVICE",
+        "DEVICE_FIND_INPUT_DEVICE"
+      ]
+    },
+    "apps/client_sidecar/audio/resample.py": {
+      "anchors": [
+        "RESAMPLE",
+        "RESAMPLE_RESAMPLER",
+        "RESAMPLE___INIT__",
+        "RESAMPLE_PROCESS"
+      ]
+    },
+    "apps/client_sidecar/audio/rms.py": {
+      "anchors": [
+        "RMS",
+        "RMS_RMS_DBFS",
+        "RMS_RMSLOGGER",
+        "RMS___INIT__",
+        "RMS_OBSERVE",
+        "RMS_SHOULD_GATE_SILENCE"
+      ]
+    },
+    "apps/client_sidecar/config/audio.py": {
+      "anchors": [
+        "AUDIO"
+      ]
+    },
     "apps/client_sidecar/config/constants.py": {
       "anchors": [
         "CONSTANTS"
+      ]
+    },
+    "apps/client_sidecar/main.py": {
+      "anchors": [
+        "MAIN",
+        "MAIN__REQUIRED_ENV",
+        "MAIN_FIXTURE_MAIN",
+        "MAIN_AUDIO_MAIN",
+        "MAIN_MAIN",
+        "MAIN_RUN"
+      ]
+    },
+    "apps/client_sidecar/transport/audio_ws.py": {
+      "anchors": [
+        "AUDIO_WS",
+        "AUDIO_WS_STREAM_AUDIO",
+        "AUDIO_WS__ISO_NOW",
+        "AUDIO_WS__SAFE_URL"
+      ]
+    },
+    "apps/client_sidecar/transport/event_schema.py": {
+      "anchors": [
+        "EVENT_SCHEMA",
+        "EVENT_SCHEMA_UTTERANCETRANSCRIBED",
+        "EVENT_SCHEMA_TO_JSON_DICT"
+      ]
+    },
+    "apps/client_sidecar/transport/fixture_emitter.py": {
+      "anchors": [
+        "FIXTURE_EMITTER",
+        "FIXTURE_EMITTER_FIXTURE_STREAM"
+      ]
+    },
+    "apps/client_sidecar/transport/server_ws.py": {
+      "anchors": [
+        "SERVER_WS",
+        "SERVER_WS_SEND_EVENTS"
       ]
     },
     "apps/desktop/src-tauri/build.rs": {
@@ -108,10 +452,123 @@
         "VITE_CONFIG"
       ]
     },
+    "apps/server/ai/gemini_live.py": {
+      "anchors": [
+        "GEMINI_LIVE"
+      ]
+    },
+    "apps/server/ai/live_session.py": {
+      "anchors": [
+        "LIVE_SESSION",
+        "LIVE_SESSION_AUDIOLIVESESSION",
+        "LIVE_SESSION_START",
+        "LIVE_SESSION_PUSH_AUDIO",
+        "LIVE_SESSION_STOP",
+        "LIVE_SESSION__AUDIO_STREAM",
+        "LIVE_SESSION__RUN"
+      ]
+    },
+    "apps/server/ai/providers.py": {
+      "anchors": [
+        "PROVIDERS",
+        "PROVIDERS_TRANSLATEDUTTERANCE",
+        "PROVIDERS_STTPROVIDER",
+        "PROVIDERS_TRANSLATIONPROVIDER"
+      ]
+    },
+    "apps/server/api/v1/audio_stats.py": {
+      "anchors": [
+        "AUDIO_STATS",
+        "AUDIO_STATS_GET_AUDIO_STATS"
+      ]
+    },
+    "apps/server/api/v1/auth.py": {
+      "anchors": [
+        "AUTH",
+        "AUTH_LOGININ",
+        "AUTH_LOGIN"
+      ]
+    },
+    "apps/server/api/v1/devices.py": {
+      "anchors": [
+        "DEVICES",
+        "DEVICES_DEVICECREATEIN",
+        "DEVICES_DEVICECREATEOUT",
+        "DEVICES_CREATE_DEVICE"
+      ]
+    },
     "apps/server/api/v1/health.py": {
       "anchors": [
         "HEALTH",
         "HEALTH_HEALTH"
+      ]
+    },
+    "apps/server/api/v1/operator_alerts.py": {
+      "anchors": [
+        "OPERATOR_ALERTS",
+        "OPERATOR_ALERTS_OPERATORALERTOUT",
+        "OPERATOR_ALERTS_LIST_OPERATOR_ALERTS"
+      ]
+    },
+    "apps/server/api/v1/sessions.py": {
+      "anchors": [
+        "SESSIONS",
+        "SESSIONS__VIEWER_BASE",
+        "SESSIONS__STORAGE_ROOT",
+        "SESSIONS_SESSIONCREATEIN",
+        "SESSIONS_SESSIONCREATEOUT",
+        "SESSIONS_SESSIONENDOUT",
+        "SESSIONS_CREATE_SESSION",
+        "SESSIONS__GET_OPERATOR_SESSION_OR_404",
+        "SESSIONS__SESSION_UTTERANCES",
+        "SESSIONS_END_SESSION",
+        "SESSIONS_DOWNLOAD_SESSION_REPORT"
+      ]
+    },
+    "apps/server/api/v1/utterances.py": {
+      "anchors": [
+        "UTTERANCES",
+        "UTTERANCES_UTTERANCEOUT",
+        "UTTERANCES_UTTERANCELISTOUT",
+        "UTTERANCES__LIST_UTTERANCES",
+        "UTTERANCES__TO_OUT",
+        "UTTERANCES_LIST_SESSION_UTTERANCES",
+        "UTTERANCES_LIST_VIEWER_UTTERANCES"
+      ]
+    },
+    "apps/server/auth/deps.py": {
+      "anchors": [
+        "DEPS",
+        "DEPS_GET_CURRENT_USER",
+        "DEPS_REQUIRE_ADMIN",
+        "DEPS_REQUIRE_OPERATOR",
+        "DEPS_DEVICE_FROM_KEY"
+      ]
+    },
+    "apps/server/auth/device.py": {
+      "anchors": [
+        "DEVICE",
+        "DEVICE_GENERATE_API_KEY",
+        "DEVICE_HASH_API_KEY",
+        "DEVICE_VERIFY_API_KEY"
+      ]
+    },
+    "apps/server/auth/jwt.py": {
+      "anchors": [
+        "JWT",
+        "JWT__SECRET",
+        "JWT_TOKENPAIR",
+        "JWT_CREATE_TOKEN",
+        "JWT_CREATE_ACCESS",
+        "JWT_CREATE_REFRESH",
+        "JWT_DECODE_TOKEN"
+      ]
+    },
+    "apps/server/auth/password.py": {
+      "anchors": [
+        "PASSWORD",
+        "PASSWORD_HASH_PASSWORD",
+        "PASSWORD_VERIFY_PASSWORD"
       ]
     },
     "apps/server/db/alembic/env.py": {
@@ -123,10 +580,135 @@
         "ENV_RUN_MIGRATIONS_ONLINE"
       ]
     },
+    "apps/server/db/alembic/versions/0001_initial.py": {
+      "anchors": [
+        "0001_INITIAL",
+        "0001_INITIAL_UPGRADE",
+        "0001_INITIAL_DOWNGRADE"
+      ]
+    },
+    "apps/server/db/base.py": {
+      "anchors": [
+        "BASE",
+        "BASE_BASE"
+      ]
+    },
+    "apps/server/db/models.py": {
+      "anchors": [
+        "MODELS",
+        "MODELS_APPUSER",
+        "MODELS_DEVICE",
+        "MODELS_SESSION",
+        "MODELS_SESSIONTOKEN",
+        "MODELS_UTTERANCE"
+      ]
+    },
+    "apps/server/db/seed.py": {
+      "anchors": [
+        "SEED",
+        "SEED__SHA256_HEX",
+        "SEED__GEN_API_KEY",
+        "SEED__GEN_VIEWER_TOKEN",
+        "SEED_SEED",
+        "SEED__MAIN"
+      ]
+    },
+    "apps/server/db/session.py": {
+      "anchors": [
+        "SESSION",
+        "SESSION_GET_SESSION"
+      ]
+    },
+    "apps/server/domain/events.py": {
+      "anchors": [
+        "EVENTS",
+        "EVENTS_DOMAINEVENT",
+        "EVENTS_UTTERANCETRANSCRIBED",
+        "EVENTS_SESSIONENDED",
+        "EVENTS_SERIALIZE"
+      ]
+    },
+    "apps/server/domain/reports.py": {
+      "anchors": [
+        "REPORTS",
+        "REPORTS_BUILD_SESSION_REPORT",
+        "REPORTS_REPORT_PATH",
+        "REPORTS_WRITE_SESSION_REPORT"
+      ]
+    },
     "apps/server/main.py": {
       "anchors": [
         "MAIN",
         "MAIN_RUN"
+      ]
+    },
+    "apps/server/ops/alerts.py": {
+      "anchors": [
+        "ALERTS",
+        "ALERTS_OPERATORALERT",
+        "ALERTS_AS_DICT",
+        "ALERTS_OPERATORALERTSTORE",
+        "ALERTS___INIT__",
+        "ALERTS_RAISE_ALERT",
+        "ALERTS_RESOLVE",
+        "ALERTS_ACTIVE",
+        "ALERTS_RESET",
+        "ALERTS_SYNC_GEMINI_CONFIG_ALERT",
+        "ALERTS_RAISE_MEETING_MAX_DURATION_ALERT"
+      ]
+    },
+    "apps/server/ops/session_safety.py": {
+      "anchors": [
+        "SESSION_SAFETY",
+        "SESSION_SAFETY_MEETING_MAX_DURATION",
+        "SESSION_SAFETY_SESSION_STARTED_AT_EXCEEDS_MAX_DURATION",
+        "SESSION_SAFETY_ENFORCE_MEETING_DURATION_LIMIT",
+        "SESSION_SAFETY__AS_UTC"
+      ]
+    },
+    "apps/server/ws/audio_stats.py": {
+      "anchors": [
+        "AUDIO_STATS",
+        "AUDIO_STATS_AUDIOSTATS",
+        "AUDIO_STATS_AUDIOSTATSREGISTRY",
+        "AUDIO_STATS___INIT__",
+        "AUDIO_STATS_RECORD",
+        "AUDIO_STATS_MARK_STARTED",
+        "AUDIO_STATS_NOTE_SEQ",
+        "AUDIO_STATS_MARK_STOPPED",
+        "AUDIO_STATS_DISCARD",
+        "AUDIO_STATS_SNAPSHOT"
+      ]
+    },
+    "apps/server/ws/bus.py": {
+      "anchors": [
+        "BUS",
+        "BUS_INMEMORYBUS",
+        "BUS___INIT__",
+        "BUS_SUBSCRIBE",
+        "BUS_UNSUBSCRIBE",
+        "BUS_PUBLISH"
+      ]
+    },
+    "apps/server/ws/control_messages.py": {
+      "anchors": [
+        "CONTROL_MESSAGES",
+        "CONTROL_MESSAGES_AUDIOSTARTED",
+        "CONTROL_MESSAGES_CHUNKMETA",
+        "CONTROL_MESSAGES_AUDIOSTOPPED",
+        "CONTROL_MESSAGES_PARSE_CONTROL_MESSAGE"
+      ]
+    },
+    "apps/server/ws/sidecar.py": {
+      "anchors": [
+        "SIDECAR"
+      ]
+    },
+    "apps/server/ws/viewer.py": {
+      "anchors": [
+        "VIEWER",
+        "VIEWER_WS_VIEWER",
+        "VIEWER__DRAIN_INCOMING"
       ]
     },
     "apps/web/postcss.config.js": {
@@ -139,9 +721,53 @@
         "APP"
       ]
     },
+    "apps/web/src/components/AdminAudioStats.tsx": {
+      "anchors": [
+        "ADMINAUDIOSTATS",
+        "ADMINAUDIOSTATS_API_BASE",
+        "ADMINAUDIOSTATS_FMTBYTES",
+        "ADMINAUDIOSTATS_ADMINAUDIOSTATS",
+        "ADMINAUDIOSTATS_POLL",
+        "ADMINAUDIOSTATS_DATA"
+      ]
+    },
+    "apps/web/src/components/SubtitleView.tsx": {
+      "anchors": [
+        "SUBTITLEVIEW",
+        "SUBTITLEVIEW_SUBTITLEVIEW"
+      ]
+    },
+    "apps/web/src/hooks/useViewerWS.ts": {
+      "anchors": [
+        "USEVIEWERWS",
+        "USEVIEWERWS_USEVIEWERWS",
+        "USEVIEWERWS_START",
+        "USEVIEWERWS_CONNECT"
+      ]
+    },
+    "apps/web/src/lib/api.ts": {
+      "anchors": [
+        "API",
+        "API_API_BASE",
+        "API_FETCHBACKFILL",
+        "API_BODY",
+        "API_VIEWERWSURL",
+        "API_BASE"
+      ]
+    },
+    "apps/web/src/lib/utterances.ts": {
+      "anchors": [
+        "WEB_UTTERANCES"
+      ]
+    },
     "apps/web/src/main.tsx": {
       "anchors": [
         "MAIN"
+      ]
+    },
+    "apps/web/src/types/events.ts": {
+      "anchors": [
+        "EVENTS"
       ]
     },
     "apps/web/src/vite-env.d.ts": {

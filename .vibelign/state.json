@@ -2,8 +2,8 @@
   "schema_version": 1,
   "project_initialized": true,
   "project_map_version": 1,
-  "last_scan_at": "2026-05-15T05:29:11.835540+00:00",
-  "last_anchor_run_at": null,
-  "last_guard_run_at": "2026-05-15T05:02:28.200693+00:00",
+  "last_scan_at": "2026-05-18T09:42:35.858425+00:00",
+  "last_anchor_run_at": "2026-05-18T09:41:00.673702+00:00",
+  "last_guard_run_at": "2026-05-18T23:51:09.500579+00:00",
   "engine_used": "rust"
 }

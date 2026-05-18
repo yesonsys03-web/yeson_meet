@@ -1,21 +1,21 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-05-15T05:29:11.809013+00:00",
+  "generated_at": "2026-05-18T09:42:35.805262+00:00",
   "feature_flags": {
     "USE_ACTION_ENGINE": false
   },
-  "project_mtime_hash": "2375cf8a0e292524a799a62e8508df0a",
+  "project_mtime_hash": "21bc0557df0da9642dc0bd77333aa17d",
   "report": {
-    "project_score": 85,
+    "project_score": 98,
     "status": "Safe",
-    "anchor_coverage": 43,
+    "anchor_coverage": 100,
     "stats": {
-      "files_scanned": 1480,
-      "source_files_scanned": 58,
+      "files_scanned": 1837,
+      "source_files_scanned": 77,
       "oversized_entry_files": 0,
-      "missing_anchor_files": 25,
-      "anchor_coverage": 43,
-      "legacy_penalty": 30,
+      "missing_anchor_files": 0,
+      "anchor_coverage": 100,
+      "legacy_penalty": 3,
       "project_map_loaded": true,
       "mcp_status": {
         "claude": {
@@ -57,290 +57,26 @@
       "prepared_tool_status": {},
       "checkpoint_engine_status": {
         "engine_used": "python",
-        "last_fallback_reason": "RUST_ENGINE_UNAVAILABLE: rust engine binary missing"
+        "last_fallback_reason": "legacy Python checkpoints visible"
       },
-      "project_map_file_count": 32,
+      "project_map_file_count": 77,
       "project_map_generated_at": "2026-05-14T01:23:03.651301Z"
     },
     "issues": [
       {
-        "found": "apps/client_sidecar/main.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/client_sidecar/main.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "main.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/client_sidecar/main.py",
+        "found": "apps/server/main.py에 실행 코드 말고 다른 기능도 섞여 있는 것 같아요",
+        "why_it_matters": "apps/server/main.py에 실행 코드 말고 다른 기능도 섞여 있는 것 같아요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
+        "next_step": "main.py에서 시작 코드 외의 기능은 다른 파일로 옮기세요",
+        "path": "apps/server/main.py",
         "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/client_sidecar/transport/event_schema.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/client_sidecar/transport/event_schema.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "event_schema.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/client_sidecar/transport/event_schema.py",
-        "severity": "low",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/client_sidecar/transport/fixture_emitter.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/client_sidecar/transport/fixture_emitter.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "fixture_emitter.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/client_sidecar/transport/fixture_emitter.py",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/client_sidecar/transport/server_ws.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/client_sidecar/transport/server_ws.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "server_ws.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/client_sidecar/transport/server_ws.py",
-        "severity": "low",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/api/v1/auth.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/api/v1/auth.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "auth.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/api/v1/auth.py",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/api/v1/devices.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/api/v1/devices.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "devices.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/api/v1/devices.py",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/api/v1/sessions.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/api/v1/sessions.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "sessions.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/api/v1/sessions.py",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/api/v1/utterances.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/api/v1/utterances.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "utterances.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/api/v1/utterances.py",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/auth/deps.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/auth/deps.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "deps.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/auth/deps.py",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/auth/device.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/auth/device.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "device.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/auth/device.py",
-        "severity": "low",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/auth/jwt.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/auth/jwt.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "jwt.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/auth/jwt.py",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/auth/password.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/auth/password.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "password.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/auth/password.py",
-        "severity": "low",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/db/alembic/versions/0001_initial.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/db/alembic/versions/0001_initial.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "0001_initial.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/db/alembic/versions/0001_initial.py",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/db/base.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/db/base.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "base.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/db/base.py",
-        "severity": "low",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/db/models.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/db/models.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "models.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/db/models.py",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/db/seed.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/db/seed.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "seed.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/db/seed.py",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/db/session.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/db/session.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "session.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/db/session.py",
-        "severity": "low",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/domain/events.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/domain/events.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "events.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/domain/events.py",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/ws/bus.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/ws/bus.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "bus.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/ws/bus.py",
-        "severity": "low",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/ws/sidecar.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/ws/sidecar.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "sidecar.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/ws/sidecar.py",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/server/ws/viewer.py에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/server/ws/viewer.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "viewer.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/server/ws/viewer.py",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/web/src/components/SubtitleView.tsx에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/web/src/components/SubtitleView.tsx에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "SubtitleView.tsx에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/web/src/components/SubtitleView.tsx",
-        "severity": "low",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/web/src/hooks/useViewerWS.ts에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/web/src/hooks/useViewerWS.ts에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "useViewerWS.ts에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/web/src/hooks/useViewerWS.ts",
-        "severity": "medium",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/web/src/lib/api.ts에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/web/src/lib/api.ts에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "api.ts에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/web/src/lib/api.ts",
-        "severity": "low",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
-      },
-      {
-        "found": "apps/web/src/types/events.ts에 안전 구역 표시(앵커)가 없어요",
-        "why_it_matters": "apps/web/src/types/events.ts에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
-        "next_step": "events.ts에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
-        "path": "apps/web/src/types/events.ts",
-        "severity": "low",
-        "category": "anchor",
-        "recommended_command": "vib doctor --fix",
-        "can_auto_fix": true,
-        "auto_fix_label": "앵커 자동 추가"
+        "category": "structure",
+        "recommended_command": null,
+        "can_auto_fix": false,
+        "auto_fix_label": null
       }
     ],
     "recommended_actions": [
-      "vib doctor --fix"
+      "main.py에서 시작 코드 외의 기능은 다른 파일로 옮기세요"
     ]
   }
 }

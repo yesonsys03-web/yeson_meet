@@ -144,6 +144,12 @@
       "type": "file"
     },
     {
+      "path": "docs/ROADMAP.md",
+      "accessCount": 5,
+      "lastAccessed": 1779071748634,
+      "type": "file"
+    },
+    {
       "path": "docs/PRD.md",
       "accessCount": 4,
       "lastAccessed": 1779070898322,
@@ -273,12 +279,6 @@
       "path": "apps/client_sidecar/tests/test_device_select.py",
       "accessCount": 1,
       "lastAccessed": 1779070891661,
-      "type": "file"
-    },
-    {
-      "path": "docs/ROADMAP.md",
-      "accessCount": 1,
-      "lastAccessed": 1779070910331,
       "type": "file"
     }
   ],
