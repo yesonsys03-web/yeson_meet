@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from uuid import uuid4
 
 import pytest
@@ -86,4 +87,71 @@ async def test_persist_and_publish_ai_utterance(
     ).scalar_one()
     assert row.text_en == "Please review the layout."
     assert row.text_ko == "layout을 검토해 주세요."
+
+
+@pytest.mark.asyncio
+async def test_persist_and_publish_ai_utterance_logs_latency(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from apps.server.ws import sidecar
+
+    class DbSessionContext:
+        async def __aenter__(self) -> AsyncSession:
+            return db_session
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+    monkeypatch.setattr(sidecar, "AsyncSessionLocal", lambda: DbSessionContext())
+
+    admin = AppUser(
+        email="ai-latency@test.example",
+        name="AI Latency",
+        password_hash=hash_password("pw"),
+        role="admin",
+        is_active=True,
+    )
+    db_session.add(admin)
+    await db_session.flush()
+
+    session_uuid = uuid4()
+    meeting = Session(
+        external_id=session_uuid,
+        owner_user_id=admin.id,
+        title="AI Latency Test",
+        status="live",
+    )
+    db_session.add(meeting)
+    await db_session.flush()
+    await db_session.commit()
+
+    now = datetime.now(timezone.utc)
+    queue = bus.subscribe(session_uuid)
+    try:
+        with caplog.at_level(logging.INFO, logger="apps.server.ws.sidecar"):
+            await _persist_and_publish_ai_utterance(
+                meeting.id,
+                session_uuid,
+                TranslatedUtterance(
+                    seq=7,
+                    text_en="Latency sample.",
+                    text_ko="지연 샘플.",
+                    started_at=now,
+                    ended_at=now,
+                    is_final=True,
+                ),
+            )
+        await queue.get()
+    finally:
+        bus.unsubscribe(session_uuid, queue)
+
+    record = next(
+        item for item in caplog.records if item.message == "AI utterance published"
+    )
+    assert record.session_id == str(session_uuid)
+    assert record.seq == 7
+    assert isinstance(record.ai_publish_latency_ms, int)
+    assert record.ai_publish_latency_ms >= 0
 # === ANCHOR: TEST_AI_PUBLISH_FLOW_END ===

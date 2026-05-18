@@ -134,7 +134,7 @@
 - [~] 회의 세션별 Gemini WS 유지 (재연결 + 백오프)  ← `AudioLiveSession` provider disconnect retry/backoff 구현·테스트 완료, 실제 Gemini 장기 세션 회전은 실측 전
 - [x] 청크 → Provider → 응답 파싱 → `utterance.transcribed` 이벤트 발행
 - [x] 시스템 프롬프트 정적 (영→한, 2줄 캡, 기술 용어 영문 유지)
-- [ ] 비용/지연 단순 로그 (Prometheus는 β-7)
+- [~] 비용/지연 단순 로그 (Prometheus는 β-7)  ← AI publish latency structured log 완료, Gemini 비용/토큰 추정 로그 미완료
 - [ ] **latency budget 4구간 분해 문서**: 캡처→서버 WSS / 서버→Gemini / Gemini→파싱 / 서버→viewer (P50 ≤ 2초 미달 시 partial subtitle 전략 즉시 도입)
 - [~] 🔴 **API Key health check** — 서버 시작 시 + 실패 시 운영자 알림 (ARCH §12.3)  ← `/api/v1/health/ai` + startup log 완료, 운영자 알림 미완료
 - 🔴 **회의 시간 안전 타이머** — 회의당 최대 N시간 (기본 3h) 도달 시 자동 종료 + alert (좀비 세션 비용 방지)
@@ -142,7 +142,7 @@
 - 🟡 **VAD 또는 RMS 임계값으로 무음 청크 차단** (비용 절감)
 - [x] 시스템 프롬프트에 "혼합 언어 한국어 그대로 두기" 명시
 
-> 2026-05-18 코드 진행: `STTProvider`/`TranslationProvider` 인터페이스, `GeminiLiveProvider` lazy SDK adapter, sidecar audio→AI session wiring, AI utterance DB persist + viewer bus fan-out, Gemini config health endpoint, provider disconnect retry/backoff 구현. 검증: `uv run pytest apps/server/tests -v` → 12 passed / 4 skipped, `uv run pytest apps/client_sidecar/tests -q` → 14 passed. 실제 Gemini API Key 기반 1분 영상·viewer 지연 검증은 아직 미완료.
+> 2026-05-18 코드 진행: `STTProvider`/`TranslationProvider` 인터페이스, `GeminiLiveProvider` lazy SDK adapter, sidecar audio→AI session wiring, AI utterance DB persist + viewer bus fan-out, Gemini config health endpoint, provider disconnect retry/backoff, AI publish latency structured log 구현. 검증: `uv run pytest apps/server/tests -v` → 13 passed / 4 skipped, `uv run pytest apps/client_sidecar/tests -q` → 14 passed. 실제 Gemini API Key 기반 1분 영상·viewer 지연 검증은 아직 미완료.
 
 ### 완료 기준
 - [ ] 영어 1분 영상 재생 → 한국어 자막 viewer에 흐름

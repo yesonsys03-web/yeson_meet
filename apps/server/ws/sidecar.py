@@ -10,6 +10,7 @@ S2: receive loop upgraded to dict dispatch — binary frames → audio_stats, te
 """
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from uuid import UUID
@@ -37,6 +38,11 @@ from apps.server.ws.control_messages import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _elapsed_ms(start: datetime, end: datetime) -> int:
+    return max(0, round((end - start).total_seconds() * 1000))
 
 
 def create_ai_provider() -> STTProvider | None:
@@ -90,6 +96,15 @@ async def _persist_and_publish_ai_utterance(
         await db.execute(stmt)
         await db.commit()
     await bus.publish(session_uuid, serialize(evt))
+    logger.info(
+        "AI utterance published",
+        extra={
+            "session_id": str(session_uuid),
+            "seq": evt.seq,
+            "is_final": evt.is_final,
+            "ai_publish_latency_ms": _elapsed_ms(utterance.ended_at, evt.occurred_at),
+        },
+    )
 
 
 @router.websocket("/ws/sidecar")
