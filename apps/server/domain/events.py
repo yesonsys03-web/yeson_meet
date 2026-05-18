@@ -1,3 +1,4 @@
+# === ANCHOR: EVENTS_START ===
 """DomainEvent SSOT for yeson-meet.
 
 Locked in PRD §10 (Slice 1, 2026-05-15):
@@ -20,16 +21,18 @@ EVENT_VERSION = "1"
 """Bump when DomainEvent schema changes incompatibly. Currently 1 (Slice 1)."""
 
 
+# === ANCHOR: EVENTS_DOMAINEVENT_START ===
 class DomainEvent(BaseModel):
     """Base domain event. Subclasses set ``type`` literal."""
 
     model_config = ConfigDict(frozen=True)
 
-    type: str
     session_id: UUID
     occurred_at: datetime
+# === ANCHOR: EVENTS_DOMAINEVENT_END ===
 
 
+# === ANCHOR: EVENTS_UTTERANCETRANSCRIBED_START ===
 class UtteranceTranscribed(DomainEvent):
     """An English utterance was transcribed and translated to Korean."""
 
@@ -41,8 +44,21 @@ class UtteranceTranscribed(DomainEvent):
     started_at: datetime
     ended_at: datetime
     is_final: bool = False
+# === ANCHOR: EVENTS_UTTERANCETRANSCRIBED_END ===
 
 
-def serialize(event: DomainEvent) -> dict:
+# === ANCHOR: EVENTS_SESSIONENDED_START ===
+class SessionEnded(DomainEvent):
+    """A meeting session was ended and is no longer accepting live audio."""
+
+    type: Literal["session.ended"] = "session.ended"
+    ended_at: datetime
+# === ANCHOR: EVENTS_SESSIONENDED_END ===
+
+
+# === ANCHOR: EVENTS_SERIALIZE_START ===
+def serialize(event: DomainEvent) -> dict[str, object]:
     """JSON-serializable dict for WebSocket fan-out."""
     return event.model_dump(mode="json")
+# === ANCHOR: EVENTS_SERIALIZE_END ===
+# === ANCHOR: EVENTS_END ===
