@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from apps.client_sidecar.audio.rms import RmsLogger, rms_dbfs
+from apps.client_sidecar.audio.rms import RmsLogger, rms_dbfs, should_gate_silence
 
 
 def test_silence() -> None:
@@ -31,6 +31,21 @@ def test_logger_below_threshold() -> None:
     assert below1 is True, f"Expected below_threshold=True, got {below1}; avg={avg1}"
 
     # Multiple observations above threshold push avg above -45
+    avg2 = avg1
+    below2 = below1
     for _ in range(10):
         avg2, below2 = logger.observe(-40.0)
     assert below2 is False, f"Expected below_threshold=False, got {below2}; avg={avg2}"
+
+
+@pytest.mark.parametrize(
+    ("enabled", "below_threshold", "expected"),
+    [
+        (True, True, True),
+        (True, False, False),
+        (False, True, False),
+        (False, False, False),
+    ],
+)
+def test_should_gate_silence(enabled: bool, below_threshold: bool, expected: bool) -> None:
+    assert should_gate_silence(enabled, below_threshold) is expected

@@ -1,3 +1,4 @@
+# === ANCHOR: CAPTURE_START ===
 """sounddevice InputStream → asyncio bridge yielding 20ms PCM int16 LE chunks."""
 from __future__ import annotations
 
@@ -10,17 +11,19 @@ import numpy as np
 import sounddevice as sd
 
 from apps.client_sidecar.audio.resample import Resampler
-from apps.client_sidecar.audio.rms import RmsLogger, rms_dbfs
+from apps.client_sidecar.audio.rms import RmsLogger, rms_dbfs, should_gate_silence
 from apps.client_sidecar.config.audio import (
     CHUNK_BYTES,
     CHUNK_SAMPLES,
     RMS_DBFS_THRESHOLD,
+    RMS_SILENCE_GATE_ENABLED,
     TARGET_SAMPLE_RATE,
 )
 
 logger = logging.getLogger(__name__)
 
 
+# === ANCHOR: CAPTURE_CAPTURE_CHUNKS_START ===
 async def capture_chunks(device: dict[str, Any]) -> AsyncIterator[bytes]:
     """Yield 640-byte PCM int16 mono LE chunks at TARGET_SAMPLE_RATE.
 
@@ -42,8 +45,10 @@ async def capture_chunks(device: dict[str, Any]) -> AsyncIterator[bytes]:
     # keep up, typically during reconnect backoff). Bridged out via the loop
     # by the consumer; logged every LOG_EVERY drops to avoid log spam.
     drop_count = 0
+    gated_silence_count = 0
     LOG_EVERY = 100
 
+    # === ANCHOR: CAPTURE__ENQUEUE_START ===
     def _enqueue(payload: bytes) -> None:
         nonlocal drop_count
         try:
@@ -55,9 +60,11 @@ async def capture_chunks(device: dict[str, Any]) -> AsyncIterator[bytes]:
                     "audio chunk dropped: queue full (%d drops total, ~%.1fs lost)",
                     drop_count, drop_count * 0.02,
                 )
+    # === ANCHOR: CAPTURE__ENQUEUE_END ===
 
+    # === ANCHOR: CAPTURE__CALLBACK_START ===
     def _callback(indata: np.ndarray, frames: int, time_info, status_flags) -> None:
-        nonlocal pending
+        nonlocal gated_silence_count, pending
         if status_flags:
             try:
                 err_queue.put_nowait(str(status_flags))
@@ -81,6 +88,16 @@ async def capture_chunks(device: dict[str, Any]) -> AsyncIterator[bytes]:
             pending = pending[CHUNK_SAMPLES:]
             dbfs = rms_dbfs(chunk)
             avg, low = rms_logger.observe(dbfs)
+            if should_gate_silence(RMS_SILENCE_GATE_ENABLED, low):
+                gated_silence_count += 1
+                if gated_silence_count % LOG_EVERY == 0:
+                    logger.info(
+                        "audio silence gated: %d chunks withheld (~%.1fs, avg %.1f dBFS)",
+                        gated_silence_count,
+                        gated_silence_count * 0.02,
+                        avg,
+                    )
+                continue
             # Convert to int16 LE
             clipped = np.clip(chunk * 32767.0, -32768, 32767).astype(np.int16)
             payload = clipped.tobytes()
@@ -90,6 +107,7 @@ async def capture_chunks(device: dict[str, Any]) -> AsyncIterator[bytes]:
             except RuntimeError:
                 # Loop closed during shutdown
                 return
+    # === ANCHOR: CAPTURE__CALLBACK_END ===
 
     stream = sd.InputStream(
         device=dev_idx,
@@ -112,7 +130,9 @@ async def capture_chunks(device: dict[str, Any]) -> AsyncIterator[bytes]:
                 logger.warning("sounddevice status: %s", err)
             chunk = await out_queue.get()
             yield chunk
+# === ANCHOR: CAPTURE_CAPTURE_CHUNKS_END ===
     finally:
         stream.stop()
         stream.close()
         logger.info("audio capture stopped")
+# === ANCHOR: CAPTURE_END ===

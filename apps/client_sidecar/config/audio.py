@@ -1,3 +1,4 @@
+# === ANCHOR: AUDIO_START ===
 """Audio capture configuration (Slice 2 lock)."""
 from __future__ import annotations
 
@@ -17,5 +18,9 @@ DEVICE_INDEX: int | None = (
     else None
 )
 
-# RMS dBFS threshold (logged only — not enforced in S2; S3 will gate Gemini)
+# RMS dBFS threshold for silence detection.
 RMS_DBFS_THRESHOLD: float = float(os.environ.get("YESON_RMS_DBFS_THRESHOLD", "-45"))
+RMS_SILENCE_GATE_ENABLED: bool = os.environ.get(
+    "YESON_RMS_SILENCE_GATE_ENABLED", "1"
+).lower() not in {"0", "false", "no", "off"}
+# === ANCHOR: AUDIO_END ===
