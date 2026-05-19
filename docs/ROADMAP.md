@@ -145,6 +145,8 @@
 > 2026-05-18 코드 진행: `STTProvider`/`TranslationProvider` 인터페이스, `GeminiLiveProvider` lazy SDK adapter, sidecar audio→AI session wiring, AI utterance DB persist + viewer bus fan-out, Gemini config health endpoint, provider disconnect retry/backoff, AI publish latency structured log, Gemini usage token/cost structured log, viewer partial→final seq replacement, Gemini Live model/env 정정(`gemini-3.1-flash-live-preview`), AUDIO + `output_audio_transcription` 기반 실시간 transcript fan-out, `audio_stream_end` 전달, provider seq 재시작 보정, sidecar RMS silence gate 구현. 검증: `uv run pytest apps/server/tests -v` → 22 passed / 4 skipped, `uv run pytest apps/client_sidecar/tests -q` → 18 passed, `pnpm --filter @yeson-meet/web build` → pass, `git diff --check` → clean. 실제 Gemini API Key 기반 local synthetic E2E(서버+테스트 sidecar 동일 개발 머신)에서 59.37초 synthetic 영어 오디오 viewer seq 1~8 / DB utterance 8개 저장, phrase-end→first viewer subtitle P50 1419.8ms / max 1522.3ms. 단, LAN 회의실 PC↔서버 분리 지연·브라우저 렌더·실제 오디오 라우팅은 아직 별도 검증 필요.
 >
 > 2026-05-19 완료: Windows 앱 패키지 전 사전 점검용 desktop setup assistant를 `apps/desktop/src/setup/` 모듈 구조로 구현하고, `App.tsx`는 `SetupAssistant`만 렌더링하도록 유지. setup assistant에서 서버 `/api/v1/health`, Gemini `/api/v1/health/ai`, viewer URL 접근 최소 스모크를 제공하며, Device API Key는 localStorage에 저장하지 않고 PowerShell 명령 값은 escaping 처리. Tauri packaged origin(`http://tauri.localhost`)을 서버 CORS allowlist에 추가. 검증: `pnpm --filter @yeson-meet/desktop build:vite` → pass, `uv run pytest apps/server/tests -q` → 25 passed / 4 skipped, desktop LSP diagnostics → 0 errors, `GIT_MASTER=1 git diff --check -- apps/desktop/src apps/server/main.py` → clean.
+>
+> 2026-05-19 추가 진행: desktop 앱을 `DesktopConsole` shell로 전환하고 setup assistant / live meeting 탭을 분리. Live Meeting 탭에 operator login, session create/end/report API wiring, viewer URL 복사, Markdown report preview, operator JWT 기반 live subtitle preview(backfill + `/ws/operator?access=...`)를 구현. session create 성공 시 `session_id`/`viewer_url`을 setup assistant 저장값에 반영해 PowerShell sidecar handoff 값이 실제 회의 정보로 갱신되도록 연결. 검증: `pnpm --filter @yeson-meet/desktop build:vite` → pass, `uv run pytest apps/server/tests -q` → 25 passed / 4 skipped, desktop LSP diagnostics → 0 errors, `GIT_MASTER=1 git diff --check -- apps/server apps/desktop/src docs/ROADMAP.md` → clean.
 
 ### 완료 기준
 - [x] 영어 1분 synthetic 오디오 → 한국어 자막 viewer에 흐름  ← local synthetic E2E 통과: viewer WS 16개 partial/final 이벤트 수신, DB utterance seq 1~8 저장
@@ -163,17 +165,17 @@
 
 ### 산출물
 - 데스크톱 UI:
-  - 로그인 화면
-  - 회의 시작 화면: 제목 / 클라이언트 라벨 / visibility (기본 `org`)
-  - 라이브 콘솔: **자막 패널만** (큰 글씨 기본값)
-  - 회의 종료 버튼
+  - [x] 로그인 화면 — desktop operator email/password login + access token 저장
+  - [x] 회의 시작 화면: 제목 / 클라이언트 라벨 / visibility (기본 `org`) — session create API wiring
+  - [x] 라이브 콘솔: **자막 패널만** (큰 글씨 기본값) — operator JWT backfill + `/ws/operator` live subtitle preview
+  - [x] 회의 종료 버튼 — session end + Markdown report load/preview
 - **UI 확장성 1차 정의** (`docs/UI_DESIGN_SYSTEM.md` 참조):
   - `packages/ui/layout/AppShell.tsx` + `ConsoleShell.tsx` — 5슬롯 컴포지션
   - `packages/ui/src/tokens.css` — 디자인 토큰 1차 (color / spacing / typography 5단계)
   - 라우팅 placeholder: `/console/{history,glossary,admin}` "준비 중" 페이지 + nav에 disabled 항목
   - zustand 단일 store 스켈레톤 (`useMeetingStore`, `useUiStore`)
-- QR + URL 표시 (PIN은 β로 보류)
-- WS `/ws/operator` (JWT 인증, 운영자 전용)
+- [~] QR + URL 표시 (PIN은 β로 보류) — viewer URL 표시/복사 완료, QR 미구현
+- [x] WS `/ws/operator` (JWT 인증, 운영자 전용)
 - `/api/v1/sessions/{id}/end` → MD 리포트 생성 (영어 원문 + 한국어 번역 로그)
 - `/api/v1/sessions/{id}/report` 다운로드
 - viewer: 회의 종료 시 "회의 종료됨" 화면
