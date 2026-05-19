@@ -69,6 +69,45 @@ jobs:
       - name: Build Tauri Windows installer
         shell: pwsh
         run: |
+          $iconPath = "apps/desktop/src-tauri/icons/icon.ico"
+          if (!(Test-Path $iconPath)) {
+            $pixels = New-Object byte[] (16 * 16 * 4)
+            for ($i = 0; $i -lt $pixels.Length; $i += 4) {
+              $pixels[$i] = 0x28
+              $pixels[$i + 1] = 0x7A
+              $pixels[$i + 2] = 0xE6
+              $pixels[$i + 3] = 0xFF
+            }
+            $mask = New-Object byte[] 64
+            $stream = New-Object System.IO.MemoryStream
+            $writer = New-Object System.IO.BinaryWriter($stream)
+            $writer.Write([UInt16]0)
+            $writer.Write([UInt16]1)
+            $writer.Write([UInt16]1)
+            $writer.Write([Byte]16)
+            $writer.Write([Byte]16)
+            $writer.Write([Byte]0)
+            $writer.Write([Byte]0)
+            $writer.Write([UInt16]1)
+            $writer.Write([UInt16]32)
+            $writer.Write([UInt32](40 + $pixels.Length + $mask.Length))
+            $writer.Write([UInt32]22)
+            $writer.Write([UInt32]40)
+            $writer.Write([Int32]16)
+            $writer.Write([Int32]32)
+            $writer.Write([UInt16]1)
+            $writer.Write([UInt16]32)
+            $writer.Write([UInt32]0)
+            $writer.Write([UInt32]$pixels.Length)
+            $writer.Write([Int32]0)
+            $writer.Write([Int32]0)
+            $writer.Write([UInt32]0)
+            $writer.Write([UInt32]0)
+            $writer.Write($pixels)
+            $writer.Write($mask)
+            $writer.Flush()
+            [System.IO.File]::WriteAllBytes($iconPath, $stream.ToArray())
+          }
           $baseConfigPath = "apps/desktop/src-tauri/tauri.conf.json"
           $baseConfig = Get-Content $baseConfigPath -Raw | ConvertFrom-Json
           $windowsConfig = Get-Content apps/desktop/src-tauri/tauri.windows.conf.json -Raw | ConvertFrom-Json
