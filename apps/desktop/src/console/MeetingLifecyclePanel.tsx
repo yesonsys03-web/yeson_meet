@@ -1,43 +1,12 @@
 // === ANCHOR: MEETING_LIFECYCLE_PANEL_START ===
-import { useMemo, useState } from "react";
+import { ContractPreview } from "./ContractPreview";
+import { LifecycleFields } from "./LifecycleFields";
+import { SessionResultPanel } from "./SessionResultPanel";
 import { consoleStyles } from "./consoleStyles";
-import type { MeetingDraft } from "./types";
-
-const initialDraft: MeetingDraft = {
-  title: "Client weekly sync",
-  clientLabel: "CLIENT-A",
-  visibility: "org",
-  operatorToken: "",
-};
+import { useMeetingLifecycle } from "./useMeetingLifecycle";
 
 export function MeetingLifecyclePanel() {
-  const [draft, setDraft] = useState<MeetingDraft>(initialDraft);
-
-  const sessionPayload = useMemo(
-    () => ({
-      title: draft.title,
-      client_label: draft.clientLabel || null,
-      visibility: draft.visibility,
-    }),
-    [draft],
-  );
-
-  const contractPreview = useMemo(
-    () =>
-      [
-        "POST /api/v1/sessions",
-        "Authorization: Bearer <operator-token>",
-        JSON.stringify(sessionPayload, null, 2),
-        "",
-        "POST /api/v1/sessions/{session_id}/end",
-        "GET  /api/v1/sessions/{session_id}/report",
-      ].join("\n"),
-    [sessionPayload],
-  );
-
-  function updateDraft<K extends keyof MeetingDraft>(key: K, value: MeetingDraft[K]) {
-    setDraft((current) => ({ ...current, [key]: value }));
-  }
+  const lifecycle = useMeetingLifecycle();
 
   return (
     <section style={consoleStyles.panel}>
@@ -54,55 +23,39 @@ export function MeetingLifecyclePanel() {
 
       <div style={consoleStyles.grid}>
         <div style={consoleStyles.card}>
+          <LifecycleFields draft={lifecycle.draft} busy={lifecycle.busy} updateDraft={lifecycle.updateDraft} onLogin={lifecycle.login} />
           <div style={consoleStyles.row}>
-            <label style={consoleStyles.field}>
-              <span style={consoleStyles.label}>Meeting title</span>
-              <input
-                value={draft.title}
-                onChange={(event) => updateDraft("title", event.currentTarget.value)}
-                style={consoleStyles.input}
-              />
-            </label>
-            <label style={consoleStyles.field}>
-              <span style={consoleStyles.label}>Client label</span>
-              <input
-                value={draft.clientLabel}
-                onChange={(event) => updateDraft("clientLabel", event.currentTarget.value)}
-                style={consoleStyles.input}
-              />
-            </label>
-          </div>
-
-          <label style={consoleStyles.field}>
-            <span style={consoleStyles.label}>Operator bearer token</span>
-            <input
-              type="password"
-              value={draft.operatorToken}
-              onChange={(event) => updateDraft("operatorToken", event.currentTarget.value)}
-              placeholder="Paste operator JWT when backend login is wired"
-              style={consoleStyles.input}
-            />
-          </label>
-
-          <div style={consoleStyles.row}>
-            <button type="button" style={consoleStyles.action}>
-              Start meeting placeholder
+            <button
+              type="button"
+              onClick={lifecycle.startMeeting}
+              disabled={lifecycle.busy}
+              style={{ ...consoleStyles.action, ...(lifecycle.busy ? consoleStyles.actionDisabled : null) }}
+            >
+              Start meeting
             </button>
-            <button type="button" style={consoleStyles.mutedAction}>
-              End + report placeholder
+            <button
+              type="button"
+              onClick={lifecycle.finishMeeting}
+              disabled={lifecycle.busy || !lifecycle.createdSession}
+              style={{
+                ...consoleStyles.mutedAction,
+                ...(lifecycle.busy || !lifecycle.createdSession ? consoleStyles.actionDisabled : null),
+              }}
+            >
+              End meeting
             </button>
           </div>
+          <SessionResultPanel
+            createdSession={lifecycle.createdSession}
+            endedSession={lifecycle.endedSession}
+            errorText={lifecycle.errorText}
+            statusText={lifecycle.statusText}
+            copyViewerUrl={lifecycle.copyViewerUrl}
+            downloadReport={lifecycle.downloadReport}
+          />
         </div>
 
-        <aside style={consoleStyles.card}>
-          <h2 style={{ marginTop: 0 }}>Server contract</h2>
-          <pre style={consoleStyles.code}>{contractPreview}</pre>
-          <ol style={consoleStyles.steps}>
-            <li>Create session and show returned viewer URL.</li>
-            <li>Run sidecar with the session ID from the setup assistant.</li>
-            <li>End session and download generated Markdown report.</li>
-          </ol>
-        </aside>
+        <ContractPreview contractPreview={lifecycle.contractPreview} reportText={lifecycle.reportText} />
       </div>
     </section>
   );
