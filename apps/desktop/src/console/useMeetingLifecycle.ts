@@ -1,5 +1,6 @@
 // === ANCHOR: USE_MEETING_LIFECYCLE_START ===
 import { useMemo, useState } from "react";
+import { loadValues, storeValues } from "../setup/setupValues";
 import { createSession, endSession, fetchSessionReport, loginOperator, sessionRequestBody } from "./sessionApi";
 import type { CreatedSession, EndedSession, MeetingDraft } from "./types";
 
@@ -18,6 +19,7 @@ export function useMeetingLifecycle() {
   const [endedSession, setEndedSession] = useState<EndedSession | null>(null);
   const [reportText, setReportText] = useState("");
   const [statusText, setStatusText] = useState("회의를 시작하면 viewer URL이 여기에 표시됩니다.");
+  const [handoffText, setHandoffText] = useState("Setup Assistant는 아직 새 회의값을 받지 않았습니다.");
   const [errorText, setErrorText] = useState("");
   const [busy, setBusy] = useState(false);
   const sessionPayload = useMemo(() => sessionRequestBody(draft), [draft]);
@@ -58,6 +60,7 @@ export function useMeetingLifecycle() {
       setCreatedSession(session);
       setEndedSession(null);
       setReportText("");
+      storeSessionHandoff(session);
       setStatusText(`회의 생성 완료: ${session.session_id}`);
     });
   }
@@ -92,6 +95,7 @@ export function useMeetingLifecycle() {
     draft,
     endedSession,
     errorText,
+    handoffText,
     reportText,
     statusText,
     copyViewerUrl,
@@ -101,6 +105,16 @@ export function useMeetingLifecycle() {
     startMeeting,
     updateDraft,
   };
+
+  function storeSessionHandoff(session: CreatedSession) {
+    const current = loadValues();
+    storeValues({
+      ...current,
+      sessionId: session.session_id,
+      viewerUrl: session.viewer_url,
+    });
+    setHandoffText("Setup Assistant에 session ID와 viewer URL을 저장했습니다. Setup 탭의 PowerShell 명령을 다시 복사하세요.");
+  }
 }
 
 function buildContractPreview(sessionPayload: ReturnType<typeof sessionRequestBody>): string {
@@ -111,6 +125,8 @@ function buildContractPreview(sessionPayload: ReturnType<typeof sessionRequestBo
     "",
     "POST /api/v1/sessions/{session_id}/end",
     "GET  /api/v1/sessions/{session_id}/report",
+    "GET  /api/v1/sessions/{session_id}/utterances",
+    "WS   /ws/operator?session={session_id}&access=<operator-token>",
   ].join("\n");
 }
 // === ANCHOR: USE_MEETING_LIFECYCLE_END ===

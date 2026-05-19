@@ -1,6 +1,7 @@
 // === ANCHOR: MEETING_LIFECYCLE_PANEL_START ===
 import { ContractPreview } from "./ContractPreview";
 import { LifecycleFields } from "./LifecycleFields";
+import { LiveSubtitlePreview } from "./LiveSubtitlePreview";
 import { SessionResultPanel } from "./SessionResultPanel";
 import { consoleStyles } from "./consoleStyles";
 import { useMeetingLifecycle } from "./useMeetingLifecycle";
@@ -49,9 +50,14 @@ export function MeetingLifecyclePanel() {
             createdSession={lifecycle.createdSession}
             endedSession={lifecycle.endedSession}
             errorText={lifecycle.errorText}
+            handoffText={lifecycle.handoffText}
             statusText={lifecycle.statusText}
             copyViewerUrl={lifecycle.copyViewerUrl}
             downloadReport={lifecycle.downloadReport}
+          />
+          <LiveSubtitlePreview
+            operatorToken={lifecycle.draft.operatorToken}
+            sessionId={lifecycle.createdSession?.session_id ?? null}
           />
         </div>
 

@@ -6,6 +6,7 @@ type SessionResultPanelProps = {
   createdSession: CreatedSession | null;
   endedSession: EndedSession | null;
   errorText: string;
+  handoffText: string;
   statusText: string;
   copyViewerUrl: () => void;
   downloadReport: () => void;
@@ -15,6 +16,7 @@ export function SessionResultPanel({
   createdSession,
   endedSession,
   errorText,
+  handoffText,
   statusText,
   copyViewerUrl,
   downloadReport,
@@ -22,6 +24,7 @@ export function SessionResultPanel({
   return (
     <>
       <div style={errorText ? consoleStyles.statusError : consoleStyles.statusOk}>{errorText || statusText}</div>
+      <div style={consoleStyles.statusInfo}>{handoffText}</div>
       {createdSession ? (
         <div style={consoleStyles.linkBox}>
           <strong>Viewer URL</strong>
