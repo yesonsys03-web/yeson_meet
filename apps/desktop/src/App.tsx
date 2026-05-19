@@ -1,7 +1,7 @@
 // === ANCHOR: APP_START ===
-import { SetupAssistant } from "./setup/SetupAssistant";
+import { DesktopConsole } from "./console/DesktopConsole";
 
 export default function App() {
-  return <SetupAssistant />;
+  return <DesktopConsole />;
 }
 // === ANCHOR: APP_END ===
