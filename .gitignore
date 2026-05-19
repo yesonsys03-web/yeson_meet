@@ -39,6 +39,8 @@ Thumbs.db
 .vibelign/scan_cache.json
 .vibelign/logs/
 .vibelign/reports/
+.vibelign/*.db-shm
+.vibelign/*.db-wal
 
 # Tool state (entire directories — heavy / per-machine)
 .vibelign/cache/
