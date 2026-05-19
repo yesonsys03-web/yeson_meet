@@ -1,9 +1,7 @@
 // === ANCHOR: APP_START ===
+import { SetupAssistant } from "./setup/SetupAssistant";
+
 export default function App() {
-  return (
-    <div style={{ padding: 32, fontFamily: "system-ui", fontSize: 20 }}>
-      yeson-meet desktop (empty shell)
-    </div>
-  );
+  return <SetupAssistant />;
 }
 // === ANCHOR: APP_END ===
