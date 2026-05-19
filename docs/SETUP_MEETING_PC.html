@@ -309,168 +309,326 @@ YESON_AUDIO_DEVICE_INDEX=8`}</Code>
 /* ========== Windows 단계 ========== */
 const winPhases = [
   {
-    n:1, icon:"🔊", title:"Voicemeeter Banana 설치",
+    n:1, icon:"📦", title:"Windows 앱 설치 파일 받기",
     steps:[
       {
-        id:"win-vm-dl", title:"Voicemeeter Banana 다운로드 + 설치",
-        est:"5분", tag:{color:"green", label:"오디오"},
-        content:(<>
-          <p>공식 사이트: <code className="bg-slate-100 px-1 rounded">https://vb-audio.com/Voicemeeter/banana.htm</code></p>
-          <p>설치 후 <b>재부팅 필수</b>.</p>
-          <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-[12.5px] text-blue-900">
-            💡 무료(donationware). 상업적 사용도 라이선스상 OK. 사내 표준 등록 권장.
-          </div>
-        </>),
-        trouble:[
-          {symptom:"설치 후 가상 오디오 장치 안 보임", fix:"재부팅 필수. 그래도 안 보이면 제어판 → 사운드 → 표시 안 됨 장치 보기 체크."},
-        ],
-      },
-    ],
-  },
-  {
-    n:2, icon:"🎛️", title:"오디오 라우팅 (가장 까다로운 단계)",
-    steps:[
-      {
-        id:"win-vm-output", title:"시스템 기본 재생 = Voicemeeter Input",
-        est:"3분", tag:{color:"green", label:"오디오"},
-        content:(<>
-          <p>설정 → 시스템 → 사운드 → 출력 장치 = <b>Voicemeeter Input (VB-Audio Voicemeeter VAIO)</b>.</p>
-        </>),
-      },
-      {
-        id:"win-vm-a1", title:"Voicemeeter A1 = 실제 스피커, B1 = Python 입력용 가상",
-        est:"5분", tag:{color:"green", label:"오디오"},
+        id:"win-artifact-download", title:"GitHub Actions에서 desktop artifact 다운로드",
+        est:"5분", tag:{color:"violet", label:"앱"},
         content:(<>
           <ol className="list-decimal pl-5 space-y-1">
-            <li>Voicemeeter Banana 실행 (관리자 권한 권장).</li>
-            <li>우상단 <b>A1</b> 클릭 → 실제 스피커/헤드셋 선택.</li>
-            <li>B1은 가상 (별도 설정 없음, 자동으로 Voicemeeter Output으로 매핑).</li>
-            <li>VAIO 입력 채널에서 A1과 B1 모두 활성화 (LED 켜기).</li>
+            <li>GitHub repo의 <b>Actions</b> 탭을 엽니다.</li>
+            <li>성공한 <b>Windows desktop build</b> 실행 결과를 선택합니다.</li>
+            <li>아래 <b>Artifacts</b>에서 <b>yeson-meet-desktop-windows</b>를 다운로드합니다.</li>
+            <li>다운로드한 zip을 풀고, 안의 Windows 설치 파일(<code className="bg-slate-100 px-1 rounded">.exe</code> 또는 <code className="bg-slate-100 px-1 rounded">.msi</code>)을 찾습니다.</li>
           </ol>
-          <p>예시 결과:</p>
-          <div className="glass rounded-lg p-3 text-[12px] code">
-            Voicemeeter Input (시스템 출력)<br/>
-            ├─ A1 → 실제 스피커 (사람이 들음)<br/>
-            └─ B1 → Voicemeeter Output (Python 앱이 받음)
+          <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-[12.5px] text-emerald-900">
+            ✅ 회의실 PC에 설치할 것은 <b>yeson-meet-desktop-windows 하나</b>입니다. <b>yeson-sidecar-windows</b> artifact는 개발자가 문제를 확인할 때 쓰는 참고 파일이라 일반 설치 대상이 아닙니다.
           </div>
         </>),
         trouble:[
-          {symptom:"소리가 안 들림", fix:"VAIO 채널에서 A1이 활성화되어 있는지 확인. 마스터 페이더가 0이 아닌지."},
-          {symptom:"에코 발생", fix:"앱이 받는 소리에 본인 마이크가 섞임. B1에 본인 마이크 채널 보내지 않도록 설정."},
+          {symptom:"Artifacts가 안 보임", fix:"로그인 계정에 repo 접근 권한이 있는지 확인하고, 실패한 run이 아니라 성공한 Windows desktop build run을 열었는지 확인합니다."},
+          {symptom:"파일이 여러 개라 헷갈림", fix:"이름에 yeson-meet-desktop-windows가 붙은 zip만 받습니다. yeson-sidecar-windows는 일반 설치용이 아닙니다."},
         ],
       },
       {
-        id:"win-meet-output", title:"Google Meet / Zoom 출력 = Voicemeeter Input",
-        est:"2분", tag:{color:"green", label:"오디오"},
+        id:"win-installer-run", title:"설치 파일 실행",
+        est:"3분", tag:{color:"violet", label:"앱"},
         content:(<>
-          <p>Meet/Zoom 설정에서 스피커 = <b>Voicemeeter Input</b> 명시적으로 선택.</p>
-          <p>(기본값이 시스템과 동일하면 자동으로 따라감)</p>
-        </>),
-      },
-    ],
-  },
-  {
-    n:3, icon:"📦", title:"MVP-α sidecar 실행 준비",
-    steps:[
-      {
-        id:"win-runtime", title:"yeson-meet 폴더 + Python 런타임 준비",
-        est:"10분", tag:{color:"violet", label:"CLI"},
-        content:(<>
-          <p>관리자에게 받은 <b>yeson-meet 프로젝트 폴더</b> 또는 배포 번들을 회의실 PC에 둡니다.</p>
-          <p>현재 MVP-α는 Windows MSI가 아니라 <b>Python sidecar CLI</b>로 실행합니다.</p>
-          <Code>{`cd C:\\path\\to\\yeson_meet
-uv sync --all-packages`}</Code>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>압축을 푼 폴더에서 yeson-meet 설치 파일을 더블클릭합니다.</li>
+            <li>Windows SmartScreen이 나오면 파일 출처가 GitHub Actions artifact인지 확인한 뒤 <b>추가 정보 → 실행</b>을 선택합니다.</li>
+            <li>설치 마법사가 나오면 기본값으로 설치합니다.</li>
+            <li>시작 메뉴 또는 바탕화면에서 <b>yeson-meet</b> 앱을 실행합니다.</li>
+          </ol>
+          <p>앱이 열리면 왼쪽 메뉴에 <b>Setup Assistant</b>와 <b>Live Meeting</b>이 보입니다. History/Settings는 아직 비활성화되어 있어 눌리지 않아도 정상입니다.</p>
         </>),
         trouble:[
-          {symptom:"uv 명령이 없음", fix:"Python 3.12와 uv를 먼저 설치하거나, 관리자가 준비한 .venv 포함 배포 폴더를 사용."},
+          {symptom:"앱이 바로 꺼짐", fix:"설치 파일을 다시 실행해 복구하거나, 같은 artifact를 다시 압축 해제해 설치합니다. 계속 실패하면 설치 파일 이름과 Windows 버전을 기록해 개발자에게 전달합니다."},
+          {symptom:"회사 보안 프로그램이 차단함", fix:"사내에서 직접 만든 미서명 앱일 수 있습니다. 시스템 담당자에게 GitHub Actions artifact 출처 확인 후 예외 등록을 요청합니다."},
+        ],
+      },
+    ],
+  },
+  {
+    n:2, icon:"🌐", title:"사내용 기본값 준비",
+    steps:[
+      {
+        id:"win-network-values", title:"사내용 빠른 테스트에 필요한 것만 받기",
+        est:"3분", tag:{color:"amber", label:"준비"},
+        content:(<>
+          <p>사내 테스트에서는 사용자가 보안/배포 옵션을 하나씩 이해할 필요가 없습니다. 아래처럼 <b>관리자가 한 번에 준비해 준 값</b>만 사용합니다.</p>
+          <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-[12.5px] text-emerald-900">
+            ✅ <b>사내용 빠른 모드:</b> Windows 앱 설치 파일 + 서버 주소 + 사내용 테스트 계정만 있으면 먼저 앱 실행/회의 생성 테스트를 진행합니다. 오디오 자막까지 볼 때만 테스트용 오디오 키를 추가로 붙여넣습니다.
+          </div>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><b>서버 주소</b>: 예 <code className="bg-slate-100 px-1 rounded">wss://192.168.0.38</code>. 앱 기본값으로 넣어 두면 사용자는 보통 확인만 합니다.</li>
+            <li><b>사내용 테스트 계정</b>: Live Meeting 탭에서 로그인할 email/password. “운영자 계정”이라는 말 대신 테스트 계정으로 안내합니다.</li>
+            <li><b>테스트용 오디오 키</b>: 자막까지 실제로 확인할 때만 사용합니다. 사용자는 의미를 몰라도 되고, 받은 값을 그대로 붙여넣으면 됩니다.</li>
+            <li><b>root.crt</b>: 지금은 기본 절차에서 제외합니다. HTTPS 보안 경고가 뜨는 배포/확장 상황에서만 사용합니다.</li>
+          </ul>
+          <details className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-[12.5px] text-slate-700">
+            <summary className="font-bold text-slate-900"><span className="chev">▸</span> 나중에 배포/확장할 때 쓰는 이름들</summary>
+            <ul className="list-disc pl-5 mt-2 space-y-1">
+              <li><b>Operator account</b>: 사내용 테스트 계정의 정식 이름입니다.</li>
+              <li><b>Device API Key</b>: 오디오 sidecar가 서버에 접속할 때 쓰는 회의실 PC용 키입니다.</li>
+              <li><b>root.crt</b>: 자체 인증서(Caddy internal/self-signed)를 Windows가 믿게 해주는 인증서입니다.</li>
+            </ul>
+          </details>
+          <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-[12.5px] text-rose-900">
+            🔐 <b>Gemini API Key는 회의실 PC에 넣지 않습니다.</b> 이 원칙은 사내용 빠른 테스트에서도 그대로 유지합니다.
+          </div>
+        </>),
+        trouble:[
+          {symptom:"테스트용 오디오 키가 없음", fix:"앱 실행/회의 생성까지만 먼저 테스트할 수 있습니다. 실제 자막 오디오 테스트를 할 때만 관리자에게 테스트용 Device API Key를 받아 붙여넣습니다."},
         ],
       },
       {
-        id:"win-cert", title:"사내 root CA 인증서 신뢰 등록 (사내 CA 또는 Caddy internal 사용 시)",
+        id:"win-root-ca", title:"고급 옵션: HTTPS 보안 경고가 뜰 때만 root CA 설치",
         est:"5분", tag:{color:"rose", label:"보안"},
         content:(<>
-          <p>관리자에게 받은 <code className="bg-slate-100 px-1 rounded">root.crt</code>를 더블클릭.</p>
-          <p>"인증서 설치" → <b>로컬 컴퓨터</b> 저장소 → 모든 인증서를 다음 저장소에 → <b>신뢰할 수 있는 루트 인증 기관</b>.</p>
+          <p><b>사내용 빠른 테스트에서는 이 단계가 기본이 아닙니다.</b> 브라우저나 앱에서 HTTPS 보안 경고가 뜰 때만 <code className="bg-slate-100 px-1 rounded">root.crt</code>를 설치합니다.</p>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li><code className="bg-slate-100 px-1 rounded">root.crt</code> 파일을 더블클릭합니다.</li>
+            <li><b>인증서 설치</b>를 누릅니다.</li>
+            <li><b>로컬 컴퓨터</b>를 선택합니다. 관리자 권한이 필요할 수 있습니다.</li>
+            <li><b>모든 인증서를 다음 저장소에 저장</b> → <b>신뢰할 수 있는 루트 인증 기관</b>을 선택합니다.</li>
+            <li>설치 후 브라우저에서 <code className="bg-slate-100 px-1 rounded">https://서버주소</code>를 다시 열어 보안 경고가 사라졌는지 확인합니다.</li>
+          </ol>
+          <p>나중에 외부 배포, 여러 지점 확장, 자체 인증서 운영을 할 때 남겨둔 옵션입니다. 보안 경고가 없으면 건너뜁니다.</p>
+        </>),
+        trouble:[
+          {symptom:"인증서 설치 권한이 없음", fix:"Windows 관리자 계정으로 설치하거나 시스템 담당자에게 root.crt 등록을 요청합니다."},
+          {symptom:"보안 경고가 계속 뜸", fix:"서버의 SERVER_HOST와 접속 주소가 같은지 확인합니다. 예를 들어 인증서가 192.168.0.38용이면 접속도 https://192.168.0.38 로 해야 합니다."},
+        ],
+      },
+    ],
+  },
+  {
+    n:3, icon:"✅", title:"Setup Assistant로 서버 스모크 테스트",
+    steps:[
+      {
+        id:"win-setup-values", title:"Setup Assistant는 서버 주소 확인용으로 가볍게 사용",
+        est:"3분", tag:{color:"amber", label:"앱"},
+        content:(<>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>yeson-meet 앱 왼쪽에서 <b>Setup Assistant</b>를 엽니다.</li>
+            <li><b>WebSocket 서버 주소</b>가 사내 서버 주소인지 확인합니다. 예: <code className="bg-slate-100 px-1 rounded">wss://192.168.0.38</code></li>
+            <li>화면에 <b>Device API Key</b>라고 표시된 칸은 “테스트용 오디오 키”입니다. 오디오 자막 테스트를 할 때만 붙여넣고, 앱 실행/회의 생성 확인만 할 때는 비워 둬도 됩니다.</li>
+            <li><b>Session ID</b>와 <b>Viewer URL</b>은 Live Meeting에서 회의를 만든 뒤 자동으로 채워지는 값입니다. 처음에는 비어 있거나 placeholder여도 괜찮습니다.</li>
+            <li><b>오디오 장치 이름</b>은 Windows 기본값인 <code className="bg-slate-100 px-1 rounded">Voicemeeter</code>로 둡니다.</li>
+          </ol>
+          <p>WebSocket 주소는 “회의실 PC가 오디오를 보낼 길”이고, Viewer URL은 “사람들이 자막을 볼 주소”입니다.</p>
+        </>),
+      },
+      {
+        id:"win-smoke-checks", title:"사내용 기본 확인: 서버 health부터 보기",
+        est:"3분", tag:{color:"green", label:"검증"},
+        content:(<>
+          <p>처음에는 모든 항목을 완벽히 통과시키려 하지 말고, <b>서버 health</b>부터 확인합니다.</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><b>서버 health</b>: 회의실 PC에서 서버 <code className="bg-slate-100 px-1 rounded">/api/v1/health</code>까지 닿는지 확인합니다.</li>
+            <li><b>Gemini 설정</b>: 서버에 Gemini API Key가 설정되어 있는지 <code className="bg-slate-100 px-1 rounded">/api/v1/health/ai</code>로 확인합니다.</li>
+            <li><b>Viewer URL</b>: Live Meeting에서 회의를 만든 뒤 생기는 주소입니다. 처음에는 실패해도 정상입니다.</li>
+          </ul>
+          <p>사내용 빠른 테스트 순서는 <b>서버 health OK → Live Meeting에서 회의 생성 → viewer URL 확인 → 필요 시 오디오 테스트</b>입니다.</p>
+        </>),
+        trouble:[
+          {symptom:"서버 health 실패", fix:"회의실 PC가 서버와 같은 LAN에 있는지, 서버 IP/방화벽/443 포트가 열려 있는지 확인합니다."},
+          {symptom:"Gemini 설정 실패", fix:"회의실 PC 문제가 아니라 서버 설정 문제입니다. 서버의 GEMINI_API_KEY 설정과 /api/v1/health/ai 응답을 확인합니다."},
+          {symptom:"Viewer URL 실패", fix:"회의를 아직 만들지 않았다면 정상입니다. 회의 생성 후에도 실패하면 같은 사내 LAN/Wi-Fi인지, 게스트 Wi-Fi client isolation이 켜져 있지 않은지 확인합니다."},
+        ],
+      },
+    ],
+  },
+  {
+    n:4, icon:"🔊", title:"Voicemeeter Banana 설치와 오디오 길 만들기",
+    steps:[
+      {
+        id:"win-vm-install", title:"Voicemeeter Banana 설치 후 재부팅",
+        est:"8분", tag:{color:"green", label:"오디오"},
+        content:(<>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>공식 사이트에서 <b>Voicemeeter Banana</b>를 다운로드합니다: <code className="bg-slate-100 px-1 rounded">https://vb-audio.com/Voicemeeter/banana.htm</code></li>
+            <li>설치 프로그램을 <b>관리자 권한</b>으로 실행합니다.</li>
+            <li>설치가 끝나면 <b>반드시 Windows를 재부팅</b>합니다. 공식 안내도 설치 후 재부팅을 요구합니다.</li>
+          </ol>
+          <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-[12.5px] text-blue-900">
+            💡 Voicemeeter는 회의 소리를 둘로 나누는 오디오 분배기입니다. 한 길은 스피커로 보내 사람이 듣고, 다른 길은 yeson-meet sidecar가 받아 자막으로 바꿉니다.
+          </div>
+        </>),
+        trouble:[
+          {symptom:"Voicemeeter 장치가 안 보임", fix:"재부팅했는지 먼저 확인합니다. 그래도 안 보이면 제어판 → 소리에서 표시 안 됨/연결 끊긴 장치 보기를 켜고 활성화합니다."},
+        ],
+      },
+      {
+        id:"win-vm-routing", title:"Windows 출력 → Voicemeeter Input, A1/B1 켜기",
+        est:"7분", tag:{color:"green", label:"오디오"},
+        content:(<>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>Windows 설정 → 시스템 → 사운드 → 출력 장치를 <b>Voicemeeter Input (VB-Audio Voicemeeter VAIO)</b>로 바꿉니다.</li>
+            <li><b>Voicemeeter Banana</b>를 실행합니다.</li>
+            <li>오른쪽 위 <b>A1</b>을 클릭하고 실제 스피커/헤드셋을 고릅니다.</li>
+            <li>가운데 <b>Voicemeeter VAIO</b> 줄에서 <b>A1</b>과 <b>B1</b> 버튼을 둘 다 켭니다.</li>
+            <li>YouTube 영어 영상을 잠깐 틀고, Voicemeeter 막대가 움직이며 스피커에서도 소리가 들리는지 확인합니다.</li>
+          </ol>
+          <div className="glass rounded-lg p-3 text-[12px] code">
+            회의 소리 → Voicemeeter Input<br/>
+            ├─ A1 → 실제 스피커/헤드셋 (사람이 들음)<br/>
+            └─ B1 → Voicemeeter Output (yeson-meet sidecar가 받음)
+          </div>
+        </>),
+        trouble:[
+          {symptom:"스피커에서 소리가 안 들림", fix:"A1에 실제 스피커가 선택됐는지, VAIO 줄의 A1 버튼이 켜졌는지, Windows 볼륨이 0이 아닌지 확인합니다."},
+          {symptom:"sidecar가 소리를 못 받음", fix:"VAIO 줄의 B1 버튼이 켜졌는지, Windows 녹음 장치에 Voicemeeter Output이 활성화되어 있는지 확인합니다."},
+          {symptom:"에코가 생김", fix:"마이크 입력 줄의 B1은 끄고, 회의 소리가 들어오는 VAIO 줄의 B1만 켭니다."},
+        ],
+      },
+      {
+        id:"win-conference-output", title:"Meet/Zoom/Teams 스피커도 Voicemeeter로 맞추기",
+        est:"2분", tag:{color:"green", label:"오디오"},
+        content:(<>
+          <p>Google Meet, Zoom, Teams 같은 회의 앱 안에서도 스피커를 <b>Voicemeeter Input</b>으로 선택합니다.</p>
+          <p>“시스템 기본값”을 써도 될 때가 있지만, 테스트 중에는 직접 Voicemeeter Input으로 고정하는 편이 실수가 적습니다.</p>
         </>),
       },
     ],
   },
   {
-    n:4, icon:"🚀", title:"sidecar 실행값 입력 + 실행",
+    n:5, icon:"🎬", title:"Live Meeting 탭에서 회의 생성",
     steps:[
       {
-        id:"win-values", title:"관리자에게 받은 실행값 확인",
-        est:"3분", tag:{color:"amber", label:"등록"},
+        id:"win-live-login", title:"사내용 테스트 계정으로 로그인",
+        est:"2분", tag:{color:"amber", label:"회의"},
         content:(<>
-          <p>회의실 PC에는 아래 값만 들어갑니다. <b>Gemini API Key는 서버에만 둡니다.</b></p>
-          <ul className="list-disc pl-5 space-y-1">
-            <li><code className="bg-slate-100 px-1 rounded">SERVER_WS_BASE=wss://&lt;server-host&gt;</code></li>
-            <li><code className="bg-slate-100 px-1 rounded">YESON_DEVICE_API_KEY=&lt;plaintext-device-key&gt;</code></li>
-            <li><code className="bg-slate-100 px-1 rounded">YESON_SESSION_ID=&lt;session-uuid&gt;</code></li>
-            <li>viewer 확인용 <code className="bg-slate-100 px-1 rounded">VIEWER_URL</code></li>
-          </ul>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>앱 왼쪽에서 <b>Live Meeting</b>을 엽니다.</li>
+            <li>관리자가 알려준 <b>사내용 테스트 email/password</b>를 입력합니다.</li>
+            <li><b>Login operator</b>를 누릅니다.</li>
+            <li>성공하면 앱이 로그인 토큰을 자동으로 채우고, 비밀번호 입력칸은 비웁니다. 토큰 이름은 몰라도 됩니다.</li>
+          </ol>
         </>),
+        trouble:[
+          {symptom:"Login failed", fix:"서버 주소가 Setup Assistant에 먼저 저장되어 있는지, 사내용 테스트 계정/비밀번호가 맞는지 확인합니다."},
+        ],
       },
       {
-        id:"win-run", title:"audio mode로 sidecar 실행",
-        est:"2분", tag:{color:"violet", label:"CLI"},
+        id:"win-live-start", title:"회의 만들고 viewer URL/QR 확인",
+        est:"3분", tag:{color:"amber", label:"회의"},
         content:(<>
-          <Code>{`$env:SERVER_WS_BASE="wss://<server-host>"
+          <ol className="list-decimal pl-5 space-y-1">
+            <li><b>Meeting title</b>에 테스트 이름을 씁니다. 예: <code className="bg-slate-100 px-1 rounded">Windows room audio test</code></li>
+            <li><b>Client label</b>은 고객명 또는 테스트명을 씁니다. 예: <code className="bg-slate-100 px-1 rounded">TEST-WIN</code></li>
+            <li><b>Visibility</b>는 보통 <code className="bg-slate-100 px-1 rounded">org</code>로 둡니다.</li>
+            <li><b>Start meeting</b>을 누릅니다.</li>
+            <li>생성 성공 후 보이는 <b>Viewer URL</b>과 QR을 폰/노트북에서 열어 둡니다.</li>
+          </ol>
+          <p>회의가 만들어지면 앱이 Session ID와 Viewer URL을 Setup Assistant 저장값에 넘깁니다. 그래서 다음 단계 전에 <b>Setup Assistant</b>로 돌아가 PowerShell 명령을 다시 복사해야 합니다.</p>
+        </>),
+        trouble:[
+          {symptom:"Create session failed", fix:"Operator token이 없거나 만료됐을 수 있습니다. Login operator를 다시 누른 뒤 Start meeting을 다시 시도합니다."},
+          {symptom:"Viewer URL이 폰에서 안 열림", fix:"폰이 같은 사내 LAN/Wi-Fi에 있는지, 게스트 Wi-Fi/client isolation이 꺼져 있는지, root CA가 필요한지 확인합니다."},
+        ],
+      },
+    ],
+  },
+  {
+    n:6, icon:"🚀", title:"오디오 sidecar 실행과 자막 테스트",
+    steps:[
+      {
+        id:"win-copy-powershell", title:"Setup Assistant에서 PowerShell 명령 다시 복사",
+        est:"2분", tag:{color:"violet", label:"오디오 전송"},
+        content:(<>
+          <p>현재 desktop 앱은 sidecar를 자동 실행하지 않습니다. 그래서 full audio test는 Setup Assistant가 만든 PowerShell 명령으로 실행합니다.</p>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li><b>Live Meeting</b>에서 회의를 만든 뒤 <b>Setup Assistant</b>로 돌아갑니다.</li>
+            <li>Session ID와 Viewer URL이 새 회의값으로 바뀌었는지 확인합니다.</li>
+            <li>오디오 자막까지 테스트할 때만 테스트용 오디오 키(Device API Key)를 붙여넣습니다. 이 값은 보안상 저장되지 않습니다.</li>
+            <li><b>PowerShell 명령 복사</b>를 누릅니다.</li>
+          </ol>
+          <p>명령은 대략 아래 모양입니다.</p>
+          <Code>{`$env:SERVER_WS_BASE="wss://192.168.0.38"
 $env:YESON_DEVICE_API_KEY="<plaintext-device-key>"
 $env:YESON_SESSION_ID="<session-uuid>"
 $env:YESON_SIDECAR_MODE="audio"
 $env:YESON_AUDIO_DEVICE_NAME="Voicemeeter"
 uv run python -m apps.client_sidecar.main`}</Code>
-          <p>성공하면 터미널에 <code className="bg-slate-100 px-1 rounded">sidecar audio mode</code>와 <code className="bg-slate-100 px-1 rounded">audio ws connected</code> 로그가 보입니다.</p>
+          <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-[12.5px] text-amber-900">
+            ⚠️ 이 명령은 현재 <b>yeson-meet 프로젝트 폴더 + Python 3.12 + uv</b>가 있는 환경에서 실행하는 방식입니다. Windows 앱 안에서 sidecar 자동 실행 버튼을 누르는 UX는 다음 작업입니다.
+          </div>
         </>),
         trouble:[
-          {symptom:"Invalid device key", fix:"관리자에게 새 Device API Key를 발급받아 다시 실행."},
-          {symptom:"서버 연결 실패", fix:"SERVER_WS_BASE가 wss:// 서버 주소인지, 회의실 PC에서 해당 호스트에 접근 가능한지 확인."},
+          {symptom:"Session ID가 예전 값임", fix:"Live Meeting에서 Start meeting을 성공시킨 뒤 Setup Assistant로 돌아왔는지 확인합니다. 그래도 안 바뀌면 앱을 재시작하고 회의를 다시 생성합니다."},
+          {symptom:"테스트용 오디오 키가 사라짐", fix:"정상입니다. 이 키는 저장하지 않으므로 오디오 테스트 직전에 다시 붙여넣습니다."},
+        ],
+      },
+      {
+        id:"win-run-sidecar", title:"PowerShell에서 sidecar 실행",
+        est:"3분", tag:{color:"violet", label:"오디오 전송"},
+        content:(<>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>PowerShell을 엽니다.</li>
+            <li><code className="bg-slate-100 px-1 rounded">yeson_meet</code> 프로젝트 폴더로 이동합니다.</li>
+            <li>복사한 명령을 붙여넣고 Enter를 누릅니다.</li>
+            <li>PowerShell에 <code className="bg-slate-100 px-1 rounded">audio ws connected</code>가 보이면 서버 연결 성공입니다.</li>
+          </ol>
+          <p>이 상태에서 회의 소리를 재생하면 sidecar가 Voicemeeter Output을 입력 장치로 잡아 서버로 보냅니다.</p>
+        </>),
+        trouble:[
+          {symptom:"uv 명령이 없음", fix:"Python 3.12와 uv가 설치된 테스트 환경인지 확인합니다. 일반 설치 앱만으로 sidecar 자동 실행은 아직 지원 전입니다."},
+          {symptom:"Invalid device key", fix:"테스트용 오디오 키가 정확한지, 해당 키가 서버에서 폐기되지 않았는지 확인합니다."},
+          {symptom:"Voicemeeter input not found", fix:"Voicemeeter 설치/재부팅 여부와 Windows 녹음 장치의 Voicemeeter Output 활성화 여부를 확인합니다. 필요하면 YESON_AUDIO_DEVICE_INDEX를 정확한 index로 지정합니다."},
+          {symptom:"audio ws connected가 안 보임", fix:"SERVER_WS_BASE가 wss://로 시작하는 서버 주소인지, root CA/방화벽/LAN 접근 문제가 없는지 확인합니다."},
+        ],
+      },
+      {
+        id:"win-caption-test", title:"영어 소리 재생 후 viewer 자막 확인",
+        est:"5분", tag:{color:"green", label:"검증"},
+        content:(<>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>YouTube 영어 영상이나 실제 회의 음성을 재생합니다.</li>
+            <li>Voicemeeter 화면에서 소리 막대가 움직이는지 확인합니다.</li>
+            <li>PowerShell에서 오디오 청크/연결 로그가 계속 나오는지 확인합니다.</li>
+            <li>폰/노트북의 viewer URL에서 한국어 자막이 나오는지 확인합니다.</li>
+            <li>가능하면 서버 audio stats에서 약 <b>50 chunks/sec</b>가 유지되는지 확인합니다.</li>
+          </ol>
+        </>),
+        trouble:[
+          {symptom:"Voicemeeter 막대는 움직이는데 자막이 없음", fix:"PowerShell의 audio ws connected 여부, Gemini health configured=true, viewer URL 접속 여부를 순서대로 봅니다."},
+          {symptom:"스피커 소리는 들리는데 Voicemeeter 막대가 안 움직임", fix:"Windows 출력 장치와 회의 앱 스피커가 Voicemeeter Input인지 다시 확인합니다."},
+          {symptom:"자막이 너무 늦음", fix:"회의실 PC와 서버가 같은 LAN인지, Wi-Fi가 불안정하지 않은지, 서버의 Gemini 연결 로그가 정상인지 확인합니다."},
         ],
       },
     ],
   },
   {
-    n:5, icon:"🎤", title:"오디오 캡처 + 자막 E2E 검증",
+    n:7, icon:"🧾", title:"테스트 종료와 기록",
     steps:[
       {
-        id:"win-input", title:"입력 장치 자동 인식 확인",
-        est:"2분", tag:{color:"green", label:"오디오"},
+        id:"win-end-meeting", title:"회의 종료와 리포트 확인",
+        est:"3분", tag:{color:"slate", label:"마무리"},
         content:(<>
-          <p>sidecar는 <code className="bg-slate-100 px-1 rounded">YESON_AUDIO_DEVICE_NAME=Voicemeeter</code> 정규식으로 입력 장치를 찾습니다.</p>
-          <p>자동 인식이 안 되면 정확한 sounddevice index를 지정합니다.</p>
-          <Code>{`YESON_AUDIO_DEVICE_NAME=Voicemeeter
-# 또는 정확한 index를 알 때
-YESON_AUDIO_DEVICE_INDEX=<index>`}</Code>
-        </>),
-        trouble:[
-          {symptom:"Voicemeeter Output이 목록에 없음", fix:"제어판 → 사운드 → 녹음 탭 → 표시 안 됨 장치 보기 체크 → 활성화."},
-        ],
-      },
-      {
-        id:"win-mic-permission", title:"마이크 권한 허용",
-        est:"1분", tag:{color:"rose", label:"권한"},
-        content:(<>
-          <p>설정 → 개인 정보 → 마이크 → 데스크톱 앱의 마이크 접근 허용, 필요 시 Python/터미널 실행 환경 허용.</p>
-        </>),
-      },
-      {
-        id:"win-test", title:"자막 출력 확인 (영어 영상 재생)",
-        est:"5분", tag:{color:"green", label:"검증"},
-        content:(<>
-          <p><b>선택 CLI 스모크 방법:</b></p>
-          <ol className="list-decimal pl-5 space-y-1 text-[12.5px]">
-            <li>YouTube 또는 Google Meet에서 영어 영상 재생.</li>
-            <li>시스템 출력 = Voicemeeter Input → A1 = 스피커 / B1 = 가상.</li>
-            <li>viewer URL을 폰/브라우저에서 열고 한국어 자막이 흐르는지 확인합니다. 이 full E2E는 Windows 앱 출시 전에는 선택 검증입니다.</li>
-            <li>서버 audio stats에서 약 50 chunks/sec가 유지되는지 확인.</li>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>PowerShell에서 sidecar를 <code className="bg-slate-100 px-1 rounded">Ctrl+C</code>로 멈춥니다.</li>
+            <li>desktop 앱의 <b>Live Meeting</b> 탭으로 돌아갑니다.</li>
+            <li><b>End meeting</b>을 눌러 회의를 종료합니다.</li>
+            <li>Report path가 보이면 <b>Load Markdown report</b>로 리포트를 불러올 수 있는지 확인합니다.</li>
           </ol>
         </>),
-        trouble:[
-          {symptom:"자막 안 나옴", fix:"sidecar 로그의 audio ws connected, 서버 /api/v1/health/ai configured=true, viewer URL 접근 여부를 순서대로 확인."},
-          {symptom:"자막 지연 ≥ 5초", fix:"사내 서버 핑 확인. 또는 다른 회의실 PC와 비교해 네트워크 문제 격리."},
-          {symptom:"chunks/sec가 50보다 낮음", fix:"Voicemeeter A1/B1 라우팅, 입력 장치 regex/index, CPU 부하를 확인."},
-        ],
+      },
+      {
+        id:"win-record-result", title:"테스트 결과 기록",
+        est:"3분", tag:{color:"slate", label:"기록"},
+        content:(<>
+          <p>다음 값을 기록해 두면 다음 문제 해결이 쉬워집니다.</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>설치 artifact: <code className="bg-slate-100 px-1 rounded">yeson-meet-desktop-windows</code> 다운로드 날짜/run 번호</li>
+            <li>Windows 버전, 회의실 PC 네트워크(유선/Wi-Fi), 서버 주소</li>
+            <li>Session ID와 viewer URL</li>
+            <li>Voicemeeter A1/B1 설정이 맞았는지</li>
+            <li>PowerShell에 <code className="bg-slate-100 px-1 rounded">audio ws connected</code>가 떴는지</li>
+            <li>viewer 자막이 나왔는지, 지연이 어느 정도였는지, 끊김이 있었는지</li>
+          </ul>
+        </>),
       },
     ],
   },
@@ -495,12 +653,12 @@ const App = () => {
       <header className="mb-8">
         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
           <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span className={os==="mac"?"text-blue-700":"text-emerald-700"}>시스템 부서용 회의실 PC 셋업 · Windows 앱 전 최소 스모크 기준</span>
+          <span className={os==="mac"?"text-blue-700":"text-emerald-700"}>시스템 부서용 회의실 PC 셋업 · Windows 앱 설치 + Voicemeeter 기준</span>
         </div>
         <h1 className="text-[36px] md:text-[44px] font-black tracking-tight text-slate-900 leading-tight mt-1">
           yeson-meet <span className={os==="mac"?"text-blue-600":"text-emerald-600"}>회의실 PC 셋업</span>
         </h1>
-        <p className="text-slate-500 mt-1"><b>현재는 서버 LAN 접속과 오디오 라우팅을 확인하는 최소 스모크 기준</b>입니다. 실제 1분 회의 자막 E2E는 Windows 앱 패키지가 나온 뒤 진행합니다.</p>
+        <p className="text-slate-500 mt-1"><b>Windows 회의실 PC에 앱을 설치하고, Voicemeeter로 회의 소리를 yeson-meet에 보내는 절차</b>입니다. 중간에 막히면 각 단계의 트러블슈팅부터 확인하세요.</p>
       </header>
 
       {/* OS 우선순위 배너 */}
@@ -508,7 +666,7 @@ const App = () => {
         <div className="flex items-start gap-3">
           <span className="text-2xl">🪟</span>
           <div className="text-[13px] text-emerald-900 leading-relaxed">
-            <b>검증 범위 조정:</b> 아직 데스크톱 DMG/MSI가 아니라 <b>Python sidecar CLI</b> 단계라 전체 회의실 E2E가 복잡합니다. Windows 앱이 나오기 전에는 서버 접속, 인증서, viewer URL 접근 같은 최소 스모크만 확인합니다.
+            <b>설치 대상:</b> Windows 회의실 PC에는 <b>yeson-meet-desktop-windows</b>만 설치합니다. <b>yeson-sidecar-windows</b>는 일반 사용자가 따로 설치하는 프로그램이 아니라 개발/문제 확인용 artifact입니다.
           </div>
         </div>
       </div>
@@ -517,7 +675,7 @@ const App = () => {
       <div className="flex gap-3 mb-8 no-print">
         <button onClick={()=>setOs("win")} className={`os-tab ${os==="win"?"active-win":""}`}>
           <div className="text-2xl mb-1">🪟</div>
-          <div>Windows (Voicemeeter) · 앱 출시 후 E2E</div>
+          <div>Windows (Desktop App + Voicemeeter)</div>
         </button>
         <button onClick={()=>setOs("mac")} className={`os-tab ${os==="mac"?"active-mac":""}`}>
           <div className="text-2xl mb-1">🍎</div>
@@ -530,7 +688,7 @@ const App = () => {
         <div className="flex items-start gap-3">
           <span className="text-2xl">🅰️</span>
           <div className="text-[13px] text-amber-900 leading-relaxed">
-            <b>이 가이드는 Windows 앱 전 사전 점검용입니다.</b> 관리자에게 받은 서버 주소와 viewer URL로 LAN 접속을 먼저 확인합니다. Device API Key, Session ID를 넣는 CLI full E2E는 필요할 때만 선택적으로 진행하고, 정식 검증은 Windows 앱 패키지 이후에 합니다.
+            <b>사내용 빠른 사용 기준:</b> 먼저 앱 설치 → 서버 health 확인 → 사내용 테스트 계정 로그인 → 회의 생성/viewer URL 확인까지만 진행합니다. Device API Key와 root.crt는 기본 사용자가 이해할 옵션이 아니라, 오디오 테스트나 배포 확장 때만 쓰는 고급 항목으로 남겨둡니다.
           </div>
         </div>
       </div>
@@ -539,10 +697,10 @@ const App = () => {
       <div className="glass rounded-2xl p-5 mb-8 border-l-4 border-amber-400">
         <div className="flex items-center gap-2 mb-3">
           <span className="text-2xl">📋</span>
-          <h2 className="text-[16px] font-black text-slate-900">시작 전 준비 — 관리자에게 미리 받을 것</h2>
+          <h2 className="text-[16px] font-black text-slate-900">사내용 빠른 준비 — 관리자에게 미리 받을 것</h2>
         </div>
         <p className="text-[13px] text-slate-700 mb-3">
-          아래 6가지는 회의실 PC가 “어느 서버로 보낼지”, “어느 회의에 붙을지”, “사람이 어디서 자막을 볼지”를 알려주는 준비물입니다. 하나라도 빠지면 실행은 되더라도 자막 확인까지 갈 수 없습니다.
+          사내용 빠른 테스트는 “설치 파일 + 서버 주소 + 테스트 계정”만 먼저 챙기는 방식으로 진행합니다. 아래에서 고급 항목은 문제 해결이나 오디오 full test 때만 사용합니다.
         </p>
         <div className="mb-3 rounded-lg bg-blue-50 border border-blue-200 p-3 text-[12.5px] text-blue-900">
           <b>지금처럼 이 컴퓨터가 서버라면:</b> 회의실 PC에서 쓸 서버 주소는 보통 <code className="bg-white px-1 rounded text-[11px]">wss://192.168.0.38</code> 입니다.
@@ -556,30 +714,30 @@ const App = () => {
             <p className="mt-1 text-[12px]">회의실 PC가 오디오를 보내는 서버 주소입니다. 쉽게 말해 “회의 소리를 보낼 목적지”입니다.</p>
           </div>
           <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
-            <div className="font-extrabold text-slate-900">☐ YESON_DEVICE_API_KEY</div>
-            <p className="mt-1 text-[12px]">회의실 PC의 출입증 같은 값입니다. 서버가 “허가된 회의실 PC구나”라고 확인할 때 씁니다. 채팅방이나 메모장에 오래 남기지 마세요.</p>
+            <div className="font-extrabold text-slate-900">☐ 사내용 테스트 계정</div>
+            <p className="mt-1 text-[12px]">Live Meeting에서 로그인할 email/password입니다. 운영자/토큰 같은 용어는 몰라도 됩니다.</p>
           </div>
           <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
-            <div className="font-extrabold text-slate-900">☐ YESON_SESSION_ID</div>
-            <p className="mt-1 text-[12px]">이번 테스트 또는 회의의 번호표입니다. 이 값이 맞아야 자막이 엉뚱한 회의가 아니라 지금 회의에 붙습니다.</p>
+            <div className="font-extrabold text-slate-900">☐ 테스트용 오디오 키 (필요 시)</div>
+            <p className="mt-1 text-[12px]">자막 오디오까지 테스트할 때만 붙여넣는 값입니다. 앱 실행/회의 생성 확인만 할 때는 없어도 됩니다.</p>
           </div>
           <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
             <div className="font-extrabold text-slate-900">☐ viewer 확인 URL</div>
             <code className="bg-slate-100 px-1 rounded text-[11px]">https://&lt;server-host&gt;/v/&lt;token&gt;</code>
-            <p className="mt-1 text-[12px]">폰이나 노트북에서 자막을 보는 주소입니다. 테스트할 때 이 주소를 열어 자막이 나오는지 확인합니다.</p>
+            <p className="mt-1 text-[12px]">회의를 만들면 앱이 보여주는 주소입니다. 처음부터 준비하지 않아도 됩니다.</p>
           </div>
           <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
-            <div className="font-extrabold text-slate-900">☐ 사내 root CA 인증서</div>
+            <div className="font-extrabold text-slate-900">☐ root.crt (고급/필요 시)</div>
             <code className="bg-slate-100 px-1 rounded text-[11px]">root.crt</code>
-            <p className="mt-1 text-[12px]">브라우저나 PC가 사내 서버를 믿게 해주는 신분증입니다. HTTPS/WSS 접속에서 보안 경고가 뜨면 필요합니다.</p>
+            <p className="mt-1 text-[12px]">평소에는 건너뜁니다. HTTPS 보안 경고가 뜨는 배포/확장 상황에서만 설치합니다.</p>
           </div>
           <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
-            <div className="font-extrabold text-slate-900">☐ yeson-meet 폴더 + Python 3.12/uv</div>
-            <p className="mt-1 text-[12px]">회의실 PC에서 실제로 실행할 프로그램 파일과 실행 도구입니다. 게임을 하려면 게임 파일과 실행기가 필요한 것과 같습니다.</p>
+            <div className="font-extrabold text-slate-900">☐ Windows 앱 설치 파일</div>
+            <p className="mt-1 text-[12px]">GitHub Actions artifact <b>yeson-meet-desktop-windows</b>에서 받은 설치 파일입니다. 일반 회의실 PC에는 이 앱만 설치합니다.</p>
           </div>
         </div>
         <div className="mt-3 rounded-lg bg-rose-50 border border-rose-200 p-3 text-[12.5px] text-rose-800">
-          🔐 <b>회의실 PC에는 절대 Gemini API Key를 두지 않습니다.</b> Device API Key만 사용합니다. AI 호출은 모두 사내 서버 경유.
+          🔐 <b>회의실 PC에는 절대 Gemini API Key를 두지 않습니다.</b> 사내용 빠른 테스트에서도 AI 호출은 모두 사내 서버 경유입니다.
         </div>
       </div>
 
