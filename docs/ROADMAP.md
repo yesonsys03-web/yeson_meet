@@ -116,7 +116,7 @@
 - 테스트 페이지: "초당 N 청크 수신 중 / 총 X MB"
 
 ### 완료 기준 (tag `s2_test`, 2026-05-18 코드 ship)
-- [ ] Windows 회의실 PC에서 영어 영상 1분 재생 → 서버 로그에 약 3000개 청크(20ms × 50/sec × 60s) 수신  ← **시스템 부원 협조 단계 대기 (PRD §10 락)**, SETUP_MEETING_PC.md §2 placeholder
+- [~] Windows 회의실 PC에서 영어 영상 1분 재생 → 서버 로그에 약 3000개 청크(20ms × 50/sec × 60s) 수신  ← **시스템 부원 협조 단계 대기 (PRD §10 락)**, SETUP_MEETING_PC.md §2 placeholder
 - [x] Mac에서 동일 통과 (MVP-α 2순위, 일정 압박 시 β로 이월 가능)  ← **Intel Mac + BlackHole S2 PoC 통과 (2026-05-18)**: session `8390b139-5ff9-42f7-95ac-0c4aa8047c02`, AI-run `chunks_per_sec_1s=50~51` / `total_chunks=3522`, 사용자 직접 재현 `chunks/sec=49~51` / `total_chunks=26306`, 절차는 SETUP_MEETING_PC.md §1.1~1.4
 - [~] 네트워크 끊김 5초 → 큐 누적 → 복구 시 흘림 없이 재전송  ← **부분 구현**: sidecar audio_ws 지수 백오프 재연결(1→30s) + 메모리-only `asyncio.Queue` (≈40s 버퍼) + drop counter 로그. 큐 영구화는 **Slice 5 SQLite로 위임** (audio_ws.py docstring + PRD §10 락 명시)
 
@@ -152,9 +152,9 @@
 - [x] 영어 1분 synthetic 오디오 → 한국어 자막 viewer에 흐름  ← local synthetic E2E 통과: viewer WS 16개 partial/final 이벤트 수신, DB utterance seq 1~8 저장
 - [~] 실제 회의실 PC↔서버 LAN 분리 환경에서 영어 1분 영상 재생 → 한국어 자막 viewer에 흐름  ← Mac BlackHole 청크 전송은 검증 완료(S2), Gemini 포함 LAN 분리 E2E는 **Windows 앱 패키지/실행 UX가 나온 뒤 진행**. 현재는 CLI 복잡도가 높아 desktop setup assistant로 서버 health, Gemini health, viewer URL 최소 스모크까지만 확인
 - [x] local synthetic 자막 지연 P50 ≤ 2초  ← wall-clock phrase-end→first viewer subtitle P50 1419.8ms / max 1522.3ms, server→viewer P50 5.2ms / max 82.4ms
-- [ ] LAN 분리 환경 자막 지연 P50 ≤ 2초  ← Windows 회의실 앱으로 실제 운영 경로가 단순화된 뒤 측정
+- [~] LAN 분리 환경 자막 지연 P50 ≤ 2초  ← Windows 회의실 앱으로 실제 운영 경로가 단순화된 뒤 측정
 - [~] Gemini 세션 끊김 → 5초 안에 재연결, 자막 일부 손실 외 회의 진행 유지  ← provider disconnect retry 단위 검증 완료, 실제 Gemini WS 끊김 E2E 미완료
-- [ ] 좀비 회의 자동 종료 (3시간 도달 테스트)
+- [~] 좀비 회의 자동 종료 (3시간 도달 테스트)  ← sidecar ingress 최대 시간 안전장치 단위 검증 완료, wall-clock 3시간 E2E는 Windows 앱 검증 단계에서 측정
 - [~] partial→final 갱신 시 viewer 깜빡임 없음  ← 동일 `seq` final이 partial을 교체하는 상태 로직 검증 완료, 브라우저 시각 E2E 미완료
 
 ---
@@ -176,21 +176,27 @@
   - zustand 단일 store 스켈레톤 (`useMeetingStore`, `useUiStore`)
 - [x] QR + URL 표시 (PIN은 β로 보류) — viewer URL 표시/복사 + QR 표시 완료
 - [x] WS `/ws/operator` (JWT 인증, 운영자 전용)
-- `/api/v1/sessions/{id}/end` → MD 리포트 생성 (영어 원문 + 한국어 번역 로그)
-- `/api/v1/sessions/{id}/report` 다운로드
-- viewer: 회의 종료 시 "회의 종료됨" 화면
-- 🔴 **좀비 세션 자동 종료** — sidecar disconnect 감지 후 N분(기본 5분) 미복귀 시 서버가 세션 강제 종료 (ARCH §12.4)
-- 🔴 **회의 종료 시 큐 flush + timeout** — 사이드카 잔여 큐를 종료 명령 후 최대 30초 대기, 이후 강제 종료 + 로그
+- [x] `/api/v1/sessions/{id}/end` → MD 리포트 생성 (영어 원문 + 한국어 번역 로그)
+- [x] `/api/v1/sessions/{id}/report` 다운로드
+- [x] viewer: 회의 종료 시 "회의 종료됨" 화면
+- [~] **좀비 세션 자동 종료** — sidecar ingress 최대 시간 초과 자동 종료는 완료, disconnect N분 scheduler는 Windows 앱/sidecar heartbeat 이후 구현
+- [~] **회의 종료 시 큐 flush + timeout** — 현재 dev sidecar는 서버 종료 이벤트 수신/flush 계약 없음. Slice 5 SQLite 오프라인 큐와 함께 구현
 - [x] **같은 Device 동시 회의 방지** — sidecar 연결 시 동일 device의 다른 live session 거부
-- 🟡 **MD 리포트 streaming 생성** — 1시간+ 회의에서 메모리 안전
-- 🟡 **QR 회의실 모니터 전체화면 모드** — 거리 2~4m에서 폰 스캔 가능
+- [~] **MD 리포트 streaming 생성** — 현재 Markdown report 생성/다운로드 완료, 1시간+ streaming 최적화는 장시간 부하 측정 후 β/운영 안정화에서 수행
+- [~] **QR 회의실 모니터 전체화면 모드** — 기본 QR 표시 완료, 2~4m 전체화면 모드는 β-2 회의실 모드와 함께 수행
+
+### 기획 closeout (2026-05-19)
+- [x] **현재 코드로 닫을 수 있는 Slice 4 산출물**: operator login, session create/end/report, viewer URL/QR, operator subtitle preview, `/ws/operator`, 같은 device 동시 live session guard.
+- [x] **외부 환경 의존 검증은 명시 보류**: Windows 회의실 앱 패키지/실행 UX, 회의실 PC root CA 신뢰 등록, 실제 LAN viewer 다중 접속, 30분 모의 회의.
+- [x] **다음 구현 묶음 경계**: disconnect heartbeat/scheduler와 sidecar flush는 Slice 5 SQLite 오프라인 큐/heartbeat 계약과 같이 설계한다.
+- [x] **재개 트리거**: Windows 앱 실행 UX가 준비되면 `SETUP_MEETING_PC.md §1.5` 기록 템플릿으로 LAN P50, viewer 3대, 30분 모의 회의를 측정한다.
 
 ### 완료 기준
-- [ ] 30분 모의 회의(YouTube 영어 영상)를 시작 → 진행 → 종료
-- [ ] MD 리포트 다운로드 → 발화 시간순 정렬 + 영어/한국어 매칭
-- [ ] viewer 3대(PC/폰/태블릿) 동시 자막 정상
-- [ ] 운영자 앱 강제 종료 시 5분 후 서버가 좀비 세션 정리
-- [ ] 회의 종료 직후 sidecar 잔여 청크가 리포트에 포함됨
+- [~] 30분 모의 회의(YouTube 영어 영상)를 시작 → 진행 → 종료  ← Windows 앱 실행 UX + 실제 회의실 PC 오디오 라우팅 준비 후 측정
+- [x] MD 리포트 다운로드 → 발화 시간순 정렬 + 영어/한국어 매칭  ← `/api/v1/sessions/{id}/report` + desktop Markdown preview + server lifecycle tests 완료
+- [~] viewer 3대(PC/폰/태블릿) 동시 자막 정상  ← viewer URL/QR 및 fan-out 구현 완료, 실제 다중 단말 LAN QA는 Windows 앱 검증 단계
+- [~] 운영자 앱 강제 종료 시 5분 후 서버가 좀비 세션 정리  ← 최대 회의 시간 안전장치/동시 device guard 완료, heartbeat 기반 disconnect scheduler는 Slice 5 계약으로 이월
+- [~] 회의 종료 직후 sidecar 잔여 청크가 리포트에 포함됨  ← 종료/report 경로 완료, sidecar flush 계약은 SQLite 오프라인 큐와 함께 이월
 
 ---
 
