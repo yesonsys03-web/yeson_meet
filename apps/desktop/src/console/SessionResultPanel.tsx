@@ -1,6 +1,7 @@
 // === ANCHOR: SESSION_RESULT_PANEL_START ===
 import { consoleStyles } from "./consoleStyles";
 import type { CreatedSession, EndedSession } from "./types";
+import { ViewerQrPanel } from "./ViewerQrPanel";
 
 type SessionResultPanelProps = {
   createdSession: CreatedSession | null;
@@ -29,6 +30,7 @@ export function SessionResultPanel({
         <div style={consoleStyles.linkBox}>
           <strong>Viewer URL</strong>
           <div>{createdSession.viewer_url}</div>
+          <ViewerQrPanel viewerUrl={createdSession.viewer_url} />
           <button type="button" onClick={copyViewerUrl} style={{ ...consoleStyles.mutedAction, marginTop: 10 }}>
             Copy viewer URL
           </button>
