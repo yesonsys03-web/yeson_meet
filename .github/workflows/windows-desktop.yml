@@ -69,7 +69,7 @@ jobs:
       - name: Build Tauri Windows installer
         shell: pwsh
         run: |
-          $config = Get-Content apps/desktop/src-tauri/tauri.windows.conf.json -Raw
+          $config = Get-Content apps/desktop/src-tauri/tauri.windows.conf.json -Raw | ConvertFrom-Json | ConvertTo-Json -Compress -Depth 20
           pnpm --filter @yeson-meet/desktop exec tauri build --config "$config"
 
       - name: Upload sidecar executable
