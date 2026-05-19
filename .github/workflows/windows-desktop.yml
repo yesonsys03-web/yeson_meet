@@ -69,8 +69,12 @@ jobs:
       - name: Build Tauri Windows installer
         shell: pwsh
         run: |
-          $config = Get-Content apps/desktop/src-tauri/tauri.windows.conf.json -Raw | ConvertFrom-Json | ConvertTo-Json -Compress -Depth 20
-          pnpm --filter @yeson-meet/desktop exec tauri build --config "$config"
+          $baseConfigPath = "apps/desktop/src-tauri/tauri.conf.json"
+          $baseConfig = Get-Content $baseConfigPath -Raw | ConvertFrom-Json
+          $windowsConfig = Get-Content apps/desktop/src-tauri/tauri.windows.conf.json -Raw | ConvertFrom-Json
+          $baseConfig.bundle = $windowsConfig.bundle
+          $baseConfig | ConvertTo-Json -Depth 20 | Set-Content $baseConfigPath
+          pnpm --filter @yeson-meet/desktop tauri:build
 
       - name: Upload sidecar executable
         uses: actions/upload-artifact@v4
