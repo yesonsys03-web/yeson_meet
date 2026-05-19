@@ -1,12 +1,19 @@
 // === ANCHOR: SESSION_API_START ===
 import { httpBaseFromWs, loadValues } from "../setup/setupValues";
-import type { CreatedSession, EndedSession, MeetingDraft, TokenPair } from "./types";
+import type { CreatedSession, EndedSession, MeetingDraft, TokenPair, UtteranceTranscribed } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
 
-function apiBase(): string {
+export function apiBase(): string {
   if (API_BASE) return API_BASE;
   return httpBaseFromWs(loadValues().serverWsBase).replace(/\/$/, "");
+}
+
+export function operatorWsUrl(sessionId: string, operatorToken: string): string {
+  const url = new URL(`${apiBase().replace(/^http:/, "ws:").replace(/^https:/, "wss:")}/ws/operator`);
+  url.searchParams.set("session", sessionId);
+  url.searchParams.set("access", operatorToken);
+  return url.toString();
 }
 
 function authHeaders(operatorToken: string): HeadersInit {
@@ -63,5 +70,17 @@ export async function fetchSessionReport(sessionId: string, operatorToken: strin
   });
   if (!response.ok) throw new Error(`Download report failed: HTTP ${response.status}`);
   return response.text();
+}
+
+export async function fetchOperatorBackfill(
+  sessionId: string,
+  operatorToken: string,
+): Promise<{ utterances: UtteranceTranscribed[]; session_status: string }> {
+  const url = new URL(`${apiBase()}/api/v1/sessions/${encodeURIComponent(sessionId)}/utterances`);
+  url.searchParams.set("limit", "50");
+  const response = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${operatorToken}` },
+  });
+  return parseJsonResponse<{ utterances: UtteranceTranscribed[]; session_status: string }>(response, "Fetch subtitles");
 }
 // === ANCHOR: SESSION_API_END ===
