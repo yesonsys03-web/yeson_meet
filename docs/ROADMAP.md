@@ -1,6 +1,6 @@
 # ROADMAP — yeson-meet
 
-> 최종 갱신: 2026-05-18
+> 최종 갱신: 2026-05-19
 > 단위: 1인 풀타임 기준 영업일. 검토/대기 시간 제외.  
 > **MVP-α** 5 슬라이스 + **MVP-β** 7 묶음으로 분리. β는 우선순위에 따라 선택적으로 진행.
 
@@ -143,12 +143,14 @@
 - [x] 시스템 프롬프트에 "혼합 언어 한국어 그대로 두기" 명시
 
 > 2026-05-18 코드 진행: `STTProvider`/`TranslationProvider` 인터페이스, `GeminiLiveProvider` lazy SDK adapter, sidecar audio→AI session wiring, AI utterance DB persist + viewer bus fan-out, Gemini config health endpoint, provider disconnect retry/backoff, AI publish latency structured log, Gemini usage token/cost structured log, viewer partial→final seq replacement, Gemini Live model/env 정정(`gemini-3.1-flash-live-preview`), AUDIO + `output_audio_transcription` 기반 실시간 transcript fan-out, `audio_stream_end` 전달, provider seq 재시작 보정, sidecar RMS silence gate 구현. 검증: `uv run pytest apps/server/tests -v` → 22 passed / 4 skipped, `uv run pytest apps/client_sidecar/tests -q` → 18 passed, `pnpm --filter @yeson-meet/web build` → pass, `git diff --check` → clean. 실제 Gemini API Key 기반 local synthetic E2E(서버+테스트 sidecar 동일 개발 머신)에서 59.37초 synthetic 영어 오디오 viewer seq 1~8 / DB utterance 8개 저장, phrase-end→first viewer subtitle P50 1419.8ms / max 1522.3ms. 단, LAN 회의실 PC↔서버 분리 지연·브라우저 렌더·실제 오디오 라우팅은 아직 별도 검증 필요.
+>
+> 2026-05-19 완료: Windows 앱 패키지 전 사전 점검용 desktop setup assistant를 `apps/desktop/src/setup/` 모듈 구조로 구현하고, `App.tsx`는 `SetupAssistant`만 렌더링하도록 유지. setup assistant에서 서버 `/api/v1/health`, Gemini `/api/v1/health/ai`, viewer URL 접근 최소 스모크를 제공하며, Device API Key는 localStorage에 저장하지 않고 PowerShell 명령 값은 escaping 처리. Tauri packaged origin(`http://tauri.localhost`)을 서버 CORS allowlist에 추가. 검증: `pnpm --filter @yeson-meet/desktop build:vite` → pass, `uv run pytest apps/server/tests -q` → 25 passed / 4 skipped, desktop LSP diagnostics → 0 errors, `GIT_MASTER=1 git diff --check -- apps/desktop/src apps/server/main.py` → clean.
 
 ### 완료 기준
 - [x] 영어 1분 synthetic 오디오 → 한국어 자막 viewer에 흐름  ← local synthetic E2E 통과: viewer WS 16개 partial/final 이벤트 수신, DB utterance seq 1~8 저장
-- [~] 실제 회의실 PC↔서버 LAN 분리 환경에서 영어 1분 영상 재생 → 한국어 자막 viewer에 흐름  ← Mac BlackHole 청크 전송은 검증 완료(S2), Gemini 포함 LAN 분리 E2E는 미완료
+- [~] 실제 회의실 PC↔서버 LAN 분리 환경에서 영어 1분 영상 재생 → 한국어 자막 viewer에 흐름  ← Mac BlackHole 청크 전송은 검증 완료(S2), Gemini 포함 LAN 분리 E2E는 **Windows 앱 패키지/실행 UX가 나온 뒤 진행**. 현재는 CLI 복잡도가 높아 desktop setup assistant로 서버 health, Gemini health, viewer URL 최소 스모크까지만 확인
 - [x] local synthetic 자막 지연 P50 ≤ 2초  ← wall-clock phrase-end→first viewer subtitle P50 1419.8ms / max 1522.3ms, server→viewer P50 5.2ms / max 82.4ms
-- [ ] LAN 분리 환경 자막 지연 P50 ≤ 2초
+- [ ] LAN 분리 환경 자막 지연 P50 ≤ 2초  ← Windows 회의실 앱으로 실제 운영 경로가 단순화된 뒤 측정
 - [~] Gemini 세션 끊김 → 5초 안에 재연결, 자막 일부 손실 외 회의 진행 유지  ← provider disconnect retry 단위 검증 완료, 실제 Gemini WS 끊김 E2E 미완료
 - [ ] 좀비 회의 자동 종료 (3시간 도달 테스트)
 - [~] partial→final 갱신 시 viewer 깜빡임 없음  ← 동일 `seq` final이 partial을 교체하는 상태 로직 검증 완료, 브라우저 시각 E2E 미완료
