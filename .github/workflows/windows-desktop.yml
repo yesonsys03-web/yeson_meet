@@ -67,7 +67,7 @@ jobs:
           Copy-Item dist/yeson-sidecar.exe apps/desktop/src-tauri/binaries/yeson-sidecar-x86_64-pc-windows-msvc.exe
 
       - name: Build Tauri Windows installer
-        run: pnpm --filter @yeson-meet/desktop exec tauri build --config src-tauri/tauri.windows.conf.json
+        run: pnpm --filter @yeson-meet/desktop tauri:build -- --config src-tauri/tauri.windows.conf.json
 
       - name: Upload sidecar executable
         uses: actions/upload-artifact@v4
