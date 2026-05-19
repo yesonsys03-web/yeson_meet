@@ -1,16 +1,23 @@
 // === ANCHOR: SETUPVALUES_START ===
+import { defaultPlatform, PLATFORM_CONFIG } from "./platformConfig";
 import type { SetupValues } from "./types";
 
 const STORAGE_KEY = "yeson-meet-desktop-setup";
 type StoredSetupValues = Omit<SetupValues, "deviceApiKey">;
 
-export const DEFAULT_VALUES: SetupValues = {
-  serverWsBase: "wss://192.168.0.38",
-  deviceApiKey: "",
-  sessionId: "",
-  viewerUrl: "https://192.168.0.38/v/<viewer-token>",
-  audioDeviceName: "Voicemeeter",
-};
+function defaultValues(): SetupValues {
+  const platform = defaultPlatform();
+  return {
+    platform,
+    serverWsBase: "wss://192.168.0.38",
+    deviceApiKey: "",
+    sessionId: "",
+    viewerUrl: "https://192.168.0.38/v/<viewer-token>",
+    audioDeviceName: PLATFORM_CONFIG[platform].audioDeviceName,
+  };
+}
+
+export const DEFAULT_VALUES: SetupValues = defaultValues();
 
 // === ANCHOR: SETUPVALUES_LOADVALUES_START ===
 export function loadValues(): SetupValues {
@@ -18,7 +25,14 @@ export function loadValues(): SetupValues {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_VALUES;
     const stored = JSON.parse(raw) as Partial<StoredSetupValues>;
-    return { ...DEFAULT_VALUES, ...stored, deviceApiKey: "" };
+    const platform = stored.platform ?? DEFAULT_VALUES.platform;
+    return {
+      ...DEFAULT_VALUES,
+      ...stored,
+      platform,
+      audioDeviceName: stored.audioDeviceName ?? PLATFORM_CONFIG[platform].audioDeviceName,
+      deviceApiKey: "",
+    };
   } catch {
     return DEFAULT_VALUES;
   }
@@ -49,34 +63,4 @@ export function isSecureViewerUrl(viewerUrl: string): boolean {
   }
 }
 // === ANCHOR: SETUPVALUES_ISSECUREVIEWERURL_END ===
-
-// === ANCHOR: SETUPVALUES_POWERSHELLLITERAL_START ===
-function powerShellLiteral(value: string): string {
-  return `"${value
-    .replaceAll("`", "``")
-    .replaceAll('"', '`"')
-    .replaceAll("$", "`$")
-    .replaceAll("\r", "`r")
-    .replaceAll("\n", "`n")}"`;
-}
-// === ANCHOR: SETUPVALUES_POWERSHELLLITERAL_END ===
-
-// === ANCHOR: SETUPVALUES_COMMANDVALUE_START ===
-function commandValue(value: string, placeholder: string): string {
-  return powerShellLiteral(value || placeholder);
-}
-// === ANCHOR: SETUPVALUES_COMMANDVALUE_END ===
-
-// === ANCHOR: SETUPVALUES_BUILDPOWERSHELL_START ===
-export function buildPowerShell(values: SetupValues): string {
-  return [
-    `$env:SERVER_WS_BASE=${commandValue(values.serverWsBase, "wss://<server-host>")}`,
-    `$env:YESON_DEVICE_API_KEY=${commandValue(values.deviceApiKey, "<plaintext-device-key>")}`,
-    `$env:YESON_SESSION_ID=${commandValue(values.sessionId, "<session-uuid>")}`,
-    '$env:YESON_SIDECAR_MODE="audio"',
-    `$env:YESON_AUDIO_DEVICE_NAME=${commandValue(values.audioDeviceName, "Voicemeeter")}`,
-    "uv run python -m apps.client_sidecar.main",
-  ].join("\n");
-}
-// === ANCHOR: SETUPVALUES_BUILDPOWERSHELL_END ===
 // === ANCHOR: SETUPVALUES_END ===

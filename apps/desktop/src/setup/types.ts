@@ -11,7 +11,10 @@ export type SmokeCheck = {
   detail: string;
 };
 
+export type SetupPlatform = "windows" | "mac";
+
 export type SetupValues = {
+  platform: SetupPlatform;
   serverWsBase: string;
   deviceApiKey: string;
   sessionId: string;
