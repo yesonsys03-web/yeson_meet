@@ -1,5 +1,6 @@
 {
     admin off
+    default_sni {$SERVER_HOST}
     log {
         output stdout
         format console
