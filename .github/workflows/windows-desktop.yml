@@ -1,0 +1,87 @@
+name: Windows desktop build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/windows-desktop.yml"
+      - "apps/client_sidecar/**"
+      - "apps/desktop/**"
+      - "packages/ui/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "pyproject.toml"
+      - "uv.lock"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows sidecar and desktop installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Python dependencies
+        run: uv sync --all-packages --frozen
+
+      - name: Build sidecar executable
+        shell: pwsh
+        run: |
+          uv run --with pyinstaller pyinstaller --noconfirm --clean --onefile --name yeson-sidecar --paths . --collect-all sounddevice --collect-all samplerate --collect-all numpy apps/client_sidecar/main.py
+          New-Item -ItemType Directory -Force apps/desktop/src-tauri/binaries
+          Copy-Item dist/yeson-sidecar.exe apps/desktop/src-tauri/binaries/yeson-sidecar-x86_64-pc-windows-msvc.exe
+
+      - name: Build Tauri Windows installer
+        run: pnpm --filter @yeson-meet/desktop exec tauri build --config src-tauri/tauri.windows.conf.json
+
+      - name: Upload sidecar executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: yeson-sidecar-windows
+          path: dist/yeson-sidecar.exe
+          if-no-files-found: error
+
+      - name: Upload desktop installer bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: yeson-meet-desktop-windows
+          path: |
+            apps/desktop/src-tauri/target/release/*.exe
+            apps/desktop/src-tauri/target/release/bundle/**/*.exe
+            apps/desktop/src-tauri/target/release/bundle/**/*.msi
+          if-no-files-found: error

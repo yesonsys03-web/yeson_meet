@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "externalBin": ["binaries/yeson-sidecar"],
+    "windows": {
+      "nsis": {
+        "installMode": "perUser"
+      }
+    }
+  }
+}

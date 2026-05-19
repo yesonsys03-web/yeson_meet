@@ -19,6 +19,7 @@ __pycache__/
 
 # Rust / Tauri
 target/
+apps/desktop/src-tauri/binaries/
 
 # Compose volumes
 deploy/data/
