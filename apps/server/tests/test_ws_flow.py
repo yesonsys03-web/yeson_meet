@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import psycopg
 import pytest
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
-from apps.server.auth.device import generate_api_key, hash_api_key
 from apps.server.auth.password import hash_password
 from apps.server.main import app
 
@@ -60,6 +61,16 @@ def _sync_get_session_pk(external_id: str) -> int:
     return row[0]
 
 
+def _create_session(tc: TestClient, auth_headers: dict[str, str], title: str) -> str:
+    response = tc.post(
+        "/api/v1/sessions",
+        json={"title": title},
+        headers=auth_headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["session_id"]
+
+
 # ── Utterance frame builder ───────────────────────────────────────────────────
 
 def _make_frame(session_id: str, seq: int) -> str:
@@ -81,7 +92,7 @@ def _make_frame(session_id: str, seq: int) -> str:
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
-def test_ws_sidecar_viewer_flow() -> None:
+def test_ws_sidecar_viewer_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Full end-to-end flow:
     1. Admin creates device + session via REST.
@@ -91,6 +102,7 @@ def test_ws_sidecar_viewer_flow() -> None:
     5. Duplicate seq=1 is rejected (DB row count stays 3).
     6. REST backfill /api/v1/viewer/utterances returns 3 items.
     """
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
     with TestClient(app, raise_server_exceptions=True) as tc:
         # ── Step A: insert admin user ────────────────────────────────────────
         _admin_id, admin_email = _sync_insert_admin()
@@ -181,3 +193,16 @@ def test_ws_sidecar_viewer_flow() -> None:
         )
         assert operator_backfill_resp.status_code == 200
         assert len(operator_backfill_resp.json()["utterances"]) == 3
+
+        second_session = _create_session(tc, auth_headers, "Second Live Session")
+        with pytest.raises(WebSocketDisconnect):
+            with tc.websocket_connect(f"/ws/sidecar?key={api_key}&session={second_session}"):
+                pass
+
+        end_resp = tc.post(
+            f"/api/v1/sessions/{session_uuid}/end",
+            headers=auth_headers,
+        )
+        assert end_resp.status_code == 200
+        with tc.websocket_connect(f"/ws/sidecar?key={api_key}&session={second_session}"):
+            pass

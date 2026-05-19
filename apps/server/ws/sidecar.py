@@ -183,6 +183,24 @@ async def ws_sidecar(ws: WebSocket) -> None:
         if meeting is None or meeting.status == "ended":
             await ws.close(code=status.WS_1008_POLICY_VIOLATION)
             return
+        if meeting.device_id is not None and meeting.device_id != device.id:
+            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        active_for_device = (
+            await db.execute(
+                select(Session).where(
+                    Session.device_id == device.id,
+                    Session.status == "live",
+                    Session.id != meeting.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if active_for_device is not None:
+            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        if meeting.device_id is None:
+            meeting.device_id = device.id
+            await db.commit()
         if await enforce_meeting_duration_limit(db, meeting):
             await ws.close(code=status.WS_1008_POLICY_VIOLATION)
             return
