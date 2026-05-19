@@ -59,9 +59,18 @@ uv run python -m apps.client_sidecar.main
 - 청크 누락: Drift Correction 미설정 시 발생 가능 → Audio MIDI Setup 재확인
 - 무음: Multi-Output Device가 시스템 출력으로 선택됐는지 확인 (control center에서 음원 라우팅 확인)
 
-### 1.5 LAN 분리 Gemini E2E 지연 검증 (S3 완료 기준)
+### 1.5 LAN 분리 Gemini E2E 지연 검증 (Windows 앱 전까지 보류)
 
 목적: local synthetic E2E가 아니라 **회의실 PC(sidecar) ↔ 서버 ↔ viewer(폰/브라우저)**가 분리된 실제 LAN에서 자막 지연 P50 ≤ 2초를 확인한다.
+
+현재 판단: MVP-α CLI sidecar로도 검증은 가능하지만, 회의실 PC 담당자 입장에서는 환경변수·인증서·오디오 라우팅·터미널 실행이 한 번에 겹쳐 너무 복잡하다. 따라서 **full LAN Gemini E2E는 Windows 앱 패키지/실행 UX가 나온 뒤 진행**한다. 그 전까지는 아래 서버/WSS 최소 스모크만 확인한다.
+
+#### Windows 앱 전 최소 스모크
+
+- 서버 PC에서 `https://<server-host>/api/v1/health`가 200인지 확인한다.
+- 회의실 PC/폰에서 `https://<server-host>` 또는 viewer URL 접속이 되는지 확인한다.
+- 필요 시 root CA 신뢰 등록만 미리 검증한다.
+- 영어 1분 영상 → 실제 자막 P50 측정은 Windows 앱이 나온 뒤 진행한다.
 
 #### 네트워크 전제
 
