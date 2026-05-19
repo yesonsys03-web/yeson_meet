@@ -94,7 +94,10 @@ async def list_session_utterances(
     if meeting is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     rows = await _list_utterances(db, meeting.id, since, limit)
-    return UtteranceListOut(utterances=[_to_out(r) for r in rows])
+    return UtteranceListOut(
+        utterances=[_to_out(r) for r in rows],
+        session_status=meeting.status,
+    )
 
 
 @router.get("/viewer/utterances", response_model=UtteranceListOut)

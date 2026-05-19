@@ -127,23 +127,27 @@ def test_ws_sidecar_viewer_flow() -> None:
 
         session_pk = _sync_get_session_pk(session_uuid)
 
-        # ── Step E: connect viewer WS first (must subscribe before publish) ──
+        # ── Step E: connect viewer/operator WS first (must subscribe before publish) ──
         with tc.websocket_connect(
             f"/ws/viewer?token={viewer_token}"
         ) as viewer_ws:
-            # ── Step F: connect sidecar WS ───────────────────────────────────
             with tc.websocket_connect(
-                f"/ws/sidecar?key={api_key}&session={session_uuid}"
-            ) as sidecar_ws:
-                # Publish seq 1, 2, 3
-                for seq in (1, 2, 3):
-                    sidecar_ws.send_text(_make_frame(session_uuid, seq))
+                f"/ws/operator?access={admin_token}&session={session_uuid}"
+            ) as operator_ws:
+                # ── Step F: connect sidecar WS ───────────────────────────────
+                with tc.websocket_connect(
+                    f"/ws/sidecar?key={api_key}&session={session_uuid}"
+                ) as sidecar_ws:
+                    # Publish seq 1, 2, 3
+                    for seq in (1, 2, 3):
+                        sidecar_ws.send_text(_make_frame(session_uuid, seq))
 
-                # Receive 3 events on viewer
-                received = []
-                for _ in range(3):
-                    msg = viewer_ws.receive_json()
-                    received.append(msg)
+                    # Receive 3 events on viewer and operator console
+                    received = []
+                    operator_received = []
+                    for _ in range(3):
+                        received.append(viewer_ws.receive_json())
+                        operator_received.append(operator_ws.receive_json())
 
             # Sidecar WS closed — publish duplicate seq=1
             # We need a fresh sidecar connection to send the duplicate
@@ -156,6 +160,8 @@ def test_ws_sidecar_viewer_flow() -> None:
         assert len(received) == 3
         seqs = sorted(m["seq"] for m in received)
         assert seqs == [1, 2, 3]
+        operator_seqs = sorted(m["seq"] for m in operator_received)
+        assert operator_seqs == [1, 2, 3]
 
         # DB row count must still be 3 (duplicate was suppressed by ON CONFLICT DO NOTHING)
         row_count = _sync_count_utterances(session_pk)
@@ -168,3 +174,10 @@ def test_ws_sidecar_viewer_flow() -> None:
         assert backfill_resp.status_code == 200
         utterances = backfill_resp.json()["utterances"]
         assert len(utterances) == 3
+
+        operator_backfill_resp = tc.get(
+            f"/api/v1/sessions/{session_uuid}/utterances",
+            headers=auth_headers,
+        )
+        assert operator_backfill_resp.status_code == 200
+        assert len(operator_backfill_resp.json()["utterances"]) == 3
