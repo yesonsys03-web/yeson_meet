@@ -26,4 +26,26 @@ export type EndedSession = {
   ended_at: string;
   report_path: string;
 };
+
+export type UtteranceTranscribed = {
+  type: "utterance.transcribed";
+  session_id: string;
+  occurred_at: string;
+  seq: number;
+  speaker: string | null;
+  text_en: string;
+  text_ko: string;
+  started_at: string;
+  ended_at: string;
+  is_final: boolean;
+};
+
+export type SessionEnded = {
+  type: "session.ended";
+  session_id: string;
+  occurred_at: string;
+  ended_at: string;
+};
+
+export type DomainEvent = UtteranceTranscribed | SessionEnded;
 // === ANCHOR: CONSOLE_TYPES_END ===
