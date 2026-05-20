@@ -1,5 +1,6 @@
 // === ANCHOR: DESKTOP_CONSOLE_START ===
 import { useState } from "react";
+import { HelpManualPanel } from "../help/HelpManualPanel";
 import { SetupAssistant } from "../setup/SetupAssistant";
 import { ConsoleNav } from "./ConsoleNav";
 import { MeetingLifecyclePanel } from "./MeetingLifecyclePanel";
@@ -18,6 +19,9 @@ export function DesktopConsole() {
         </section>
         <section hidden={activeView !== "meet"}>
           <MeetingLifecyclePanel />
+        </section>
+        <section hidden={activeView !== "help"}>
+          <HelpManualPanel />
         </section>
       </main>
     </div>
