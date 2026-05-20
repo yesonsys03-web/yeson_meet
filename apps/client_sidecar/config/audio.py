@@ -21,6 +21,6 @@ DEVICE_INDEX: int | None = (
 # RMS dBFS threshold for silence detection.
 RMS_DBFS_THRESHOLD: float = float(os.environ.get("YESON_RMS_DBFS_THRESHOLD", "-45"))
 RMS_SILENCE_GATE_ENABLED: bool = os.environ.get(
-    "YESON_RMS_SILENCE_GATE_ENABLED", "1"
+    "YESON_RMS_SILENCE_GATE_ENABLED", "0"
 ).lower() not in {"0", "false", "no", "off"}
 # === ANCHOR: AUDIO_END ===

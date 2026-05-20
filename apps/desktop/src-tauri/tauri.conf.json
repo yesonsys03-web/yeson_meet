@@ -24,8 +24,14 @@
     }
   },
   "bundle": {
-    "active": false,
-    "targets": "all",
-    "icon": ["icons/placeholder.png"]
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": ["icons/icon.icns", "icons/icon.ico", "icons/icon.png"],
+    "category": "Business",
+    "shortDescription": "yeson-meet meeting room client",
+    "longDescription": "Desktop client for starting yeson-meet meeting room caption sidecars.",
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    }
   }
 }

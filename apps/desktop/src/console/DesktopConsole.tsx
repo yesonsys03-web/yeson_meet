@@ -13,7 +13,12 @@ export function DesktopConsole() {
     <div style={consoleStyles.page}>
       <ConsoleNav activeView={activeView} onChange={setActiveView} />
       <main style={consoleStyles.content}>
-        {activeView === "setup" ? <SetupAssistant /> : <MeetingLifecyclePanel />}
+        <section hidden={activeView !== "setup"}>
+          <SetupAssistant />
+        </section>
+        <section hidden={activeView !== "meet"}>
+          <MeetingLifecyclePanel />
+        </section>
       </main>
     </div>
   );

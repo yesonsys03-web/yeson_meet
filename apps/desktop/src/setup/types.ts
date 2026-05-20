@@ -20,5 +20,6 @@ export type SetupValues = {
   sessionId: string;
   viewerUrl: string;
   audioDeviceName: string;
+  sidecarProjectDir: string;
 };
 // === ANCHOR: TYPES_END ===

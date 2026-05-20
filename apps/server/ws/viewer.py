@@ -78,9 +78,18 @@ async def ws_viewer(ws: WebSocket) -> None:
     drain = asyncio.create_task(_drain_incoming())
     try:
         while True:
-            payload = await q.get()
+            next_payload = asyncio.create_task(q.get())
+            done, pending = await asyncio.wait(
+                {drain, next_payload},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if drain in done:
+                for task in pending:
+                    task.cancel()
+                return
+            payload = next_payload.result()
             await ws.send_json(payload)
-    except WebSocketDisconnect:
+    except (RuntimeError, WebSocketDisconnect):
         return
     finally:
 # === ANCHOR: VIEWER_WS_VIEWER_END ===

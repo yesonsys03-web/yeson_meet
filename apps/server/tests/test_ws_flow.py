@@ -61,6 +61,15 @@ def _sync_get_session_pk(external_id: str) -> int:
     return row[0]
 
 
+def _sync_get_session_status(external_id: str) -> str:
+    with psycopg.connect(_SYNC_DSN) as conn:
+        row = conn.execute(
+            "SELECT status FROM session WHERE external_id = %s::uuid",
+            [external_id],
+        ).fetchone()
+    return row[0]
+
+
 def _create_session(tc: TestClient, auth_headers: dict[str, str], title: str) -> str:
     response = tc.post(
         "/api/v1/sessions",
@@ -195,14 +204,6 @@ def test_ws_sidecar_viewer_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         assert len(operator_backfill_resp.json()["utterances"]) == 3
 
         second_session = _create_session(tc, auth_headers, "Second Live Session")
-        with pytest.raises(WebSocketDisconnect):
-            with tc.websocket_connect(f"/ws/sidecar?key={api_key}&session={second_session}"):
-                pass
-
-        end_resp = tc.post(
-            f"/api/v1/sessions/{session_uuid}/end",
-            headers=auth_headers,
-        )
-        assert end_resp.status_code == 200
         with tc.websocket_connect(f"/ws/sidecar?key={api_key}&session={second_session}"):
             pass
+        assert _sync_get_session_status(session_uuid) == "ended"

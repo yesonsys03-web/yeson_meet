@@ -80,8 +80,17 @@ async def ws_operator(ws: WebSocket) -> None:
     drain = asyncio.create_task(_drain_incoming())
     try:
         while True:
-            await ws.send_json(await q.get())
-    except WebSocketDisconnect:
+            next_payload = asyncio.create_task(q.get())
+            done, pending = await asyncio.wait(
+                {drain, next_payload},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if drain in done:
+                for task in pending:
+                    task.cancel()
+                return
+            await ws.send_json(next_payload.result())
+    except (RuntimeError, WebSocketDisconnect):
         return
     finally:
         bus.unsubscribe(session_uuid, q)

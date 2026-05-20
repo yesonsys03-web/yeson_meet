@@ -5,7 +5,7 @@ import { createSession, endSession, fetchSessionReport, loginOperator, sessionRe
 import type { CreatedSession, EndedSession, MeetingDraft } from "./types";
 
 const initialDraft: MeetingDraft = {
-  email: "admin@example.com",
+  email: "admin@yeson.local",
   password: "",
   title: "Client weekly sync",
   clientLabel: "CLIENT-A",
@@ -54,7 +54,7 @@ export function useMeetingLifecycle() {
 
   async function startMeeting() {
     await runAction(async () => {
-      if (!draft.operatorToken) throw new Error("Operator bearer token을 먼저 입력하세요.");
+      if (!draft.operatorToken) throw new Error("먼저 Operator email/password를 입력하고 Login operator를 눌러 로그인하세요.");
       if (!draft.title.trim()) throw new Error("Meeting title을 입력하세요.");
       const session = await createSession(draft);
       setCreatedSession(session);
@@ -113,7 +113,7 @@ export function useMeetingLifecycle() {
       sessionId: session.session_id,
       viewerUrl: session.viewer_url,
     });
-    setHandoffText("Setup Assistant에 session ID와 viewer URL을 저장했습니다. Setup 탭의 PowerShell 명령을 다시 복사하세요.");
+    setHandoffText("Setup Assistant에 session ID와 viewer URL을 저장했습니다. Setup 탭에서 sidecar를 시작하세요.");
   }
 }
 

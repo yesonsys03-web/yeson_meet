@@ -23,6 +23,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from apps.server.auth.device import hash_api_key
 from apps.server.ai.gemini_live import GeminiLiveProvider
+from apps.server.ai.google_stt_translate import GoogleSttTranslateProvider
 from apps.server.ai.live_session import AudioLiveSession
 from apps.server.ai.providers import STTProvider, TranslatedUtterance
 from apps.server.db.models import Device, Session, Utterance
@@ -78,8 +79,36 @@ def _elapsed_ms(start: datetime, end: datetime) -> int:
     return max(0, round((end - start).total_seconds() * 1000))
 
 
+def _mark_stale_device_session_ended(
+    stale_session: Session,
+    replacement_session: Session,
+) -> bool:
+    if stale_session.started_at >= replacement_session.started_at:
+        return False
+    now = datetime.now(timezone.utc)
+    stale_session.status = "ended"
+    stale_session.ended_at = now
+    logger.info(
+        "Ended stale sidecar device session before accepting replacement",
+        extra={
+            "stale_session_id": str(stale_session.external_id),
+            "replacement_session_id": str(replacement_session.external_id),
+            "device_id": stale_session.device_id,
+        },
+    )
+    return True
+
+
 def create_ai_provider() -> STTProvider | None:
-    """Return the S3 provider when Gemini is configured, otherwise keep S2 count-only mode."""
+    """Return the configured AI provider, otherwise keep S2 count-only mode."""
+    provider_name = os.environ.get("YESON_AI_PROVIDER", "gemini_live").lower()
+    if provider_name in {"google_stt_translate", "google_stt", "stt_translate"}:
+        if not (
+            os.environ.get("GOOGLE_CLOUD_PROJECT")
+            or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+        ):
+            return None
+        return GoogleSttTranslateProvider()
     if not os.environ.get("GEMINI_API_KEY"):
         return None
     return GeminiLiveProvider()
@@ -196,8 +225,10 @@ async def ws_sidecar(ws: WebSocket) -> None:
             )
         ).scalar_one_or_none()
         if active_for_device is not None:
-            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
+            if not _mark_stale_device_session_ended(active_for_device, meeting):
+                await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+            await db.commit()
         if meeting.device_id is None:
             meeting.device_id = device.id
             await db.commit()

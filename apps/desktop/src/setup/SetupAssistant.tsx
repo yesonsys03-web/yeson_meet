@@ -1,11 +1,13 @@
 // === ANCHOR: SETUPASSISTANT_START ===
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Field } from "./Field";
+import { PlatformRunbookPanel } from "./PlatformRunbookPanel";
 import { PlatformSelector } from "./PlatformSelector";
+import { SidecarRunnerPanel } from "./SidecarRunnerPanel";
 import { SmokeChecklist } from "./SmokeChecklist";
 import { PLATFORM_CONFIG } from "./platformConfig";
 import { buildSidecarCommand } from "./sidecarCommands";
-import { loadValues, storeValues } from "./setupValues";
+import { loadValues, SETUP_VALUES_UPDATED_EVENT, storeValues } from "./setupValues";
 import { initialSmokeChecks, runSmokeCheck, SMOKE_CHECK_ORDER } from "./smokeChecks";
 import { styles } from "./styles";
 import type { SetupPlatform, SetupValues, SmokeCheckKey, SmokeStatus } from "./types";
@@ -19,6 +21,18 @@ export function SetupAssistant() {
 
   const platformConfig = PLATFORM_CONFIG[values.platform];
   const sidecarCommand = useMemo(() => buildSidecarCommand(values), [values]);
+
+  useEffect(() => {
+    function syncStoredValues() {
+      setValues((current) => ({
+        ...loadValues(),
+        deviceApiKey: current.deviceApiKey, // vibelign: allow-secret — field name only, not a key value
+      }));
+    }
+
+    window.addEventListener(SETUP_VALUES_UPDATED_EVENT, syncStoredValues);
+    return () => window.removeEventListener(SETUP_VALUES_UPDATED_EVENT, syncStoredValues);
+  }, []);
 
   // === ANCHOR: SETUPASSISTANT_UPDATEVALUE_START ===
   function updateValue<K extends keyof SetupValues>(key: K, value: SetupValues[K]) {
@@ -104,13 +118,13 @@ export function SetupAssistant() {
           <PlatformSelector value={values.platform} onChange={updatePlatform} />
           <Field
             label="WebSocket 서버 주소"
-            help="예: wss://192.168.0.38 — 회의실 PC가 오디오를 보낼 목적지입니다."
+            help="로컬 테스트는 ws://127.0.0.1:8000, LAN HTTPS 테스트는 wss://192.168.0.38 처럼 입력합니다."
             value={values.serverWsBase}
             onChange={(value) => updateValue("serverWsBase", value)}
           />
           <Field
-            label="Device API Key"
-            help="회의실 PC 출입증입니다. 보안을 위해 브라우저에 저장하지 않고 실행할 때만 사용합니다."
+            label="테스트용 오디오 키 (Device API Key)"
+            help="sidecar가 서버에 접속할 때 필요한 회의실 PC용 키입니다. 보안을 위해 저장하지 않으므로 Sidecar 시작 직전에 붙여넣어야 합니다."
             value={values.deviceApiKey}
             secret
             onChange={(value) => updateValue("deviceApiKey", value)}
@@ -133,6 +147,12 @@ export function SetupAssistant() {
             value={values.audioDeviceName}
             onChange={(value) => updateValue("audioDeviceName", value)}
           />
+          <Field
+            label="Sidecar project folder"
+            help="패키지 앱에서 sidecar를 실행할 yeson_meet 폴더입니다. 비워두면 개발 실행 위치 주변에서 자동으로 찾습니다."
+            value={values.sidecarProjectDir}
+            onChange={(value) => updateValue("sidecarProjectDir", value)}
+          />
         </section>
 
         <section style={styles.panelDark}>
@@ -144,6 +164,10 @@ export function SetupAssistant() {
           <p style={styles.commandHint}>{platformConfig.commandHint}</p>
         </section>
       </main>
+
+      <PlatformRunbookPanel platform={values.platform} />
+
+      <SidecarRunnerPanel values={values} />
 
       <SmokeChecklist checks={checks} onRunAll={runAllSmokeChecks} running={runningChecks} />
     </div>

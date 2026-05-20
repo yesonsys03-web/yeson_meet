@@ -32,6 +32,7 @@ async def test_ai_health_reports_missing_gemini_key(
         "model": "gemini-3.1-flash-live-preview",
         "input_sample_rate": 16000,
     }
+    assert data["google_stt_translate"]["configured"] is False
 
 
 @pytest.mark.asyncio
@@ -95,4 +96,5 @@ async def test_ai_health_reports_configured_gemini_without_leaking_key(
         "model": "custom-live-model",
         "input_sample_rate": 16000,
     }
+    assert "google_stt_translate" in data
     assert dummy_key not in resp.text

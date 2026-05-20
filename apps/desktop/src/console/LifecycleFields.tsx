@@ -17,7 +17,7 @@ export function LifecycleFields({ draft, busy, updateDraft, onLogin }: Lifecycle
         <TextField label="Operator password" value={draft.password} type="password" onChange={(value) => updateDraft("password", value)} />
       </div>
       <button type="button" onClick={onLogin} disabled={busy} style={{ ...consoleStyles.mutedAction, marginBottom: 16 }}>
-        Login operator
+        {draft.operatorToken ? "Operator login 완료" : "Login operator"}
       </button>
       <div style={consoleStyles.row}>
         <TextField label="Meeting title" value={draft.title} onChange={(value) => updateDraft("title", value)} />
@@ -38,7 +38,7 @@ export function LifecycleFields({ draft, busy, updateDraft, onLogin }: Lifecycle
         label="Operator bearer token"
         value={draft.operatorToken}
         type="password"
-        placeholder="Login or paste operator JWT"
+        placeholder="Login operator를 누르면 자동으로 채워집니다"
         onChange={(value) => updateDraft("operatorToken", value)}
       />
     </>

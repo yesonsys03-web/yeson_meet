@@ -3,6 +3,7 @@ import { defaultPlatform, PLATFORM_CONFIG } from "./platformConfig";
 import type { SetupValues } from "./types";
 
 const STORAGE_KEY = "yeson-meet-desktop-setup";
+export const SETUP_VALUES_UPDATED_EVENT = "yeson-meet-desktop-setup-updated";
 type StoredSetupValues = Omit<SetupValues, "deviceApiKey">;
 
 function defaultValues(): SetupValues {
@@ -14,6 +15,7 @@ function defaultValues(): SetupValues {
     sessionId: "",
     viewerUrl: "https://192.168.0.38/v/<viewer-token>",
     audioDeviceName: PLATFORM_CONFIG[platform].audioDeviceName,
+    sidecarProjectDir: "",
   };
 }
 
@@ -43,14 +45,17 @@ export function loadValues(): SetupValues {
 export function storeValues(values: SetupValues): void {
   const { deviceApiKey: _deviceApiKey, ...safeValues } = values;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(safeValues));
+  window.dispatchEvent(new CustomEvent(SETUP_VALUES_UPDATED_EVENT));
 }
 // === ANCHOR: SETUPVALUES_STOREVALUES_END ===
 
 // === ANCHOR: SETUPVALUES_HTTPBASEFROMWS_START ===
 export function httpBaseFromWs(serverWsBase: string): string {
   if (serverWsBase.startsWith("wss://")) return serverWsBase.replace("wss://", "https://");
+  if (serverWsBase.startsWith("ws://")) return serverWsBase.replace("ws://", "http://");
   if (serverWsBase.startsWith("https://")) return serverWsBase;
-  throw new Error("WebSocket 서버 주소는 wss:// 로 시작해야 합니다.");
+  if (serverWsBase.startsWith("http://")) return serverWsBase;
+  throw new Error("WebSocket 서버 주소는 ws:// 또는 wss:// 로 시작해야 합니다.");
 }
 // === ANCHOR: SETUPVALUES_HTTPBASEFROMWS_END ===
 
