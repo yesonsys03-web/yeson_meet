@@ -1,6 +1,7 @@
 // === ANCHOR: SETUPASSISTANT_START ===
 import { useEffect, useMemo, useState } from "react";
 import { Field } from "./Field";
+import { MeetingQuickStartPanel } from "./MeetingQuickStartPanel";
 import { PlatformRunbookPanel } from "./PlatformRunbookPanel";
 import { PlatformSelector } from "./PlatformSelector";
 import { SidecarRunnerPanel } from "./SidecarRunnerPanel";
@@ -102,19 +103,21 @@ export function SetupAssistant() {
           <p style={styles.eyebrow}>yeson-meet · Mac / Windows client setup</p>
           <h1 style={styles.title}>회의실 PC 실행 준비</h1>
           <p style={styles.subtitle}>
-            담당자가 터미널 명령을 외우지 않아도 되도록, 서버 주소와 회의 정보를 한 곳에 모아 플랫폼별 sidecar 실행 명령을 만듭니다.
+            담당자가 탭을 오가거나 터미널 명령을 외우지 않아도 되도록, 로그인·회의 생성·sidecar 실행·자막 확인을 한 화면에 모았습니다.
           </p>
         </div>
         <div style={styles.statusCard}>
           <span style={styles.statusLabel}>현재 검증 범위</span>
-          <strong>서버 접속 + 실행 명령 준비</strong>
-          <small>Mac은 BlackHole, Windows는 Voicemeeter 기준으로 실행값을 분리합니다.</small>
+          <strong>회의 생성 + sidecar 실행</strong>
+          <small>Session ID와 Viewer URL은 회의를 만들면 자동으로 실행값에 반영됩니다.</small>
         </div>
       </section>
 
+      <MeetingQuickStartPanel />
+
       <main style={styles.grid}>
         <section style={styles.panel}>
-          <h2 style={styles.sectionTitle}>1. 관리자에게 받은 값 입력</h2>
+          <h2 style={styles.sectionTitle}>실행 환경 값</h2>
           <PlatformSelector value={values.platform} onChange={updatePlatform} />
           <Field
             label="WebSocket 서버 주소"
@@ -131,13 +134,13 @@ export function SetupAssistant() {
           />
           <Field
             label="Session ID"
-            help="이번 테스트/회의 번호표입니다."
+            help="회의를 만들면 자동으로 채워집니다. 필요할 때만 직접 수정하세요."
             value={values.sessionId}
             onChange={(value) => updateValue("sessionId", value)}
           />
           <Field
             label="Viewer URL"
-            help="폰이나 노트북에서 자막을 확인할 주소입니다."
+            help="회의를 만들면 자동으로 채워집니다. 폰이나 노트북에서 자막을 확인할 주소입니다."
             value={values.viewerUrl}
             onChange={(value) => updateValue("viewerUrl", value)}
           />
