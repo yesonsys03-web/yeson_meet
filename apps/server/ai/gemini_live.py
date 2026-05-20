@@ -40,9 +40,9 @@ DEFAULT_VAD_PREFIX_PADDING_MS = 120
 DEFAULT_VAD_SILENCE_DURATION_MS = 350
 DEFAULT_EXPLICIT_VAD_RMS_DBFS_THRESHOLD = -50.0
 DEFAULT_EXPLICIT_VAD_END_SILENCE_MS = 320
-DEFAULT_PARTIAL_MIN_CHARS = 32
-DEFAULT_PARTIAL_MIN_WORDS = 6
-DEFAULT_PARTIAL_MIN_DELTA_CHARS = 18
+DEFAULT_PARTIAL_MIN_CHARS = 16
+DEFAULT_PARTIAL_MIN_WORDS = 3
+DEFAULT_PARTIAL_MIN_DELTA_CHARS = 10
 DEFAULT_PARTIAL_FORCE_CHARS = 90
 logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """You are a real-time meeting assistant for a Korean animation/VFX studio.
@@ -338,7 +338,6 @@ async def _stream_session(
     text_en = ""
     text_ko = ""
     last_partial_text_en = ""
-    partial_text_ko = ""
     started_at = datetime.now(timezone.utc)
 
     async def send_audio() -> None:
@@ -376,9 +375,8 @@ async def _stream_session(
                     and _should_emit_partial_translation(last_partial_text_en, text_en)
                 ):
                     translated = await _translate_partial_text(text_client, text_en)
-                    if translated and translated != partial_text_ko:
+                    if _has_subtitle_text(translated):
                         last_partial_text_en = text_en
-                        partial_text_ko = translated
                         if current_seq == 0:
                             seq += 1
                             current_seq = seq
@@ -386,13 +384,13 @@ async def _stream_session(
                         yield TranslatedUtterance(
                             seq=current_seq,
                             text_en=text_en,
-                            text_ko=partial_text_ko,
+                            text_ko=translated,
                             started_at=started_at,
                             ended_at=ended_at,
                             is_final=False,
                         )
             output_emitted = False
-            if extracted.output_text:
+            if _has_subtitle_text(extracted.output_text):
                 text_ko += extracted.output_text
                 if current_seq == 0:
                     seq += 1
@@ -425,7 +423,6 @@ async def _stream_session(
                 text_en = ""
                 text_ko = ""
                 last_partial_text_en = ""
-                partial_text_ko = ""
                 started_at = ended_at
     finally:
         _ = send_task.cancel()
@@ -450,10 +447,10 @@ def _should_emit_partial_translation(last_emitted_text: str, next_text: str) -> 
         return False
 
     if not last_emitted_text:
-        return _has_soft_boundary(text)
+        return True
 
     min_delta = _int_env(PARTIAL_MIN_DELTA_CHARS_ENV, DEFAULT_PARTIAL_MIN_DELTA_CHARS)
-    return len(text) - len(last_emitted_text) >= min_delta and _has_soft_boundary(text)
+    return len(text) - len(last_emitted_text) >= min_delta
 
 
 def _has_soft_boundary(text: str) -> bool:
@@ -461,6 +458,27 @@ def _has_soft_boundary(text: str) -> bool:
     if stripped.endswith(('.', '?', '!', ',', ';', ':')):
         return True
     return len(stripped) >= _int_env(PARTIAL_FORCE_CHARS_ENV, DEFAULT_PARTIAL_FORCE_CHARS)
+
+
+def _has_subtitle_text(text: str) -> bool:
+    normalized = " ".join(text.split()).strip().lower()
+    if not normalized:
+        return False
+    return normalized not in {
+        "(자막 없음)",
+        "자막 없음",
+        "[자막 없음]",
+        "(번역 없음)",
+        "번역 없음",
+        "(no subtitle)",
+        "no subtitle",
+        "(no subtitles)",
+        "no subtitles",
+        "(no caption)",
+        "no caption",
+        "(no captions)",
+        "no captions",
+    }
 
 
 async def _translate_partial_text(text_client: Any, text: str) -> str:
