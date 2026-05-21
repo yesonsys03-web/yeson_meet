@@ -128,6 +128,45 @@ async def test_audio_live_session_retries_provider_disconnect() -> None:
     assert emitted[0].text_en == "recovered 640 bytes"
 
 
+@pytest.mark.asyncio
+async def test_audio_live_session_drops_oldest_when_queue_full() -> None:
+    """Provider가 audio를 소비하지 않아 queue가 가득 차면 가장 오래된 chunk가
+    drop되어 sidecar push가 절대 막히지 않아야 한다 (lossy queue 회귀 가드)."""
+    release = asyncio.Event()
+
+    class StallingProvider:
+        async def stream(
+            self,
+            audio: AsyncIterator[bytes],
+            lang_hint: str,
+        ) -> AsyncIterator[TranslatedUtterance]:
+            # 호출 즉시 audio를 안 읽고 release를 기다린다 → queue가 가득 참.
+            await release.wait()
+            async for _ in audio:
+                pass
+            return
+            yield  # pragma: no cover — 본 함수를 async generator로 만들기 위한 마커
+
+    session = AudioLiveSession(
+        provider=StallingProvider(),
+        on_utterance=lambda _u: None,
+        audio_queue_max_chunks=3,
+    )
+    await session.start()
+    # 짧게 양보해서 provider가 release.wait() 진입할 시간을 준다.
+    await asyncio.sleep(0)
+
+    for index in range(10):
+        await session.push_audio(bytes([index]))
+
+    # queue는 maxsize에 클램프, 나머지는 drop됨.
+    assert session._queue.qsize() == 3
+    assert session._dropped_chunks == 7
+
+    release.set()
+    await session.stop()
+
+
 def test_is_permanent_provider_error_detects_spending_cap() -> None:
     err = Exception(
         "1011 None. Your project has exceeded its monthly spending cap. "

@@ -34,6 +34,7 @@ GENAI_USE_ENTERPRISE_ENV = "GOOGLE_GENAI_USE_ENTERPRISE"
 SEGMENT_MAX_SPEECH_MS_ENV = "GEMINI_SEGMENT_MAX_SPEECH_MS"
 SEGMENT_HARD_MAX_SPEECH_MS_ENV = "GEMINI_SEGMENT_HARD_MAX_SPEECH_MS"
 SEGMENT_CYCLE_SILENCE_MS_ENV = "GEMINI_SEGMENT_CYCLE_SILENCE_MS"
+SEGMENT_STUCK_WATCHDOG_MS_ENV = "GEMINI_SEGMENT_STUCK_WATCHDOG_MS"
 FAST_PARTIAL_TRANSLATION_ENABLED_ENV = "GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED"
 PARTIAL_TRANSLATION_MODEL_ENV = "GEMINI_PARTIAL_TRANSLATION_MODEL"
 PARTIAL_MIN_CHARS_ENV = "GEMINI_PARTIAL_MIN_CHARS"
@@ -56,6 +57,10 @@ DEFAULT_EXPLICIT_VAD_MAX_SPEECH_MS = 2500
 DEFAULT_SEGMENT_MAX_SPEECH_MS = 120000
 DEFAULT_SEGMENT_HARD_MAX_SPEECH_MS = 300000
 DEFAULT_SEGMENT_CYCLE_SILENCE_MS = 400
+# Speech가 보내졌는데도 input/output transcription이 안 오는 segment에 대한
+# 최대 대기. 시간을 초과하면 force-cycle해서 새 Gemini Live 세션으로 옮긴다.
+# Gemini가 내부적으로 결과를 batching하다가 멈춘 듯한 케이스 회피용.
+DEFAULT_SEGMENT_STUCK_WATCHDOG_MS = 45000
 DEFAULT_PARTIAL_MIN_CHARS = 12
 DEFAULT_PARTIAL_MIN_WORDS = 2
 DEFAULT_PARTIAL_MIN_DELTA_CHARS = 6
@@ -268,6 +273,10 @@ def _segment_cycle_silence_chunks() -> int:
     if silence_ms <= 0:
         return 0
     return max(1, math.ceil(silence_ms / INPUT_CHUNK_MS))
+
+
+def _segment_stuck_watchdog_ms() -> int:
+    return _int_env(SEGMENT_STUCK_WATCHDOG_MS_ENV, DEFAULT_SEGMENT_STUCK_WATCHDOG_MS)
 
 
 def _receive_poll_timeout_seconds() -> float:
@@ -581,6 +590,8 @@ async def _stream_session(
     receive_timeout = _receive_poll_timeout_seconds()
     receive_drain_timeout = _receive_drain_timeout_seconds()
     partial_translation_timeout = _partial_translation_timeout_seconds()
+    stuck_watchdog_ms = _segment_stuck_watchdog_ms()
+    segment_start_at = time.monotonic()
     send_task = asyncio.create_task(send_audio())
     try:
         while True:
@@ -597,6 +608,31 @@ async def _stream_session(
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if not done:
+                    if (
+                        stuck_watchdog_ms > 0
+                        and speech_observed
+                        and not first_input_seen
+                        and not first_output_seen
+                        and not first_utterance_yielded
+                        and (time.monotonic() - segment_start_at) * 1000
+                        >= stuck_watchdog_ms
+                    ):
+                        # Speech가 들어갔는데 Gemini가 input/output을 안 내보냄.
+                        # 내부 batching/stuck 가능성 — force-cycle해서 새 세션.
+                        logger.warning(
+                            "Gemini Live segment stuck — forcing cycle",
+                            extra={
+                                **trace,
+                                "gemini_segment_stuck_watchdog_ms": stuck_watchdog_ms,
+                                "gemini_segment_elapsed_ms": _elapsed_monotonic_ms(
+                                    segment_start_at
+                                ),
+                            },
+                        )
+                        receive_next.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await receive_next
+                        break
                     if send_task.done():
                         if (
                             not speech_observed

@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 
 OnUtterance = Callable[[TranslatedUtterance], Awaitable[None] | None]
 DEFAULT_RECONNECT_DELAYS = (0.5, 1.0, 2.0, 5.0)
+# Audio queue capacity (chunks of ~20ms PCM each). 1500 ≈ 30s. Provider가 늦으면
+# 큐가 가득 차고, 그 시점부터 가장 오래된 chunk를 drop해서 "최근 30초 audio"만
+# 유지한다. 큐를 무제한 또는 큰 값으로 두면 Gemini가 늦을 때 backlog가 누적되어
+# 자막이 분 단위로 밀리는 현상이 생긴다 (실측됨).
+DEFAULT_AUDIO_QUEUE_MAX_CHUNKS = 1500
+# Drop이 N개 누적되면 한 번 WARNING 로그 (스팸 방지).
+_DROP_LOG_EVERY = 50
 # Provider 영구 에러(quota/billing/auth) 시 reconnect 백오프. 짧은 백오프로
 # 무한 재시도하면 비용/quota만 더 소모하므로 5분 단위로 늦춘다.
 PERMANENT_ERROR_BACKOFF_SECONDS = 300.0
@@ -48,14 +55,19 @@ class AudioLiveSession:
         on_utterance: OnUtterance,
         lang_hint: str = "en",
         reconnect_delays: Sequence[float] = DEFAULT_RECONNECT_DELAYS,
+        audio_queue_max_chunks: int = DEFAULT_AUDIO_QUEUE_MAX_CHUNKS,
     ) -> None:
         self._provider: STTProvider = provider
         self._on_utterance: OnUtterance = on_utterance
         self._lang_hint: str = lang_hint
         self._reconnect_delays: tuple[float, ...] = tuple(reconnect_delays)
-        self._queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=2000)
+        self._queue: asyncio.Queue[bytes | None] = asyncio.Queue(
+            maxsize=max(1, audio_queue_max_chunks)
+        )
         self._task: asyncio.Task[None] | None = None
         self._stopping: bool = False
+        self._dropped_chunks: int = 0
+        self._next_drop_log_at: int = _DROP_LOG_EVERY
 
     # === ANCHOR: LIVE_SESSION_START_START ===
     async def start(self) -> None:
@@ -69,7 +81,27 @@ class AudioLiveSession:
     async def push_audio(self, chunk: bytes) -> None:
         if self._task is None:
             raise RuntimeError("audio live session not started")
-        await self._queue.put(chunk)
+        # Lossy push: provider가 따라잡지 못해 큐가 가득 차면 가장 오래된 chunk를
+        # drop해서 슬롯을 확보한다. 이렇게 하면 sidecar가 차단되어 audio capture가
+        # 멈추거나 backlog가 분 단위로 누적되는 것을 막는다 (자막이 늦더라도
+        # 최신 음성 기준 transcribe).
+        if self._queue.full():
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            self._dropped_chunks += 1
+            if self._dropped_chunks >= self._next_drop_log_at:
+                logger.warning(
+                    "Audio queue lossy drop — provider can't keep up",
+                    extra={"dropped_chunks_total": self._dropped_chunks},
+                )
+                self._next_drop_log_at += _DROP_LOG_EVERY
+        try:
+            self._queue.put_nowait(chunk)
+        except asyncio.QueueFull:
+            # 극히 드문 race. 이 chunk도 drop.
+            self._dropped_chunks += 1
     # === ANCHOR: LIVE_SESSION_PUSH_AUDIO_END ===
 
     # === ANCHOR: LIVE_SESSION_STOP_START ===

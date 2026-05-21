@@ -996,4 +996,34 @@ async def test_stream_session_does_not_emit_english_only_turn() -> None:
     ]
 
     assert utterances == []
+
+
+async def test_stream_session_watchdog_breaks_when_no_transcription(monkeypatch) -> None:
+    """Speech가 들어갔는데도 Gemini가 input/output을 안 내보내면 watchdog가
+    force-cycle하여 깔끔하게 종료해야 한다."""
+    monkeypatch.setenv("GEMINI_SEGMENT_STUCK_WATCHDOG_MS", "150")
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class StuckSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            # Gemini가 stuck 상태처럼 아무것도 안 보냄.
+            event = asyncio.Event()
+            await event.wait()
+            yield  # pragma: no cover — never reached
+
+    speech = (12000).to_bytes(2, "little", signed=True) * 320
+    utterances = [
+        item async for item in _stream_session(StuckSession(), FakeTypes, _single_chunk(speech))
+    ]
+
+    # watchdog에 의해 깔끔하게 break돼 utterance 없이 종료.
+    assert utterances == []
 # === ANCHOR: TEST_GEMINI_LIVE_END ===
