@@ -6,6 +6,7 @@ without requiring a live API key or network access.
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
@@ -535,6 +536,14 @@ async def _stream_session(
     first_partial_translation = False
     first_utterance_yielded = False
     speech_observed = False
+    # In-flight partial translation state. fire-and-forget so the receive loop
+    # is not blocked by gemini-2.5-flash-lite latency (previously caused a
+    # positive-feedback loop after cycle backlog where every input_text update
+    # triggered a 2s blocking call). At most one partial in flight per turn.
+    partial_task: asyncio.Task[str] | None = None
+    partial_input_snapshot: str = ""
+    partial_target_seq: int = 0
+    partial_started_log_at: float = 0.0
 
     async def send_audio() -> None:
         nonlocal first_audio_sent, speech_observed
@@ -569,8 +578,6 @@ async def _stream_session(
             await session.send_realtime_input(activity_end=types.ActivityEnd())
         await session.send_realtime_input(audio_stream_end=True)
 
-    import asyncio
-
     receive_timeout = _receive_poll_timeout_seconds()
     receive_drain_timeout = _receive_drain_timeout_seconds()
     partial_translation_timeout = _partial_translation_timeout_seconds()
@@ -581,7 +588,14 @@ async def _stream_session(
             receive_next = asyncio.create_task(receive_iter.__anext__())
             drain_started_at: float | None = None
             while True:
-                done, _pending = await asyncio.wait({receive_next}, timeout=receive_timeout)
+                wait_set: set[asyncio.Task[Any]] = {receive_next}
+                if partial_task is not None:
+                    wait_set.add(partial_task)
+                done, _pending = await asyncio.wait(
+                    wait_set,
+                    timeout=receive_timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
                 if not done:
                     if send_task.done():
                         if (
@@ -604,6 +618,81 @@ async def _stream_session(
                     continue
 
                 drain_started_at = None
+
+                # Harvest in-flight partial translation if it finished.
+                if partial_task is not None and partial_task in done:
+                    finished_partial = partial_task
+                    snapshot_text_en = partial_input_snapshot
+                    target_seq = partial_target_seq
+                    started_log_at = partial_started_log_at
+                    partial_task = None
+                    try:
+                        translated = finished_partial.result()
+                    except (TimeoutError, asyncio.TimeoutError):
+                        logger.warning(
+                            "Gemini partial translation timed out",
+                            extra={
+                                **trace,
+                                "gemini_partial_translation_timeout_ms": round(
+                                    partial_translation_timeout * 1000
+                                ),
+                            },
+                        )
+                        translated = ""
+                    except asyncio.CancelledError:
+                        translated = ""
+                    except Exception as error:
+                        logger.warning(
+                            "Gemini partial translation failed",
+                            extra={**trace, "error_type": type(error).__name__},
+                        )
+                        translated = ""
+                    if (
+                        _has_subtitle_text(translated)
+                        and current_seq != 0
+                        and current_seq == target_seq
+                    ):
+                        if not first_partial_translation:
+                            first_partial_translation = True
+                            logger.info(
+                                "Gemini Live first partial translation",
+                                extra={
+                                    **trace,
+                                    "gemini_partial_translation_latency_ms": _elapsed_monotonic_ms(
+                                        started_log_at
+                                    ),
+                                    "gemini_first_partial_chars": len(translated),
+                                },
+                            )
+                        last_partial_text_en = snapshot_text_en
+                        partial_text_ko = translated
+                        ended_at = datetime.now(timezone.utc)
+                        if not first_utterance_yielded:
+                            first_utterance_yielded = True
+                            logger.info(
+                                "Gemini Live first subtitle yielded",
+                                extra={
+                                    **trace,
+                                    "seq": current_seq,
+                                    "is_final": False,
+                                    "gemini_connect_to_first_subtitle_ms": _elapsed_monotonic_ms(
+                                        connected_at
+                                    ) if connected_at is not None else None,
+                                },
+                            )
+                        yield TranslatedUtterance(
+                            seq=current_seq,
+                            text_en=snapshot_text_en,
+                            text_ko=translated,
+                            started_at=started_at,
+                            ended_at=ended_at,
+                            is_final=False,
+                            provider_segment=provider_segment,
+                        )
+
+                if receive_next not in done:
+                    continue
+
                 try:
                     message = receive_next.result()
                 except StopAsyncIteration:
@@ -627,75 +716,29 @@ async def _stream_session(
                             },
                         )
                     text_en = extracted.input_text
+                    # Fire-and-forget partial translation. Only one in flight per
+                    # turn — subsequent input_text updates skip until the previous
+                    # call finishes. This stops the polling feedback loop where
+                    # blocking awaits starved the receive loop after a cycle
+                    # backlog and exploded API spend.
                     if (
                         _fast_partial_translation_enabled()
                         and text_client is not None
+                        and partial_task is None
                         and _should_emit_partial_translation(last_partial_text_en, text_en)
                     ):
-                        partial_started_at = time.monotonic()
-                        try:
-                            translated = await asyncio.wait_for(
+                        if current_seq == 0:
+                            seq += 1
+                            current_seq = seq
+                        partial_input_snapshot = text_en
+                        partial_target_seq = current_seq
+                        partial_started_log_at = time.monotonic()
+                        partial_task = asyncio.create_task(
+                            asyncio.wait_for(
                                 _translate_partial_text(text_client, text_en),
                                 timeout=partial_translation_timeout,
                             )
-                        except TimeoutError:
-                            logger.warning(
-                                "Gemini partial translation timed out",
-                                extra={
-                                    **trace,
-                                    "gemini_partial_translation_timeout_ms": round(
-                                        partial_translation_timeout * 1000
-                                    ),
-                                },
-                            )
-                            translated = ""
-                        except Exception as error:
-                            logger.warning(
-                                "Gemini partial translation failed",
-                                extra={**trace, "error_type": type(error).__name__},
-                            )
-                            translated = ""
-                        if _has_subtitle_text(translated):
-                            if not first_partial_translation:
-                                first_partial_translation = True
-                                logger.info(
-                                    "Gemini Live first partial translation",
-                                    extra={
-                                        **trace,
-                                        "gemini_partial_translation_latency_ms": _elapsed_monotonic_ms(
-                                            partial_started_at
-                                        ),
-                                        "gemini_first_partial_chars": len(translated),
-                                    },
-                                )
-                            last_partial_text_en = text_en
-                            partial_text_ko = translated
-                            if current_seq == 0:
-                                seq += 1
-                                current_seq = seq
-                            ended_at = datetime.now(timezone.utc)
-                            if not first_utterance_yielded:
-                                first_utterance_yielded = True
-                                logger.info(
-                                    "Gemini Live first subtitle yielded",
-                                    extra={
-                                        **trace,
-                                        "seq": current_seq,
-                                        "is_final": False,
-                                        "gemini_connect_to_first_subtitle_ms": _elapsed_monotonic_ms(
-                                            connected_at
-                                        ) if connected_at is not None else None,
-                                    },
-                                )
-                            yield TranslatedUtterance(
-                                seq=current_seq,
-                                text_en=text_en,
-                                text_ko=translated,
-                                started_at=started_at,
-                                ended_at=ended_at,
-                                is_final=False,
-                                provider_segment=provider_segment,
-                            )
+                        )
                 output_emitted = False
                 if _has_subtitle_text(extracted.output_text):
                     if not first_output_seen:
@@ -767,6 +810,11 @@ async def _stream_session(
                             is_final=True,
                             provider_segment=provider_segment,
                         )
+                    if partial_task is not None and not partial_task.done():
+                        partial_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError, Exception):
+                            await partial_task
+                    partial_task = None
                     current_seq = 0
                     text_en = ""
                     text_ko = ""
@@ -783,6 +831,10 @@ async def _stream_session(
             if send_task.done():
                 break
     finally:
+        if partial_task is not None and not partial_task.done():
+            partial_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await partial_task
         if not send_task.done():
             _ = send_task.cancel()
 
