@@ -1,9 +1,13 @@
 // === ANCHOR: SUBTITLEVIEW_START ===
+import { usePacedSubtitle } from "../hooks/usePacedSubtitle";
 import { useViewerWS } from "../hooks/useViewerWS";
 
 // === ANCHOR: SUBTITLEVIEW_SUBTITLEVIEW_START ===
 export function SubtitleView({ token }: { token: string }) {
-  const { latest, connected, ended, error } = useViewerWS(token);
+  const { latest: streamLatest, connected, ended, error } = useViewerWS(token);
+  // 자막이 너무 빨리 다음 seq로 갱신되면 사용자가 읽을 시간이 부족하다.
+  // 길이에 비례한 최소 표시 시간을 보장하면서 다음 자막은 큐에 보관해 노출.
+  const latest = usePacedSubtitle(streamLatest);
 
   return (
     <main className="min-h-screen bg-slate-900 text-slate-100 flex flex-col">

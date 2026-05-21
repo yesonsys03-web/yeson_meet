@@ -3,7 +3,9 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
 import { consoleStyles } from "./consoleStyles";
+import type { UtteranceTranscribed } from "./types";
 import { useLiveSubtitleStream } from "./useLiveSubtitleStream";
+import { usePacedSubtitle } from "./usePacedSubtitle";
 import { useSubtitleFullscreenShortcut } from "./useSubtitleFullscreenShortcut";
 
 type LiveSubtitlePreviewProps = {
@@ -19,7 +21,12 @@ export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = fal
     ...consoleStyles.subtitlePanel,
     ...(fullscreen.isFullscreen ? consoleStyles.subtitlePanelFullscreen : null),
   };
-  const subtitleText = stream.latest?.text_ko || stream.latest?.text_en || "";
+  // Paced display — 자막이 너무 빨리 다음 seq로 갱신되면 사용자가 못 읽기 때문에
+  // 길이에 비례하는 최소 표시 시간을 보장한다. 진행 중인 다음 seq는 큐에 보관.
+  const latest = usePacedSubtitle(stream.latest);
+  const previous = previousSubtitle(stream.utterances, latest?.seq ?? null);
+  const subtitleText = latest?.text_ko || latest?.text_en || "";
+  const previousSubtitleText = previous?.text_ko || previous?.text_en || "";
   const subtitleFit = useFullscreenSubtitleFit(subtitleText, fullscreen.isFullscreen);
   const textStyle = {
     ...consoleStyles.subtitleText,
@@ -54,8 +61,15 @@ export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = fal
           status={stream.ended ? "ended" : stream.connected ? "live" : "connecting"}
         />
       ) : null}
-      {stream.latest ? (
-        <div ref={subtitleFit.ref} style={textStyle}>{subtitleText}</div>
+      {latest ? (
+        <div style={consoleStyles.subtitleStack}>
+          {previousSubtitleText ? (
+            <div style={fullscreen.isFullscreen ? consoleStyles.subtitleContextFullscreen : consoleStyles.subtitleContext}>
+              {previousSubtitleText}
+            </div>
+          ) : null}
+          <div ref={subtitleFit.ref} style={textStyle}>{subtitleText}</div>
+        </div>
       ) : (
         <p style={consoleStyles.subtitleEmpty}>아직 수신한 자막이 없습니다.</p>
       )}
@@ -63,6 +77,16 @@ export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = fal
       {!fullscreen.isFullscreen ? <p style={consoleStyles.subtitleMeta}>최근 {stream.utterances.length}개 발화 보관 · partial/final은 같은 seq로 교체</p> : null}
     </section>
   );
+}
+
+function previousSubtitle(utterances: UtteranceTranscribed[], latestSeq: number | null): UtteranceTranscribed | null {
+  if (utterances.length < 2) return null;
+  if (latestSeq === null) return null;
+  for (let index = utterances.length - 2; index >= 0; index -= 1) {
+    const item = utterances[index];
+    if (item && item.seq !== latestSeq) return item;
+  }
+  return null;
 }
 
 function useFullscreenSubtitleFit(text: string, enabled: boolean): { ref: (node: HTMLDivElement | null) => void; style: CSSProperties | null } {
