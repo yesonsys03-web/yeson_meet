@@ -1,4 +1,5 @@
 // === ANCHOR: SESSION_API_START ===
+import { appLogger } from "../diagnostics/appLog";
 import { httpBaseFromWs, loadValues } from "../setup/setupValues";
 import type { CreatedSession, EndedSession, MeetingDraft, TokenPair, UtteranceTranscribed } from "./types";
 
@@ -38,8 +39,24 @@ export function sessionRequestBody(draft: MeetingDraft) {
   };
 }
 
+async function timedFetch(action: string, url: string, init?: RequestInit): Promise<Response> {
+  const method = init?.method ?? "GET";
+  const startedAt = performance.now();
+  try {
+    const response = await fetch(url, init);
+    appLogger.latency("network", `${action} ${method} ${safeApiPath(url)}`, performance.now() - startedAt, { detail: `HTTP ${response.status}` });
+    return response;
+  } catch (error) {
+    appLogger.error("network", `${action} ${method} ${safeApiPath(url)} failed`, {
+      durationMs: performance.now() - startedAt,
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
 export async function loginOperator(email: string, password: string): Promise<TokenPair> {
-  const response = await fetch(`${apiBase()}/api/v1/auth/login`, {
+  const response = await timedFetch("Login", `${apiBase()}/api/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -48,7 +65,7 @@ export async function loginOperator(email: string, password: string): Promise<To
 }
 
 export async function createSession(draft: MeetingDraft): Promise<CreatedSession> {
-  const response = await fetch(`${apiBase()}/api/v1/sessions`, {
+  const response = await timedFetch("Create session", `${apiBase()}/api/v1/sessions`, {
     method: "POST",
     headers: authHeaders(draft.operatorToken),
     body: JSON.stringify(sessionRequestBody(draft)),
@@ -57,7 +74,7 @@ export async function createSession(draft: MeetingDraft): Promise<CreatedSession
 }
 
 export async function endSession(sessionId: string, operatorToken: string): Promise<EndedSession> {
-  const response = await fetch(`${apiBase()}/api/v1/sessions/${encodeURIComponent(sessionId)}/end`, {
+  const response = await timedFetch("End session", `${apiBase()}/api/v1/sessions/${encodeURIComponent(sessionId)}/end`, {
     method: "POST",
     headers: authHeaders(operatorToken),
   });
@@ -65,7 +82,7 @@ export async function endSession(sessionId: string, operatorToken: string): Prom
 }
 
 export async function fetchSessionReport(sessionId: string, operatorToken: string): Promise<string> {
-  const response = await fetch(`${apiBase()}/api/v1/sessions/${encodeURIComponent(sessionId)}/report`, {
+  const response = await timedFetch("Download report", `${apiBase()}/api/v1/sessions/${encodeURIComponent(sessionId)}/report`, {
     headers: { Authorization: `Bearer ${operatorToken}` },
   });
   if (!response.ok) throw new Error(`Download report failed: HTTP ${response.status}`);
@@ -78,9 +95,18 @@ export async function fetchOperatorBackfill(
 ): Promise<{ utterances: UtteranceTranscribed[]; session_status: string }> {
   const url = new URL(`${apiBase()}/api/v1/sessions/${encodeURIComponent(sessionId)}/utterances`);
   url.searchParams.set("limit", "50");
-  const response = await fetch(url.toString(), {
+  const response = await timedFetch("Fetch subtitles", url.toString(), {
     headers: { Authorization: `Bearer ${operatorToken}` },
   });
   return parseJsonResponse<{ utterances: UtteranceTranscribed[]; session_status: string }>(response, "Fetch subtitles");
+}
+
+function safeApiPath(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname;
+  } catch {
+    return url;
+  }
 }
 // === ANCHOR: SESSION_API_END ===

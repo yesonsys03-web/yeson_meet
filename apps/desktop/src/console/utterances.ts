@@ -17,6 +17,9 @@ export function upsertUtterance(current: UtteranceTranscribed[], next: Utterance
 }
 
 export function latestUtterance(utterances: UtteranceTranscribed[]): UtteranceTranscribed | null {
-  return utterances[utterances.length - 1] ?? null;
+  return utterances.reduce<UtteranceTranscribed | null>((latest, item) => {
+    if (!latest) return item;
+    return item.seq >= latest.seq ? item : latest;
+  }, null);
 }
 // === ANCHOR: CONSOLE_UTTERANCES_END ===

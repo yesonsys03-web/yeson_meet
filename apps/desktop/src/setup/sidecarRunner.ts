@@ -1,5 +1,6 @@
 // === ANCHOR: SIDECAR_RUNNER_START ===
 import { invoke } from "@tauri-apps/api/core";
+import { appLogger } from "../diagnostics/appLog";
 import type { SetupValues } from "./types";
 
 export type SidecarStatus = {
@@ -23,15 +24,17 @@ function requireTauriRuntime(): void {
 export async function startSidecar(values: SetupValues): Promise<SidecarStatus> {
   requireTauriRuntime();
   validateSidecarValues(values);
-  return invoke<SidecarStatus>("start_sidecar", {
-    request: {
-      serverWsBase: values.serverWsBase,
-      deviceApiKey: values.deviceApiKey, // vibelign: allow-secret — field name only, not a key value
-      sessionId: values.sessionId,
-      audioDeviceName: values.audioDeviceName,
-      projectDir: values.sidecarProjectDir,
-    },
-  });
+  return timedSidecarAction("start_sidecar", () =>
+    invoke<SidecarStatus>("start_sidecar", {
+      request: {
+        serverWsBase: values.serverWsBase,
+        deviceApiKey: values.deviceApiKey, // vibelign: allow-secret — field name only, not a key value
+        sessionId: values.sessionId,
+        audioDeviceName: values.audioDeviceName,
+        projectDir: values.sidecarProjectDir,
+      },
+    }),
+  );
 }
 
 function validateSidecarValues(values: SetupValues): void {
@@ -51,17 +54,34 @@ function validateSidecarValues(values: SetupValues): void {
 
 export async function stopSidecar(): Promise<SidecarStatus> {
   requireTauriRuntime();
-  return invoke<SidecarStatus>("stop_sidecar");
+  return timedSidecarAction("stop_sidecar", () => invoke<SidecarStatus>("stop_sidecar"));
 }
 
 export async function loadSidecarStatus(): Promise<SidecarStatus> {
   if (!hasTauriRuntime()) {
+    appLogger.info("sidecar", "Sidecar status requested in browser preview");
     return {
       running: false,
       pid: null,
       detail: "브라우저 미리보기에서는 sidecar 실행 버튼이 비활성화됩니다.",
     };
   }
-  return invoke<SidecarStatus>("sidecar_status");
+  return timedSidecarAction("sidecar_status", () => invoke<SidecarStatus>("sidecar_status"));
+}
+
+async function timedSidecarAction(action: string, run: () => Promise<SidecarStatus>): Promise<SidecarStatus> {
+  const startedAt = performance.now();
+  appLogger.info("sidecar", `${action} requested`);
+  try {
+    const status = await run();
+    appLogger.latency("sidecar", `${action} completed`, performance.now() - startedAt, { detail: status.detail });
+    return status;
+  } catch (error) {
+    appLogger.error("sidecar", `${action} failed`, {
+      durationMs: performance.now() - startedAt,
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 // === ANCHOR: SIDECAR_RUNNER_END ===

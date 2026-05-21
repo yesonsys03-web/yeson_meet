@@ -10,9 +10,9 @@ type ConsoleNavProps = {
 const navItems: Array<{ view: ConsoleView; label: string; disabled?: boolean }> = [
   { view: "setup", label: "Setup Assistant" },
   { view: "meet", label: "Live Meeting" },
+  { view: "settings", label: "Settings" },
   { view: "help", label: "Help Manual" },
   { view: "history", label: "History", disabled: true },
-  { view: "settings", label: "Settings", disabled: true },
 ];
 
 export function ConsoleNav({ activeView, onChange }: ConsoleNavProps) {

@@ -1,6 +1,8 @@
 // === ANCHOR: DESKTOP_CONSOLE_START ===
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { installAppLogCapture } from "../diagnostics/appLog";
 import { HelpManualPanel } from "../help/HelpManualPanel";
+import { SettingsPanel } from "../settings/SettingsPanel";
 import { SetupAssistant } from "../setup/SetupAssistant";
 import { ConsoleNav } from "./ConsoleNav";
 import { MeetingLifecyclePanel } from "./MeetingLifecyclePanel";
@@ -9,6 +11,10 @@ import type { ConsoleView } from "./types";
 
 export function DesktopConsole() {
   const [activeView, setActiveView] = useState<ConsoleView>("setup");
+
+  useEffect(() => {
+    installAppLogCapture();
+  }, []);
 
   return (
     <div style={consoleStyles.page}>
@@ -22,6 +28,9 @@ export function DesktopConsole() {
         </section>
         <section hidden={activeView !== "help"}>
           <HelpManualPanel />
+        </section>
+        <section hidden={activeView !== "settings"}>
+          <SettingsPanel />
         </section>
       </main>
     </div>
