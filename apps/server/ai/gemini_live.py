@@ -361,6 +361,7 @@ class GeminiLiveProvider:
                     client,
                     trace_extra=trace_extra,
                     connected_at=connected_at,
+                    provider_segment=segment_index,
                 ):
                     yield utterance
             if segment_state.exhausted:
@@ -470,6 +471,7 @@ async def _stream_session(
     text_client: Any | None = None,
     trace_extra: Mapping[str, object] | None = None,
     connected_at: float | None = None,
+    provider_segment: int = 1,
 ) -> AsyncIterator[TranslatedUtterance]:
     seq = 0
     current_seq = 0
@@ -644,6 +646,7 @@ async def _stream_session(
                                 started_at=started_at,
                                 ended_at=ended_at,
                                 is_final=False,
+                                provider_segment=provider_segment,
                             )
                 output_emitted = False
                 if _has_subtitle_text(extracted.output_text):
@@ -684,6 +687,7 @@ async def _stream_session(
                         started_at=started_at,
                         ended_at=ended_at,
                         is_final=extracted.turn_complete,
+                        provider_segment=provider_segment,
                     )
                     output_emitted = True
                 final_text_ko = text_ko or partial_text_ko
@@ -713,6 +717,7 @@ async def _stream_session(
                             started_at=started_at,
                             ended_at=ended_at,
                             is_final=True,
+                            provider_segment=provider_segment,
                         )
                     current_seq = 0
                     text_en = ""

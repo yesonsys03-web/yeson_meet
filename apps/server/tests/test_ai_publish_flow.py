@@ -31,6 +31,7 @@ def test_ai_sequence_normalizer_offsets_restarted_provider_sequences() -> None:
         started_at=now,
         ended_at=now,
         is_final=False,
+        provider_segment=1,
     )
     first_final = TranslatedUtterance(
         seq=1,
@@ -39,6 +40,7 @@ def test_ai_sequence_normalizer_offsets_restarted_provider_sequences() -> None:
         started_at=now,
         ended_at=now,
         is_final=True,
+        provider_segment=1,
     )
     restarted_partial = TranslatedUtterance(
         seq=1,
@@ -47,11 +49,41 @@ def test_ai_sequence_normalizer_offsets_restarted_provider_sequences() -> None:
         started_at=now,
         ended_at=now,
         is_final=False,
+        provider_segment=2,
     )
 
     assert normalizer.normalize(first_partial).seq == 1
     assert normalizer.normalize(first_final).seq == 1
     assert normalizer.normalize(restarted_partial).seq == 2
+
+
+def test_ai_sequence_normalizer_resets_across_partial_only_cycle() -> None:
+    """이전 segment가 final 없이 partial만으로 끊긴 뒤 새 segment의 seq=1이
+    이전 매핑을 재사용하지 않아야 한다 (덮어쓰기 collision 회귀 가드)."""
+    normalizer = AISequenceNormalizer()
+    now = datetime.now(timezone.utc)
+    seg1_partial = TranslatedUtterance(
+        seq=1,
+        text_en="First", text_ko="첫 번째",
+        started_at=now, ended_at=now,
+        is_final=False, provider_segment=1,
+    )
+    seg1_revision = TranslatedUtterance(
+        seq=1,
+        text_en="First revised", text_ko="첫 번째 개정",
+        started_at=now, ended_at=now,
+        is_final=False, provider_segment=1,
+    )
+    seg2_partial = TranslatedUtterance(
+        seq=1,
+        text_en="Second", text_ko="두 번째",
+        started_at=now, ended_at=now,
+        is_final=False, provider_segment=2,
+    )
+
+    assert normalizer.normalize(seg1_partial).seq == 1
+    assert normalizer.normalize(seg1_revision).seq == 1
+    assert normalizer.normalize(seg2_partial).seq == 2
 
 
 def test_ai_sequence_normalizer_starts_after_persisted_history() -> None:
@@ -66,6 +98,7 @@ def test_ai_sequence_normalizer_starts_after_persisted_history() -> None:
             started_at=now,
             ended_at=now,
             is_final=False,
+            provider_segment=1,
         )
     )
 

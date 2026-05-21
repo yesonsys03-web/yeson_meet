@@ -19,6 +19,9 @@ class TranslatedUtterance:
     ended_at: datetime
     is_final: bool = False
     speaker: str | None = None
+    # 같은 provider 세션 내 monotonically 증가하는 segment 번호. 재접속/cycle 시
+    # 증가하므로 downstream에서 segment 경계를 식별할 수 있다 (예: 시퀀스 normalizer).
+    provider_segment: int = 1
 # === ANCHOR: PROVIDERS_TRANSLATEDUTTERANCE_END ===
 
 

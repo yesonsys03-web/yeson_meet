@@ -50,28 +50,31 @@ logger = logging.getLogger(__name__)
 
 
 class AISequenceNormalizer:
-    """Keep provider subtitle seq values monotonic across Live reconnects."""
+    """Keep provider subtitle seq values monotonic across Live reconnects.
+
+    Provider yields seq starting from 1 within each segment, and `provider_segment`
+    increments on each reconnect/cycle. We detect a segment boundary by watching
+    `provider_segment` change — that's also when partial-only segments correctly
+    bump the offset (the previous heuristic missed partial-cut-off cycles).
+    """
 
     def __init__(self, initial_offset: int = 0) -> None:
         self._offset = initial_offset
-        self._last_provider_seq = 0
         self._last_assigned_seq = initial_offset
-        self._last_assigned_final = False
+        self._last_segment = 0
         self._provider_to_assigned: dict[int, int] = {}
 
     def normalize(self, utterance: TranslatedUtterance) -> TranslatedUtterance:
-        if utterance.seq <= self._last_provider_seq and self._last_assigned_final:
+        if utterance.provider_segment != self._last_segment:
             self._offset = self._last_assigned_seq
-            self._last_provider_seq = 0
             self._provider_to_assigned.clear()
+            self._last_segment = utterance.provider_segment
 
         assigned_seq = self._provider_to_assigned.setdefault(
             utterance.seq,
             self._offset + utterance.seq,
         )
-        self._last_provider_seq = max(self._last_provider_seq, utterance.seq)
         self._last_assigned_seq = max(self._last_assigned_seq, assigned_seq)
-        self._last_assigned_final = utterance.is_final
         if assigned_seq == utterance.seq:
             return utterance
         return replace(utterance, seq=assigned_seq)
