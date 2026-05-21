@@ -553,6 +553,17 @@ async def _stream_session(
     partial_input_snapshot: str = ""
     partial_target_seq: int = 0
     partial_started_log_at: float = 0.0
+    # Q-1: incremental partial — when the in-flight call was fired with prev_en
+    # anchor, the model only outputs the Korean delta. We concatenate that with
+    # the captured prev_ko at fire time to get the full Korean.
+    partial_was_incremental: bool = False
+    partial_prev_ko_anchor: str = ""
+    # Q-2': follow-up queue. When partial_task is in flight and new input_text
+    # arrives, we don't fire a second partial concurrently (cost) but remember
+    # the latest text. As soon as the in-flight one completes we fire a fresh
+    # partial on this text. This keeps cancellation cost at zero while still
+    # always working on the freshest text.
+    pending_partial_text: str = ""
 
     async def send_audio() -> None:
         nonlocal first_audio_sent, speech_observed
@@ -673,9 +684,13 @@ async def _stream_session(
                     snapshot_text_en = partial_input_snapshot
                     target_seq = partial_target_seq
                     started_log_at = partial_started_log_at
+                    was_incremental = partial_was_incremental
+                    prev_ko_anchor_snapshot = partial_prev_ko_anchor
                     partial_task = None
+                    partial_was_incremental = False
+                    partial_prev_ko_anchor = ""
                     try:
-                        translated = finished_partial.result()
+                        raw_translated = finished_partial.result()
                     except (TimeoutError, asyncio.TimeoutError):
                         logger.warning(
                             "Gemini partial translation timed out",
@@ -686,15 +701,21 @@ async def _stream_session(
                                 ),
                             },
                         )
-                        translated = ""
+                        raw_translated = ""
                     except asyncio.CancelledError:
-                        translated = ""
+                        raw_translated = ""
                     except Exception as error:
                         logger.warning(
                             "Gemini partial translation failed",
                             extra={**trace, "error_type": type(error).__name__},
                         )
-                        translated = ""
+                        raw_translated = ""
+                    # Q-1: incremental 모드면 모델 출력은 delta만 → prev_ko anchor와
+                    # 이어붙여 완전한 한국어 문장으로 구성. full 모드면 그대로 사용.
+                    if was_incremental and raw_translated:
+                        translated = prev_ko_anchor_snapshot + raw_translated
+                    else:
+                        translated = raw_translated
                     if (
                         _has_subtitle_text(translated)
                         and current_seq != 0
@@ -737,6 +758,53 @@ async def _stream_session(
                             is_final=False,
                             provider_segment=provider_segment,
                         )
+                    # Q-2': in-flight 중 쌓아둔 follow-up 텍스트가 있으면 즉시 발사.
+                    # 항상 가장 최신 텍스트에 대한 partial이 다음으로 돌아간다.
+                    if (
+                        pending_partial_text
+                        and pending_partial_text != last_partial_text_en
+                        and _fast_partial_translation_enabled()
+                        and text_client is not None
+                        and _should_emit_partial_translation(
+                            last_partial_text_en, pending_partial_text
+                        )
+                    ):
+                        followup_text = pending_partial_text
+                        pending_partial_text = ""
+                        if current_seq == 0:
+                            seq += 1
+                            current_seq = seq
+                        partial_input_snapshot = followup_text
+                        partial_target_seq = current_seq
+                        partial_started_log_at = time.monotonic()
+                        followup_incremental = bool(
+                            last_partial_text_en
+                            and partial_text_ko
+                            and followup_text.startswith(last_partial_text_en)
+                            and len(followup_text) > len(last_partial_text_en)
+                        )
+                        if followup_incremental:
+                            delta_en = followup_text[len(last_partial_text_en):]
+                            partial_was_incremental = True
+                            partial_prev_ko_anchor = partial_text_ko
+                            followup_coro = _translate_partial_delta(
+                                text_client,
+                                last_partial_text_en,
+                                partial_text_ko,
+                                delta_en,
+                            )
+                        else:
+                            partial_was_incremental = False
+                            partial_prev_ko_anchor = ""
+                            followup_coro = _translate_partial_text(
+                                text_client, followup_text
+                            )
+                        partial_task = asyncio.create_task(
+                            asyncio.wait_for(
+                                followup_coro,
+                                timeout=partial_translation_timeout,
+                            )
+                        )
 
                 if receive_next not in done:
                     continue
@@ -765,28 +833,58 @@ async def _stream_session(
                         )
                     text_en = extracted.input_text
                     # Fire-and-forget partial translation. Only one in flight per
-                    # turn — subsequent input_text updates skip until the previous
-                    # call finishes. This stops the polling feedback loop where
-                    # blocking awaits starved the receive loop after a cycle
-                    # backlog and exploded API spend.
+                    # turn — subsequent input_text updates while in-flight are
+                    # remembered as pending_partial_text and fired immediately
+                    # after completion (Q-2'). This stops the polling feedback
+                    # loop where blocking awaits starved the receive loop and
+                    # exploded API spend, while still always working on the
+                    # freshest text without paying for cancelled calls.
                     if (
                         _fast_partial_translation_enabled()
                         and text_client is not None
-                        and partial_task is None
                         and _should_emit_partial_translation(last_partial_text_en, text_en)
                     ):
-                        if current_seq == 0:
-                            seq += 1
-                            current_seq = seq
-                        partial_input_snapshot = text_en
-                        partial_target_seq = current_seq
-                        partial_started_log_at = time.monotonic()
-                        partial_task = asyncio.create_task(
-                            asyncio.wait_for(
-                                _translate_partial_text(text_client, text_en),
-                                timeout=partial_translation_timeout,
+                        if partial_task is None:
+                            if current_seq == 0:
+                                seq += 1
+                                current_seq = seq
+                            partial_input_snapshot = text_en
+                            partial_target_seq = current_seq
+                            partial_started_log_at = time.monotonic()
+                            # Q-1: incremental when text strictly extends prior
+                            # successful translation — only the delta is sent
+                            # to the model so output token count stays small
+                            # regardless of how much speech has accumulated.
+                            use_incremental = bool(
+                                last_partial_text_en
+                                and partial_text_ko
+                                and text_en.startswith(last_partial_text_en)
+                                and len(text_en) > len(last_partial_text_en)
                             )
-                        )
+                            if use_incremental:
+                                delta_en = text_en[len(last_partial_text_en):]
+                                partial_was_incremental = True
+                                partial_prev_ko_anchor = partial_text_ko
+                                partial_coro = _translate_partial_delta(
+                                    text_client,
+                                    last_partial_text_en,
+                                    partial_text_ko,
+                                    delta_en,
+                                )
+                            else:
+                                partial_was_incremental = False
+                                partial_prev_ko_anchor = ""
+                                partial_coro = _translate_partial_text(text_client, text_en)
+                            partial_task = asyncio.create_task(
+                                asyncio.wait_for(
+                                    partial_coro,
+                                    timeout=partial_translation_timeout,
+                                )
+                            )
+                        else:
+                            # Q-2': in-flight partial이 끝날 때까지 최신 텍스트를
+                            # 기억해뒀다가 완료 직후 자동으로 follow-up fire.
+                            pending_partial_text = text_en
                 output_emitted = False
                 if _has_subtitle_text(extracted.output_text):
                     if not first_output_seen:
@@ -863,6 +961,9 @@ async def _stream_session(
                         with contextlib.suppress(asyncio.CancelledError, Exception):
                             await partial_task
                     partial_task = None
+                    partial_was_incremental = False
+                    partial_prev_ko_anchor = ""
+                    pending_partial_text = ""
                     current_seq = 0
                     text_en = ""
                     text_ko = ""
@@ -953,6 +1054,43 @@ async def _translate_partial_text(text_client: Any, text: str) -> str:
             "subtitle text. Return only Korean. Preserve only common studio terms "
             "such as layout, retake, render, comp, rig, shot, asset.\n\n"
             f"English: {text}"
+        ),
+        config=types.GenerateContentConfig(
+            temperature=0,
+            max_output_tokens=160,
+        ),
+    )
+    translated = getattr(response, "text", "") or ""
+    return translated.strip()
+
+
+async def _translate_partial_delta(
+    text_client: Any,
+    prev_en: str,
+    prev_ko: str,
+    delta_en: str,
+) -> str:
+    """긴 발화에서 발화가 길어질수록 partial latency가 커지는 문제를 완화하기 위한
+    incremental 번역. 이전에 번역된 영어/한국어를 anchor로 주고, 모델에는 새로
+    추가된 영어 조각에 해당하는 한국어 delta만 출력하라고 지시. 출력 토큰이
+    delta 크기에 비례하므로 누적 길이에 무관하게 응답이 작게 유지된다.
+    """
+    from google.genai import types
+
+    response = await text_client.aio.models.generate_content(
+        model=os.environ.get(
+            PARTIAL_TRANSLATION_MODEL_ENV,
+            DEFAULT_PARTIAL_TRANSLATION_MODEL,
+        ),
+        contents=(
+            "You are extending a Korean meeting subtitle in real time. "
+            "Translate ONLY the new English continuation into Korean, so it can be "
+            "appended to the existing Korean subtitle. Do not repeat the earlier "
+            "Korean. Output Korean only. Preserve common studio terms in English: "
+            "layout, retake, render, comp, rig, shot, asset.\n\n"
+            f"Earlier English (already translated, context only): {prev_en}\n"
+            f"Earlier Korean (your previous output): {prev_ko}\n"
+            f"New English continuation to translate: {delta_en}"
         ),
         config=types.GenerateContentConfig(
             temperature=0,

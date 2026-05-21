@@ -998,6 +998,161 @@ async def test_stream_session_does_not_emit_english_only_turn() -> None:
     assert utterances == []
 
 
+async def test_stream_session_uses_incremental_partial_when_text_extends(monkeypatch) -> None:
+    """Q-1: 두 번째 input_text가 이전을 strict extend하면 incremental delta 번역을
+    호출하고, 결과를 prev_ko에 이어붙여 최종 text_ko를 구성해야 한다."""
+    monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_WORDS", "3")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_DELTA_CHARS", "10")
+
+    class IncrementalAwareTextClient:
+        def __init__(self) -> None:
+            self.aio = SimpleNamespace(
+                models=SimpleNamespace(generate_content=self.generate_content)
+            )
+            self.calls: list[dict[str, object]] = []
+
+        async def generate_content(self, **kwargs: object) -> object:
+            self.calls.append(kwargs)
+            contents = str(kwargs["contents"])
+            if "New English continuation to translate:" in contents:
+                return SimpleNamespace(text="라마")
+            return SimpleNamespace(text="가나다")
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(text="Please check the layout"),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(
+                        text="Please check the layout before delivery please"
+                    ),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+
+    text_client = IncrementalAwareTextClient()
+    utterances = [
+        item
+        async for item in _stream_session(
+            FakeSession(),
+            FakeTypes,
+            _empty_audio(),
+            text_client,
+        )
+    ]
+
+    assert len(utterances) == 2
+    assert utterances[0].text_ko == "가나다"
+    # 두 번째 호출은 incremental — prev_ko("가나다") + delta 번역("라마")로 합쳐짐.
+    assert utterances[1].text_ko == "가나다라마"
+    assert "New English continuation to translate:" in str(text_client.calls[1]["contents"])
+
+
+async def test_stream_session_queues_followup_when_partial_in_flight(monkeypatch) -> None:
+    """Q-2': in-flight partial이 끝나기 전에 새 input_text가 도착하면 따로 다시
+    fire하지 않고 pending_partial_text에 기억해뒀다가, 완료 직후 자동으로
+    follow-up partial을 발사해야 한다 (cost 누수 0)."""
+    monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_WORDS", "3")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_DELTA_CHARS", "10")
+
+    release_first = asyncio.Event()
+    finished_first = asyncio.Event()
+
+    class GatedTextClient:
+        def __init__(self) -> None:
+            self.aio = SimpleNamespace(
+                models=SimpleNamespace(generate_content=self.generate_content)
+            )
+            self.calls: list[dict[str, object]] = []
+
+        async def generate_content(self, **kwargs: object) -> object:
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                # 첫 호출은 release_first가 set될 때까지 대기 — in-flight 시간 확보.
+                await release_first.wait()
+                finished_first.set()
+                return SimpleNamespace(text="번역 A")
+            return SimpleNamespace(text="번역 B")
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    second_yielded = asyncio.Event()
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(text="First sentence please now"),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(
+                        text="Different revised sentence completely now"
+                    ),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            second_yielded.set()
+            # 두 번째 yield가 _stream_session에 들어간 시점에서 첫 호출 release.
+            await asyncio.sleep(0.05)
+            release_first.set()
+            # follow-up partial이 완료될 때까지 잠시 기다린 후 종료.
+            await asyncio.sleep(0.05)
+
+    text_client = GatedTextClient()
+    utterances = [
+        item
+        async for item in _stream_session(
+            FakeSession(),
+            FakeTypes,
+            _empty_audio(),
+            text_client,
+        )
+    ]
+
+    # 두 input_text 모두 partial로 emit돼야 함 (첫째: 번역 A, 둘째 follow-up: 번역 B).
+    text_kos = [u.text_ko for u in utterances]
+    assert "번역 A" in text_kos
+    assert "번역 B" in text_kos
+    # text_client는 정확히 두 번 호출됨 — 동시 호출 없음.
+    assert len(text_client.calls) == 2
+
+
 async def test_stream_session_watchdog_breaks_when_no_transcription(monkeypatch) -> None:
     """Speech가 들어갔는데도 Gemini가 input/output을 안 내보내면 watchdog가
     force-cycle하여 깔끔하게 종료해야 한다."""
