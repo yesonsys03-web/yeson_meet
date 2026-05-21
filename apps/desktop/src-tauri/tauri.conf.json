@@ -25,7 +25,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": ["app", "dmg", "nsis", "msi"],
     "icon": ["icons/icon.icns", "icons/icon.ico", "icons/icon.png"],
     "category": "Business",
     "shortDescription": "yeson-meet meeting room client",

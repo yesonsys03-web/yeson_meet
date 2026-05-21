@@ -37,7 +37,8 @@ def find_input_device(name_regex: str, index_override: int | None = None) -> dic
 
     if not matches:
         raise RuntimeError(
-            "BlackHole input not found. "
+            f"Input device matching {name_regex!r} not found. "
+            "macOS는 BlackHole, Windows는 Voicemeeter Output을 기대합니다. "
             "See docs/SETUP_MEETING_PC.md for setup, or set YESON_AUDIO_DEVICE_NAME / "
             "YESON_AUDIO_DEVICE_INDEX env."
         )
