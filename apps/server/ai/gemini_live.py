@@ -62,7 +62,7 @@ DEFAULT_PARTIAL_MIN_DELTA_CHARS = 6
 DEFAULT_PARTIAL_FORCE_CHARS = 90
 DEFAULT_PARTIAL_TRANSLATION_TIMEOUT_MS = 2000
 DEFAULT_RECEIVE_POLL_TIMEOUT_MS = 200
-DEFAULT_RECEIVE_DRAIN_TIMEOUT_MS = 12000
+DEFAULT_RECEIVE_DRAIN_TIMEOUT_MS = 2500
 DEFAULT_SEGMENT_SPEECH_RMS_DBFS_THRESHOLD = -60.0
 logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """You are a real-time meeting assistant for a Korean animation/VFX studio.
@@ -604,6 +604,18 @@ async def _stream_session(
                             and not first_output_seen
                             and not first_utterance_yielded
                         ):
+                            receive_next.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await receive_next
+                            break
+                        if (
+                            first_utterance_yielded
+                            and current_seq == 0
+                            and partial_task is None
+                        ):
+                            # 이미 한 번 이상 yield했고 마지막 turn이 finalized,
+                            # in-flight partial도 없음. 더 기다릴 stragger가 없으므로
+                            # 즉시 cycle 종료해 다음 segment의 backlog 누적을 막는다.
                             receive_next.cancel()
                             with contextlib.suppress(asyncio.CancelledError):
                                 await receive_next
