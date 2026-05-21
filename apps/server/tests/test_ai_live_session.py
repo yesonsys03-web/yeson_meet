@@ -8,7 +8,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from apps.server.ai.live_session import AudioLiveSession
+from apps.server.ai.live_session import (
+    AudioLiveSession,
+    PERMANENT_ERROR_BACKOFF_SECONDS,
+    is_permanent_provider_error,
+)
 from apps.server.ai.providers import TranslatedUtterance
 
 
@@ -122,4 +126,77 @@ async def test_audio_live_session_retries_provider_disconnect() -> None:
 
     assert provider.calls >= 2
     assert emitted[0].text_en == "recovered 640 bytes"
+
+
+def test_is_permanent_provider_error_detects_spending_cap() -> None:
+    err = Exception(
+        "1011 None. Your project has exceeded its monthly spending cap. "
+        "Please go to AI Studio at https://ai.studio/spend"
+    )
+    assert is_permanent_provider_error(err) is True
+
+
+def test_is_permanent_provider_error_detects_quota() -> None:
+    assert is_permanent_provider_error(Exception("RESOURCE_EXHAUSTED: Quota exceeded")) is True
+
+
+def test_is_permanent_provider_error_detects_auth() -> None:
+    assert is_permanent_provider_error(Exception("API key not valid. Please pass a valid API key.")) is True
+    assert is_permanent_provider_error(Exception("Invalid API key supplied")) is True
+
+
+def test_is_permanent_provider_error_skips_transient() -> None:
+    assert is_permanent_provider_error(Exception("1011 None. Internal error encountered.")) is False
+    assert is_permanent_provider_error(ConnectionError("provider disconnected")) is False
+    assert is_permanent_provider_error(TimeoutError("partial translation timed out")) is False
+
+
+class PermanentErrorProvider:
+    """1번째 호출에서 spending cap 에러를 던지는 fake provider."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def stream(
+        self,
+        audio: AsyncIterator[bytes],
+        lang_hint: str,
+    ) -> AsyncIterator[TranslatedUtterance]:
+        self.calls += 1
+        raise Exception(
+            "1011 None. Your project has exceeded its monthly spending cap."
+        )
+        yield  # pragma: no cover — make this an async generator
+
+
+@pytest.mark.asyncio
+async def test_audio_live_session_uses_long_backoff_for_permanent_error(monkeypatch) -> None:
+    sleep_calls: list[float] = []
+    original_sleep = asyncio.sleep
+
+    async def capture_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        # 실제로는 잠시만 양보해서 테스트가 hang 안 되도록.
+        await original_sleep(0)
+
+    from apps.server.ai import live_session as live_session_module
+
+    monkeypatch.setattr(live_session_module.asyncio, "sleep", capture_sleep)
+
+    provider = PermanentErrorProvider()
+    session = AudioLiveSession(
+        provider=provider,
+        on_utterance=lambda u: None,
+        reconnect_delays=(0.5,),
+    )
+    await session.start()
+    # provider가 즉시 raise하므로 _run은 곧바로 sleep 진입.
+    for _ in range(20):
+        if sleep_calls:
+            break
+        await original_sleep(0.01)
+    await session.stop()
+
+    assert sleep_calls, "expected _run to call asyncio.sleep at least once"
+    assert sleep_calls[0] == PERMANENT_ERROR_BACKOFF_SECONDS
 # === ANCHOR: TEST_AI_LIVE_SESSION_END ===

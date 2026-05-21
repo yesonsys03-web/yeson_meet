@@ -13,6 +13,25 @@ logger = logging.getLogger(__name__)
 
 OnUtterance = Callable[[TranslatedUtterance], Awaitable[None] | None]
 DEFAULT_RECONNECT_DELAYS = (0.5, 1.0, 2.0, 5.0)
+# Provider 영구 에러(quota/billing/auth) 시 reconnect 백오프. 짧은 백오프로
+# 무한 재시도하면 비용/quota만 더 소모하므로 5분 단위로 늦춘다.
+PERMANENT_ERROR_BACKOFF_SECONDS = 300.0
+# 영구 에러로 식별할 메시지 부분 문자열 (lowercase 매칭).
+_PERMANENT_ERROR_SIGNATURES: tuple[str, ...] = (
+    "spending cap",
+    "quota",
+    "billing",
+    "permission denied",
+    "invalid api key",
+    "invalid_api_key",
+    "api key not valid",
+)
+
+
+def is_permanent_provider_error(exc: BaseException) -> bool:
+    """provider가 던진 예외가 재시도해도 회복 불가능한 종류인지 판별."""
+    text = str(exc).lower()
+    return any(sig in text for sig in _PERMANENT_ERROR_SIGNATURES)
 
 
 # === ANCHOR: LIVE_SESSION_AUDIOLIVESESSION_START ===
@@ -76,18 +95,34 @@ class AudioLiveSession:
     async def _run(self) -> None:
         failures = 0
         while not self._stopping:
+            permanent = False
             try:
                 emitted = await self._consume_provider_stream()
                 failures = 0 if emitted else failures + 1
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as error:
                 failures += 1
                 if self._stopping:
                     break
-                logger.exception("AI live session provider disconnected")
+                permanent = is_permanent_provider_error(error)
+                if permanent:
+                    logger.error(
+                        "AI live session provider rejected request (permanent)",
+                        extra={
+                            "error_type": type(error).__name__,
+                            "error_message": str(error)[:200],
+                        },
+                    )
+                else:
+                    logger.exception("AI live session provider disconnected")
             if not self._stopping:
-                await asyncio.sleep(self._reconnect_delay(failures))
+                delay = (
+                    PERMANENT_ERROR_BACKOFF_SECONDS
+                    if permanent
+                    else self._reconnect_delay(failures)
+                )
+                await asyncio.sleep(delay)
 
     async def _consume_provider_stream(self) -> bool:
         emitted = False
