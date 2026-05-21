@@ -362,6 +362,12 @@ class GeminiLiveProvider:
     ) -> None:
         self._api_key: str | None = api_key or os.environ.get("GEMINI_API_KEY")
         self._model: str = model or os.environ.get(MODEL_ENV, DEFAULT_MODEL)
+        # Cumulative segment index — `stream()`이 live_session._run의 reconnect
+        # loop에 의해 재호출돼도 누적 증가시킨다. AISequenceNormalizer가
+        # `provider_segment` 변화를 segment 경계로 감지하므로, 매 stream() 호출
+        # 시 reset되면 disconnect→reconnect 흐름에서 seq=1이 옛 매핑에 묶여
+        # 화면 자막이 덮어쓰이는 회귀가 발생한다.
+        self._segment_index = 0
         self._trace_extra = dict(trace_extra or {})
 
     async def stream(
@@ -378,13 +384,13 @@ class GeminiLiveProvider:
         client = genai.Client(api_key=self._api_key)
         config = _build_live_config(types)
         audio_source = audio.__aiter__()
-        segment_index = 0
         segment_max_chunks = _segment_max_chunks()
         segment_hard_max_chunks = _segment_hard_max_chunks()
         segment_silence_chunks = _segment_cycle_silence_chunks()
 
         while True:
-            segment_index += 1
+            self._segment_index += 1
+            segment_index = self._segment_index
             segment_state = AudioSegmentState()
             segment_audio = _bounded_audio_segment(
                 audio_source,
