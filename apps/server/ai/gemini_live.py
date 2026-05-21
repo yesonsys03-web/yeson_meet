@@ -31,6 +31,8 @@ EXPLICIT_VAD_END_SILENCE_MS_ENV = "GEMINI_EXPLICIT_VAD_END_SILENCE_MS"
 EXPLICIT_VAD_MAX_SPEECH_MS_ENV = "GEMINI_EXPLICIT_VAD_MAX_SPEECH_MS"
 GENAI_USE_ENTERPRISE_ENV = "GOOGLE_GENAI_USE_ENTERPRISE"
 SEGMENT_MAX_SPEECH_MS_ENV = "GEMINI_SEGMENT_MAX_SPEECH_MS"
+SEGMENT_HARD_MAX_SPEECH_MS_ENV = "GEMINI_SEGMENT_HARD_MAX_SPEECH_MS"
+SEGMENT_CYCLE_SILENCE_MS_ENV = "GEMINI_SEGMENT_CYCLE_SILENCE_MS"
 FAST_PARTIAL_TRANSLATION_ENABLED_ENV = "GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED"
 PARTIAL_TRANSLATION_MODEL_ENV = "GEMINI_PARTIAL_TRANSLATION_MODEL"
 PARTIAL_MIN_CHARS_ENV = "GEMINI_PARTIAL_MIN_CHARS"
@@ -51,6 +53,8 @@ DEFAULT_EXPLICIT_VAD_RMS_DBFS_THRESHOLD = -50.0
 DEFAULT_EXPLICIT_VAD_END_SILENCE_MS = 320
 DEFAULT_EXPLICIT_VAD_MAX_SPEECH_MS = 2500
 DEFAULT_SEGMENT_MAX_SPEECH_MS = 120000
+DEFAULT_SEGMENT_HARD_MAX_SPEECH_MS = 300000
+DEFAULT_SEGMENT_CYCLE_SILENCE_MS = 400
 DEFAULT_PARTIAL_MIN_CHARS = 12
 DEFAULT_PARTIAL_MIN_WORDS = 2
 DEFAULT_PARTIAL_MIN_DELTA_CHARS = 6
@@ -251,6 +255,20 @@ def _segment_max_chunks() -> int:
     return max(1, math.ceil(segment_ms / INPUT_CHUNK_MS))
 
 
+def _segment_hard_max_chunks() -> int:
+    hard_ms = _int_env(SEGMENT_HARD_MAX_SPEECH_MS_ENV, DEFAULT_SEGMENT_HARD_MAX_SPEECH_MS)
+    if hard_ms <= 0:
+        return 0
+    return max(1, math.ceil(hard_ms / INPUT_CHUNK_MS))
+
+
+def _segment_cycle_silence_chunks() -> int:
+    silence_ms = _int_env(SEGMENT_CYCLE_SILENCE_MS_ENV, DEFAULT_SEGMENT_CYCLE_SILENCE_MS)
+    if silence_ms <= 0:
+        return 0
+    return max(1, math.ceil(silence_ms / INPUT_CHUNK_MS))
+
+
 def _receive_poll_timeout_seconds() -> float:
     return max(1, _int_env(RECEIVE_POLL_TIMEOUT_MS_ENV, DEFAULT_RECEIVE_POLL_TIMEOUT_MS)) / 1000
 
@@ -274,18 +292,40 @@ async def _bounded_audio_segment(
     audio: AsyncIterator[bytes],
     state: AudioSegmentState,
     max_chunks: int,
+    hard_max_chunks: int = 0,
+    silence_chunk_run: int = 0,
 ) -> AsyncIterator[bytes]:
+    """Yield audio chunks until the segment should end.
+
+    - `max_chunks` (soft target): cycle when reached if `silence_chunk_run<=0`,
+      else wait for a silent run of `silence_chunk_run` chunks before cycling.
+      Silence-aware behavior keeps the cycle out of the middle of a long
+      utterance, which otherwise causes a large backlog flush on reconnect.
+    - `hard_max_chunks` (backstop): absolute cap regardless of speech state.
+      0 disables the cap.
+    """
     sent = 0
     speech_threshold = _segment_speech_threshold_dbfs()
-    while max_chunks <= 0 or sent < max_chunks:
+    silence_run = 0
+    while True:
+        if hard_max_chunks > 0 and sent >= hard_max_chunks:
+            return
+        if max_chunks > 0 and sent >= max_chunks:
+            if silence_chunk_run <= 0 or silence_run >= silence_chunk_run:
+                return
         try:
             chunk = await audio.__anext__()
         except StopAsyncIteration:
             state.exhausted = True
             return
         sent += 1
-        if not state.speech_observed and _pcm16le_rms_dbfs(chunk) >= speech_threshold:
-            state.speech_observed = True
+        chunk_dbfs = _pcm16le_rms_dbfs(chunk)
+        if chunk_dbfs >= speech_threshold:
+            silence_run = 0
+            if not state.speech_observed:
+                state.speech_observed = True
+        else:
+            silence_run += 1
         yield chunk
 
 
@@ -330,11 +370,19 @@ class GeminiLiveProvider:
         audio_source = audio.__aiter__()
         segment_index = 0
         segment_max_chunks = _segment_max_chunks()
+        segment_hard_max_chunks = _segment_hard_max_chunks()
+        segment_silence_chunks = _segment_cycle_silence_chunks()
 
         while True:
             segment_index += 1
             segment_state = AudioSegmentState()
-            segment_audio = _bounded_audio_segment(audio_source, segment_state, segment_max_chunks)
+            segment_audio = _bounded_audio_segment(
+                audio_source,
+                segment_state,
+                segment_max_chunks,
+                hard_max_chunks=segment_hard_max_chunks,
+                silence_chunk_run=segment_silence_chunks,
+            )
             trace_extra = {**self._trace_extra, "gemini_segment": segment_index}
             connect_started_at = time.monotonic()
             logger.info(

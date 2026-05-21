@@ -304,6 +304,67 @@ async def _single_chunk(chunk: bytes):
     yield chunk
 
 
+_SILENCE_CHUNK = b"\x00" * 640
+_SPEECH_CHUNK = (12000).to_bytes(2, "little", signed=True) * 320
+
+
+async def _mixed_chunks(*chunks: bytes):
+    for chunk in chunks:
+        yield chunk
+
+
+async def test_bounded_audio_segment_silence_aware_waits_for_silence_run() -> None:
+    # soft target=3, hard=20, silence run required=2.
+    # Stream: 4 speech chunks (passes soft target without silence), then 2 silence chunks.
+    # Expect: stays open through the 4 speech chunks, exits after the 2-chunk silence run.
+    chunks = (_SPEECH_CHUNK, _SPEECH_CHUNK, _SPEECH_CHUNK, _SPEECH_CHUNK,
+              _SILENCE_CHUNK, _SILENCE_CHUNK,
+              _SPEECH_CHUNK)  # last not consumed
+    source = _mixed_chunks(*chunks).__aiter__()
+    state = AudioSegmentState()
+
+    yielded = [
+        chunk async for chunk in _bounded_audio_segment(
+            source, state, max_chunks=3, hard_max_chunks=20, silence_chunk_run=2,
+        )
+    ]
+
+    # Should consume 4 speech + 2 silence = 6 chunks, then cycle.
+    assert len(yielded) == 6
+    assert state.speech_observed is True
+
+
+async def test_bounded_audio_segment_hard_backstop_cuts_continuous_speech() -> None:
+    # Hard backstop=5. All chunks speech, silence run never met.
+    chunks = tuple(_SPEECH_CHUNK for _ in range(10))
+    source = _mixed_chunks(*chunks).__aiter__()
+    state = AudioSegmentState()
+
+    yielded = [
+        chunk async for chunk in _bounded_audio_segment(
+            source, state, max_chunks=3, hard_max_chunks=5, silence_chunk_run=2,
+        )
+    ]
+
+    assert len(yielded) == 5
+    assert state.speech_observed is True
+
+
+async def test_bounded_audio_segment_exits_at_soft_target_when_silence_disabled() -> None:
+    # silence_chunk_run=0 (disabled) preserves legacy hard-cut behavior at soft target.
+    chunks = tuple(_SPEECH_CHUNK for _ in range(10))
+    source = _mixed_chunks(*chunks).__aiter__()
+    state = AudioSegmentState()
+
+    yielded = [
+        chunk async for chunk in _bounded_audio_segment(
+            source, state, max_chunks=4, hard_max_chunks=0, silence_chunk_run=0,
+        )
+    ]
+
+    assert len(yielded) == 4
+
+
 async def test_stream_session_emits_output_transcription_before_turn_complete() -> None:
     class FakeTypes:
         class Blob:
