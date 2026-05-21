@@ -6,13 +6,15 @@ without requiring a live API key or network access.
 """
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import contextlib
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 import math
 import os
 import struct
+import time
 from typing import Any, Literal, TypedDict
 
 from apps.server.ai.providers import TranslatedUtterance
@@ -26,12 +28,19 @@ VAD_SILENCE_DURATION_MS_ENV = "GEMINI_VAD_SILENCE_DURATION_MS"
 EXPLICIT_VAD_ENABLED_ENV = "GEMINI_EXPLICIT_VAD_ENABLED"
 EXPLICIT_VAD_RMS_DBFS_THRESHOLD_ENV = "GEMINI_EXPLICIT_VAD_RMS_DBFS_THRESHOLD"
 EXPLICIT_VAD_END_SILENCE_MS_ENV = "GEMINI_EXPLICIT_VAD_END_SILENCE_MS"
+EXPLICIT_VAD_MAX_SPEECH_MS_ENV = "GEMINI_EXPLICIT_VAD_MAX_SPEECH_MS"
+GENAI_USE_ENTERPRISE_ENV = "GOOGLE_GENAI_USE_ENTERPRISE"
+SEGMENT_MAX_SPEECH_MS_ENV = "GEMINI_SEGMENT_MAX_SPEECH_MS"
 FAST_PARTIAL_TRANSLATION_ENABLED_ENV = "GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED"
 PARTIAL_TRANSLATION_MODEL_ENV = "GEMINI_PARTIAL_TRANSLATION_MODEL"
 PARTIAL_MIN_CHARS_ENV = "GEMINI_PARTIAL_MIN_CHARS"
 PARTIAL_MIN_WORDS_ENV = "GEMINI_PARTIAL_MIN_WORDS"
 PARTIAL_MIN_DELTA_CHARS_ENV = "GEMINI_PARTIAL_MIN_DELTA_CHARS"
 PARTIAL_FORCE_CHARS_ENV = "GEMINI_PARTIAL_FORCE_CHARS"
+PARTIAL_TRANSLATION_TIMEOUT_MS_ENV = "GEMINI_PARTIAL_TRANSLATION_TIMEOUT_MS"
+RECEIVE_POLL_TIMEOUT_MS_ENV = "GEMINI_RECEIVE_POLL_TIMEOUT_MS"
+RECEIVE_DRAIN_TIMEOUT_MS_ENV = "GEMINI_RECEIVE_DRAIN_TIMEOUT_MS"
+SEGMENT_SPEECH_RMS_DBFS_THRESHOLD_ENV = "GEMINI_SEGMENT_SPEECH_RMS_DBFS_THRESHOLD"
 DEFAULT_MODEL = "gemini-3.1-flash-live-preview"
 DEFAULT_PARTIAL_TRANSLATION_MODEL = "gemini-2.5-flash-lite"
 INPUT_SAMPLE_RATE = 16000
@@ -40,10 +49,16 @@ DEFAULT_VAD_PREFIX_PADDING_MS = 120
 DEFAULT_VAD_SILENCE_DURATION_MS = 350
 DEFAULT_EXPLICIT_VAD_RMS_DBFS_THRESHOLD = -50.0
 DEFAULT_EXPLICIT_VAD_END_SILENCE_MS = 320
-DEFAULT_PARTIAL_MIN_CHARS = 16
-DEFAULT_PARTIAL_MIN_WORDS = 3
-DEFAULT_PARTIAL_MIN_DELTA_CHARS = 10
+DEFAULT_EXPLICIT_VAD_MAX_SPEECH_MS = 2500
+DEFAULT_SEGMENT_MAX_SPEECH_MS = 120000
+DEFAULT_PARTIAL_MIN_CHARS = 12
+DEFAULT_PARTIAL_MIN_WORDS = 2
+DEFAULT_PARTIAL_MIN_DELTA_CHARS = 6
 DEFAULT_PARTIAL_FORCE_CHARS = 90
+DEFAULT_PARTIAL_TRANSLATION_TIMEOUT_MS = 2000
+DEFAULT_RECEIVE_POLL_TIMEOUT_MS = 200
+DEFAULT_RECEIVE_DRAIN_TIMEOUT_MS = 12000
+DEFAULT_SEGMENT_SPEECH_RMS_DBFS_THRESHOLD = -60.0
 logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """You are a real-time meeting assistant for a Korean animation/VFX studio.
 
@@ -81,20 +96,33 @@ class LiveUsage:
 
 
 @dataclass
+class AudioSegmentState:
+    exhausted: bool = False
+    speech_observed: bool = False
+
+
+@dataclass
 class ManualVadState:
     threshold_dbfs: float
     end_silence_ms: int
+    max_speech_ms: int
     chunk_ms: int = INPUT_CHUNK_MS
     speech_active: bool = False
     silent_ms: int = 0
+    speech_ms: int = 0
 
-    def observe(self, chunk: bytes) -> Literal["start", "end"] | None:
+    def observe(self, chunk: bytes) -> Literal["start", "end", "restart"] | None:
         is_speech = _pcm16le_rms_dbfs(chunk) >= self.threshold_dbfs
         if is_speech:
             self.silent_ms = 0
             if not self.speech_active:
                 self.speech_active = True
+                self.speech_ms = self.chunk_ms
                 return "start"
+            self.speech_ms += self.chunk_ms
+            if self.max_speech_ms > 0 and self.speech_ms >= self.max_speech_ms:
+                self.speech_ms = self.chunk_ms
+                return "restart"
             return None
 
         if not self.speech_active:
@@ -104,6 +132,7 @@ class ManualVadState:
             return None
         self.speech_active = False
         self.silent_ms = 0
+        self.speech_ms = 0
         return "end"
 
     def finish(self) -> Literal["end"] | None:
@@ -111,6 +140,7 @@ class ManualVadState:
             return None
         self.speech_active = False
         self.silent_ms = 0
+        self.speech_ms = 0
         return "end"
 
 
@@ -210,6 +240,55 @@ def _estimate_usage_cost_usd(usage: LiveUsage) -> float | None:
     return round(prompt_cost + output_cost, 8)
 
 
+def _elapsed_monotonic_ms(start: float, end: float | None = None) -> int:
+    return max(0, round(((end if end is not None else time.monotonic()) - start) * 1000))
+
+
+def _segment_max_chunks() -> int:
+    segment_ms = _int_env(SEGMENT_MAX_SPEECH_MS_ENV, DEFAULT_SEGMENT_MAX_SPEECH_MS)
+    if segment_ms <= 0:
+        return 0
+    return max(1, math.ceil(segment_ms / INPUT_CHUNK_MS))
+
+
+def _receive_poll_timeout_seconds() -> float:
+    return max(1, _int_env(RECEIVE_POLL_TIMEOUT_MS_ENV, DEFAULT_RECEIVE_POLL_TIMEOUT_MS)) / 1000
+
+
+def _partial_translation_timeout_seconds() -> float:
+    return max(1, _int_env(PARTIAL_TRANSLATION_TIMEOUT_MS_ENV, DEFAULT_PARTIAL_TRANSLATION_TIMEOUT_MS)) / 1000
+
+
+def _receive_drain_timeout_seconds() -> float:
+    return max(1, _int_env(RECEIVE_DRAIN_TIMEOUT_MS_ENV, DEFAULT_RECEIVE_DRAIN_TIMEOUT_MS)) / 1000
+
+
+def _segment_speech_threshold_dbfs() -> float:
+    return _float_env(
+        SEGMENT_SPEECH_RMS_DBFS_THRESHOLD_ENV,
+        DEFAULT_SEGMENT_SPEECH_RMS_DBFS_THRESHOLD,
+    )
+
+
+async def _bounded_audio_segment(
+    audio: AsyncIterator[bytes],
+    state: AudioSegmentState,
+    max_chunks: int,
+) -> AsyncIterator[bytes]:
+    sent = 0
+    speech_threshold = _segment_speech_threshold_dbfs()
+    while max_chunks <= 0 or sent < max_chunks:
+        try:
+            chunk = await audio.__anext__()
+        except StopAsyncIteration:
+            state.exhausted = True
+            return
+        sent += 1
+        if not state.speech_observed and _pcm16le_rms_dbfs(chunk) >= speech_threshold:
+            state.speech_observed = True
+        yield chunk
+
+
 def _log_usage_metadata(usage: LiveUsage) -> None:
     logger.info(
         "Gemini usage metadata",
@@ -225,9 +304,15 @@ def _log_usage_metadata(usage: LiveUsage) -> None:
 class GeminiLiveProvider:
     """STT+translation provider backed by Google Gen AI Live API."""
 
-    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        trace_extra: Mapping[str, object] | None = None,
+    ) -> None:
         self._api_key: str | None = api_key or os.environ.get("GEMINI_API_KEY")
         self._model: str = model or os.environ.get(MODEL_ENV, DEFAULT_MODEL)
+        self._trace_extra = dict(trace_extra or {})
 
     async def stream(
         self,
@@ -242,16 +327,50 @@ class GeminiLiveProvider:
 
         client = genai.Client(api_key=self._api_key)
         config = _build_live_config(types)
+        audio_source = audio.__aiter__()
+        segment_index = 0
+        segment_max_chunks = _segment_max_chunks()
 
-        async with client.aio.live.connect(model=self._model, config=config) as session:
-            async for utterance in _stream_session(session, types, audio, client):
-                yield utterance
+        while True:
+            segment_index += 1
+            segment_state = AudioSegmentState()
+            segment_audio = _bounded_audio_segment(audio_source, segment_state, segment_max_chunks)
+            trace_extra = {**self._trace_extra, "gemini_segment": segment_index}
+            connect_started_at = time.monotonic()
+            logger.info(
+                "Gemini Live connect starting",
+                extra={**trace_extra, "gemini_model": self._model},
+            )
+            async with client.aio.live.connect(model=self._model, config=config) as session:
+                connected_at = time.monotonic()
+                logger.info(
+                    "Gemini Live connected",
+                    extra={
+                        **trace_extra,
+                        "gemini_model": self._model,
+                        "gemini_connect_latency_ms": _elapsed_monotonic_ms(
+                            connect_started_at,
+                            connected_at,
+                        ),
+                    },
+                )
+                async for utterance in _stream_session(
+                    session,
+                    types,
+                    segment_audio,
+                    client,
+                    trace_extra=trace_extra,
+                    connected_at=connected_at,
+                ):
+                    yield utterance
+            if segment_state.exhausted:
+                return
 
 
 def _build_live_config(types: Any) -> Any:
     response_modality = os.environ.get(RESPONSE_MODALITY_ENV, "AUDIO").upper()
     modality = types.Modality.TEXT if response_modality == "TEXT" else types.Modality.AUDIO
-    explicit_vad_enabled = _bool_env(EXPLICIT_VAD_ENABLED_ENV, False)
+    explicit_vad_enabled = _explicit_vad_supported()
     config_kwargs: dict[str, Any] = {
         "response_modalities": [modality],
         "system_instruction": types.Content(parts=[types.Part(text=SYSTEM_PROMPT)]),
@@ -280,6 +399,19 @@ def _build_live_config(types: Any) -> Any:
     if explicit_vad_enabled:
         config_kwargs["explicit_vad_signal"] = True
     return types.LiveConnectConfig(**config_kwargs)
+
+
+def _explicit_vad_supported() -> bool:
+    requested = _bool_env(EXPLICIT_VAD_ENABLED_ENV, False)
+    if not requested:
+        return False
+    if _bool_env(GENAI_USE_ENTERPRISE_ENV, False):
+        return True
+    logger.warning(
+        "Gemini explicit VAD disabled: Developer API does not support explicit_vad_signal",
+        extra={"env_name": EXPLICIT_VAD_ENABLED_ENV},
+    )
+    return False
 
 
 def _int_env(name: str, default: int) -> int:
@@ -313,7 +445,7 @@ def _bool_env(name: str, default: bool) -> bool:
 
 
 def _manual_vad_from_env() -> ManualVadState | None:
-    if not _bool_env(EXPLICIT_VAD_ENABLED_ENV, False):
+    if not _explicit_vad_supported():
         return None
     return ManualVadState(
         threshold_dbfs=_float_env(
@@ -324,6 +456,10 @@ def _manual_vad_from_env() -> ManualVadState | None:
             EXPLICIT_VAD_END_SILENCE_MS_ENV,
             DEFAULT_EXPLICIT_VAD_END_SILENCE_MS,
         ),
+        max_speech_ms=_int_env(
+            EXPLICIT_VAD_MAX_SPEECH_MS_ENV,
+            DEFAULT_EXPLICIT_VAD_MAX_SPEECH_MS,
+        ),
     )
 
 
@@ -332,19 +468,36 @@ async def _stream_session(
     types: Any,
     audio: AsyncIterator[bytes],
     text_client: Any | None = None,
+    trace_extra: Mapping[str, object] | None = None,
+    connected_at: float | None = None,
 ) -> AsyncIterator[TranslatedUtterance]:
     seq = 0
     current_seq = 0
     text_en = ""
     text_ko = ""
     last_partial_text_en = ""
+    partial_text_ko = ""
     started_at = datetime.now(timezone.utc)
+    trace = dict(trace_extra or {})
+    first_audio_sent = False
+    first_input_seen = False
+    first_output_seen = False
+    first_partial_translation = False
+    first_utterance_yielded = False
+    speech_observed = False
 
     async def send_audio() -> None:
+        nonlocal first_audio_sent, speech_observed
         manual_vad = _manual_vad_from_env()
+        speech_threshold = _segment_speech_threshold_dbfs()
         async for chunk in audio:
+            if not speech_observed and _pcm16le_rms_dbfs(chunk) >= speech_threshold:
+                speech_observed = True
             signal = manual_vad.observe(chunk) if manual_vad is not None else None
             if signal == "start":
+                await session.send_realtime_input(activity_start=types.ActivityStart())
+            elif signal == "restart":
+                await session.send_realtime_input(activity_end=types.ActivityEnd())
                 await session.send_realtime_input(activity_start=types.ActivityStart())
             await session.send_realtime_input(
                 audio=types.Blob(
@@ -352,6 +505,14 @@ async def _stream_session(
                     mime_type=f"audio/pcm;rate={INPUT_SAMPLE_RATE}",
                 )
             )
+            if not first_audio_sent:
+                first_audio_sent = True
+                extra = {**trace, "gemini_first_audio_bytes": len(chunk)}
+                if connected_at is not None:
+                    extra["gemini_connect_to_first_audio_send_ms"] = _elapsed_monotonic_ms(
+                        connected_at
+                    )
+                logger.info("Gemini Live first audio sent", extra=extra)
             if signal == "end":
                 await session.send_realtime_input(activity_end=types.ActivityEnd())
         if manual_vad is not None and manual_vad.finish() == "end":
@@ -360,72 +521,217 @@ async def _stream_session(
 
     import asyncio
 
+    receive_timeout = _receive_poll_timeout_seconds()
+    receive_drain_timeout = _receive_drain_timeout_seconds()
+    partial_translation_timeout = _partial_translation_timeout_seconds()
     send_task = asyncio.create_task(send_audio())
     try:
-        async for message in session.receive():
-            usage = extract_usage_metadata(message)
-            if usage is not None:
-                _log_usage_metadata(usage)
-            extracted = extract_live_text(message)
-            if extracted.input_text:
-                text_en = extracted.input_text
-                if (
-                    _fast_partial_translation_enabled()
-                    and text_client is not None
-                    and _should_emit_partial_translation(last_partial_text_en, text_en)
-                ):
-                    translated = await _translate_partial_text(text_client, text_en)
-                    if _has_subtitle_text(translated):
-                        last_partial_text_en = text_en
-                        if current_seq == 0:
-                            seq += 1
-                            current_seq = seq
-                        ended_at = datetime.now(timezone.utc)
-                        yield TranslatedUtterance(
-                            seq=current_seq,
-                            text_en=text_en,
-                            text_ko=translated,
-                            started_at=started_at,
-                            ended_at=ended_at,
-                            is_final=False,
+        while True:
+            receive_iter = session.receive().__aiter__()
+            receive_next = asyncio.create_task(receive_iter.__anext__())
+            drain_started_at: float | None = None
+            while True:
+                done, _pending = await asyncio.wait({receive_next}, timeout=receive_timeout)
+                if not done:
+                    if send_task.done():
+                        if (
+                            not speech_observed
+                            and not first_input_seen
+                            and not first_output_seen
+                            and not first_utterance_yielded
+                        ):
+                            receive_next.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await receive_next
+                            break
+                        if drain_started_at is None:
+                            drain_started_at = time.monotonic()
+                        if time.monotonic() - drain_started_at >= receive_drain_timeout:
+                            receive_next.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await receive_next
+                            break
+                    continue
+
+                drain_started_at = None
+                try:
+                    message = receive_next.result()
+                except StopAsyncIteration:
+                    break
+                receive_next = asyncio.create_task(receive_iter.__anext__())
+                usage = extract_usage_metadata(message)
+                if usage is not None:
+                    _log_usage_metadata(usage)
+                extracted = extract_live_text(message)
+                if extracted.input_text:
+                    if not first_input_seen:
+                        first_input_seen = True
+                        logger.info(
+                            "Gemini Live first input transcription",
+                            extra={
+                                **trace,
+                                "gemini_first_input_chars": len(extracted.input_text),
+                                "gemini_connect_to_first_input_ms": _elapsed_monotonic_ms(
+                                    connected_at
+                                ) if connected_at is not None else None,
+                            },
                         )
-            output_emitted = False
-            if _has_subtitle_text(extracted.output_text):
-                text_ko += extracted.output_text
-                if current_seq == 0:
-                    seq += 1
-                    current_seq = seq
-                ended_at = datetime.now(timezone.utc)
-                yield TranslatedUtterance(
-                    seq=current_seq,
-                    text_en=text_en,
-                    text_ko=text_ko,
-                    started_at=started_at,
-                    ended_at=ended_at,
-                    is_final=extracted.turn_complete,
-                )
-                output_emitted = True
-            if extracted.turn_complete and text_ko:
-                if current_seq == 0:
-                    seq += 1
-                    current_seq = seq
-                ended_at = datetime.now(timezone.utc)
-                if not output_emitted:
+                    text_en = extracted.input_text
+                    if (
+                        _fast_partial_translation_enabled()
+                        and text_client is not None
+                        and _should_emit_partial_translation(last_partial_text_en, text_en)
+                    ):
+                        partial_started_at = time.monotonic()
+                        try:
+                            translated = await asyncio.wait_for(
+                                _translate_partial_text(text_client, text_en),
+                                timeout=partial_translation_timeout,
+                            )
+                        except TimeoutError:
+                            logger.warning(
+                                "Gemini partial translation timed out",
+                                extra={
+                                    **trace,
+                                    "gemini_partial_translation_timeout_ms": round(
+                                        partial_translation_timeout * 1000
+                                    ),
+                                },
+                            )
+                            translated = ""
+                        except Exception as error:
+                            logger.warning(
+                                "Gemini partial translation failed",
+                                extra={**trace, "error_type": type(error).__name__},
+                            )
+                            translated = ""
+                        if _has_subtitle_text(translated):
+                            if not first_partial_translation:
+                                first_partial_translation = True
+                                logger.info(
+                                    "Gemini Live first partial translation",
+                                    extra={
+                                        **trace,
+                                        "gemini_partial_translation_latency_ms": _elapsed_monotonic_ms(
+                                            partial_started_at
+                                        ),
+                                        "gemini_first_partial_chars": len(translated),
+                                    },
+                                )
+                            last_partial_text_en = text_en
+                            partial_text_ko = translated
+                            if current_seq == 0:
+                                seq += 1
+                                current_seq = seq
+                            ended_at = datetime.now(timezone.utc)
+                            if not first_utterance_yielded:
+                                first_utterance_yielded = True
+                                logger.info(
+                                    "Gemini Live first subtitle yielded",
+                                    extra={
+                                        **trace,
+                                        "seq": current_seq,
+                                        "is_final": False,
+                                        "gemini_connect_to_first_subtitle_ms": _elapsed_monotonic_ms(
+                                            connected_at
+                                        ) if connected_at is not None else None,
+                                    },
+                                )
+                            yield TranslatedUtterance(
+                                seq=current_seq,
+                                text_en=text_en,
+                                text_ko=translated,
+                                started_at=started_at,
+                                ended_at=ended_at,
+                                is_final=False,
+                            )
+                output_emitted = False
+                if _has_subtitle_text(extracted.output_text):
+                    if not first_output_seen:
+                        first_output_seen = True
+                        logger.info(
+                            "Gemini Live first output transcription",
+                            extra={
+                                **trace,
+                                "gemini_first_output_chars": len(extracted.output_text),
+                                "gemini_connect_to_first_output_ms": _elapsed_monotonic_ms(
+                                    connected_at
+                                ) if connected_at is not None else None,
+                            },
+                        )
+                    text_ko += extracted.output_text
+                    if current_seq == 0:
+                        seq += 1
+                        current_seq = seq
+                    ended_at = datetime.now(timezone.utc)
+                    if not first_utterance_yielded:
+                        first_utterance_yielded = True
+                        logger.info(
+                            "Gemini Live first subtitle yielded",
+                            extra={
+                                **trace,
+                                "seq": current_seq,
+                                "is_final": extracted.turn_complete,
+                                "gemini_connect_to_first_subtitle_ms": _elapsed_monotonic_ms(
+                                    connected_at
+                                ) if connected_at is not None else None,
+                            },
+                        )
                     yield TranslatedUtterance(
                         seq=current_seq,
                         text_en=text_en,
                         text_ko=text_ko,
                         started_at=started_at,
                         ended_at=ended_at,
-                        is_final=True,
+                        is_final=extracted.turn_complete,
                     )
-                current_seq = 0
-                text_en = ""
-                text_ko = ""
-                last_partial_text_en = ""
-                started_at = ended_at
+                    output_emitted = True
+                final_text_ko = text_ko or partial_text_ko
+                if extracted.turn_complete and final_text_ko:
+                    if current_seq == 0:
+                        seq += 1
+                        current_seq = seq
+                    ended_at = datetime.now(timezone.utc)
+                    if not output_emitted:
+                        if not first_utterance_yielded:
+                            first_utterance_yielded = True
+                            logger.info(
+                                "Gemini Live first subtitle yielded",
+                                extra={
+                                    **trace,
+                                    "seq": current_seq,
+                                    "is_final": True,
+                                    "gemini_connect_to_first_subtitle_ms": _elapsed_monotonic_ms(
+                                        connected_at
+                                    ) if connected_at is not None else None,
+                                },
+                            )
+                        yield TranslatedUtterance(
+                            seq=current_seq,
+                            text_en=text_en,
+                            text_ko=final_text_ko,
+                            started_at=started_at,
+                            ended_at=ended_at,
+                            is_final=True,
+                        )
+                    current_seq = 0
+                    text_en = ""
+                    text_ko = ""
+                    last_partial_text_en = ""
+                    partial_text_ko = ""
+                    started_at = ended_at
+            if not receive_next.done():
+                receive_next.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await receive_next
+            if send_task.done():
+                break
+            await asyncio.sleep(0)
+            if send_task.done():
+                break
     finally:
-        _ = send_task.cancel()
+        if not send_task.done():
+            _ = send_task.cancel()
 
 
 def _fast_partial_translation_enabled() -> bool:

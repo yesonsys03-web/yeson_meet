@@ -21,6 +21,31 @@ from apps.server.ws.operator import router as ws_operator_router
 from apps.server.ws.sidecar import router as ws_sidecar_router
 from apps.server.ws.viewer import router as ws_viewer_router
 
+_LOG_RECORD_KEYS = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__)
+
+
+class ExtraFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        message = super().format(record)
+        extras = {
+            key: value
+            for key, value in record.__dict__.items()
+            if key not in _LOG_RECORD_KEYS
+            and key not in {"asctime", "message"}
+            and not key.startswith("_")
+        }
+        if not extras:
+            return message
+        fields = " ".join(f"{key}={value}" for key, value in sorted(extras.items()))
+        return f"{message} {fields}"
+
+
+server_logger = logging.getLogger("apps.server")
+server_logger.setLevel(logging.INFO)
+if not server_logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(ExtraFormatter("%(levelname)s:%(name)s:%(message)s"))
+    server_logger.addHandler(handler)
 logger = logging.getLogger(__name__)
 
 

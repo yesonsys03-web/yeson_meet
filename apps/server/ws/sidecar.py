@@ -12,13 +12,15 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from apps.server.auth.device import hash_api_key
@@ -50,10 +52,10 @@ logger = logging.getLogger(__name__)
 class AISequenceNormalizer:
     """Keep provider subtitle seq values monotonic across Live reconnects."""
 
-    def __init__(self) -> None:
-        self._offset = 0
+    def __init__(self, initial_offset: int = 0) -> None:
+        self._offset = initial_offset
         self._last_provider_seq = 0
-        self._last_assigned_seq = 0
+        self._last_assigned_seq = initial_offset
         self._last_assigned_final = False
         self._provider_to_assigned: dict[int, int] = {}
 
@@ -79,6 +81,10 @@ def _elapsed_ms(start: datetime, end: datetime) -> int:
     return max(0, round((end - start).total_seconds() * 1000))
 
 
+def _elapsed_monotonic_ms(start: float, end: float | None = None) -> int:
+    return max(0, round(((end if end is not None else time.monotonic()) - start) * 1000))
+
+
 def _mark_stale_device_session_ended(
     stale_session: Session,
     replacement_session: Session,
@@ -99,7 +105,7 @@ def _mark_stale_device_session_ended(
     return True
 
 
-def create_ai_provider() -> STTProvider | None:
+def create_ai_provider(trace_extra: Mapping[str, object] | None = None) -> STTProvider | None:
     """Return the configured AI provider, otherwise keep S2 count-only mode."""
     provider_name = os.environ.get("YESON_AI_PROVIDER", "gemini_live").lower()
     if provider_name in {"google_stt_translate", "google_stt", "stt_translate"}:
@@ -111,7 +117,7 @@ def create_ai_provider() -> STTProvider | None:
         return GoogleSttTranslateProvider()
     if not os.environ.get("GEMINI_API_KEY"):
         return None
-    return GeminiLiveProvider()
+    return GeminiLiveProvider(trace_extra=trace_extra)
 
 
 def _handle_control(session_id: UUID, ctrl: ControlMessage) -> None:
@@ -179,6 +185,16 @@ async def _persist_and_publish_ai_utterance(
     )
 
 
+async def _last_utterance_seq(session_pk: int) -> int:
+    async with AsyncSessionLocal() as db:
+        value = (
+            await db.execute(
+                select(func.max(Utterance.seq)).where(Utterance.session_id == session_pk)
+            )
+        ).scalar_one_or_none()
+    return int(value or 0)
+
+
 @router.websocket("/ws/sidecar")
 async def ws_sidecar(ws: WebSocket) -> None:
     key = ws.query_params.get("key")
@@ -240,7 +256,13 @@ async def ws_sidecar(ws: WebSocket) -> None:
 
     await ws.accept()
     ai_session: AudioLiveSession | None = None
-    ai_sequence_normalizer = AISequenceNormalizer()
+    ai_sequence_normalizer = AISequenceNormalizer(
+        initial_offset=await _last_utterance_seq(session_pk)
+    )
+    accepted_at = time.monotonic()
+    first_audio_chunk_at: float | None = None
+    trace_extra: dict[str, object] = {"session_id": str(session_uuid)}
+    logger.info("Sidecar websocket accepted", extra=trace_extra)
     try:
         while True:
             msg = await ws.receive()
@@ -254,8 +276,32 @@ async def ws_sidecar(ws: WebSocket) -> None:
                     control = parse_control_message(text)
                     _handle_control(session_uuid, control)  # in-process log + audio_stats hooks
                     if isinstance(control, AudioStarted) and ai_session is None:
-                        provider = create_ai_provider()
+                        audio_started_at = time.monotonic()
+                        logger.info(
+                            "Sidecar audio stream started",
+                            extra={
+                                **trace_extra,
+                                "sidecar_accept_to_audio_started_ms": _elapsed_monotonic_ms(
+                                    accepted_at,
+                                    audio_started_at,
+                                ),
+                                "audio_sample_rate": control.sample_rate,
+                                "audio_channels": control.channels,
+                            },
+                        )
+                        provider = create_ai_provider(trace_extra=trace_extra)
                         if provider is not None:
+                            ai_start_at = time.monotonic()
+                            logger.info(
+                                "AI live session starting",
+                                extra={
+                                    **trace_extra,
+                                    "audio_started_to_ai_start_ms": _elapsed_monotonic_ms(
+                                        audio_started_at,
+                                        ai_start_at,
+                                    ),
+                                },
+                            )
                             new_ai_session = AudioLiveSession(
                                 provider=provider,
                                 on_utterance=lambda utterance: _persist_and_publish_ai_utterance(
@@ -266,6 +312,17 @@ async def ws_sidecar(ws: WebSocket) -> None:
                             )
                             await new_ai_session.start()
                             ai_session = new_ai_session
+                            logger.info(
+                                "AI live session started",
+                                extra={
+                                    **trace_extra,
+                                    "ai_session_start_latency_ms": _elapsed_monotonic_ms(
+                                        ai_start_at
+                                    ),
+                                },
+                            )
+                        else:
+                            logger.info("AI provider unavailable", extra=trace_extra)
                     elif isinstance(control, AudioStopped) and ai_session is not None:
                         await ai_session.stop()
                         ai_session = None
@@ -310,6 +367,19 @@ async def ws_sidecar(ws: WebSocket) -> None:
                     await ws.close(code=status.WS_1008_POLICY_VIOLATION)
                     return
                 audio_stats.record(session_uuid, len(msg["bytes"]))
+                if first_audio_chunk_at is None:
+                    first_audio_chunk_at = time.monotonic()
+                    logger.info(
+                        "Sidecar first audio chunk received",
+                        extra={
+                            **trace_extra,
+                            "sidecar_accept_to_first_chunk_ms": _elapsed_monotonic_ms(
+                                accepted_at,
+                                first_audio_chunk_at,
+                            ),
+                            "audio_first_chunk_bytes": len(msg["bytes"]),
+                        },
+                    )
                 if ai_session is not None:
                     await ai_session.push_audio(msg["bytes"])
     except WebSocketDisconnect:

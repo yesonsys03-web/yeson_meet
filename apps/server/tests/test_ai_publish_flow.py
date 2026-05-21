@@ -14,7 +14,11 @@ from apps.server.ai.providers import TranslatedUtterance
 from apps.server.auth.password import hash_password
 from apps.server.db.models import AppUser, Session, Utterance
 from apps.server.ws.bus import bus
-from apps.server.ws.sidecar import AISequenceNormalizer, _persist_and_publish_ai_utterance
+from apps.server.ws.sidecar import (
+    AISequenceNormalizer,
+    _last_utterance_seq,
+    _persist_and_publish_ai_utterance,
+)
 
 
 def test_ai_sequence_normalizer_offsets_restarted_provider_sequences() -> None:
@@ -48,6 +52,24 @@ def test_ai_sequence_normalizer_offsets_restarted_provider_sequences() -> None:
     assert normalizer.normalize(first_partial).seq == 1
     assert normalizer.normalize(first_final).seq == 1
     assert normalizer.normalize(restarted_partial).seq == 2
+
+
+def test_ai_sequence_normalizer_starts_after_persisted_history() -> None:
+    normalizer = AISequenceNormalizer(initial_offset=18)
+    now = datetime.now(timezone.utc)
+
+    first_after_reconnect = normalizer.normalize(
+        TranslatedUtterance(
+            seq=1,
+            text_en="After reconnect",
+            text_ko="재연결 이후",
+            started_at=now,
+            ended_at=now,
+            is_final=False,
+        )
+    )
+
+    assert first_after_reconnect.seq == 19
 
 
 @pytest.mark.asyncio
@@ -120,6 +142,71 @@ async def test_persist_and_publish_ai_utterance(
     ).scalar_one()
     assert row.text_en == "Please review the layout."
     assert row.text_ko == "layout을 검토해 주세요."
+
+
+@pytest.mark.asyncio
+async def test_last_utterance_seq_reads_persisted_session_max(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apps.server.ws import sidecar
+
+    class DbSessionContext:
+        async def __aenter__(self) -> AsyncSession:
+            return db_session
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+    monkeypatch.setattr(sidecar, "AsyncSessionLocal", lambda: DbSessionContext())
+
+    admin = AppUser(
+        email="ai-history@test.example",
+        name="AI History",
+        password_hash=hash_password("pw"),
+        role="admin",
+        is_active=True,
+    )
+    db_session.add(admin)
+    await db_session.flush()
+
+    meeting = Session(
+        external_id=uuid4(),
+        owner_user_id=admin.id,
+        title="AI History Test",
+        status="live",
+    )
+    db_session.add(meeting)
+    await db_session.flush()
+
+    now = datetime.now(timezone.utc)
+    db_session.add_all(
+        [
+            Utterance(
+                session_id=meeting.id,
+                seq=3,
+                speaker="spk",
+                text_en="Old",
+                text_ko="이전",
+                started_at=now,
+                ended_at=now,
+                is_final=True,
+            ),
+            Utterance(
+                session_id=meeting.id,
+                seq=9,
+                speaker="spk",
+                text_en="Latest",
+                text_ko="최신",
+                started_at=now,
+                ended_at=now,
+                is_final=True,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    assert await _last_utterance_seq(meeting.id) == 9
 
 
 @pytest.mark.asyncio

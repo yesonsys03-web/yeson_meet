@@ -2,10 +2,13 @@
 """Tests for Gemini Live response parsing helpers."""
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 from apps.server.ai.gemini_live import (
+    AudioSegmentState,
     ManualVadState,
+    _bounded_audio_segment,
     _build_live_config,
     _estimate_usage_cost_usd,
     _has_subtitle_text,
@@ -178,6 +181,15 @@ def test_build_live_config_sets_low_latency_vad(monkeypatch) -> None:
     assert config.realtime_input_config.turn_coverage == "TURN_INCLUDES_ONLY_ACTIVITY"
 
 
+def test_build_live_config_can_use_text_response_modality(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_RESPONSE_MODALITY", "TEXT")
+
+    config = _build_live_config(FakeLiveTypes)
+
+    assert config.response_modalities == ["TEXT"]
+    assert config.output_audio_transcription is None
+
+
 def test_build_live_config_omits_explicit_vad_by_default(monkeypatch) -> None:
     monkeypatch.delenv("GEMINI_EXPLICIT_VAD_ENABLED", raising=False)
 
@@ -198,6 +210,7 @@ def test_build_live_config_can_disable_explicit_vad(monkeypatch) -> None:
 
 def test_build_live_config_can_enable_explicit_vad(monkeypatch) -> None:
     monkeypatch.setenv("GEMINI_EXPLICIT_VAD_ENABLED", "1")
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "1")
 
     config = _build_live_config(FakeLiveTypes)
 
@@ -205,8 +218,18 @@ def test_build_live_config_can_enable_explicit_vad(monkeypatch) -> None:
     assert config.realtime_input_config.automatic_activity_detection.disabled is True
 
 
+def test_build_live_config_falls_back_when_explicit_vad_unsupported(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_EXPLICIT_VAD_ENABLED", "1")
+    monkeypatch.delenv("GOOGLE_GENAI_USE_ENTERPRISE", raising=False)
+
+    config = _build_live_config(FakeLiveTypes)
+
+    assert not hasattr(config, "explicit_vad_signal")
+    assert config.realtime_input_config.automatic_activity_detection.disabled is False
+
+
 def test_manual_vad_emits_activity_boundaries() -> None:
-    vad = ManualVadState(threshold_dbfs=-50.0, end_silence_ms=40)
+    vad = ManualVadState(threshold_dbfs=-50.0, end_silence_ms=40, max_speech_ms=0)
     speech = (12000).to_bytes(2, "little", signed=True) * 320
     silence = (0).to_bytes(2, "little", signed=True) * 320
 
@@ -218,9 +241,67 @@ def test_manual_vad_emits_activity_boundaries() -> None:
     assert vad.observe(silence) is None
 
 
+def test_manual_vad_restarts_long_continuous_speech() -> None:
+    vad = ManualVadState(threshold_dbfs=-50.0, end_silence_ms=320, max_speech_ms=60)
+    speech = (12000).to_bytes(2, "little", signed=True) * 320
+
+    assert vad.observe(speech) == "start"
+    assert vad.observe(speech) is None
+    assert vad.observe(speech) == "restart"
+    assert vad.observe(speech) is None
+
+
 async def _empty_audio():
     if False:
         yield b""
+
+
+async def _audio_chunks(count: int):
+    for index in range(count):
+        yield bytes([index]) * 640
+
+
+async def test_bounded_audio_segment_caps_one_gemini_turn() -> None:
+    source = _audio_chunks(5).__aiter__()
+    state = AudioSegmentState()
+
+    first = [chunk async for chunk in _bounded_audio_segment(source, state, 2)]
+    second = [chunk async for chunk in _bounded_audio_segment(source, state, 2)]
+
+    assert len(first) == 2
+    assert len(second) == 2
+    assert state.exhausted is False
+
+
+async def test_bounded_audio_segment_marks_source_exhausted() -> None:
+    source = _audio_chunks(1).__aiter__()
+    state = AudioSegmentState()
+
+    chunks = [chunk async for chunk in _bounded_audio_segment(source, state, 3)]
+
+    assert len(chunks) == 1
+    assert state.exhausted is True
+
+
+async def test_bounded_audio_segment_marks_speech_observed() -> None:
+    speech = (12000).to_bytes(2, "little", signed=True) * 320
+    source = _audio_chunks(1).__aiter__()
+    state = AudioSegmentState()
+
+    chunks = [chunk async for chunk in _bounded_audio_segment(source, state, 1)]
+
+    assert len(chunks) == 1
+    assert state.speech_observed is False
+
+    state = AudioSegmentState()
+    chunks = [chunk async for chunk in _bounded_audio_segment(_single_chunk(speech), state, 1)]
+
+    assert len(chunks) == 1
+    assert state.speech_observed is True
+
+
+async def _single_chunk(chunk: bytes):
+    yield chunk
 
 
 async def test_stream_session_emits_output_transcription_before_turn_complete() -> None:
@@ -433,11 +514,181 @@ async def test_stream_session_keeps_partial_revisions_on_same_seq(monkeypatch) -
     assert "lighting before delivery" in str(text_client.calls[1]["contents"])
 
 
+async def test_stream_session_finalizes_partial_when_turn_complete_has_placeholder(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_WORDS", "3")
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(text="Please check the layout."),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=None,
+                    output_transcription=SimpleNamespace(text="(자막 없음)"),
+                    model_turn=None,
+                    turn_complete=True,
+                )
+            )
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(
+                        text="Please confirm the lighting before sending the delivery."
+                    ),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+
+    utterances = [
+        item
+        async for item in _stream_session(
+            FakeSession(),
+            FakeTypes,
+            _empty_audio(),
+            FakeTextClient(),
+        )
+    ]
+
+    assert [item.seq for item in utterances] == [1, 1, 2]
+    assert [item.is_final for item in utterances] == [False, True, False]
+    assert utterances[1].text_ko == utterances[0].text_ko
+
+
+async def test_stream_session_continues_when_fast_partial_translation_fails(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_WORDS", "3")
+
+    class FailingTextClient(FakeTextClient):
+        async def generate_content(self, **kwargs: object) -> object:
+            self.calls.append(kwargs)
+            raise RuntimeError("partial translation unavailable")
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(text="Please check the layout."),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=None,
+                    output_transcription=SimpleNamespace(text="layout 확인 부탁드립니다."),
+                    model_turn=None,
+                    turn_complete=True,
+                )
+            )
+
+    text_client = FailingTextClient()
+    utterances = [
+        item
+        async for item in _stream_session(
+            FakeSession(),
+            FakeTypes,
+            _empty_audio(),
+            text_client,
+        )
+    ]
+
+    assert len(utterances) == 1
+    assert utterances[0].text_ko == "layout 확인 부탁드립니다."
+    assert utterances[0].is_final is True
+    assert len(text_client.calls) == 1
+
+
+async def test_stream_session_continues_when_fast_partial_translation_times_out(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_WORDS", "3")
+    monkeypatch.setenv("GEMINI_PARTIAL_TRANSLATION_TIMEOUT_MS", "5")
+
+    class SlowTextClient(FakeTextClient):
+        async def generate_content(self, **kwargs: object) -> object:
+            self.calls.append(kwargs)
+            await asyncio.sleep(0.05)
+            return SimpleNamespace(text="느린 partial")
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(text="Please check the layout."),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=None,
+                    output_transcription=SimpleNamespace(text="layout 확인 부탁드립니다."),
+                    model_turn=None,
+                    turn_complete=True,
+                )
+            )
+
+    text_client = SlowTextClient()
+    utterances = [
+        item
+        async for item in _stream_session(
+            FakeSession(),
+            FakeTypes,
+            _empty_audio(),
+            text_client,
+        )
+    ]
+
+    assert len(utterances) == 1
+    assert utterances[0].text_ko == "layout 확인 부탁드립니다."
+    assert utterances[0].is_final is True
+    assert len(text_client.calls) == 1
+
+
 def test_partial_translation_cadence_skips_tiny_fragments(monkeypatch) -> None:
     monkeypatch.delenv("GEMINI_PARTIAL_MIN_CHARS", raising=False)
     monkeypatch.delenv("GEMINI_PARTIAL_MIN_WORDS", raising=False)
 
-    assert _should_emit_partial_translation("", "Please check") is False
+    assert _should_emit_partial_translation("", "hello") is False
 
 
 def test_partial_translation_cadence_default_emits_short_first_caption(monkeypatch) -> None:
@@ -491,6 +742,135 @@ async def test_stream_session_keeps_long_final_translation_on_same_seq() -> None
     assert utterances[0].text_ko == "첫 번째 문장입니다. 두 번째 문장입니다. 세 번째 문장입니다."
 
 
+async def test_stream_session_reuses_live_connection_across_receive_turns() -> None:
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.receive_calls = 0
+            self.second_turn_seen = asyncio.Event()
+
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            self.receive_calls += 1
+            if self.receive_calls > 2:
+                return
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(text=f"Please check turn {self.receive_calls}."),
+                    output_transcription=SimpleNamespace(text=f"turn {self.receive_calls} 확인"),
+                    model_turn=None,
+                    turn_complete=True,
+                )
+            )
+            if self.receive_calls == 2:
+                self.second_turn_seen.set()
+
+    async def audio_until_second_turn(session: FakeSession):
+        yield b"\x01" * 640
+        await session.second_turn_seen.wait()
+
+    session = FakeSession()
+    utterances = [
+        item async for item in _stream_session(session, FakeTypes, audio_until_second_turn(session))
+    ]
+
+    assert session.receive_calls == 2
+    assert [item.seq for item in utterances] == [1, 2]
+    assert [item.text_ko for item in utterances] == ["turn 1 확인", "turn 2 확인"]
+
+
+async def test_stream_session_exits_silent_segment_after_audio_is_sent(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_RECEIVE_POLL_TIMEOUT_MS", "5")
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class HangingReceive:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Event().wait()
+            raise StopAsyncIteration
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.sent_stream_end = False
+
+        async def send_realtime_input(self, **kwargs: object) -> None:
+            if kwargs.get("audio_stream_end") is True:
+                self.sent_stream_end = True
+
+        def receive(self):
+            return HangingReceive()
+
+    session = FakeSession()
+
+    utterances = [
+        item async for item in _stream_session(session, FakeTypes, _audio_chunks(1))
+    ]
+
+    assert utterances == []
+    assert session.sent_stream_end is True
+
+
+async def test_stream_session_waits_for_speech_segment_after_audio_is_sent(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_RECEIVE_POLL_TIMEOUT_MS", "5")
+    monkeypatch.setenv("GEMINI_RECEIVE_DRAIN_TIMEOUT_MS", "100")
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class DelayedReceive:
+        def __init__(self) -> None:
+            self.sent = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.sent:
+                raise StopAsyncIteration
+            await asyncio.sleep(0.02)
+            self.sent = True
+            return SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(text="Please check the layout."),
+                    output_transcription=SimpleNamespace(text="layout 확인 부탁드립니다."),
+                    model_turn=None,
+                    turn_complete=True,
+                )
+            )
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        def receive(self):
+            return DelayedReceive()
+
+    speech = (12000).to_bytes(2, "little", signed=True) * 320
+    utterances = [
+        item async for item in _stream_session(FakeSession(), FakeTypes, _single_chunk(speech))
+    ]
+
+    assert len(utterances) == 1
+    assert utterances[0].text_ko == "layout 확인 부탁드립니다."
+
+
 async def test_stream_session_skips_fast_partial_for_short_fragment(monkeypatch) -> None:
     monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
 
@@ -507,7 +887,7 @@ async def test_stream_session_skips_fast_partial_for_short_fragment(monkeypatch)
         async def receive(self):
             yield SimpleNamespace(
                 server_content=SimpleNamespace(
-                    input_transcription=SimpleNamespace(text="Please check"),
+                    input_transcription=SimpleNamespace(text="hello"),
                     output_transcription=None,
                     model_turn=None,
                     turn_complete=False,
