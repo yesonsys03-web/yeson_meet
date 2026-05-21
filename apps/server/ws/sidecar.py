@@ -48,6 +48,12 @@ from apps.server.ws.control_messages import (
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# Tracks the currently-active AI live session for each meeting external_id.
+# Used so that when a sidecar reconnects (new ws handler accepts for the same
+# session), the prior handler's still-running AudioLiveSession is stopped
+# before a second one starts emitting in parallel.
+_active_ai_sessions: dict[UUID, "AudioLiveSession"] = {}
+
 
 class AISequenceNormalizer:
     """Keep provider subtitle seq values monotonic across Live reconnects.
@@ -258,6 +264,15 @@ async def ws_sidecar(ws: WebSocket) -> None:
         meeting_started_at = meeting.started_at
 
     await ws.accept()
+    # Stop any AI session left over by a prior sidecar that didn't cleanly
+    # disconnect — prevents two AudioLiveSessions publishing in parallel.
+    stale_ai_session = _active_ai_sessions.pop(session_uuid, None)
+    if stale_ai_session is not None:
+        logger.info(
+            "Stopping stale AI live session before accepting replacement sidecar",
+            extra={"session_id": str(session_uuid)},
+        )
+        await stale_ai_session.stop()
     ai_session: AudioLiveSession | None = None
     ai_sequence_normalizer = AISequenceNormalizer(
         initial_offset=await _last_utterance_seq(session_pk)
@@ -315,6 +330,7 @@ async def ws_sidecar(ws: WebSocket) -> None:
                             )
                             await new_ai_session.start()
                             ai_session = new_ai_session
+                            _active_ai_sessions[session_uuid] = ai_session
                             logger.info(
                                 "AI live session started",
                                 extra={
@@ -327,6 +343,8 @@ async def ws_sidecar(ws: WebSocket) -> None:
                         else:
                             logger.info("AI provider unavailable", extra=trace_extra)
                     elif isinstance(control, AudioStopped) and ai_session is not None:
+                        if _active_ai_sessions.get(session_uuid) is ai_session:
+                            del _active_ai_sessions[session_uuid]
                         await ai_session.stop()
                         ai_session = None
                     continue
@@ -389,6 +407,9 @@ async def ws_sidecar(ws: WebSocket) -> None:
         return
     finally:
         if ai_session is not None:
+            # Only deregister if a later handler hasn't already replaced us.
+            if _active_ai_sessions.get(session_uuid) is ai_session:
+                del _active_ai_sessions[session_uuid]
             await ai_session.stop()
     # NOTE(s4-session-lifecycle): do not audio_stats.discard() here — admin
     # view + tests rely on snapshot surviving sidecar disconnect to show final
