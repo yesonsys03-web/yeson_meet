@@ -595,6 +595,80 @@ async def _stream_session(
     # partial on this text. This keeps cancellation cost at zero while still
     # always working on the freshest text.
     pending_partial_text: str = ""
+    # Streaming partial translation: the driver task pushes each cumulative
+    # text snapshot into this queue as the model emits chunks; the main loop
+    # consumes the queue via partial_chunk_get_task and yields TranslatedUtterance
+    # updates per chunk. A fresh queue is created for each new partial so old,
+    # superseded chunks become unreachable once we rotate to the next partial.
+    partial_stream_queue: asyncio.Queue[str] | None = None
+    partial_chunk_get_task: asyncio.Task[str] | None = None
+
+    def _publish_partial_chunk(chunk_text: str) -> TranslatedUtterance | None:
+        nonlocal first_partial_translation, first_utterance_yielded
+        nonlocal last_partial_text_en, partial_text_ko
+        if partial_was_incremental and chunk_text:
+            translated = partial_prev_ko_anchor + chunk_text
+        else:
+            translated = chunk_text
+        if not (
+            _has_subtitle_text(translated)
+            and current_seq != 0
+            and current_seq == partial_target_seq
+        ):
+            return None
+        if not first_partial_translation:
+            first_partial_translation = True
+            logger.info(
+                "Gemini Live first partial translation",
+                extra={
+                    **trace,
+                    "gemini_partial_translation_latency_ms": _elapsed_monotonic_ms(
+                        partial_started_log_at
+                    ),
+                    "gemini_first_partial_chars": len(translated),
+                    "gemini_partial_was_incremental": partial_was_incremental,
+                },
+            )
+        last_partial_text_en = partial_input_snapshot
+        partial_text_ko = translated
+        ended_at_local = datetime.now(timezone.utc)
+        if not first_utterance_yielded:
+            first_utterance_yielded = True
+            logger.info(
+                "Gemini Live first subtitle yielded",
+                extra={
+                    **trace,
+                    "seq": current_seq,
+                    "is_final": False,
+                    "gemini_connect_to_first_subtitle_ms": _elapsed_monotonic_ms(
+                        connected_at
+                    ) if connected_at is not None else None,
+                },
+            )
+        return TranslatedUtterance(
+            seq=current_seq,
+            text_en=partial_input_snapshot,
+            text_ko=translated,
+            started_at=started_at,
+            ended_at=ended_at_local,
+            is_final=False,
+            provider_segment=provider_segment,
+        )
+
+    def _fire_streaming_partial(
+        coro_iter_factory: Callable[[], AsyncIterator[Any]],
+    ) -> None:
+        nonlocal partial_task, partial_stream_queue
+        partial_stream_queue = asyncio.Queue()
+        partial_task = asyncio.create_task(
+            _drive_streaming_partial(
+                coro_iter_factory,
+                partial_stream_queue,
+                trace=trace,
+                timeout_s=partial_translation_timeout,
+                backoff_s=partial_translation_retry_backoff,
+            )
+        )
 
     async def send_audio() -> None:
         nonlocal first_audio_sent, speech_observed
@@ -646,6 +720,15 @@ async def _stream_session(
                 wait_set: set[asyncio.Task[Any]] = {receive_next}
                 if partial_task is not None:
                     wait_set.add(partial_task)
+                    if (
+                        partial_chunk_get_task is None
+                        and partial_stream_queue is not None
+                    ):
+                        partial_chunk_get_task = asyncio.create_task(
+                            partial_stream_queue.get()
+                        )
+                if partial_chunk_get_task is not None:
+                    wait_set.add(partial_chunk_get_task)
                 done, _pending = await asyncio.wait(
                     wait_set,
                     timeout=receive_timeout,
@@ -711,19 +794,47 @@ async def _stream_session(
 
                 drain_started_at = None
 
-                # Harvest in-flight partial translation if it finished.
+                # Drain in-flight partial translation chunk first — if both
+                # the chunk get and the partial task land in the same wait
+                # cycle, we must not lose the chunk.
+                if (
+                    partial_chunk_get_task is not None
+                    and partial_chunk_get_task in done
+                ):
+                    chunk_text = partial_chunk_get_task.result()
+                    partial_chunk_get_task = None
+                    utterance = _publish_partial_chunk(chunk_text)
+                    if utterance is not None:
+                        yield utterance
                 if partial_task is not None and partial_task in done:
                     finished_partial = partial_task
-                    snapshot_text_en = partial_input_snapshot
-                    target_seq = partial_target_seq
-                    started_log_at = partial_started_log_at
-                    was_incremental = partial_was_incremental
-                    prev_ko_anchor_snapshot = partial_prev_ko_anchor
                     partial_task = None
+                    # On natural completion, drain any tail chunks the driver
+                    # pushed between our last consumption and its exit. On
+                    # cancellation, skip — leftover chunks reflect text the
+                    # cancel-stale path has already declared stale.
+                    if (
+                        not finished_partial.cancelled()
+                        and partial_stream_queue is not None
+                    ):
+                        while True:
+                            try:
+                                tail_chunk = partial_stream_queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                break
+                            utterance = _publish_partial_chunk(tail_chunk)
+                            if utterance is not None:
+                                yield utterance
+                    if partial_chunk_get_task is not None:
+                        partial_chunk_get_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError, Exception):
+                            await partial_chunk_get_task
+                        partial_chunk_get_task = None
+                    partial_stream_queue = None
                     partial_was_incremental = False
                     partial_prev_ko_anchor = ""
                     try:
-                        raw_translated = finished_partial.result()
+                        finished_partial.result()
                     except (TimeoutError, asyncio.TimeoutError):
                         logger.warning(
                             "Gemini partial translation timed out",
@@ -734,62 +845,12 @@ async def _stream_session(
                                 ),
                             },
                         )
-                        raw_translated = ""
                     except asyncio.CancelledError:
-                        raw_translated = ""
+                        pass
                     except Exception as error:
                         logger.warning(
                             "Gemini partial translation failed",
                             extra={**trace, "error_type": type(error).__name__},
-                        )
-                        raw_translated = ""
-                    # Q-1: incremental 모드면 모델 출력은 delta만 → prev_ko anchor와
-                    # 이어붙여 완전한 한국어 문장으로 구성. full 모드면 그대로 사용.
-                    if was_incremental and raw_translated:
-                        translated = prev_ko_anchor_snapshot + raw_translated
-                    else:
-                        translated = raw_translated
-                    if (
-                        _has_subtitle_text(translated)
-                        and current_seq != 0
-                        and current_seq == target_seq
-                    ):
-                        if not first_partial_translation:
-                            first_partial_translation = True
-                            logger.info(
-                                "Gemini Live first partial translation",
-                                extra={
-                                    **trace,
-                                    "gemini_partial_translation_latency_ms": _elapsed_monotonic_ms(
-                                        started_log_at
-                                    ),
-                                    "gemini_first_partial_chars": len(translated),
-                                },
-                            )
-                        last_partial_text_en = snapshot_text_en
-                        partial_text_ko = translated
-                        ended_at = datetime.now(timezone.utc)
-                        if not first_utterance_yielded:
-                            first_utterance_yielded = True
-                            logger.info(
-                                "Gemini Live first subtitle yielded",
-                                extra={
-                                    **trace,
-                                    "seq": current_seq,
-                                    "is_final": False,
-                                    "gemini_connect_to_first_subtitle_ms": _elapsed_monotonic_ms(
-                                        connected_at
-                                    ) if connected_at is not None else None,
-                                },
-                            )
-                        yield TranslatedUtterance(
-                            seq=current_seq,
-                            text_en=snapshot_text_en,
-                            text_ko=translated,
-                            started_at=started_at,
-                            ended_at=ended_at,
-                            is_final=False,
-                            provider_segment=provider_segment,
                         )
                     # Q-2': in-flight 중 쌓아둔 follow-up 텍스트가 있으면 즉시 발사.
                     # 항상 가장 최신 텍스트에 대한 partial이 다음으로 돌아간다.
@@ -820,8 +881,8 @@ async def _stream_session(
                             delta_en = followup_text[len(last_partial_text_en):]
                             partial_was_incremental = True
                             partial_prev_ko_anchor = partial_text_ko
-                            followup_coro_factory = functools.partial(
-                                _translate_partial_delta,
+                            followup_stream_factory = functools.partial(
+                                _translate_partial_delta_stream,
                                 text_client,
                                 last_partial_text_en,
                                 partial_text_ko,
@@ -830,19 +891,12 @@ async def _stream_session(
                         else:
                             partial_was_incremental = False
                             partial_prev_ko_anchor = ""
-                            followup_coro_factory = functools.partial(
-                                _translate_partial_text, text_client, followup_text
+                            followup_stream_factory = functools.partial(
+                                _translate_partial_text_stream,
+                                text_client,
+                                followup_text,
                             )
-                        partial_task = asyncio.create_task(
-                            asyncio.wait_for(
-                                _translate_with_retry(
-                                    followup_coro_factory,
-                                    trace=trace,
-                                    backoff_s=partial_translation_retry_backoff,
-                                ),
-                                timeout=partial_translation_timeout,
-                            )
-                        )
+                        _fire_streaming_partial(followup_stream_factory)
 
                 if receive_next not in done:
                     continue
@@ -903,8 +957,8 @@ async def _stream_session(
                                 delta_en = text_en[len(last_partial_text_en):]
                                 partial_was_incremental = True
                                 partial_prev_ko_anchor = partial_text_ko
-                                partial_coro_factory = functools.partial(
-                                    _translate_partial_delta,
+                                partial_stream_factory = functools.partial(
+                                    _translate_partial_delta_stream,
                                     text_client,
                                     last_partial_text_en,
                                     partial_text_ko,
@@ -913,19 +967,12 @@ async def _stream_session(
                             else:
                                 partial_was_incremental = False
                                 partial_prev_ko_anchor = ""
-                                partial_coro_factory = functools.partial(
-                                    _translate_partial_text, text_client, text_en
+                                partial_stream_factory = functools.partial(
+                                    _translate_partial_text_stream,
+                                    text_client,
+                                    text_en,
                                 )
-                            partial_task = asyncio.create_task(
-                                asyncio.wait_for(
-                                    _translate_with_retry(
-                                        partial_coro_factory,
-                                        trace=trace,
-                                        backoff_s=partial_translation_retry_backoff,
-                                    ),
-                                    timeout=partial_translation_timeout,
-                                )
-                            )
+                            _fire_streaming_partial(partial_stream_factory)
                         else:
                             # Q-2': in-flight partial이 끝날 때까지(혹은 우리가
                             # 아래에서 cancel할 때까지) 최신 텍스트를 기억해뒀다가
@@ -1037,6 +1084,12 @@ async def _stream_session(
                         partial_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError, Exception):
                             await partial_task
+                    if partial_chunk_get_task is not None:
+                        partial_chunk_get_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError, Exception):
+                            await partial_chunk_get_task
+                        partial_chunk_get_task = None
+                    partial_stream_queue = None
                     partial_task = None
                     partial_was_incremental = False
                     partial_prev_ko_anchor = ""
@@ -1061,6 +1114,10 @@ async def _stream_session(
             partial_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await partial_task
+        if partial_chunk_get_task is not None:
+            partial_chunk_get_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await partial_chunk_get_task
         if not send_task.done():
             _ = send_task.cancel()
 
@@ -1178,6 +1235,69 @@ async def _translate_partial_delta(
     return translated.strip()
 
 
+async def _translate_partial_text_stream(
+    text_client: Any, text: str
+) -> AsyncIterator[Any]:
+    """Streaming counterpart of _translate_partial_text. Yields raw response
+    chunks (each .text holds the delta from the model); callers accumulate
+    cumulative text themselves. The first await happens inside the loop
+    because generate_content_stream is an async call that returns the async
+    iterator after the initial round trip.
+    """
+    from google.genai import types
+    stream = await text_client.aio.models.generate_content_stream(
+        model=os.environ.get(
+            PARTIAL_TRANSLATION_MODEL_ENV,
+            DEFAULT_PARTIAL_TRANSLATION_MODEL,
+        ),
+        contents=(
+            "Translate this English meeting transcript fragment into concise Korean "
+            "subtitle text. Return only Korean. Preserve only common studio terms "
+            "such as layout, retake, render, comp, rig, shot, asset.\n\n"
+            f"English: {text}"
+        ),
+        config=types.GenerateContentConfig(
+            temperature=0,
+            max_output_tokens=160,
+        ),
+    )
+    async for chunk in stream:
+        yield chunk
+
+
+async def _translate_partial_delta_stream(
+    text_client: Any,
+    prev_en: str,
+    prev_ko: str,
+    delta_en: str,
+) -> AsyncIterator[Any]:
+    """Streaming counterpart of _translate_partial_delta — same incremental
+    contract (model outputs Korean delta only), just chunk-by-chunk."""
+    from google.genai import types
+    stream = await text_client.aio.models.generate_content_stream(
+        model=os.environ.get(
+            PARTIAL_TRANSLATION_MODEL_ENV,
+            DEFAULT_PARTIAL_TRANSLATION_MODEL,
+        ),
+        contents=(
+            "You are extending a Korean meeting subtitle in real time. "
+            "Translate ONLY the new English continuation into Korean, so it can be "
+            "appended to the existing Korean subtitle. Do not repeat the earlier "
+            "Korean. Output Korean only. Preserve common studio terms in English: "
+            "layout, retake, render, comp, rig, shot, asset.\n\n"
+            f"Earlier English (already translated, context only): {prev_en}\n"
+            f"Earlier Korean (your previous output): {prev_ko}\n"
+            f"New English continuation to translate: {delta_en}"
+        ),
+        config=types.GenerateContentConfig(
+            temperature=0,
+            max_output_tokens=160,
+        ),
+    )
+    async for chunk in stream:
+        yield chunk
+
+
 def _is_transient_server_error(exc: BaseException) -> bool:
     """Match Gemini 5xx ServerError so the retry helper can target it without
     sweeping up unrelated exceptions (RuntimeError from fakes, permission
@@ -1222,6 +1342,69 @@ async def _translate_with_retry(
                 raise
             logger.info(
                 "Gemini partial translation retrying",
+                extra={
+                    **trace,
+                    "error_type": type(error).__name__,
+                    "attempt": attempt,
+                    "max_attempts": attempts,
+                    "backoff_ms": round(backoff_s * 1000),
+                },
+            )
+            await asyncio.sleep(backoff_s)
+    assert last_error is not None
+    raise last_error
+
+
+async def _drive_streaming_partial(
+    coro_iter_factory: Callable[[], AsyncIterator[Any]],
+    queue: asyncio.Queue[str],
+    *,
+    trace: Mapping[str, Any],
+    timeout_s: float,
+    backoff_s: float,
+    attempts: int = 2,
+) -> None:
+    """Consume a streaming partial-translation async generator and push each
+    cumulative text snapshot to queue as it grows. Completion is signalled by
+    this task itself transitioning to done; main loop drains any final queue
+    items and inspects task.result() / exception. Transient 5xx ServerError
+    triggers one retry (same backoff as the non-streaming retry); cancellation,
+    timeout, permanent errors, and unrelated exceptions are NOT retried.
+    Total wall-time is bounded by timeout_s — once exceeded, raises
+    asyncio.TimeoutError without forcing the inner stream to finish.
+    """
+    deadline = time.monotonic() + timeout_s
+    last_error: BaseException | None = None
+    for attempt in range(1, attempts + 1):
+        accumulated_parts: list[str] = []
+        try:
+            if time.monotonic() >= deadline:
+                raise asyncio.TimeoutError(
+                    "partial translation deadline exceeded before stream start"
+                )
+            stream_iter = coro_iter_factory()
+            async for chunk in stream_iter:
+                if time.monotonic() >= deadline:
+                    raise asyncio.TimeoutError(
+                        "partial translation deadline exceeded during stream"
+                    )
+                text = getattr(chunk, "text", "") or ""
+                if text:
+                    accumulated_parts.append(text)
+                    await queue.put("".join(accumulated_parts))
+            return
+        except (TimeoutError, asyncio.TimeoutError, asyncio.CancelledError):
+            raise
+        except Exception as error:
+            last_error = error
+            if (
+                attempt >= attempts
+                or is_permanent_provider_error(error)
+                or not _is_transient_server_error(error)
+            ):
+                raise
+            logger.info(
+                "Gemini partial translation stream retrying",
                 extra={
                     **trace,
                     "error_type": type(error).__name__,

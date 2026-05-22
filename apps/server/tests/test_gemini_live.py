@@ -64,7 +64,12 @@ class FakeLiveTypes:
 
 class FakeTextClient:
     def __init__(self) -> None:
-        self.aio = SimpleNamespace(models=SimpleNamespace(generate_content=self.generate_content))
+        self.aio = SimpleNamespace(
+            models=SimpleNamespace(
+                generate_content=self.generate_content,
+                generate_content_stream=self.generate_content_stream,
+            )
+        )
         self.calls: list[dict[str, object]] = []
 
     async def generate_content(self, **kwargs: object) -> object:
@@ -72,6 +77,15 @@ class FakeTextClient:
         contents = str(kwargs["contents"])
         source = contents.rsplit("English: ", 1)[-1]
         return SimpleNamespace(text=f"번역:{source}")
+
+    async def generate_content_stream(self, **kwargs: object) -> object:
+        # Backwards-compatible single-chunk stream: production code now uses
+        # the streaming API, but existing tests stay correct because we wrap
+        # the same generate_content response as one chunk.
+        async def _stream():
+            response = await self.generate_content(**kwargs)
+            yield response
+        return _stream()
 
 
 def test_extract_live_text_reads_input_transcription_and_model_text() -> None:
@@ -980,6 +994,75 @@ async def test_stream_session_does_not_cancel_when_in_flight_is_fresh(monkeypatc
     assert utterances[-1].text_ko == "layout 확인 부탁드립니다."
 
 
+async def test_stream_session_publishes_each_streamed_chunk(monkeypatch) -> None:
+    """Streaming partial translation publishes per chunk: a model emitting
+    three deltas should produce three TranslatedUtterance updates whose
+    text_ko grows cumulatively (1 char → 4 chars → 9 chars in this fixture)."""
+    monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_WORDS", "3")
+
+    class MultiChunkTextClient(FakeTextClient):
+        async def generate_content_stream(self, **kwargs: object) -> object:
+            self.calls.append(kwargs)
+            async def _stream():
+                for delta in ("레이아웃", " 확인", " 부탁드립니다"):
+                    yield SimpleNamespace(text=delta)
+            return _stream()
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(text="Please check the layout."),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            # Give the streaming driver time to push all chunks before the
+            # turn_complete arrives and tears down the partial.
+            await asyncio.sleep(0.05)
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=None,
+                    output_transcription=SimpleNamespace(text="layout 확인 부탁드립니다."),
+                    model_turn=None,
+                    turn_complete=True,
+                )
+            )
+
+    text_client = MultiChunkTextClient()
+    utterances = [
+        item
+        async for item in _stream_session(
+            FakeSession(),
+            FakeTypes,
+            _empty_audio(),
+            text_client,
+        )
+    ]
+
+    partials = [u for u in utterances if not u.is_final]
+    partial_texts = [u.text_ko for u in partials]
+    # All three cumulative snapshots reach the consumer.
+    assert "레이아웃" in partial_texts
+    assert "레이아웃 확인" in partial_texts
+    assert "레이아웃 확인 부탁드립니다" in partial_texts
+    # Final translation still arrives from the separate Gemini Live output path.
+    assert utterances[-1].text_ko == "layout 확인 부탁드립니다."
+    assert utterances[-1].is_final is True
+
+
 async def test_stream_session_continues_when_fast_partial_translation_times_out(monkeypatch) -> None:
     monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
     monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
@@ -1298,13 +1381,7 @@ async def test_stream_session_uses_incremental_partial_when_text_extends(monkeyp
     monkeypatch.setenv("GEMINI_PARTIAL_MIN_WORDS", "3")
     monkeypatch.setenv("GEMINI_PARTIAL_MIN_DELTA_CHARS", "10")
 
-    class IncrementalAwareTextClient:
-        def __init__(self) -> None:
-            self.aio = SimpleNamespace(
-                models=SimpleNamespace(generate_content=self.generate_content)
-            )
-            self.calls: list[dict[str, object]] = []
-
+    class IncrementalAwareTextClient(FakeTextClient):
         async def generate_content(self, **kwargs: object) -> object:
             self.calls.append(kwargs)
             contents = str(kwargs["contents"])
@@ -1372,13 +1449,7 @@ async def test_stream_session_queues_followup_when_partial_in_flight(monkeypatch
     release_first = asyncio.Event()
     finished_first = asyncio.Event()
 
-    class GatedTextClient:
-        def __init__(self) -> None:
-            self.aio = SimpleNamespace(
-                models=SimpleNamespace(generate_content=self.generate_content)
-            )
-            self.calls: list[dict[str, object]] = []
-
+    class GatedTextClient(FakeTextClient):
         async def generate_content(self, **kwargs: object) -> object:
             self.calls.append(kwargs)
             if len(self.calls) == 1:
