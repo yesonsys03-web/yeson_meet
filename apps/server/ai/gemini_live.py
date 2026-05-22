@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator, Mapping
+import functools
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
@@ -18,6 +19,7 @@ import struct
 import time
 from typing import Any, Literal, TypedDict
 
+from apps.server.ai.live_session import is_permanent_provider_error
 from apps.server.ai.providers import TranslatedUtterance
 
 MODEL_ENV = "GEMINI_LIVE_MODEL"
@@ -42,6 +44,7 @@ PARTIAL_MIN_WORDS_ENV = "GEMINI_PARTIAL_MIN_WORDS"
 PARTIAL_MIN_DELTA_CHARS_ENV = "GEMINI_PARTIAL_MIN_DELTA_CHARS"
 PARTIAL_FORCE_CHARS_ENV = "GEMINI_PARTIAL_FORCE_CHARS"
 PARTIAL_TRANSLATION_TIMEOUT_MS_ENV = "GEMINI_PARTIAL_TRANSLATION_TIMEOUT_MS"
+PARTIAL_TRANSLATION_RETRY_BACKOFF_MS_ENV = "GEMINI_PARTIAL_TRANSLATION_RETRY_BACKOFF_MS"
 RECEIVE_POLL_TIMEOUT_MS_ENV = "GEMINI_RECEIVE_POLL_TIMEOUT_MS"
 RECEIVE_DRAIN_TIMEOUT_MS_ENV = "GEMINI_RECEIVE_DRAIN_TIMEOUT_MS"
 SEGMENT_SPEECH_RMS_DBFS_THRESHOLD_ENV = "GEMINI_SEGMENT_SPEECH_RMS_DBFS_THRESHOLD"
@@ -66,6 +69,7 @@ DEFAULT_PARTIAL_MIN_WORDS = 2
 DEFAULT_PARTIAL_MIN_DELTA_CHARS = 6
 DEFAULT_PARTIAL_FORCE_CHARS = 90
 DEFAULT_PARTIAL_TRANSLATION_TIMEOUT_MS = 3000
+DEFAULT_PARTIAL_TRANSLATION_RETRY_BACKOFF_MS = 50
 DEFAULT_RECEIVE_POLL_TIMEOUT_MS = 200
 DEFAULT_RECEIVE_DRAIN_TIMEOUT_MS = 2500
 DEFAULT_SEGMENT_SPEECH_RMS_DBFS_THRESHOLD = -60.0
@@ -285,6 +289,13 @@ def _receive_poll_timeout_seconds() -> float:
 
 def _partial_translation_timeout_seconds() -> float:
     return max(1, _int_env(PARTIAL_TRANSLATION_TIMEOUT_MS_ENV, DEFAULT_PARTIAL_TRANSLATION_TIMEOUT_MS)) / 1000
+
+
+def _partial_translation_retry_backoff_seconds() -> float:
+    return max(0, _int_env(
+        PARTIAL_TRANSLATION_RETRY_BACKOFF_MS_ENV,
+        DEFAULT_PARTIAL_TRANSLATION_RETRY_BACKOFF_MS,
+    )) / 1000
 
 
 def _receive_drain_timeout_seconds() -> float:
@@ -607,6 +618,7 @@ async def _stream_session(
     receive_timeout = _receive_poll_timeout_seconds()
     receive_drain_timeout = _receive_drain_timeout_seconds()
     partial_translation_timeout = _partial_translation_timeout_seconds()
+    partial_translation_retry_backoff = _partial_translation_retry_backoff_seconds()
     stuck_watchdog_ms = _segment_stuck_watchdog_ms()
     segment_start_at = time.monotonic()
     send_task = asyncio.create_task(send_audio())
@@ -793,7 +805,8 @@ async def _stream_session(
                             delta_en = followup_text[len(last_partial_text_en):]
                             partial_was_incremental = True
                             partial_prev_ko_anchor = partial_text_ko
-                            followup_coro = _translate_partial_delta(
+                            followup_coro_factory = functools.partial(
+                                _translate_partial_delta,
                                 text_client,
                                 last_partial_text_en,
                                 partial_text_ko,
@@ -802,12 +815,16 @@ async def _stream_session(
                         else:
                             partial_was_incremental = False
                             partial_prev_ko_anchor = ""
-                            followup_coro = _translate_partial_text(
-                                text_client, followup_text
+                            followup_coro_factory = functools.partial(
+                                _translate_partial_text, text_client, followup_text
                             )
                         partial_task = asyncio.create_task(
                             asyncio.wait_for(
-                                followup_coro,
+                                _translate_with_retry(
+                                    followup_coro_factory,
+                                    trace=trace,
+                                    backoff_s=partial_translation_retry_backoff,
+                                ),
                                 timeout=partial_translation_timeout,
                             )
                         )
@@ -871,7 +888,8 @@ async def _stream_session(
                                 delta_en = text_en[len(last_partial_text_en):]
                                 partial_was_incremental = True
                                 partial_prev_ko_anchor = partial_text_ko
-                                partial_coro = _translate_partial_delta(
+                                partial_coro_factory = functools.partial(
+                                    _translate_partial_delta,
                                     text_client,
                                     last_partial_text_en,
                                     partial_text_ko,
@@ -880,10 +898,16 @@ async def _stream_session(
                             else:
                                 partial_was_incremental = False
                                 partial_prev_ko_anchor = ""
-                                partial_coro = _translate_partial_text(text_client, text_en)
+                                partial_coro_factory = functools.partial(
+                                    _translate_partial_text, text_client, text_en
+                                )
                             partial_task = asyncio.create_task(
                                 asyncio.wait_for(
-                                    partial_coro,
+                                    _translate_with_retry(
+                                        partial_coro_factory,
+                                        trace=trace,
+                                        backoff_s=partial_translation_retry_backoff,
+                                    ),
                                     timeout=partial_translation_timeout,
                                 )
                             )
@@ -1105,4 +1129,61 @@ async def _translate_partial_delta(
     )
     translated = getattr(response, "text", "") or ""
     return translated.strip()
+
+
+def _is_transient_server_error(exc: BaseException) -> bool:
+    """Match Gemini 5xx ServerError so the retry helper can target it without
+    sweeping up unrelated exceptions (RuntimeError from fakes, permission
+    errors, etc.). Tries the real class first; falls back to a name check so
+    a test using a stand-in class named "ServerError" still hits the retry path.
+    """
+    try:
+        from google.genai.errors import ServerError as GenAIServerError
+        if isinstance(exc, GenAIServerError):
+            return True
+    except ImportError:
+        pass
+    return type(exc).__name__ == "ServerError"
+
+
+async def _translate_with_retry(
+    coro_factory: Callable[[], Awaitable[str]],
+    *,
+    trace: Mapping[str, Any],
+    attempts: int = 2,
+    backoff_s: float = 0.05,
+) -> str:
+    """Retry transient Gemini 5xx ServerErrors once. Observed in production:
+    bursts of ServerError on the same segment, often clearing on a fresh call.
+    Timeouts, cancellations, permanent provider errors (quota/billing/auth),
+    and unrelated exception types are NOT retried — those either won't recover
+    or have already used the wait_for budget.
+    """
+    last_error: BaseException | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return await coro_factory()
+        except (TimeoutError, asyncio.TimeoutError, asyncio.CancelledError):
+            raise
+        except Exception as error:
+            last_error = error
+            if (
+                attempt >= attempts
+                or is_permanent_provider_error(error)
+                or not _is_transient_server_error(error)
+            ):
+                raise
+            logger.info(
+                "Gemini partial translation retrying",
+                extra={
+                    **trace,
+                    "error_type": type(error).__name__,
+                    "attempt": attempt,
+                    "max_attempts": attempts,
+                    "backoff_ms": round(backoff_s * 1000),
+                },
+            )
+            await asyncio.sleep(backoff_s)
+    assert last_error is not None
+    raise last_error
 # === ANCHOR: GEMINI_LIVE_END ===

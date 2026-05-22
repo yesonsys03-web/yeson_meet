@@ -688,6 +688,132 @@ async def test_stream_session_continues_when_fast_partial_translation_fails(monk
     assert len(text_client.calls) == 1
 
 
+async def test_stream_session_retries_partial_translation_on_server_error(monkeypatch) -> None:
+    """Gemini 5xx ServerError on partial translation triggers one quick retry."""
+    monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_WORDS", "3")
+    monkeypatch.setenv("GEMINI_PARTIAL_TRANSLATION_RETRY_BACKOFF_MS", "0")
+
+    # Production code prefers isinstance against google.genai.errors.ServerError
+    # but falls back to a class-name check so this stand-in still hits retry.
+    class ServerError(Exception):
+        pass
+
+    class FlakyTextClient(FakeTextClient):
+        async def generate_content(self, **kwargs: object) -> object:
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                raise ServerError("transient 5xx")
+            return SimpleNamespace(text="레이아웃 확인")
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(text="Please check the layout."),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=None,
+                    output_transcription=SimpleNamespace(text="layout 확인 부탁드립니다."),
+                    model_turn=None,
+                    turn_complete=True,
+                )
+            )
+
+    text_client = FlakyTextClient()
+    utterances = [
+        item
+        async for item in _stream_session(
+            FakeSession(),
+            FakeTypes,
+            _empty_audio(),
+            text_client,
+        )
+    ]
+
+    assert len(text_client.calls) == 2
+    assert utterances[-1].text_ko == "layout 확인 부탁드립니다."
+    assert utterances[-1].is_final is True
+    partials = [u for u in utterances if not u.is_final]
+    assert any(u.text_ko == "레이아웃 확인" for u in partials)
+
+
+async def test_stream_session_drops_partial_when_retry_also_fails(monkeypatch) -> None:
+    """If retry also fails with ServerError, partial is dropped after exactly
+    two attempts and the main loop still delivers the final translation."""
+    monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_WORDS", "3")
+    monkeypatch.setenv("GEMINI_PARTIAL_TRANSLATION_RETRY_BACKOFF_MS", "0")
+
+    class ServerError(Exception):
+        pass
+
+    class AlwaysFailingClient(FakeTextClient):
+        async def generate_content(self, **kwargs: object) -> object:
+            self.calls.append(kwargs)
+            raise ServerError("persistent 5xx")
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(text="Please check the layout."),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=None,
+                    output_transcription=SimpleNamespace(text="layout 확인 부탁드립니다."),
+                    model_turn=None,
+                    turn_complete=True,
+                )
+            )
+
+    text_client = AlwaysFailingClient()
+    utterances = [
+        item
+        async for item in _stream_session(
+            FakeSession(),
+            FakeTypes,
+            _empty_audio(),
+            text_client,
+        )
+    ]
+
+    assert len(text_client.calls) == 2
+    assert len(utterances) == 1
+    assert utterances[0].text_ko == "layout 확인 부탁드립니다."
+    assert utterances[0].is_final is True
+
+
 async def test_stream_session_continues_when_fast_partial_translation_times_out(monkeypatch) -> None:
     monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
     monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
