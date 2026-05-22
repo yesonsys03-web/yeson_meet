@@ -38,6 +38,7 @@ SEGMENT_MAX_SPEECH_MS_ENV = "GEMINI_SEGMENT_MAX_SPEECH_MS"
 SEGMENT_HARD_MAX_SPEECH_MS_ENV = "GEMINI_SEGMENT_HARD_MAX_SPEECH_MS"
 SEGMENT_CYCLE_SILENCE_MS_ENV = "GEMINI_SEGMENT_CYCLE_SILENCE_MS"
 SEGMENT_STUCK_WATCHDOG_MS_ENV = "GEMINI_SEGMENT_STUCK_WATCHDOG_MS"
+SEGMENT_EMPTY_TAIL_CYCLE_MS_ENV = "GEMINI_SEGMENT_EMPTY_TAIL_CYCLE_MS"
 FAST_PARTIAL_TRANSLATION_ENABLED_ENV = "GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED"
 PARTIAL_TRANSLATION_MODEL_ENV = "GEMINI_PARTIAL_TRANSLATION_MODEL"
 PARTIAL_MIN_CHARS_ENV = "GEMINI_PARTIAL_MIN_CHARS"
@@ -66,6 +67,13 @@ DEFAULT_SEGMENT_CYCLE_SILENCE_MS = 400
 # 최대 대기. 시간을 초과하면 force-cycle해서 새 Gemini Live 세션으로 옮긴다.
 # Gemini가 내부적으로 결과를 batching하다가 멈춘 듯한 케이스 회피용.
 DEFAULT_SEGMENT_STUCK_WATCHDOG_MS = 45000
+# Empty-tail cycle: once we've yielded at least one subtitle in this segment,
+# if no further publish happens for this many ms, cycle the Gemini Live
+# session early instead of waiting for the soft/hard cap. Observed in 3.1:
+# Gemini emits one input_transcription batch and goes quiet for the rest of
+# the segment, which left a 10s subtitle gap before next-segment first input.
+# 0 disables the behavior (fall back to cap-only cycling).
+DEFAULT_SEGMENT_EMPTY_TAIL_CYCLE_MS = 3000
 DEFAULT_PARTIAL_MIN_CHARS = 12
 DEFAULT_PARTIAL_MIN_WORDS = 2
 DEFAULT_PARTIAL_MIN_DELTA_CHARS = 6
@@ -299,6 +307,13 @@ def _partial_translation_retry_backoff_seconds() -> float:
     return max(0, _int_env(
         PARTIAL_TRANSLATION_RETRY_BACKOFF_MS_ENV,
         DEFAULT_PARTIAL_TRANSLATION_RETRY_BACKOFF_MS,
+    )) / 1000
+
+
+def _segment_empty_tail_cycle_seconds() -> float:
+    return max(0, _int_env(
+        SEGMENT_EMPTY_TAIL_CYCLE_MS_ENV,
+        DEFAULT_SEGMENT_EMPTY_TAIL_CYCLE_MS,
     )) / 1000
 
 
@@ -710,6 +725,8 @@ async def _stream_session(
     partial_translation_retry_backoff = _partial_translation_retry_backoff_seconds()
     partial_translation_cancel_stale = _partial_translation_cancel_stale_seconds()
     stuck_watchdog_ms = _segment_stuck_watchdog_ms()
+    empty_tail_cycle = _segment_empty_tail_cycle_seconds()
+    last_publish_at: float = 0.0
     segment_start_at = time.monotonic()
     send_task = asyncio.create_task(send_audio())
     try:
@@ -754,6 +771,29 @@ async def _stream_session(
                                 "gemini_segment_stuck_watchdog_ms": stuck_watchdog_ms,
                                 "gemini_segment_elapsed_ms": _elapsed_monotonic_ms(
                                     segment_start_at
+                                ),
+                            },
+                        )
+                        receive_next.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await receive_next
+                        break
+                    if (
+                        empty_tail_cycle > 0
+                        and first_utterance_yielded
+                        and last_publish_at > 0
+                        and partial_task is None
+                        and (time.monotonic() - last_publish_at) >= empty_tail_cycle
+                    ):
+                        logger.info(
+                            "Gemini Live segment empty tail — cycling early",
+                            extra={
+                                **trace,
+                                "empty_tail_elapsed_ms": _elapsed_monotonic_ms(
+                                    last_publish_at
+                                ),
+                                "empty_tail_threshold_ms": round(
+                                    empty_tail_cycle * 1000
                                 ),
                             },
                         )
@@ -806,6 +846,7 @@ async def _stream_session(
                     partial_chunk_get_task = None
                     utterance = _publish_partial_chunk(chunk_text)
                     if utterance is not None:
+                        last_publish_at = time.monotonic()
                         yield utterance
                 if partial_task is not None and partial_task in done:
                     finished_partial = partial_task
@@ -825,6 +866,7 @@ async def _stream_session(
                                 break
                             utterance = _publish_partial_chunk(tail_chunk)
                             if utterance is not None:
+                                last_publish_at = time.monotonic()
                                 yield utterance
                     if partial_chunk_get_task is not None:
                         partial_chunk_get_task.cancel()
@@ -1052,6 +1094,7 @@ async def _stream_session(
                                 seq += 1
                                 current_seq = seq
                                 ended_at = datetime.now(timezone.utc)
+                            last_publish_at = time.monotonic()
                             yield TranslatedUtterance(
                                 seq=current_seq,
                                 text_en=text_en if i == 0 else "",
@@ -1062,6 +1105,7 @@ async def _stream_session(
                                 provider_segment=provider_segment,
                             )
                     else:
+                        last_publish_at = time.monotonic()
                         yield TranslatedUtterance(
                             seq=current_seq,
                             text_en=text_en,
@@ -1098,6 +1142,7 @@ async def _stream_session(
                                 seq += 1
                                 current_seq = seq
                                 ended_at = datetime.now(timezone.utc)
+                            last_publish_at = time.monotonic()
                             yield TranslatedUtterance(
                                 seq=current_seq,
                                 text_en=text_en if i == 0 else "",

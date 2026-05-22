@@ -1186,6 +1186,49 @@ def test_partial_translation_cadence_emits_meaningful_boundary(monkeypatch) -> N
     assert _should_emit_partial_translation("", text) is True
 
 
+async def test_stream_session_cycles_early_on_empty_segment_tail(monkeypatch) -> None:
+    """Once we've published at least one subtitle, if no further utterance
+    arrives within GEMINI_SEGMENT_EMPTY_TAIL_CYCLE_MS the segment cycles
+    early instead of waiting for the soft/hard cap. This eliminates the
+    'one input batch then silence' worst case we saw with Gemini 3.1."""
+    monkeypatch.setenv("GEMINI_SEGMENT_EMPTY_TAIL_CYCLE_MS", "50")
+    monkeypatch.setenv("GEMINI_RECEIVE_POLL_TIMEOUT_MS", "10")
+    monkeypatch.setenv("GEMINI_SEGMENT_STUCK_WATCHDOG_MS", "10000")
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=None,
+                    output_transcription=SimpleNamespace(text="첫 자막"),
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            # Simulate Gemini going silent after the first transcription event —
+            # this is the 3.1 'empty tail' pattern we want to detect.
+            await asyncio.Event().wait()
+
+    utterances = [
+        item async for item in _stream_session(FakeSession(), FakeTypes, _empty_audio())
+    ]
+
+    assert len(utterances) == 1
+    assert utterances[0].text_ko == "첫 자막"
+    # If the empty-tail cycle had not fired, _stream_session would still be
+    # waiting on FakeSession's hung receive — reaching this line proves it
+    # exited.
+
+
 async def test_stream_session_splits_long_final_translation_into_sentence_subtitles() -> None:
     """A turn_complete dump containing several Korean sentences is published
     as one TranslatedUtterance per sentence (each is_final=True, seq bumped
