@@ -4,6 +4,7 @@ version = "0.0.0"
 description = "yeson-meet operator desktop"
 edition = "2021"
 rust-version = "1.77"
+default-run = "yeson-meet-desktop"
 
 [lib]
 name = "yeson_meet_lib"
