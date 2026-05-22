@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import logging
 import math
 import os
+import re
 import struct
 import time
 from typing import Any, Literal, TypedDict
@@ -1041,15 +1042,35 @@ async def _stream_session(
                                 ) if connected_at is not None else None,
                             },
                         )
-                    yield TranslatedUtterance(
-                        seq=current_seq,
-                        text_en=text_en,
-                        text_ko=text_ko,
-                        started_at=started_at,
-                        ended_at=ended_at,
-                        is_final=extracted.turn_complete,
-                        provider_segment=provider_segment,
-                    )
+                    if extracted.turn_complete:
+                        # Split the final Korean into per-sentence subtitles so a
+                        # 5–7 sentence dump arrives as several readable lines
+                        # instead of one wall the operator can't keep up with.
+                        sentences = _split_into_sentences(text_ko) or [text_ko]
+                        for i, sentence in enumerate(sentences):
+                            if i > 0:
+                                seq += 1
+                                current_seq = seq
+                                ended_at = datetime.now(timezone.utc)
+                            yield TranslatedUtterance(
+                                seq=current_seq,
+                                text_en=text_en if i == 0 else "",
+                                text_ko=sentence,
+                                started_at=started_at,
+                                ended_at=ended_at,
+                                is_final=True,
+                                provider_segment=provider_segment,
+                            )
+                    else:
+                        yield TranslatedUtterance(
+                            seq=current_seq,
+                            text_en=text_en,
+                            text_ko=text_ko,
+                            started_at=started_at,
+                            ended_at=ended_at,
+                            is_final=False,
+                            provider_segment=provider_segment,
+                        )
                     output_emitted = True
                 final_text_ko = text_ko or partial_text_ko
                 if extracted.turn_complete and final_text_ko:
@@ -1071,15 +1092,21 @@ async def _stream_session(
                                     ) if connected_at is not None else None,
                                 },
                             )
-                        yield TranslatedUtterance(
-                            seq=current_seq,
-                            text_en=text_en,
-                            text_ko=final_text_ko,
-                            started_at=started_at,
-                            ended_at=ended_at,
-                            is_final=True,
-                            provider_segment=provider_segment,
-                        )
+                        sentences = _split_into_sentences(final_text_ko) or [final_text_ko]
+                        for i, sentence in enumerate(sentences):
+                            if i > 0:
+                                seq += 1
+                                current_seq = seq
+                                ended_at = datetime.now(timezone.utc)
+                            yield TranslatedUtterance(
+                                seq=current_seq,
+                                text_en=text_en if i == 0 else "",
+                                text_ko=sentence,
+                                started_at=started_at,
+                                ended_at=ended_at,
+                                is_final=True,
+                                provider_segment=provider_segment,
+                            )
                     if partial_task is not None and not partial_task.done():
                         partial_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -1236,6 +1263,26 @@ async def _translate_partial_delta_stream(
     )
     async for chunk in stream:
         yield chunk
+
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？…])\s+|(?<=[。！？…])(?=\S)")
+
+
+def _split_into_sentences(text: str) -> list[str]:
+    """Split Korean/English subtitle text into per-sentence fragments so a
+    long turn-final dump can be published as several digestible subtitles
+    instead of one wall of text. Splits only after terminal punctuation
+    followed by whitespace (or directly after a CJK sentence-ender), so
+    in-token periods like 'v1.5' stay intact; English abbreviations such
+    as 'Mr. Kim' do get oversplit and are accepted as a known limitation
+    for Korean-meeting use. Returns the original text as a single-item
+    list when no boundary is found.
+    """
+    cleaned = text.strip()
+    if not cleaned:
+        return []
+    parts = _SENTENCE_SPLIT_RE.split(cleaned)
+    return [part.strip() for part in parts if part and part.strip()]
 
 
 def _is_transient_server_error(exc: BaseException) -> bool:

@@ -14,10 +14,53 @@ from apps.server.ai.gemini_live import (
     _has_subtitle_text,
     _pcm16le_rms_dbfs,
     _should_emit_partial_translation,
+    _split_into_sentences,
     _stream_session,
     extract_live_text,
     extract_usage_metadata,
 )
+
+
+def test_split_into_sentences_english_terminal_punctuation() -> None:
+    assert _split_into_sentences("Hello there. How are you? I'm good!") == [
+        "Hello there.",
+        "How are you?",
+        "I'm good!",
+    ]
+
+
+def test_split_into_sentences_korean_terminal_punctuation() -> None:
+    assert _split_into_sentences("안녕하세요. 오늘 회의 시작합니다. 잘 부탁드립니다.") == [
+        "안녕하세요.",
+        "오늘 회의 시작합니다.",
+        "잘 부탁드립니다.",
+    ]
+
+
+def test_split_into_sentences_returns_single_when_no_boundary() -> None:
+    # Continuous speech without sentence-ending punctuation stays as one chunk
+    # so the caller can fall back to publishing it whole.
+    assert _split_into_sentences("이건 그냥 한 덩어리 텍스트입니다") == [
+        "이건 그냥 한 덩어리 텍스트입니다"
+    ]
+
+
+def test_split_into_sentences_handles_empty_and_whitespace() -> None:
+    assert _split_into_sentences("") == []
+    assert _split_into_sentences("   ") == []
+
+
+def test_split_into_sentences_keeps_decimals_intact() -> None:
+    # "v1.5" stays together because the period inside has no following whitespace.
+    assert _split_into_sentences("Use v1.5 of the API.") == ["Use v1.5 of the API."]
+
+
+def test_split_into_sentences_oversplits_english_abbreviations_known_limit() -> None:
+    """Documented edge case: 'Mr.' followed by a space gets split mid-name
+    because the regex doesn't carry an abbreviation list. Tolerable for our
+    Korean meeting use case where this rarely appears; if it becomes painful
+    in practice we'll switch to a smarter splitter."""
+    assert _split_into_sentences("Mr. Kim agreed.") == ["Mr.", "Kim agreed."]
 
 
 class FakeLiveTypes:
@@ -1143,7 +1186,11 @@ def test_partial_translation_cadence_emits_meaningful_boundary(monkeypatch) -> N
     assert _should_emit_partial_translation("", text) is True
 
 
-async def test_stream_session_keeps_long_final_translation_on_same_seq() -> None:
+async def test_stream_session_splits_long_final_translation_into_sentence_subtitles() -> None:
+    """A turn_complete dump containing several Korean sentences is published
+    as one TranslatedUtterance per sentence (each is_final=True, seq bumped
+    per sentence) so the desktop subtitle UI shows readable chunks instead of
+    a 100+ word wall the operator can't keep up with."""
     class FakeTypes:
         class Blob:
             def __init__(self, data: bytes, mime_type: str) -> None:
@@ -1172,10 +1219,18 @@ async def test_stream_session_keeps_long_final_translation_on_same_seq() -> None
         item async for item in _stream_session(FakeSession(), FakeTypes, _empty_audio())
     ]
 
-    assert len(utterances) == 1
-    assert utterances[0].seq == 1
-    assert utterances[0].is_final is True
-    assert utterances[0].text_ko == "첫 번째 문장입니다. 두 번째 문장입니다. 세 번째 문장입니다."
+    assert [u.text_ko for u in utterances] == [
+        "첫 번째 문장입니다.",
+        "두 번째 문장입니다.",
+        "세 번째 문장입니다.",
+    ]
+    assert [u.seq for u in utterances] == [1, 2, 3]
+    assert all(u.is_final for u in utterances)
+    # English is attached only to the first sentence; later sentences carry
+    # empty text_en because we don't have per-sentence English alignment.
+    assert utterances[0].text_en == "The speaker is talking for a long time."
+    assert utterances[1].text_en == ""
+    assert utterances[2].text_en == ""
 
 
 async def test_stream_session_reuses_live_connection_across_receive_turns() -> None:
