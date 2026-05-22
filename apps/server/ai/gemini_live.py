@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
@@ -1175,66 +1175,6 @@ def _has_subtitle_text(text: str) -> bool:
     }
 
 
-async def _translate_partial_text(text_client: Any, text: str) -> str:
-    from google.genai import types
-
-    response = await text_client.aio.models.generate_content(
-        model=os.environ.get(
-            PARTIAL_TRANSLATION_MODEL_ENV,
-            DEFAULT_PARTIAL_TRANSLATION_MODEL,
-        ),
-        contents=(
-            "Translate this English meeting transcript fragment into concise Korean "
-            "subtitle text. Return only Korean. Preserve only common studio terms "
-            "such as layout, retake, render, comp, rig, shot, asset.\n\n"
-            f"English: {text}"
-        ),
-        config=types.GenerateContentConfig(
-            temperature=0,
-            max_output_tokens=160,
-        ),
-    )
-    translated = getattr(response, "text", "") or ""
-    return translated.strip()
-
-
-async def _translate_partial_delta(
-    text_client: Any,
-    prev_en: str,
-    prev_ko: str,
-    delta_en: str,
-) -> str:
-    """긴 발화에서 발화가 길어질수록 partial latency가 커지는 문제를 완화하기 위한
-    incremental 번역. 이전에 번역된 영어/한국어를 anchor로 주고, 모델에는 새로
-    추가된 영어 조각에 해당하는 한국어 delta만 출력하라고 지시. 출력 토큰이
-    delta 크기에 비례하므로 누적 길이에 무관하게 응답이 작게 유지된다.
-    """
-    from google.genai import types
-
-    response = await text_client.aio.models.generate_content(
-        model=os.environ.get(
-            PARTIAL_TRANSLATION_MODEL_ENV,
-            DEFAULT_PARTIAL_TRANSLATION_MODEL,
-        ),
-        contents=(
-            "You are extending a Korean meeting subtitle in real time. "
-            "Translate ONLY the new English continuation into Korean, so it can be "
-            "appended to the existing Korean subtitle. Do not repeat the earlier "
-            "Korean. Output Korean only. Preserve common studio terms in English: "
-            "layout, retake, render, comp, rig, shot, asset.\n\n"
-            f"Earlier English (already translated, context only): {prev_en}\n"
-            f"Earlier Korean (your previous output): {prev_ko}\n"
-            f"New English continuation to translate: {delta_en}"
-        ),
-        config=types.GenerateContentConfig(
-            temperature=0,
-            max_output_tokens=160,
-        ),
-    )
-    translated = getattr(response, "text", "") or ""
-    return translated.strip()
-
-
 async def _translate_partial_text_stream(
     text_client: Any, text: str
 ) -> AsyncIterator[Any]:
@@ -1311,48 +1251,6 @@ def _is_transient_server_error(exc: BaseException) -> bool:
     except ImportError:
         pass
     return type(exc).__name__ == "ServerError"
-
-
-async def _translate_with_retry(
-    coro_factory: Callable[[], Awaitable[str]],
-    *,
-    trace: Mapping[str, Any],
-    attempts: int = 2,
-    backoff_s: float = 0.05,
-) -> str:
-    """Retry transient Gemini 5xx ServerErrors once. Observed in production:
-    bursts of ServerError on the same segment, often clearing on a fresh call.
-    Timeouts, cancellations, permanent provider errors (quota/billing/auth),
-    and unrelated exception types are NOT retried — those either won't recover
-    or have already used the wait_for budget.
-    """
-    last_error: BaseException | None = None
-    for attempt in range(1, attempts + 1):
-        try:
-            return await coro_factory()
-        except (TimeoutError, asyncio.TimeoutError, asyncio.CancelledError):
-            raise
-        except Exception as error:
-            last_error = error
-            if (
-                attempt >= attempts
-                or is_permanent_provider_error(error)
-                or not _is_transient_server_error(error)
-            ):
-                raise
-            logger.info(
-                "Gemini partial translation retrying",
-                extra={
-                    **trace,
-                    "error_type": type(error).__name__,
-                    "attempt": attempt,
-                    "max_attempts": attempts,
-                    "backoff_ms": round(backoff_s * 1000),
-                },
-            )
-            await asyncio.sleep(backoff_s)
-    assert last_error is not None
-    raise last_error
 
 
 async def _drive_streaming_partial(
