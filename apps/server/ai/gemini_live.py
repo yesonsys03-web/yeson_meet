@@ -45,6 +45,7 @@ PARTIAL_MIN_DELTA_CHARS_ENV = "GEMINI_PARTIAL_MIN_DELTA_CHARS"
 PARTIAL_FORCE_CHARS_ENV = "GEMINI_PARTIAL_FORCE_CHARS"
 PARTIAL_TRANSLATION_TIMEOUT_MS_ENV = "GEMINI_PARTIAL_TRANSLATION_TIMEOUT_MS"
 PARTIAL_TRANSLATION_RETRY_BACKOFF_MS_ENV = "GEMINI_PARTIAL_TRANSLATION_RETRY_BACKOFF_MS"
+PARTIAL_TRANSLATION_CANCEL_STALE_MS_ENV = "GEMINI_PARTIAL_TRANSLATION_CANCEL_STALE_MS"
 RECEIVE_POLL_TIMEOUT_MS_ENV = "GEMINI_RECEIVE_POLL_TIMEOUT_MS"
 RECEIVE_DRAIN_TIMEOUT_MS_ENV = "GEMINI_RECEIVE_DRAIN_TIMEOUT_MS"
 SEGMENT_SPEECH_RMS_DBFS_THRESHOLD_ENV = "GEMINI_SEGMENT_SPEECH_RMS_DBFS_THRESHOLD"
@@ -70,6 +71,8 @@ DEFAULT_PARTIAL_MIN_DELTA_CHARS = 6
 DEFAULT_PARTIAL_FORCE_CHARS = 90
 DEFAULT_PARTIAL_TRANSLATION_TIMEOUT_MS = 3000
 DEFAULT_PARTIAL_TRANSLATION_RETRY_BACKOFF_MS = 50
+DEFAULT_PARTIAL_TRANSLATION_CANCEL_STALE_MS = 600
+_PARTIAL_TRANSLATION_CANCEL_MIN_DELTA_CHARS = 6
 DEFAULT_RECEIVE_POLL_TIMEOUT_MS = 200
 DEFAULT_RECEIVE_DRAIN_TIMEOUT_MS = 2500
 DEFAULT_SEGMENT_SPEECH_RMS_DBFS_THRESHOLD = -60.0
@@ -295,6 +298,17 @@ def _partial_translation_retry_backoff_seconds() -> float:
     return max(0, _int_env(
         PARTIAL_TRANSLATION_RETRY_BACKOFF_MS_ENV,
         DEFAULT_PARTIAL_TRANSLATION_RETRY_BACKOFF_MS,
+    )) / 1000
+
+
+def _partial_translation_cancel_stale_seconds() -> float:
+    """In-flight partial이 이 시간 이상 흐른 상태에서 충분히 다른 새 텍스트가
+    도착하면 in-flight를 cancel하고 새 partial로 빠르게 넘어간다.
+    0이면 cancellation 비활성 (legacy 큐 동작 — in-flight 끝까지 기다림).
+    """
+    return max(0, _int_env(
+        PARTIAL_TRANSLATION_CANCEL_STALE_MS_ENV,
+        DEFAULT_PARTIAL_TRANSLATION_CANCEL_STALE_MS,
     )) / 1000
 
 
@@ -619,6 +633,7 @@ async def _stream_session(
     receive_drain_timeout = _receive_drain_timeout_seconds()
     partial_translation_timeout = _partial_translation_timeout_seconds()
     partial_translation_retry_backoff = _partial_translation_retry_backoff_seconds()
+    partial_translation_cancel_stale = _partial_translation_cancel_stale_seconds()
     stuck_watchdog_ms = _segment_stuck_watchdog_ms()
     segment_start_at = time.monotonic()
     send_task = asyncio.create_task(send_audio())
@@ -912,8 +927,40 @@ async def _stream_session(
                                 )
                             )
                         else:
-                            # Q-2': in-flight partial이 끝날 때까지 최신 텍스트를
-                            # 기억해뒀다가 완료 직후 자동으로 follow-up fire.
+                            # Q-2': in-flight partial이 끝날 때까지(혹은 우리가
+                            # 아래에서 cancel할 때까지) 최신 텍스트를 기억해뒀다가
+                            # 완료 직후 자동으로 follow-up fire.
+                            # In-flight가 stale 임계 이상 오래됐고 새 텍스트의
+                            # delta가 충분하면 cancel — 어차피 곧 덮어씌워질
+                            # 운명이라 기다리는 시간이 낭비됨. 다음 loop iteration
+                            # 에서 partial_task가 done(CancelledError)으로
+                            # 처리되고 follow-up 분기가 pending_partial_text로
+                            # 새 partial을 즉시 발사한다.
+                            if partial_translation_cancel_stale > 0:
+                                in_flight_elapsed_s = (
+                                    time.monotonic() - partial_started_log_at
+                                )
+                                text_delta_chars = (
+                                    len(text_en) - len(partial_input_snapshot)
+                                )
+                                if (
+                                    in_flight_elapsed_s
+                                    >= partial_translation_cancel_stale
+                                    and text_delta_chars
+                                    >= _PARTIAL_TRANSLATION_CANCEL_MIN_DELTA_CHARS
+                                ):
+                                    partial_task.cancel()
+                                    logger.info(
+                                        "Gemini partial translation cancelled — "
+                                        "fresher text superseded in-flight",
+                                        extra={
+                                            **trace,
+                                            "in_flight_elapsed_ms": round(
+                                                in_flight_elapsed_s * 1000
+                                            ),
+                                            "text_delta_chars": text_delta_chars,
+                                        },
+                                    )
                             pending_partial_text = text_en
                 output_emitted = False
                 if _has_subtitle_text(extracted.output_text):

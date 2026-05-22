@@ -814,6 +814,172 @@ async def test_stream_session_drops_partial_when_retry_also_fails(monkeypatch) -
     assert utterances[0].is_final is True
 
 
+async def test_stream_session_cancels_stale_partial_for_fresher_text(monkeypatch) -> None:
+    """In-flight partial that has been running past the stale threshold is
+    cancelled when a sufficiently different text arrives, and the fresher
+    text immediately fires a new partial. The cancelled partial's would-be
+    output is never published."""
+    monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_WORDS", "3")
+    monkeypatch.setenv("GEMINI_PARTIAL_TRANSLATION_CANCEL_STALE_MS", "20")
+    monkeypatch.setenv("GEMINI_PARTIAL_TRANSLATION_TIMEOUT_MS", "5000")
+
+    class SlowTextClient(FakeTextClient):
+        async def generate_content(self, **kwargs: object) -> object:
+            self.calls.append(kwargs)
+            contents_str = str(kwargs["contents"])
+            await asyncio.sleep(0.05)
+            return SimpleNamespace(
+                text="조명까지 확인" if "lighting" in contents_str else "레이아웃 확인"
+            )
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(text="Please check the layout"),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            # Let the in-flight partial age past the 20ms stale threshold.
+            await asyncio.sleep(0.04)
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(
+                        text="Please check the layout and the lighting too"
+                    ),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            # Give the fresh follow-up partial time to complete.
+            await asyncio.sleep(0.15)
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=None,
+                    output_transcription=SimpleNamespace(text="layout 확인 부탁드립니다."),
+                    model_turn=None,
+                    turn_complete=True,
+                )
+            )
+
+    text_client = SlowTextClient()
+    utterances = [
+        item
+        async for item in _stream_session(
+            FakeSession(),
+            FakeTypes,
+            _empty_audio(),
+            text_client,
+        )
+    ]
+
+    # Both calls land at text_client (cancelled call still appended on entry).
+    assert len(text_client.calls) == 2
+    partials = [u for u in utterances if not u.is_final]
+    # Cancelled partial's Korean is never published.
+    assert all("레이아웃" not in u.text_ko for u in partials)
+    # Fresh partial's Korean appears.
+    assert any("조명까지" in u.text_ko for u in partials)
+    # Final still delivered downstream.
+    assert utterances[-1].text_ko == "layout 확인 부탁드립니다."
+    assert utterances[-1].is_final is True
+
+
+async def test_stream_session_does_not_cancel_when_in_flight_is_fresh(monkeypatch) -> None:
+    """If in-flight has barely started, don't cancel — queue the new text and
+    fire follow-up after in-flight completes (legacy behaviour). This guards
+    against cancelling things that would have finished in the next few ms."""
+    monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_WORDS", "3")
+    # 5 seconds stale threshold — in-flight will never be considered stale
+    # within the test's runtime, so cancellation must NOT fire.
+    monkeypatch.setenv("GEMINI_PARTIAL_TRANSLATION_CANCEL_STALE_MS", "5000")
+    monkeypatch.setenv("GEMINI_PARTIAL_TRANSLATION_TIMEOUT_MS", "5000")
+
+    class SlowTextClient(FakeTextClient):
+        async def generate_content(self, **kwargs: object) -> object:
+            self.calls.append(kwargs)
+            contents_str = str(kwargs["contents"])
+            await asyncio.sleep(0.05)
+            return SimpleNamespace(
+                text="조명까지 확인" if "lighting" in contents_str else "레이아웃 확인"
+            )
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(text="Please check the layout"),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            await asyncio.sleep(0.01)
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(
+                        text="Please check the layout and the lighting too"
+                    ),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            await asyncio.sleep(0.2)
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=None,
+                    output_transcription=SimpleNamespace(text="layout 확인 부탁드립니다."),
+                    model_turn=None,
+                    turn_complete=True,
+                )
+            )
+
+    text_client = SlowTextClient()
+    utterances = [
+        item
+        async for item in _stream_session(
+            FakeSession(),
+            FakeTypes,
+            _empty_audio(),
+            text_client,
+        )
+    ]
+
+    # Both calls still happen (queue → follow-up), but cancelled partial's
+    # result was NOT discarded — both partials get published.
+    assert len(text_client.calls) == 2
+    partials = [u for u in utterances if not u.is_final]
+    # In-flight ran to completion; its result is part of the published partials.
+    assert any("레이아웃" in u.text_ko for u in partials)
+    assert utterances[-1].text_ko == "layout 확인 부탁드립니다."
+
+
 async def test_stream_session_continues_when_fast_partial_translation_times_out(monkeypatch) -> None:
     monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
     monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
