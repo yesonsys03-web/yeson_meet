@@ -2,6 +2,10 @@
 
 > MVP-α S2: Intel Mac + BlackHole 와 Windows + Voicemeeter Banana 두 갈래 모두 지원. Windows 자동 라우팅은 yeson-meet-desktop S2~S4 슬라이스에서 추가 예정 — 그 전까지는 §2의 수동 절차로 진행.
 
+> **단계 표시**:
+> - 본 가이드 = **current MVP-α path** (외부 가상 오디오 장치 기반).
+> - **Planned (Phase 1~2 native)**: ScreenCaptureKit(Mac) / WASAPI(Win) 직접 캡처로 BlackHole·Voicemeeter 설치 자체가 불필요해질 예정. `docs/NATIVE_DESKTOP_HELPER_PLAN.md` + `docs/INTEGRATION_DESIGN.md` §3 참조. native 안정화 시 본 가이드는 fallback section 으로 이동한다.
+
 ## 1. macOS (Intel Mac, S2 PoC 우선)
 
 ### 1.0 진행 로그

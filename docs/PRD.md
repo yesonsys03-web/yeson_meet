@@ -171,6 +171,11 @@
 5. (β-3 추가) **6자리 PIN** 표시 + viewer 페이지에서 PIN 입력 옵션
 
 ### 5.2 회의 중
+
+> **오디오 캡처 경로 단계**:
+> - **현재 (MVP-α)**: Windows + Voicemeeter / Mac + BlackHole — 본 §5.2 가 정의하는 경로
+> - **계획 (Phase 1~2 native)**: BlackHole/Voicemeeter 없는 ScreenCaptureKit(Mac) / WASAPI(Win) 직접 캡처 — `docs/NATIVE_DESKTOP_HELPER_PLAN.md` + `docs/INTEGRATION_DESIGN.md` §3 참조. native 안정화 이후 §5.2 는 fallback 경로로 격하.
+
 - 회의실 PC: **Windows + Voicemeeter를 MVP-α 1순위**로 시스템 오디오 수신. Mac + BlackHole은 2순위 검증 경로로 유지
 - **오디오 청크를 사내 서버에 WSS push** (회의실 PC는 Gemini 직접 호출 X)
 - 서버가 Gemini Live API 호출 → 자막 (MVP-α) / 키워드·액션 (β-3) 산출

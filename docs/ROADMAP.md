@@ -4,6 +4,11 @@
 > 단위: 1인 풀타임 기준 영업일. 검토/대기 시간 제외.  
 > **MVP-α** 5 슬라이스 + **MVP-β** 7 묶음으로 분리. β는 우선순위에 따라 선택적으로 진행.
 
+> **오디오 캡처 경로 트랙 (병행)**:
+> - 본 ROADMAP 의 Slice 0~5 / β-1~β-7 는 **현재 MVP-α path (Voicemeeter/BlackHole + sounddevice)** 기준으로 일정/완료 기준이 적혀 있다.
+> - **Native helper track (Phase 0~4)** 은 별도 트랙으로 `docs/NATIVE_DESKTOP_HELPER_PLAN.md` 와 `docs/plans/2026-05-27-native-audio.md` 에서 관리. Phase 0 baseline 측정 → Phase 1 macOS native → Phase 2 Windows native 순.
+> - Native track 안정화 시점에 본 ROADMAP 의 Slice 2 산출물 / β-1 의 Voicemeeter 자동 감지 항목은 fallback 카테고리로 격하 후 재기술 필요.
+
 ---
 
 ## 마일스톤 개요

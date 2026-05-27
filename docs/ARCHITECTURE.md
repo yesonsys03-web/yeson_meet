@@ -44,6 +44,11 @@
 - **UI 레이아웃은 `ConsoleShell` + 5슬롯 컴포지션 (Header / Main / Side / Footer / Floating)** — 자세히 `docs/UI_DESIGN_SYSTEM.md`. 좌측 nav는 `/console/{meet,history,glossary,admin,settings}` 5칸 미리 박되 MVP-α는 `meet`·`settings`만 활성, 나머지는 placeholder.
 
 ### 2.2 회의실 PC: Python 사이드카 (`apps/client_sidecar`)
+
+> **오디오 캡처 경로 단계**:
+> - **현재 (MVP-α)**: `sounddevice` + Voicemeeter/BlackHole — 본 §2.2 가 기술하는 path
+> - **계획 (Phase 1~2 native)**: `AudioSource` 추상화 + `NativePipeSource` 가 ScreenCaptureKit(Mac) / WASAPI(Win) helper 자식 프로세스에서 PCM 수신. 자세히 `docs/INTEGRATION_DESIGN.md` §3·§4 와 `docs/NATIVE_DESKTOP_HELPER_PLAN.md`. native 안정화 이후 sounddevice 경로는 fallback 으로 격하.
+
 - 오디오 캡처: `sounddevice` → **Voicemeeter(Windows) 1순위**, BlackHole(Mac) 2순위
 - **사내 서버에 오디오 청크 WSS push** (Gemini API 직접 호출 안 함 — 키는 서버에만)
 - 메타 이벤트(시작/종료/하트비트): HTTPS POST

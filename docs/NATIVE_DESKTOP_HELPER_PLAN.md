@@ -64,14 +64,17 @@
 현재 큰 구조는 유지한다.
 
 ```text
-Desktop App
+Desktop App (Tauri)
   ├─ Operator UI
-  ├─ Native Audio Helper
-  │    ├─ Windows: WASAPI loopback 기반 캡처
-  │    └─ macOS: ScreenCaptureKit 기반 시스템 오디오 캡처
-  └─ Sidecar Transport
-       └─ WSS audio chunks → FastAPI Gateway → Gemini Live → viewer subtitles
+  └─ Python Sidecar  (Tauri externalBin 으로 라이프사이클 관리)
+       ├─ Native Audio Helper  (sidecar 가 자식 프로세스로 spawn / stdout pipe 로 PCM 수신)
+       │    ├─ Windows: WASAPI loopback 기반 캡처
+       │    └─ macOS: ScreenCaptureKit 기반 시스템 오디오 캡처
+       └─ Transport
+            └─ WSS audio chunks → FastAPI Gateway → Gemini Live → viewer subtitles
 ```
+
+> Lifecycle 책임: Tauri → Python sidecar → Native helper 의 1-자식 chain. 자세한 결정 근거는 `docs/INTEGRATION_DESIGN.md` §3.2.
 
 핵심은 **서버 전송 방식(WebSocket)이나 viewer 자막 구조를 바꾸는 것이 아니라, 클라이언트의 오디오 입력 계층만 교체하는 것**이다.
 
@@ -97,8 +100,8 @@ Desktop App
   - 가상 오디오 드라이버 설치 부담 제거
   - macOS 권한 플로우 안에서 안내 가능
   - 장기적으로 앱/윈도우 선택 캡처 UX와 연결 가능
+- 최소 지원 macOS: **14.2 (Sonoma)** — 그 미만 버전은 BlackHole compatibility mode로 안내
 - 검토 포인트:
-  - 지원 macOS 버전 범위
   - Screen Recording / System Audio 관련 권한 안내
   - 권한 거부·미부여 상태의 복구 UX
   - Intel Mac / Apple Silicon 차이
@@ -122,13 +125,30 @@ Desktop App
 
 - 기존 방식으로 최소 1개 Windows PC, 1개 Mac에서 E2E 기준선 확보
 
-### Phase 1 — Windows native capture PoC
+### Phase 1 — macOS native capture PoC
 
-목표: Voicemeeter 없이 Windows 시스템 오디오를 캡처해 기존 WSS audio chunk 파이프라인에 연결 가능함을 검증한다.
+목표: BlackHole 없이 macOS 시스템 오디오를 캡처해 기존 파이프라인에 연결 가능함을 검증하고, 이후 Windows 구현이 끼워질 수 있는 공통 인터페이스를 정의한다. dev 환경과 일치해 iteration 비용이 낮고, ScreenCaptureKit이 WASAPI보다 큰 unknown이라 risk-first 검증에 부합한다.
 
 산출물:
 
-- WASAPI loopback 캡처 PoC
+- ScreenCaptureKit 기반 오디오 캡처 PoC (macOS 14.2+ 기준)
+- **OS-agnostic `AudioCapture` 추상화 인터페이스 정의** — Phase 2의 Windows 구현이 끼워질 자리
+- 권한 요청/거부/재시도 UX 초안
+- Apple Silicon 동작 검증 (Intel Mac은 비-우선)
+
+성공 기준:
+
+- BlackHole 미설치 Mac에서 회의/영상 오디오가 서버로 안정 전송됨
+- 권한 미부여 상태를 앱이 명확히 감지하고 안내함
+- 캡처 레이어 밖 공통 코드(샘플레이트 변환·mono downmix·sidecar 전송)가 OS별 분기 없이 재사용되도록 설계됨
+
+### Phase 2 — Windows native capture PoC
+
+목표: Voicemeeter 없이 Windows 시스템 오디오를 캡처해 Phase 1에서 정의한 `AudioCapture` 추상화의 두 번째 구현체로 끼워넣는다.
+
+산출물:
+
+- WASAPI loopback 캡처 PoC (`AudioCapture` 인터페이스 구현)
 - 16kHz mono PCM 변환
 - 기존 sidecar 전송 포맷과 호환성 확인
 - 장치 변경 감지 초안
@@ -137,21 +157,7 @@ Desktop App
 
 - Zoom / Teams / 브라우저 영상 소리가 Voicemeeter 없이 서버에 50 chunks/sec 수준으로 전송됨
 - 사용자 수동 오디오 라우팅 없이 자막 생성 가능
-
-### Phase 2 — macOS native capture PoC
-
-목표: BlackHole 없이 macOS 시스템 오디오를 캡처해 기존 파이프라인에 연결 가능함을 검증한다.
-
-산출물:
-
-- ScreenCaptureKit 기반 오디오 캡처 PoC
-- 권한 요청/거부/재시도 UX 초안
-- Intel / Apple Silicon 동작 차이 기록
-
-성공 기준:
-
-- BlackHole 미설치 Mac에서 회의/영상 오디오가 서버로 안정 전송됨
-- 권한 미부여 상태를 앱이 명확히 감지하고 안내함
+- 캡처 레이어 외 공통 코드가 Phase 1과 동일 코드 경로로 재사용됨을 코드 리뷰에서 확인
 
 ### Phase 3 — 데스크톱 앱 통합
 
@@ -292,8 +298,8 @@ macOS는 권한 정책 변화에 민감하다. ScreenCaptureKit 기반 접근은
 1. **지금 당장 WebRTC로 전환하지 않는다.** 실시간 번역 자막 목적에는 현재 WebSocket audio chunk 구조가 충분히 현실적이다.
 2. **오디오 캡처 계층만 네이티브 헬퍼로 전환한다.** 서버, Gemini 연동, viewer fan-out 구조는 유지한다.
 3. **Voicemeeter / BlackHole은 단기 MVP와 fallback으로 유지한다.** 안정화 전까지 완전히 제거하지 않는다.
-4. **Windows native capture를 먼저 한다.** 현재 회의실 PC 우선순위와 운영 현실을 고려하면 Windows WASAPI loopback PoC가 1순위다.
-5. **macOS native capture는 두 번째로 진행한다.** ScreenCaptureKit 기반 가능성을 검증하되, 권한 UX와 OS 버전 범위를 명확히 한다.
+4. **macOS native capture를 먼저 한다.** dev 머신 환경(macOS Tahoe 26.x)과 일치해 iteration 비용이 낮고, ScreenCaptureKit이 더 큰 unknown이므로 risk-first 검증에 부합한다. 최소 지원 OS는 **macOS 14.2 (Sonoma)**.
+5. **Windows native capture는 두 번째로 진행한다.** Phase 1에서 정의한 `AudioCapture` 추상화 인터페이스의 두 번째 구현체로 끼워넣어 캡처 레이어 외 공통 코드 재사용을 보장한다. WASAPI loopback은 검증된 패턴이라 unknown 위험이 낮다.
 
 ---
 
