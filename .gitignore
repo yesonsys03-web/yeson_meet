@@ -5,6 +5,7 @@
 
 # Logs (may contain JWT / Device API Key in WS URLs — see server-latency.log incident)
 *.log
+!tests/**/fixtures/*.log
 
 # Node
 node_modules/

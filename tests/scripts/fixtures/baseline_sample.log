@@ -1,0 +1,12 @@
+server-1  | INFO:apps.server.ai.gemini_live:Gemini Live first input transcription gemini_connect_to_first_input_ms=9400 gemini_first_input_chars=215 gemini_segment=1 session_id=abc-1
+server-1  | INFO:apps.server.ai.gemini_live:Gemini Live first subtitle yielded gemini_connect_to_first_subtitle_ms=9988 gemini_segment=1 is_final=False seq=1 session_id=abc-1
+server-1  | INFO:apps.server.ws.sidecar:AI utterance published ai_publish_latency_ms=0 is_final=False seq=1 session_id=abc-1
+server-1  | INFO:apps.server.ws.sidecar:AI utterance published ai_publish_latency_ms=0 is_final=True seq=1 session_id=abc-1
+server-1  | INFO:apps.server.ai.gemini_live:Gemini Live connect starting gemini_model=gemini-3.1-flash-live-preview gemini_segment=2 session_id=abc-1
+server-1  | INFO:apps.server.ai.gemini_live:Gemini Live first subtitle yielded gemini_connect_to_first_subtitle_ms=8010 gemini_segment=2 is_final=False seq=1 session_id=abc-1
+server-1  | INFO:apps.server.ws.sidecar:AI utterance published ai_publish_latency_ms=0 is_final=True seq=2 session_id=abc-1
+server-1  | INFO:apps.server.ai.gemini_live:Gemini Live connect starting gemini_model=gemini-3.1-flash-live-preview gemini_segment=3 session_id=abc-1
+server-1  | INFO:apps.server.ai.gemini_live:Gemini Live first subtitle yielded gemini_connect_to_first_subtitle_ms=7500 gemini_segment=3 is_final=False seq=1 session_id=abc-1
+server-1  | INFO:apps.server.ws.sidecar:AI utterance published ai_publish_latency_ms=0 is_final=True seq=3 session_id=abc-1
+server-1  | WARNING:apps.server.ai.live_session:Audio queue lossy drop — provider can't keep up dropped_chunks_total=50
+server-1  | WARNING:apps.server.ai.live_session:Audio queue lossy drop — provider can't keep up dropped_chunks_total=100
