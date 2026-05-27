@@ -1,9 +1,25 @@
 // === ANCHOR: USE_LIVE_SUBTITLE_STREAM_START ===
 import { useEffect, useRef, useState } from "react";
 import { appLogger } from "../diagnostics/appLog";
+import { SubtitleTimingRecorder } from "../timing/subtitleTiming";
 import { fetchOperatorBackfill, operatorWsUrl } from "./sessionApi";
 import type { DomainEvent, UtteranceTranscribed } from "./types";
 import { latestUtterance, upsertUtterance } from "./utterances";
+
+// Subtitle-arrival timing for Phase 0/1 baseline measurements.
+// DevTools usage: `copy(window.__yesonTimingExport())` after a scenario,
+// paste into docs/baselines/<date>-<scenario>-client.json.
+const subtitleTimingRecorder = new SubtitleTimingRecorder();
+declare global {
+  interface Window {
+    __yesonTimingExport?: () => string;
+    __yesonTimingReset?: () => void;
+  }
+}
+if (typeof window !== "undefined") {
+  window.__yesonTimingExport = () => subtitleTimingRecorder.toJSON();
+  window.__yesonTimingReset = () => subtitleTimingRecorder.reset();
+}
 
 export type LiveSubtitleState = {
   utterances: UtteranceTranscribed[];
@@ -101,6 +117,7 @@ export function useLiveSubtitleStream(sessionId: string | null, operatorToken: s
       }
       if (event.seq < lastSeqRef.current) return;
       lastSeqRef.current = Math.max(lastSeqRef.current, event.seq);
+      subtitleTimingRecorder.markArrival({ seq: event.seq, isFinal: event.is_final });
       logEventLatency(event);
       setState((current) => {
         const utterances = upsertUtterance(current.utterances, event);
