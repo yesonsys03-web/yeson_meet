@@ -37,21 +37,21 @@ async def fixture_main() -> None:
 
 # === ANCHOR: MAIN_AUDIO_MAIN_START ===
 async def audio_main() -> None:
-    """S2 audio mode — sounddevice BlackHole capture → 16kHz mono PCM s16le WS push."""
-    from apps.client_sidecar.audio.capture import capture_chunks
-    from apps.client_sidecar.audio.device import find_input_device
-    from apps.client_sidecar.config.audio import DEVICE_INDEX, DEVICE_NAME_REGEX
+    """S2 audio mode — provider factory selects source, then stream to server WS."""
+    from apps.client_sidecar.audio.sources.factory import make_source
     from apps.client_sidecar.transport.audio_ws import stream_audio
 
     api_key = _required_env("YESON_DEVICE_API_KEY")
     session_id = UUID(_required_env("YESON_SESSION_ID"))
 
-    device = find_input_device(DEVICE_NAME_REGEX, DEVICE_INDEX)
+    source = make_source()
     url = f"{SERVER_WS_BASE}{SERVER_WS_PATH}?key={api_key}&session={session_id}"
-    print(f"sidecar audio mode → device={device['name']!r} url={url}")
+    print(f"sidecar audio mode → source={type(source).__name__} url={url}")
 
-    chunks = capture_chunks(device)
-    await stream_audio(url, chunks)
+    try:
+        await stream_audio(url, source.chunks())
+    finally:
+        await source.close()
 # === ANCHOR: MAIN_AUDIO_MAIN_END ===
 
 

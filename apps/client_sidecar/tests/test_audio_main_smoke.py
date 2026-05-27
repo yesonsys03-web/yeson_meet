@@ -51,6 +51,9 @@ async def test_audio_main_smoke(monkeypatch) -> None:
     monkeypatch.setenv("YESON_SESSION_ID", "00000000-0000-0000-0000-000000000000")
     monkeypatch.setenv("SERVER_WS_BASE", "ws://test")
     monkeypatch.setenv("YESON_SIDECAR_MODE", "audio")
+    # Force sounddevice provider — the smoke test mocks sounddevice + websockets;
+    # `auto` would otherwise pick the native helper binary if one is built locally.
+    monkeypatch.setenv("YESON_AUDIO_PROVIDER", "sounddevice")
 
     fake_ws = _make_fake_ws()
     ws_cm = _make_ws_context_manager(fake_ws)
