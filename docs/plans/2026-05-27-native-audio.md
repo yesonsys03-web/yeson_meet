@@ -2,6 +2,35 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Execution Status (as of 2026-05-27)
+
+| Tasks | Status | Notes |
+|---|---|---|
+| 1 — scenarios.md | ✅ done | commit `b3c2f9b` |
+| 2-3 — baseline_collect.py + tests | ✅ done | commit `1d69686`; flat + `--schema v1` paths, `--allow-empty` covers silent |
+| 4-5 — baseline_compare.py + tests | ✅ done | commit `c1d50ba`; flat + schema-v1 dotted-key paths |
+| 6 — subtitleTiming.ts + wiring | ✅ done | commit `83a74f3`; wired into `useLiveSubtitleStream.applyMessage`; `window.__yesonTimingExport()` for DevTools |
+| 7 — baseline measurements | ⚠ **manual** | Step 5 (`--allow-empty`) folded into Task 2-3 |
+| 8 — Swift package skeleton | ✅ done | commit `45d0cd4`; **deviation**: split into `YesonMacAudioHelperKit` (lib) + `YesonMacAudioHelper` (thin exec). Plan's single-target setup triggered SIGILL in `xctest` on Swift 5.9 / macOS 14. All Swift sources for Tasks 9-14 live in `Sources/YesonMacAudioHelperKit/`, the executable shell in `Sources/YesonMacAudioHelper/`. |
+| 9-10 — PCMConverter | ✅ done | commit `4d8a0a2`; `process()` loops to drain converter, streaming test confirms convergence |
+| 11-12 — IPC framer | ✅ done | commit `a6b489c` |
+| 13 — AudioCapture protocol | ✅ done | commit `2493034` |
+| 14 — ScreenCaptureKitProvider | ✅ done | commit `df352c6` |
+| 15 — Helper main entrypoint | ✅ done | commit `a5e7f33`; `main.swift` → `App.swift` (`@main async`) since top-level `await` isn't allowed in `main.swift`. Step 3 smoke skipped (needs Screen Recording grant — falls under manual Task 24). |
+| 16 — build-release.sh | ✅ done | commit `636c6b3`; release build verified, 126 KB binary at `target/native-helper-mac/yeson-mac-audio-helper` |
+| 17 — AudioSource ABC | ✅ done | commit `27f6a73` |
+| 18 — SoundDeviceSource | ✅ done | commit `c306ff7` |
+| 19-20 — NativePipeSource | ✅ done | commit `52c4ea9` |
+| 21-22 — Provider factory + config | ✅ done | commit `dfb7fd5` |
+| 23 — Wire factory into main.py | ✅ done | commit `6a8e449`; existing `test_audio_main_smoke.py` pins `YESON_AUDIO_PROVIDER=sounddevice` (auto would pick native when helper binary is built locally) |
+| 24 — End-to-end smoke | ⚠ **manual** | requires dashboard dev + Screen Recording grant |
+| 25 — Native re-measurements | ⚠ **manual** | requires Task 7 baselines + dashboard run |
+| 26 — Comparison reports | ⚠ **manual** | depends on Task 25 outputs |
+
+**Test totals (2026-05-27)**: Python 35 ✅ · Swift 8 ✅ · Vitest 3 ✅.
+
+**Next decision**: run Task 7 (4 baseline scenarios) → Phase 1 GO/HOLD per Task 7 Step 7 exit-criteria table.
+
 **Goal:** macOS 시스템 오디오를 BlackHole 없이 ScreenCaptureKit로 직접 캡처해 기존 sidecar 파이프라인에 흘리고, 도입 전·후 자막 latency 및 토큰 사용량을 정량 비교한다. Native 실패 시 BlackHole sounddevice 경로로 자동 fallback.
 
 **Architecture:** Swift ScreenCaptureKit helper(별도 프로세스) → stdout 16 kHz mono PCM s16le 20 ms 청크 → Python sidecar의 `NativePipeSource`가 수신 → 기존 WebSocket 전송 그대로. Provider 선택은 `YESON_AUDIO_PROVIDER=native|sounddevice|auto` env로 제어. Phase 0에서 현 baseline 측정 후 Phase 1 완료 시 같은 시나리오로 재측정·비교.
