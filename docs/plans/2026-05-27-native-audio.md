@@ -719,6 +719,19 @@ git add docs/baselines/2026-05-27-*.json docs/baselines/raw/*.log scripts/baseli
 git commit -m "data(baselines): phase 0 measurements for 4 scenarios (BlackHole)"
 ```
 
+- [ ] **Step 7: Exit criteria — Phase 0 → Phase 1 진입 결정**
+
+4 시나리오 측정이 끝나면 아래 표로 다음 단계를 박는다. 각 줄은 "이 수치면 → 이 행동" 단일 결정 규칙.
+
+| 신호 (4 시나리오 종합) | 의미 | 다음 행동 |
+|---|---|---|
+| `ai.gemini_connect_to_first_subtitle_ms_p50` > 5000 (Zoom·Teams·YouTube 중 2개 이상) | 자막 지연의 주범이 Gemini 쪽 — 캡처 레이어 교체로 안 풀림 | Phase 1 보류. server-side(prompt / segment 분리 / partial 전략) 먼저 손봄 |
+| `capture.audio_queue_drop_count` > 10 (1분 환산) 또는 `chunks_per_sec_sustained` < 45 | 캡처 안정성이 진짜 문제 | Phase 1 native 진입 — 가장 큰 가치 |
+| silent 시나리오에서 자막 1줄 이상 생성 | false positive (Gemini 가 무음에 환각) | Phase 1 보류. VAD/silence gate + prompt 재설계 먼저 |
+| 위 3개 모두 정상 | 기술적으로 sounddevice 가 충분 | Phase 1 native 진입 — 사용자 설치 UX 목적 (BlackHole/Voicemeeter 없애기) |
+
+판정 결과는 commit 메시지 또는 `docs/baselines/comparison-<date>.md` 상단에 한 줄 명시: `"Phase 1 GO: <이유>"` 또는 `"Phase 1 HOLD: <원인 + 선행 작업>"`. 결과가 명백하지 않은 경계 케이스(예: drop 8개, P50 4800ms)면 시나리오 1개씩만 rerun 후 재판정.
+
 ---
 
 ### Task 8: Swift package skeleton
