@@ -1,6 +1,6 @@
 # SETUP_MEETING_PC — 회의실 PC 셋업
 
-> MVP-α S2 PoC: Intel Mac + BlackHole 우선. Windows + Voicemeeter는 시스템 부원 협조 시점 별도 검증 (별도 섹션 placeholder).
+> MVP-α S2: Intel Mac + BlackHole 와 Windows + Voicemeeter Banana 두 갈래 모두 지원. Windows 자동 라우팅은 yeson-meet-desktop S2~S4 슬라이스에서 추가 예정 — 그 전까지는 §2의 수동 절차로 진행.
 
 ## 1. macOS (Intel Mac, S2 PoC 우선)
 
@@ -141,18 +141,76 @@ notes: Wi-Fi AP, browser/device, any drops
 - 자막만 늦음: 서버→Gemini 외부망 품질, Gemini Live 로그, partial transcript 수신 여부 확인.
 - DB `seq`가 덮어써짐: provider seq 재시작 보정(`AISequenceNormalizer`)이 적용된 서버 이미지인지 확인.
 
-## 2. Windows (1순위 검증 — 시스템 부원 협조 단계, placeholder)
+## 2. Windows (Voicemeeter Banana — S2 정식 검증 대상)
 
-> ROADMAP §S2 정식 완료 기준은 Windows 회의실 PC + Voicemeeter Banana. 본 섹션은 시스템 부원이 진행 시 채워짐.
+> macOS의 BlackHole 라우팅과 동일한 효과를 Windows에서는 **Voicemeeter Banana**로 만든다.
+> 회의 상대방 음성은 스피커로 그대로 들으면서, 같은 소리가 가상 오디오 라인(B1)을 통해 yeson-meet 사이드카로도 전달된다.
+> 마이크는 OS 기본 입력으로 두고 미팅 앱이 직접 잡으므로, sidecar는 "회의 상대방 음성"만 깔끔하게 받아 자막/번역 처리한다.
+> 현재 ①~③ 단계는 1회 수동 설정. yeson-meet-desktop S2~S4 슬라이스 완료 시 ①~③은 앱이 자동 적용 예정.
 
-### 2.1 Voicemeeter Banana 설치
-- VB-Audio Voicemeeter Banana: https://vb-audio.com/Voicemeeter/banana.htm
-- 설치 후 재부팅 필요
+### 2.1 Voicemeeter Banana 설치 (한 번만)
 
-### 2.2 캡처 라우팅
-- 시스템 사운드 출력 → Voicemeeter Input (VAIO)
-- A1 출력은 실제 스피커로 → 회의 소리 들림 동시에 VAIO를 통해 캡처 가능
-- sidecar는 `YESON_AUDIO_DEVICE_NAME=Voicemeeter` regex로 자동 인식
+1. https://vb-audio.com/Voicemeeter/banana.htm 접속 → **Voicemeeter Banana** 다운로드 (도네이션웨어, 무료 사용 가능)
+2. 다운받은 설치 파일 더블클릭 → **Next** 계속 누르며 설치 완료
+3. 설치가 끝나면 **Windows 재부팅** (가상 오디오 드라이버 등록을 위해 필수)
 
-### 2.3 Windows-Specific 검증
-- (시스템 부원 협조 시 채움)
+### 2.2 ① Windows 기본 출력 변경
+
+1. 작업표시줄 우하단 스피커 아이콘 우클릭 → **사운드 설정**
+2. **재생** 탭에서 **"Voicemeeter Input (VB-Audio Voicemeeter VAIO)"** 선택 → **기본값으로 설정** 클릭
+
+이제 PC의 모든 소리(YouTube, Zoom 상대 음성, 알림)가 Voicemeeter를 통해 흐릅니다.
+
+### 2.3 ② Voicemeeter 라우팅 설정
+
+1. 시작 메뉴 → **Voicemeeter Banana** 실행
+2. 화면 우상단 **A1** 클릭 → 실제 스피커 / 헤드셋 선택
+3. 화면 가운데 **"Voicemeeter VAIO"** Strip에서 **A1**, **B1** 두 버튼 모두 켜기 (밝게 빛나는 상태)
+
+```
+회의 소리 → Voicemeeter Input
+  ├─ A1 → 실제 스피커 / 헤드셋 (사람이 들음)
+  └─ B1 → Voicemeeter Output (sidecar가 캡처)
+```
+
+### 2.4 ③ 미팅 앱 스피커 설정
+
+- Zoom / Google Meet / Teams 등 회의 앱의 **스피커** 설정에서 **"Voicemeeter Input"** 선택
+- 시스템 기본값으로 두어도 동작하지만, 직접 지정하는 편이 실수가 적습니다.
+- **마이크는 OS 기본 마이크 그대로** 둡니다 (Voicemeeter를 거치지 않음).
+
+### 2.6 설정 점검 — `voicemeeter_dump.exe`
+
+설정이 제대로 들어갔는지 30초 만에 확인할 수 있는 진단 도구가 있습니다.
+
+1. yeson-meet 운영자에게서 **`voicemeeter_dump.exe`** 파일 받기 (350KB)
+2. 바탕화면 등 아무 폴더에 놓고 **더블클릭**
+3. 검은 콘솔 창이 열리며 옆에 **`vm_dump.json`** 파일이 자동 생성됨
+4. 콘솔에 `Edition : Banana`, `Press Enter to close...` 가 보이면 **Enter** 키로 창 닫기
+5. 생성된 `vm_dump.json` 파일을 운영자에게 전달
+
+운영자는 그 JSON 한 장으로 라우팅 상태를 즉시 확인합니다. 추후 "소리가 안 잡혀요" 같은 컴플레인이 생기면 동일하게 실행해서 보내주면 원격 진단이 가능합니다.
+
+### 2.7 sidecar 실행 (운영자/스크립트용)
+
+```cmd
+SET SERVER_WS_BASE=wss://<server-host>
+SET YESON_DEVICE_API_KEY=<plaintext-device-key>
+SET YESON_SESSION_ID=<session-uuid>
+SET YESON_SIDECAR_MODE=audio
+SET YESON_AUDIO_DEVICE_NAME=Voicemeeter Aux Output
+uv run python -m apps.client_sidecar.main
+```
+
+- `YESON_AUDIO_DEVICE_NAME=Voicemeeter Aux Output` 로 지정하면 B2 가상 라인(상대방 음성 + 내 마이크 풀 믹스)을 캡처합니다.
+- admin audio-stats 페이지에서 ≈ 50 chunks/sec 가 유지되면 정상.
+
+### 2.8 자주 발생하는 문제
+
+| 증상 | 확인 사항 |
+|---|---|
+| 미팅 상대가 내 목소리를 못 들음 | 미팅 앱 마이크가 **"Voicemeeter Output"** 인지 / Strip 1 의 **B1** 이 켜져 있는지 |
+| 메아리/하울링이 들림 | Voicemeeter **VAIO** Strip 의 **B1** 을 끄기 (켜져 있으면 발생) |
+| 시스템 소리가 안 들림 | VAIO Strip 의 **A1** 이 켜져 있는지 / Windows 기본 재생 장치 = "Voicemeeter Input" 인지 |
+| sidecar 가 마이크를 못 잡음 | `voicemeeter_dump.exe` 실행해 결과의 디바이스명과 `YESON_AUDIO_DEVICE_NAME` 일치 여부 확인 |
+| Voicemeeter UI 가 안 보임 | 시스템 트레이(우하단) → Voicemeeter 아이콘 우클릭 → **Show** |

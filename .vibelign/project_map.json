@@ -107,16 +107,16 @@
         {
           "name": "DEVICE",
           "start": 1,
-          "end": 55
+          "end": 56
         },
         {
           "name": "DEVICE_FIND_INPUT_DEVICE",
           "start": 14,
-          "end": 54,
+          "end": 55,
           "signature": "def find_input_device(name_regex: str, index_override: int | None = None) -> dict[str, Any]:"
         }
       ],
-      "line_count": 55,
+      "line_count": 56,
       "imports": [],
       "imported_by": [
         "apps/client_sidecar/main.py"
@@ -463,6 +463,14 @@
         "apps/client_sidecar/main.py"
       ]
     },
+    "apps/desktop/scripts/vm_dump.py": {
+      "category": "other",
+      "anchors": [],
+      "anchor_spans": [],
+      "line_count": 141,
+      "imports": [],
+      "imported_by": []
+    },
     "apps/desktop/src-tauri/build.rs": {
       "category": "ui",
       "anchors": [
@@ -479,6 +487,70 @@
       "imports": [],
       "imported_by": []
     },
+    "apps/desktop/src-tauri/src/audio/mod.rs": {
+      "category": "other",
+      "anchors": [
+        "AUDIO_MOD"
+      ],
+      "anchor_spans": [
+        {
+          "name": "AUDIO_MOD",
+          "start": 1,
+          "end": 10
+        }
+      ],
+      "line_count": 10,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/desktop/src-tauri/src/audio/voicemeeter_ffi.rs": {
+      "category": "other",
+      "anchors": [
+        "VOICEMEETER_FFI"
+      ],
+      "anchor_spans": [
+        {
+          "name": "VOICEMEETER_FFI",
+          "start": 1,
+          "end": 302
+        }
+      ],
+      "line_count": 302,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/desktop/src-tauri/src/bin/voicemeeter_dump.rs": {
+      "category": "other",
+      "anchors": [
+        "VOICEMEETER_DUMP"
+      ],
+      "anchor_spans": [
+        {
+          "name": "VOICEMEETER_DUMP",
+          "start": 1,
+          "end": 160
+        }
+      ],
+      "line_count": 160,
+      "imports": [],
+      "imported_by": []
+    },
+    "apps/desktop/src-tauri/src/diagnostics.rs": {
+      "category": "other",
+      "anchors": [
+        "DIAGNOSTICS"
+      ],
+      "anchor_spans": [
+        {
+          "name": "DIAGNOSTICS",
+          "start": 1,
+          "end": 33
+        }
+      ],
+      "line_count": 33,
+      "imports": [],
+      "imported_by": []
+    },
     "apps/desktop/src-tauri/src/lib.rs": {
       "category": "other",
       "anchors": [
@@ -488,10 +560,10 @@
         {
           "name": "LIB",
           "start": 1,
-          "end": 8
+          "end": 20
         }
       ],
-      "line_count": 8,
+      "line_count": 20,
       "imports": [],
       "imported_by": []
     },
@@ -511,6 +583,22 @@
       "imports": [],
       "imported_by": []
     },
+    "apps/desktop/src-tauri/src/sidecar.rs": {
+      "category": "other",
+      "anchors": [
+        "SIDECAR"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SIDECAR",
+          "start": 1,
+          "end": 348
+        }
+      ],
+      "line_count": 348,
+      "imports": [],
+      "imported_by": []
+    },
     "apps/desktop/src/App.tsx": {
       "category": "other",
       "anchors": [
@@ -520,13 +608,509 @@
         {
           "name": "APP",
           "start": 1,
-          "end": 9
+          "end": 10
         }
       ],
-      "line_count": 9,
-      "imports": [],
+      "line_count": 10,
+      "imports": [
+        "apps/desktop/src/console/DesktopConsole.tsx",
+        "apps/desktop/src/console/SubtitleFullscreenWindow.tsx",
+        "apps/desktop/src/console/useSubtitleFullscreenShortcut.ts"
+      ],
       "imported_by": [
         "apps/desktop/src/main.tsx"
+      ]
+    },
+    "apps/desktop/src/console/ConsoleNav.tsx": {
+      "category": "other",
+      "anchors": [
+        "CONSOLE_NAV"
+      ],
+      "anchor_spans": [
+        {
+          "name": "CONSOLE_NAV",
+          "start": 1,
+          "end": 42
+        }
+      ],
+      "line_count": 42,
+      "imports": [
+        "apps/desktop/src/console/consoleStyles.ts",
+        "apps/desktop/src/console/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/DesktopConsole.tsx"
+      ]
+    },
+    "apps/desktop/src/console/ContractPreview.tsx": {
+      "category": "ui",
+      "anchors": [
+        "CONTRACT_PREVIEW"
+      ],
+      "anchor_spans": [
+        {
+          "name": "CONTRACT_PREVIEW",
+          "start": 1,
+          "end": 23
+        }
+      ],
+      "line_count": 23,
+      "imports": [
+        "apps/desktop/src/console/consoleStyles.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/MeetingLifecyclePanel.tsx"
+      ]
+    },
+    "apps/desktop/src/console/DesktopConsole.tsx": {
+      "category": "other",
+      "anchors": [
+        "DESKTOP_CONSOLE"
+      ],
+      "anchor_spans": [
+        {
+          "name": "DESKTOP_CONSOLE",
+          "start": 1,
+          "end": 39
+        }
+      ],
+      "line_count": 39,
+      "imports": [
+        "apps/desktop/src/diagnostics/appLog.ts",
+        "apps/desktop/src/help/HelpManualPanel.tsx",
+        "apps/desktop/src/settings/SettingsPanel.tsx",
+        "apps/desktop/src/setup/SetupAssistant.tsx",
+        "apps/desktop/src/console/ConsoleNav.tsx",
+        "apps/desktop/src/console/MeetingLifecyclePanel.tsx",
+        "apps/desktop/src/console/consoleStyles.ts",
+        "apps/desktop/src/console/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/App.tsx"
+      ]
+    },
+    "apps/desktop/src/console/LifecycleFields.tsx": {
+      "category": "other",
+      "anchors": [
+        "LIFECYCLE_FIELDS"
+      ],
+      "anchor_spans": [
+        {
+          "name": "LIFECYCLE_FIELDS",
+          "start": 1,
+          "end": 74
+        }
+      ],
+      "line_count": 74,
+      "imports": [
+        "apps/desktop/src/console/consoleStyles.ts",
+        "apps/desktop/src/console/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/MeetingLifecyclePanel.tsx"
+      ]
+    },
+    "apps/desktop/src/console/LiveSubtitlePreview.tsx": {
+      "category": "ui",
+      "anchors": [
+        "LIVE_SUBTITLE_PREVIEW"
+      ],
+      "anchor_spans": [
+        {
+          "name": "LIVE_SUBTITLE_PREVIEW",
+          "start": 1,
+          "end": 180
+        }
+      ],
+      "line_count": 180,
+      "imports": [
+        "apps/desktop/src/console/consoleStyles.ts",
+        "apps/desktop/src/console/types.ts",
+        "apps/desktop/src/console/useLiveSubtitleStream.ts",
+        "apps/desktop/src/console/usePacedSubtitle.ts",
+        "apps/desktop/src/console/useSubtitleFullscreenShortcut.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/MeetingLifecyclePanel.tsx",
+        "apps/desktop/src/console/SubtitleFullscreenWindow.tsx",
+        "apps/desktop/src/setup/MeetingQuickStartPanel.tsx"
+      ]
+    },
+    "apps/desktop/src/console/MeetingLifecyclePanel.tsx": {
+      "category": "other",
+      "anchors": [
+        "MEETING_LIFECYCLE_PANEL"
+      ],
+      "anchor_spans": [
+        {
+          "name": "MEETING_LIFECYCLE_PANEL",
+          "start": 1,
+          "end": 73
+        }
+      ],
+      "line_count": 73,
+      "imports": [
+        "apps/desktop/src/console/ContractPreview.tsx",
+        "apps/desktop/src/console/LifecycleFields.tsx",
+        "apps/desktop/src/console/LiveSubtitlePreview.tsx",
+        "apps/desktop/src/console/SessionResultPanel.tsx",
+        "apps/desktop/src/console/consoleStyles.ts",
+        "apps/desktop/src/console/useMeetingLifecycle.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/DesktopConsole.tsx"
+      ]
+    },
+    "apps/desktop/src/console/SessionResultPanel.tsx": {
+      "category": "other",
+      "anchors": [
+        "SESSION_RESULT_PANEL"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SESSION_RESULT_PANEL",
+          "start": 1,
+          "end": 51
+        }
+      ],
+      "line_count": 51,
+      "imports": [
+        "apps/desktop/src/console/consoleStyles.ts",
+        "apps/desktop/src/console/types.ts",
+        "apps/desktop/src/console/ViewerQrPanel.tsx"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/MeetingLifecyclePanel.tsx"
+      ]
+    },
+    "apps/desktop/src/console/SubtitleFullscreenWindow.tsx": {
+      "category": "ui",
+      "anchors": [
+        "SUBTITLE_FULLSCREEN_WINDOW"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SUBTITLE_FULLSCREEN_WINDOW",
+          "start": 1,
+          "end": 15,
+          "signature": "export function SubtitleFullscreenWindow() {"
+        }
+      ],
+      "line_count": 15,
+      "imports": [
+        "apps/desktop/src/console/LiveSubtitlePreview.tsx",
+        "apps/desktop/src/console/consoleStyles.ts",
+        "apps/desktop/src/console/useSubtitleFullscreenShortcut.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/App.tsx"
+      ]
+    },
+    "apps/desktop/src/console/ViewerQrPanel.tsx": {
+      "category": "ui",
+      "anchors": [
+        "VIEWER_QR_PANEL"
+      ],
+      "anchor_spans": [
+        {
+          "name": "VIEWER_QR_PANEL",
+          "start": 1,
+          "end": 46
+        }
+      ],
+      "line_count": 46,
+      "imports": [
+        "apps/desktop/src/console/consoleStyles.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/SessionResultPanel.tsx"
+      ]
+    },
+    "apps/desktop/src/console/consoleStyles.ts": {
+      "category": "other",
+      "anchors": [
+        "CONSOLE_STYLES"
+      ],
+      "anchor_spans": [
+        {
+          "name": "CONSOLE_STYLES",
+          "start": 1,
+          "end": 375,
+          "signature": "export const consoleStyles: Record<string, CSSProperties> = {"
+        }
+      ],
+      "line_count": 375,
+      "imports": [],
+      "imported_by": [
+        "apps/desktop/src/console/ConsoleNav.tsx",
+        "apps/desktop/src/console/ContractPreview.tsx",
+        "apps/desktop/src/console/DesktopConsole.tsx",
+        "apps/desktop/src/console/LifecycleFields.tsx",
+        "apps/desktop/src/console/LiveSubtitlePreview.tsx",
+        "apps/desktop/src/console/MeetingLifecyclePanel.tsx",
+        "apps/desktop/src/console/SessionResultPanel.tsx",
+        "apps/desktop/src/console/SubtitleFullscreenWindow.tsx",
+        "apps/desktop/src/console/ViewerQrPanel.tsx"
+      ]
+    },
+    "apps/desktop/src/console/sessionApi.ts": {
+      "category": "service",
+      "anchors": [
+        "SESSION_API"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SESSION_API",
+          "start": 1,
+          "end": 112,
+          "signature": "const API_BASE = (import.meta.env.VITE_API_BASE ?? \"\").replace(/\\/$/, \"\");"
+        }
+      ],
+      "line_count": 112,
+      "imports": [
+        "apps/desktop/src/diagnostics/appLog.ts",
+        "apps/desktop/src/setup/setupValues.ts",
+        "apps/desktop/src/console/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/useLiveSubtitleStream.ts",
+        "apps/desktop/src/console/useMeetingLifecycle.ts"
+      ]
+    },
+    "apps/desktop/src/console/types.ts": {
+      "category": "other",
+      "anchors": [
+        "CONSOLE_TYPES"
+      ],
+      "anchor_spans": [
+        {
+          "name": "CONSOLE_TYPES",
+          "start": 1,
+          "end": 51
+        }
+      ],
+      "line_count": 51,
+      "imports": [],
+      "imported_by": [
+        "apps/desktop/src/console/ConsoleNav.tsx",
+        "apps/desktop/src/console/DesktopConsole.tsx",
+        "apps/desktop/src/console/LifecycleFields.tsx",
+        "apps/desktop/src/console/LiveSubtitlePreview.tsx",
+        "apps/desktop/src/console/SessionResultPanel.tsx",
+        "apps/desktop/src/console/sessionApi.ts",
+        "apps/desktop/src/console/useLiveSubtitleStream.ts",
+        "apps/desktop/src/console/useMeetingLifecycle.ts",
+        "apps/desktop/src/console/usePacedSubtitle.ts",
+        "apps/desktop/src/console/utterances.ts"
+      ]
+    },
+    "apps/desktop/src/console/useLiveSubtitleStream.ts": {
+      "category": "other",
+      "anchors": [
+        "USE_LIVE_SUBTITLE_STREAM"
+      ],
+      "anchor_spans": [
+        {
+          "name": "USE_LIVE_SUBTITLE_STREAM",
+          "start": 1,
+          "end": 136
+        }
+      ],
+      "line_count": 136,
+      "imports": [
+        "apps/desktop/src/diagnostics/appLog.ts",
+        "apps/desktop/src/console/sessionApi.ts",
+        "apps/desktop/src/console/types.ts",
+        "apps/desktop/src/console/utterances.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/LiveSubtitlePreview.tsx"
+      ]
+    },
+    "apps/desktop/src/console/useMeetingLifecycle.ts": {
+      "category": "other",
+      "anchors": [
+        "USE_MEETING_LIFECYCLE"
+      ],
+      "anchor_spans": [
+        {
+          "name": "USE_MEETING_LIFECYCLE",
+          "start": 1,
+          "end": 132
+        }
+      ],
+      "line_count": 132,
+      "imports": [
+        "apps/desktop/src/setup/setupValues.ts",
+        "apps/desktop/src/console/sessionApi.ts",
+        "apps/desktop/src/console/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/MeetingLifecyclePanel.tsx",
+        "apps/desktop/src/setup/MeetingQuickStartPanel.tsx"
+      ]
+    },
+    "apps/desktop/src/console/usePacedSubtitle.ts": {
+      "category": "other",
+      "anchors": [
+        "USE_PACED_SUBTITLE"
+      ],
+      "anchor_spans": [
+        {
+          "name": "USE_PACED_SUBTITLE",
+          "start": 1,
+          "end": 93
+        }
+      ],
+      "line_count": 93,
+      "imports": [
+        "apps/desktop/src/console/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/LiveSubtitlePreview.tsx"
+      ]
+    },
+    "apps/desktop/src/console/useSubtitleFullscreenShortcut.ts": {
+      "category": "ui",
+      "anchors": [
+        "USE_SUBTITLE_FULLSCREEN_SHORTCUT"
+      ],
+      "anchor_spans": [
+        {
+          "name": "USE_SUBTITLE_FULLSCREEN_SHORTCUT",
+          "start": 1,
+          "end": 113,
+          "signature": "const SUBTITLE_WINDOW_LABEL = \"subtitle-fullscreen\";"
+        }
+      ],
+      "line_count": 113,
+      "imports": [],
+      "imported_by": [
+        "apps/desktop/src/App.tsx",
+        "apps/desktop/src/console/LiveSubtitlePreview.tsx",
+        "apps/desktop/src/console/SubtitleFullscreenWindow.tsx"
+      ]
+    },
+    "apps/desktop/src/console/utterances.ts": {
+      "category": "other",
+      "anchors": [
+        "CONSOLE_UTTERANCES"
+      ],
+      "anchor_spans": [
+        {
+          "name": "CONSOLE_UTTERANCES",
+          "start": 1,
+          "end": 25,
+          "signature": "const MAX_UTTERANCES = 50;"
+        }
+      ],
+      "line_count": 25,
+      "imports": [
+        "apps/desktop/src/console/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/useLiveSubtitleStream.ts"
+      ]
+    },
+    "apps/desktop/src/diagnostics/appLog.ts": {
+      "category": "other",
+      "anchors": [
+        "APP_LOG"
+      ],
+      "anchor_spans": [
+        {
+          "name": "APP_LOG",
+          "start": 1,
+          "end": 200
+        }
+      ],
+      "line_count": 200,
+      "imports": [],
+      "imported_by": [
+        "apps/desktop/src/console/DesktopConsole.tsx",
+        "apps/desktop/src/console/sessionApi.ts",
+        "apps/desktop/src/console/useLiveSubtitleStream.ts",
+        "apps/desktop/src/setup/sidecarRunner.ts"
+      ]
+    },
+    "apps/desktop/src/help/HelpManualPanel.tsx": {
+      "category": "other",
+      "anchors": [
+        "HELP_MANUAL_PANEL"
+      ],
+      "anchor_spans": [
+        {
+          "name": "HELP_MANUAL_PANEL",
+          "start": 1,
+          "end": 37,
+          "signature": "export function HelpManualPanel() {"
+        }
+      ],
+      "line_count": 37,
+      "imports": [
+        "apps/desktop/src/help/helpManualContent.ts",
+        "apps/desktop/src/help/helpManualStyles.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/DesktopConsole.tsx"
+      ]
+    },
+    "apps/desktop/src/help/helpManualContent.ts": {
+      "category": "other",
+      "anchors": [
+        "HELP_MANUAL_CONTENT"
+      ],
+      "anchor_spans": [
+        {
+          "name": "HELP_MANUAL_CONTENT",
+          "start": 1,
+          "end": 122,
+          "signature": "export const helpManualSections: HelpSection[] = ["
+        }
+      ],
+      "line_count": 122,
+      "imports": [
+        "apps/desktop/src/help/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/help/HelpManualPanel.tsx"
+      ]
+    },
+    "apps/desktop/src/help/helpManualStyles.ts": {
+      "category": "other",
+      "anchors": [
+        "HELP_MANUAL_STYLES"
+      ],
+      "anchor_spans": [
+        {
+          "name": "HELP_MANUAL_STYLES",
+          "start": 1,
+          "end": 93,
+          "signature": "export const helpManualStyles: Record<string, CSSProperties> = {"
+        }
+      ],
+      "line_count": 93,
+      "imports": [],
+      "imported_by": [
+        "apps/desktop/src/help/HelpManualPanel.tsx"
+      ]
+    },
+    "apps/desktop/src/help/types.ts": {
+      "category": "other",
+      "anchors": [
+        "HELP_TYPES"
+      ],
+      "anchor_spans": [
+        {
+          "name": "HELP_TYPES",
+          "start": 1,
+          "end": 15
+        }
+      ],
+      "line_count": 15,
+      "imports": [],
+      "imported_by": [
+        "apps/desktop/src/help/helpManualContent.ts"
       ]
     },
     "apps/desktop/src/main.tsx": {
@@ -546,6 +1130,545 @@
         "apps/desktop/src/App.tsx"
       ],
       "imported_by": []
+    },
+    "apps/desktop/src/settings/LogSettingsPanel.tsx": {
+      "category": "other",
+      "anchors": [
+        "LOG_SETTINGS_PANEL"
+      ],
+      "anchor_spans": [
+        {
+          "name": "LOG_SETTINGS_PANEL",
+          "start": 1,
+          "end": 165
+        }
+      ],
+      "line_count": 165,
+      "imports": [
+        "apps/desktop/src/settings/settingsStyles.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/settings/SettingsPanel.tsx"
+      ]
+    },
+    "apps/desktop/src/settings/SettingsPanel.tsx": {
+      "category": "other",
+      "anchors": [
+        "SETTINGS_PANEL"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SETTINGS_PANEL",
+          "start": 1,
+          "end": 63
+        }
+      ],
+      "line_count": 63,
+      "imports": [
+        "apps/desktop/src/settings/LogSettingsPanel.tsx",
+        "apps/desktop/src/settings/settingsStyles.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/DesktopConsole.tsx"
+      ]
+    },
+    "apps/desktop/src/settings/settingsStyles.ts": {
+      "category": "other",
+      "anchors": [
+        "SETTINGS_STYLES"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SETTINGS_STYLES",
+          "start": 1,
+          "end": 241,
+          "signature": "export const settingsStyles: Record<string, CSSProperties> = {"
+        }
+      ],
+      "line_count": 241,
+      "imports": [],
+      "imported_by": [
+        "apps/desktop/src/settings/LogSettingsPanel.tsx",
+        "apps/desktop/src/settings/SettingsPanel.tsx"
+      ]
+    },
+    "apps/desktop/src/setup/Field.tsx": {
+      "category": "other",
+      "anchors": [
+        "FIELD",
+        "FIELD_FIELD"
+      ],
+      "anchor_spans": [
+        {
+          "name": "FIELD",
+          "start": 1,
+          "end": 28
+        },
+        {
+          "name": "FIELD_FIELD",
+          "start": 12,
+          "end": 27,
+          "signature": "export function Field({ label, help, value, secret = false, onChange }: FieldProps) {"
+        }
+      ],
+      "line_count": 28,
+      "imports": [
+        "apps/desktop/src/setup/styles.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/setup/SetupAssistant.tsx"
+      ]
+    },
+    "apps/desktop/src/setup/MeetingQuickStartPanel.tsx": {
+      "category": "ui",
+      "anchors": [
+        "MEETING_QUICK_START_PANEL"
+      ],
+      "anchor_spans": [
+        {
+          "name": "MEETING_QUICK_START_PANEL",
+          "start": 1,
+          "end": 102,
+          "signature": "export function MeetingQuickStartPanel() {"
+        }
+      ],
+      "line_count": 102,
+      "imports": [
+        "apps/desktop/src/console/LiveSubtitlePreview.tsx",
+        "apps/desktop/src/console/useMeetingLifecycle.ts",
+        "apps/desktop/src/setup/styles.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/setup/SetupAssistant.tsx"
+      ]
+    },
+    "apps/desktop/src/setup/PlatformRunbookPanel.tsx": {
+      "category": "other",
+      "anchors": [
+        "PLATFORM_RUNBOOK_PANEL"
+      ],
+      "anchor_spans": [
+        {
+          "name": "PLATFORM_RUNBOOK_PANEL",
+          "start": 1,
+          "end": 33
+        }
+      ],
+      "line_count": 33,
+      "imports": [
+        "apps/desktop/src/setup/platformRunbook.ts",
+        "apps/desktop/src/setup/styles.ts",
+        "apps/desktop/src/setup/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/setup/SetupAssistant.tsx"
+      ]
+    },
+    "apps/desktop/src/setup/PlatformSelector.tsx": {
+      "category": "other",
+      "anchors": [
+        "PLATFORM_SELECTOR"
+      ],
+      "anchor_spans": [
+        {
+          "name": "PLATFORM_SELECTOR",
+          "start": 1,
+          "end": 37
+        }
+      ],
+      "line_count": 37,
+      "imports": [
+        "apps/desktop/src/setup/platformConfig.ts",
+        "apps/desktop/src/setup/styles.ts",
+        "apps/desktop/src/setup/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/setup/SetupAssistant.tsx"
+      ]
+    },
+    "apps/desktop/src/setup/SetupAssistant.tsx": {
+      "category": "other",
+      "anchors": [
+        "SETUPASSISTANT",
+        "SETUPASSISTANT_SETUPASSISTANT",
+        "SETUPASSISTANT_UPDATEVALUE",
+        "SETUPASSISTANT_UPDATEPLATFORM",
+        "SETUPASSISTANT_COPYCOMMAND",
+        "SETUPASSISTANT_RUNALLSMOKECHECKS",
+        "SETUPASSISTANT_MARKCHECK"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SETUPASSISTANT",
+          "start": 1,
+          "end": 180
+        },
+        {
+          "name": "SETUPASSISTANT_SETUPASSISTANT",
+          "start": 16,
+          "end": 179,
+          "signature": "export function SetupAssistant() {"
+        },
+        {
+          "name": "SETUPASSISTANT_UPDATEVALUE",
+          "start": 38,
+          "end": 46,
+          "signature": "function updateValue<K extends keyof SetupValues>(key: K, value: SetupValues[K]) {"
+        },
+        {
+          "name": "SETUPASSISTANT_UPDATEPLATFORM",
+          "start": 48,
+          "end": 60,
+          "signature": "function updatePlatform(platform: SetupPlatform) {"
+        },
+        {
+          "name": "SETUPASSISTANT_COPYCOMMAND",
+          "start": 62,
+          "end": 68,
+          "signature": "async function copyCommand() {"
+        },
+        {
+          "name": "SETUPASSISTANT_RUNALLSMOKECHECKS",
+          "start": 70,
+          "end": 84,
+          "signature": "async function runAllSmokeChecks() {"
+        },
+        {
+          "name": "SETUPASSISTANT_MARKCHECK",
+          "start": 86,
+          "end": 97,
+          "signature": "function markCheck(key: SmokeCheckKey, status: SmokeStatus, detail: string) {"
+        }
+      ],
+      "line_count": 180,
+      "imports": [
+        "apps/desktop/src/setup/Field.tsx",
+        "apps/desktop/src/setup/MeetingQuickStartPanel.tsx",
+        "apps/desktop/src/setup/PlatformRunbookPanel.tsx",
+        "apps/desktop/src/setup/PlatformSelector.tsx",
+        "apps/desktop/src/setup/SidecarRunnerPanel.tsx",
+        "apps/desktop/src/setup/SmokeChecklist.tsx",
+        "apps/desktop/src/setup/platformConfig.ts",
+        "apps/desktop/src/setup/sidecarCommands.ts",
+        "apps/desktop/src/setup/setupValues.ts",
+        "apps/desktop/src/setup/smokeChecks.ts",
+        "apps/desktop/src/setup/styles.ts",
+        "apps/desktop/src/setup/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/DesktopConsole.tsx"
+      ]
+    },
+    "apps/desktop/src/setup/SidecarRunnerPanel.tsx": {
+      "category": "other",
+      "anchors": [
+        "SIDECAR_RUNNER_PANEL"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SIDECAR_RUNNER_PANEL",
+          "start": 1,
+          "end": 92
+        }
+      ],
+      "line_count": 92,
+      "imports": [
+        "apps/desktop/src/setup/sidecarRunner.ts",
+        "apps/desktop/src/setup/styles.ts",
+        "apps/desktop/src/setup/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/setup/SetupAssistant.tsx"
+      ]
+    },
+    "apps/desktop/src/setup/SmokeChecklist.tsx": {
+      "category": "other",
+      "anchors": [
+        "SMOKECHECKLIST",
+        "SMOKECHECKLIST_SMOKECHECKLIST"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SMOKECHECKLIST",
+          "start": 1,
+          "end": 53
+        },
+        {
+          "name": "SMOKECHECKLIST_SMOKECHECKLIST",
+          "start": 19,
+          "end": 52,
+          "signature": "export function SmokeChecklist({ checks, onRunAll, running }: SmokeChecklistProps) {"
+        }
+      ],
+      "line_count": 53,
+      "imports": [
+        "apps/desktop/src/setup/smokeChecks.ts",
+        "apps/desktop/src/setup/styles.ts",
+        "apps/desktop/src/setup/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/setup/SetupAssistant.tsx"
+      ]
+    },
+    "apps/desktop/src/setup/platformConfig.ts": {
+      "category": "other",
+      "anchors": [
+        "PLATFORM_CONFIG"
+      ],
+      "anchor_spans": [
+        {
+          "name": "PLATFORM_CONFIG",
+          "start": 1,
+          "end": 39
+        }
+      ],
+      "line_count": 39,
+      "imports": [
+        "apps/desktop/src/setup/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/setup/PlatformSelector.tsx",
+        "apps/desktop/src/setup/SetupAssistant.tsx",
+        "apps/desktop/src/setup/setupValues.ts",
+        "apps/desktop/src/setup/sidecarCommands.ts"
+      ]
+    },
+    "apps/desktop/src/setup/platformRunbook.ts": {
+      "category": "other",
+      "anchors": [
+        "PLATFORM_RUNBOOK"
+      ],
+      "anchor_spans": [
+        {
+          "name": "PLATFORM_RUNBOOK",
+          "start": 1,
+          "end": 64
+        }
+      ],
+      "line_count": 64,
+      "imports": [
+        "apps/desktop/src/setup/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/setup/PlatformRunbookPanel.tsx"
+      ]
+    },
+    "apps/desktop/src/setup/setupValues.ts": {
+      "category": "other",
+      "anchors": [
+        "SETUPVALUES",
+        "SETUPVALUES_LOADVALUES",
+        "SETUPVALUES_STOREVALUES",
+        "SETUPVALUES_HTTPBASEFROMWS",
+        "SETUPVALUES_ISSECUREVIEWERURL"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SETUPVALUES",
+          "start": 1,
+          "end": 71,
+          "signature": "const STORAGE_KEY = \"yeson-meet-desktop-setup\";"
+        },
+        {
+          "name": "SETUPVALUES_LOADVALUES",
+          "start": 24,
+          "end": 42,
+          "signature": "export function loadValues(): SetupValues {"
+        },
+        {
+          "name": "SETUPVALUES_STOREVALUES",
+          "start": 44,
+          "end": 50,
+          "signature": "export function storeValues(values: SetupValues): void {"
+        },
+        {
+          "name": "SETUPVALUES_HTTPBASEFROMWS",
+          "start": 52,
+          "end": 60,
+          "signature": "export function httpBaseFromWs(serverWsBase: string): string {"
+        },
+        {
+          "name": "SETUPVALUES_ISSECUREVIEWERURL",
+          "start": 62,
+          "end": 70,
+          "signature": "export function isSecureViewerUrl(viewerUrl: string): boolean {"
+        }
+      ],
+      "line_count": 71,
+      "imports": [
+        "apps/desktop/src/setup/platformConfig.ts",
+        "apps/desktop/src/setup/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/console/sessionApi.ts",
+        "apps/desktop/src/console/useMeetingLifecycle.ts",
+        "apps/desktop/src/setup/SetupAssistant.tsx",
+        "apps/desktop/src/setup/smokeChecks.ts"
+      ]
+    },
+    "apps/desktop/src/setup/sidecarCommands.ts": {
+      "category": "other",
+      "anchors": [
+        "SIDECAR_COMMANDS"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SIDECAR_COMMANDS",
+          "start": 1,
+          "end": 57,
+          "signature": "function powerShellLiteral(value: string): string {"
+        }
+      ],
+      "line_count": 57,
+      "imports": [
+        "apps/desktop/src/setup/platformConfig.ts",
+        "apps/desktop/src/setup/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/setup/SetupAssistant.tsx"
+      ]
+    },
+    "apps/desktop/src/setup/sidecarRunner.ts": {
+      "category": "other",
+      "anchors": [
+        "SIDECAR_RUNNER"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SIDECAR_RUNNER",
+          "start": 1,
+          "end": 87
+        }
+      ],
+      "line_count": 87,
+      "imports": [
+        "apps/desktop/src/diagnostics/appLog.ts",
+        "apps/desktop/src/setup/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/setup/SidecarRunnerPanel.tsx"
+      ]
+    },
+    "apps/desktop/src/setup/smokeChecks.ts": {
+      "category": "other",
+      "anchors": [
+        "SMOKECHECKS",
+        "SMOKECHECKS_INITIALSMOKECHECKS",
+        "SMOKECHECKS_RUNSMOKECHECK",
+        "SMOKECHECKS_CHECKSERVER",
+        "SMOKECHECKS_CHECKGEMINI",
+        "SMOKECHECKS_BODY",
+        "SMOKECHECKS_CHECKVIEWER"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SMOKECHECKS",
+          "start": 1,
+          "end": 85,
+          "signature": "export const SMOKE_CHECK_ORDER: SmokeCheckKey[] = [\"server\", \"gemini\", \"viewer\"];"
+        },
+        {
+          "name": "SMOKECHECKS_INITIALSMOKECHECKS",
+          "start": 7,
+          "end": 33,
+          "signature": "export function initialSmokeChecks(): Record<SmokeCheckKey, SmokeCheck> {"
+        },
+        {
+          "name": "SMOKECHECKS_RUNSMOKECHECK",
+          "start": 35,
+          "end": 44,
+          "signature": "export async function runSmokeCheck("
+        },
+        {
+          "name": "SMOKECHECKS_CHECKSERVER",
+          "start": 46,
+          "end": 52,
+          "signature": "async function checkServer(values: SetupValues): Promise<Pick<SmokeCheck, \"status\" | \"detail\">> {"
+        },
+        {
+          "name": "SMOKECHECKS_CHECKGEMINI",
+          "start": 54,
+          "end": 67,
+          "signature": "async function checkGemini(values: SetupValues): Promise<Pick<SmokeCheck, \"status\" | \"detail\">> {"
+        },
+        {
+          "name": "SMOKECHECKS_BODY",
+          "start": 59,
+          "end": 61,
+          "signature": "const body = (await response.json()) as { gemini?: { configured?: boolean; status?: string } };"
+        },
+        {
+          "name": "SMOKECHECKS_CHECKVIEWER",
+          "start": 69,
+          "end": 84,
+          "signature": "async function checkViewer(values: SetupValues): Promise<Pick<SmokeCheck, \"status\" | \"detail\">> {"
+        }
+      ],
+      "line_count": 85,
+      "imports": [
+        "apps/desktop/src/setup/setupValues.ts",
+        "apps/desktop/src/setup/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/setup/SetupAssistant.tsx",
+        "apps/desktop/src/setup/SmokeChecklist.tsx"
+      ]
+    },
+    "apps/desktop/src/setup/styles.ts": {
+      "category": "other",
+      "anchors": [
+        "STYLES"
+      ],
+      "anchor_spans": [
+        {
+          "name": "STYLES",
+          "start": 1,
+          "end": 522,
+          "signature": "export const statusStyles: Record<SmokeStatus, CSSProperties> = {"
+        }
+      ],
+      "line_count": 522,
+      "imports": [
+        "apps/desktop/src/setup/types.ts"
+      ],
+      "imported_by": [
+        "apps/desktop/src/setup/Field.tsx",
+        "apps/desktop/src/setup/MeetingQuickStartPanel.tsx",
+        "apps/desktop/src/setup/PlatformRunbookPanel.tsx",
+        "apps/desktop/src/setup/PlatformSelector.tsx",
+        "apps/desktop/src/setup/SetupAssistant.tsx",
+        "apps/desktop/src/setup/SidecarRunnerPanel.tsx",
+        "apps/desktop/src/setup/SmokeChecklist.tsx"
+      ]
+    },
+    "apps/desktop/src/setup/types.ts": {
+      "category": "other",
+      "anchors": [
+        "TYPES"
+      ],
+      "anchor_spans": [
+        {
+          "name": "TYPES",
+          "start": 1,
+          "end": 25
+        }
+      ],
+      "line_count": 25,
+      "imports": [],
+      "imported_by": [
+        "apps/desktop/src/setup/PlatformRunbookPanel.tsx",
+        "apps/desktop/src/setup/PlatformSelector.tsx",
+        "apps/desktop/src/setup/SetupAssistant.tsx",
+        "apps/desktop/src/setup/SidecarRunnerPanel.tsx",
+        "apps/desktop/src/setup/SmokeChecklist.tsx",
+        "apps/desktop/src/setup/platformConfig.ts",
+        "apps/desktop/src/setup/platformRunbook.ts",
+        "apps/desktop/src/setup/setupValues.ts",
+        "apps/desktop/src/setup/sidecarCommands.ts",
+        "apps/desktop/src/setup/sidecarRunner.ts",
+        "apps/desktop/src/setup/smokeChecks.ts",
+        "apps/desktop/src/setup/styles.ts"
+      ]
     },
     "apps/desktop/vite.config.ts": {
       "category": "other",
@@ -588,16 +1711,38 @@
         {
           "name": "GEMINI_LIVE",
           "start": 1,
-          "end": 248
+          "end": 1409
         }
       ],
-      "line_count": 248,
+      "line_count": 1409,
       "imports": [
+        "apps/server/ai/live_session.py",
         "apps/server/ai/providers.py"
       ],
       "imported_by": [
         "apps/server/api/v1/health.py",
         "apps/server/main.py",
+        "apps/server/ws/sidecar.py"
+      ]
+    },
+    "apps/server/ai/google_stt_translate.py": {
+      "category": "service",
+      "anchors": [
+        "GOOGLE_STT_TRANSLATE"
+      ],
+      "anchor_spans": [
+        {
+          "name": "GOOGLE_STT_TRANSLATE",
+          "start": 1,
+          "end": 261
+        }
+      ],
+      "line_count": 261,
+      "imports": [
+        "apps/server/ai/providers.py"
+      ],
+      "imported_by": [
+        "apps/server/api/v1/health.py",
         "apps/server/ws/sidecar.py"
       ]
     },
@@ -616,50 +1761,51 @@
         {
           "name": "LIVE_SESSION",
           "start": 1,
-          "end": 108
+          "end": 175
         },
         {
           "name": "LIVE_SESSION_AUDIOLIVESESSION",
-          "start": 18,
-          "end": 107,
+          "start": 44,
+          "end": 174,
           "signature": "class AudioLiveSession:"
         },
         {
           "name": "LIVE_SESSION_START",
-          "start": 41,
-          "end": 47,
+          "start": 72,
+          "end": 78,
           "signature": "async def start(self) -> None:"
         },
         {
           "name": "LIVE_SESSION_PUSH_AUDIO",
-          "start": 49,
-          "end": 54,
+          "start": 80,
+          "end": 105,
           "signature": "async def push_audio(self, chunk: bytes) -> None:"
         },
         {
           "name": "LIVE_SESSION_STOP",
-          "start": 56,
-          "end": 65,
+          "start": 107,
+          "end": 116,
           "signature": "async def stop(self) -> None:"
         },
         {
           "name": "LIVE_SESSION__AUDIO_STREAM",
-          "start": 67,
-          "end": 74,
+          "start": 118,
+          "end": 125,
           "signature": "async def _audio_stream(self) -> AsyncIterator[bytes]:"
         },
         {
           "name": "LIVE_SESSION__RUN",
-          "start": 75,
-          "end": 106,
+          "start": 126,
+          "end": 173,
           "signature": "async def _run(self) -> None:"
         }
       ],
-      "line_count": 108,
+      "line_count": 175,
       "imports": [
         "apps/server/ai/providers.py"
       ],
       "imported_by": [
+        "apps/server/ai/gemini_live.py",
         "apps/server/ws/sidecar.py"
       ]
     },
@@ -675,34 +1821,72 @@
         {
           "name": "PROVIDERS",
           "start": 1,
-          "end": 49
+          "end": 52
         },
         {
           "name": "PROVIDERS_TRANSLATEDUTTERANCE",
           "start": 10,
-          "end": 22,
+          "end": 25,
           "signature": "class TranslatedUtterance:"
         },
         {
           "name": "PROVIDERS_STTPROVIDER",
-          "start": 25,
-          "end": 34,
+          "start": 28,
+          "end": 37,
           "signature": "class STTProvider(Protocol):"
         },
         {
           "name": "PROVIDERS_TRANSLATIONPROVIDER",
-          "start": 37,
-          "end": 48,
+          "start": 40,
+          "end": 51,
           "signature": "class TranslationProvider(Protocol):"
         }
       ],
-      "line_count": 49,
+      "line_count": 52,
       "imports": [],
       "imported_by": [
         "apps/server/ai/gemini_live.py",
+        "apps/server/ai/google_stt_translate.py",
         "apps/server/ai/live_session.py",
         "apps/server/ws/sidecar.py"
       ]
+    },
+    "apps/server/ai/subtitle_quality.py": {
+      "category": "service",
+      "anchors": [
+        "SUBTITLE_QUALITY",
+        "SUBTITLE_QUALITY_MODELS",
+        "SUBTITLE_QUALITY_ASSESS",
+        "SUBTITLE_QUALITY_HEURISTICS"
+      ],
+      "anchor_spans": [
+        {
+          "name": "SUBTITLE_QUALITY",
+          "start": 1,
+          "end": 330
+        },
+        {
+          "name": "SUBTITLE_QUALITY_MODELS",
+          "start": 86,
+          "end": 106,
+          "signature": "class SubtitleQualityIssue:"
+        },
+        {
+          "name": "SUBTITLE_QUALITY_ASSESS",
+          "start": 109,
+          "end": 147,
+          "signature": "def assess_subtitle_quality(text_en: str, text_ko: str) -> SubtitleQualityReport:"
+        },
+        {
+          "name": "SUBTITLE_QUALITY_HEURISTICS",
+          "start": 150,
+          "end": 329,
+          "signature": "def _looks_too_short(source: str, translated: str) -> bool:"
+        }
+      ],
+      "line_count": 330,
+      "imports": [],
+      "imported_by": []
     },
     "apps/server/api/__init__.py": {
       "category": "service",
@@ -841,18 +2025,19 @@
         {
           "name": "HEALTH",
           "start": 1,
-          "end": 22
+          "end": 23
         },
         {
           "name": "HEALTH_HEALTH",
-          "start": 11,
-          "end": 14,
+          "start": 12,
+          "end": 15,
           "signature": "async def health() -> dict[str, str]:"
         }
       ],
-      "line_count": 22,
+      "line_count": 23,
       "imports": [
         "apps/server/ai/gemini_live.py",
+        "apps/server/ai/google_stt_translate.py",
         "apps/server/ops/alerts.py"
       ],
       "imported_by": [
@@ -1005,7 +2190,7 @@
         {
           "name": "UTTERANCES",
           "start": 1,
-          "end": 126
+          "end": 129
         },
         {
           "name": "UTTERANCES_UTTERANCEOUT",
@@ -1039,12 +2224,12 @@
         },
         {
           "name": "UTTERANCES_LIST_VIEWER_UTTERANCES",
-          "start": 101,
-          "end": 107,
+          "start": 104,
+          "end": 110,
           "signature": "async def list_viewer_utterances("
         }
       ],
-      "line_count": 126,
+      "line_count": 129,
       "imports": [
         "apps/server/auth/deps.py",
         "apps/server/db/models.py",
@@ -1216,7 +2401,8 @@
       "imports": [],
       "imported_by": [
         "apps/server/api/v1/auth.py",
-        "apps/server/auth/deps.py"
+        "apps/server/auth/deps.py",
+        "apps/server/ws/operator.py"
       ]
     },
     "apps/server/auth/password.py": {
@@ -1424,6 +2610,7 @@
         "apps/server/db/seed.py",
         "apps/server/domain/reports.py",
         "apps/server/ops/session_safety.py",
+        "apps/server/ws/operator.py",
         "apps/server/ws/sidecar.py",
         "apps/server/ws/viewer.py"
       ]
@@ -1512,6 +2699,7 @@
         "apps/server/api/v1/utterances.py",
         "apps/server/auth/deps.py",
         "apps/server/db/seed.py",
+        "apps/server/ws/operator.py",
         "apps/server/ws/sidecar.py",
         "apps/server/ws/viewer.py"
       ]
@@ -1630,16 +2818,16 @@
         {
           "name": "MAIN",
           "start": 1,
-          "end": 70
+          "end": 97
         },
         {
           "name": "MAIN_RUN",
-          "start": 60,
-          "end": 65,
+          "start": 87,
+          "end": 92,
           "signature": "def run() -> None:"
         }
       ],
-      "line_count": 70,
+      "line_count": 97,
       "imports": [
         "apps/server/api/v1/auth.py",
         "apps/server/api/v1/devices.py",
@@ -1650,6 +2838,7 @@
         "apps/server/api/v1/audio_stats.py",
         "apps/server/ai/gemini_live.py",
         "apps/server/ops/alerts.py",
+        "apps/server/ws/operator.py",
         "apps/server/ws/sidecar.py",
         "apps/server/ws/viewer.py"
       ],
@@ -1944,6 +3133,7 @@
       "imports": [],
       "imported_by": [
         "apps/server/api/v1/sessions.py",
+        "apps/server/ws/operator.py",
         "apps/server/ws/sidecar.py",
         "apps/server/ws/viewer.py"
       ]
@@ -1994,6 +3184,36 @@
         "apps/server/ws/sidecar.py"
       ]
     },
+    "apps/server/ws/operator.py": {
+      "category": "service",
+      "anchors": [
+        "OPERATOR_WS",
+        "OPERATOR_WS_OPERATOR"
+      ],
+      "anchor_spans": [
+        {
+          "name": "OPERATOR_WS",
+          "start": 1,
+          "end": 99
+        },
+        {
+          "name": "OPERATOR_WS_OPERATOR",
+          "start": 20,
+          "end": 98,
+          "signature": "async def ws_operator(ws: WebSocket) -> None:"
+        }
+      ],
+      "line_count": 99,
+      "imports": [
+        "apps/server/auth/jwt.py",
+        "apps/server/db/models.py",
+        "apps/server/db/session.py",
+        "apps/server/ws/bus.py"
+      ],
+      "imported_by": [
+        "apps/server/main.py"
+      ]
+    },
     "apps/server/ws/sidecar.py": {
       "category": "service",
       "anchors": [
@@ -2003,13 +3223,14 @@
         {
           "name": "SIDECAR",
           "start": 1,
-          "end": 274
+          "end": 417
         }
       ],
-      "line_count": 274,
+      "line_count": 417,
       "imports": [
         "apps/server/auth/device.py",
         "apps/server/ai/gemini_live.py",
+        "apps/server/ai/google_stt_translate.py",
         "apps/server/ai/live_session.py",
         "apps/server/ai/providers.py",
         "apps/server/db/models.py",
@@ -2035,12 +3256,12 @@
         {
           "name": "VIEWER",
           "start": 1,
-          "end": 89
+          "end": 98
         },
         {
           "name": "VIEWER_WS_VIEWER",
           "start": 24,
-          "end": 86,
+          "end": 95,
           "signature": "async def ws_viewer(ws: WebSocket) -> None:"
         },
         {
@@ -2050,7 +3271,7 @@
           "signature": "async def _drain_incoming() -> None:"
         }
       ],
-      "line_count": 89,
+      "line_count": 98,
       "imports": [
         "apps/server/db/models.py",
         "apps/server/db/session.py",
@@ -2161,22 +3382,43 @@
         {
           "name": "SUBTITLEVIEW",
           "start": 1,
-          "end": 45,
+          "end": 49,
           "signature": "export function SubtitleView({ token }: { token: string }) {"
         },
         {
           "name": "SUBTITLEVIEW_SUBTITLEVIEW",
-          "start": 4,
-          "end": 44,
+          "start": 5,
+          "end": 48,
           "signature": "export function SubtitleView({ token }: { token: string }) {"
         }
       ],
-      "line_count": 45,
+      "line_count": 49,
       "imports": [
+        "apps/web/src/hooks/usePacedSubtitle.ts",
         "apps/web/src/hooks/useViewerWS.ts"
       ],
       "imported_by": [
         "apps/web/src/App.tsx"
+      ]
+    },
+    "apps/web/src/hooks/usePacedSubtitle.ts": {
+      "category": "other",
+      "anchors": [
+        "USE_PACED_SUBTITLE"
+      ],
+      "anchor_spans": [
+        {
+          "name": "USE_PACED_SUBTITLE",
+          "start": 1,
+          "end": 91
+        }
+      ],
+      "line_count": 91,
+      "imports": [
+        "apps/web/src/types/events.ts"
+      ],
+      "imported_by": [
+        "apps/web/src/components/SubtitleView.tsx"
       ]
     },
     "apps/web/src/hooks/useViewerWS.ts": {
@@ -2333,6 +3575,7 @@
       "line_count": 28,
       "imports": [],
       "imported_by": [
+        "apps/web/src/hooks/usePacedSubtitle.ts",
         "apps/web/src/hooks/useViewerWS.ts",
         "apps/web/src/lib/api.ts",
         "apps/web/src/lib/utterances.ts"
@@ -2489,7 +3732,7 @@
   "core_modules": [],
   "service_modules": [],
   "large_files": [],
-  "file_count": 77,
+  "file_count": 127,
   "anchor_index": {
     "apps/client_sidecar/audio/capture.py": [
       "CAPTURE",
@@ -2551,23 +3794,179 @@
     "apps/desktop/src-tauri/build.rs": [
       "BUILD"
     ],
+    "apps/desktop/src-tauri/src/audio/mod.rs": [
+      "AUDIO_MOD"
+    ],
+    "apps/desktop/src-tauri/src/audio/voicemeeter_ffi.rs": [
+      "VOICEMEETER_FFI"
+    ],
+    "apps/desktop/src-tauri/src/bin/voicemeeter_dump.rs": [
+      "VOICEMEETER_DUMP"
+    ],
+    "apps/desktop/src-tauri/src/diagnostics.rs": [
+      "DIAGNOSTICS"
+    ],
     "apps/desktop/src-tauri/src/lib.rs": [
       "LIB"
     ],
     "apps/desktop/src-tauri/src/main.rs": [
       "MAIN"
     ],
+    "apps/desktop/src-tauri/src/sidecar.rs": [
+      "SIDECAR"
+    ],
     "apps/desktop/src/App.tsx": [
       "APP"
     ],
+    "apps/desktop/src/console/ConsoleNav.tsx": [
+      "CONSOLE_NAV"
+    ],
+    "apps/desktop/src/console/ContractPreview.tsx": [
+      "CONTRACT_PREVIEW"
+    ],
+    "apps/desktop/src/console/DesktopConsole.tsx": [
+      "DESKTOP_CONSOLE"
+    ],
+    "apps/desktop/src/console/LifecycleFields.tsx": [
+      "LIFECYCLE_FIELDS"
+    ],
+    "apps/desktop/src/console/LiveSubtitlePreview.tsx": [
+      "LIVE_SUBTITLE_PREVIEW"
+    ],
+    "apps/desktop/src/console/MeetingLifecyclePanel.tsx": [
+      "MEETING_LIFECYCLE_PANEL"
+    ],
+    "apps/desktop/src/console/SessionResultPanel.tsx": [
+      "SESSION_RESULT_PANEL"
+    ],
+    "apps/desktop/src/console/SubtitleFullscreenWindow.tsx": [
+      "SUBTITLE_FULLSCREEN_WINDOW"
+    ],
+    "apps/desktop/src/console/ViewerQrPanel.tsx": [
+      "VIEWER_QR_PANEL"
+    ],
+    "apps/desktop/src/console/consoleStyles.ts": [
+      "CONSOLE_STYLES"
+    ],
+    "apps/desktop/src/console/sessionApi.ts": [
+      "SESSION_API"
+    ],
+    "apps/desktop/src/console/types.ts": [
+      "CONSOLE_TYPES"
+    ],
+    "apps/desktop/src/console/useLiveSubtitleStream.ts": [
+      "USE_LIVE_SUBTITLE_STREAM"
+    ],
+    "apps/desktop/src/console/useMeetingLifecycle.ts": [
+      "USE_MEETING_LIFECYCLE"
+    ],
+    "apps/desktop/src/console/usePacedSubtitle.ts": [
+      "USE_PACED_SUBTITLE"
+    ],
+    "apps/desktop/src/console/useSubtitleFullscreenShortcut.ts": [
+      "USE_SUBTITLE_FULLSCREEN_SHORTCUT"
+    ],
+    "apps/desktop/src/console/utterances.ts": [
+      "CONSOLE_UTTERANCES"
+    ],
+    "apps/desktop/src/diagnostics/appLog.ts": [
+      "APP_LOG"
+    ],
+    "apps/desktop/src/help/HelpManualPanel.tsx": [
+      "HELP_MANUAL_PANEL"
+    ],
+    "apps/desktop/src/help/helpManualContent.ts": [
+      "HELP_MANUAL_CONTENT"
+    ],
+    "apps/desktop/src/help/helpManualStyles.ts": [
+      "HELP_MANUAL_STYLES"
+    ],
+    "apps/desktop/src/help/types.ts": [
+      "HELP_TYPES"
+    ],
     "apps/desktop/src/main.tsx": [
       "MAIN"
+    ],
+    "apps/desktop/src/settings/LogSettingsPanel.tsx": [
+      "LOG_SETTINGS_PANEL"
+    ],
+    "apps/desktop/src/settings/SettingsPanel.tsx": [
+      "SETTINGS_PANEL"
+    ],
+    "apps/desktop/src/settings/settingsStyles.ts": [
+      "SETTINGS_STYLES"
+    ],
+    "apps/desktop/src/setup/Field.tsx": [
+      "FIELD",
+      "FIELD_FIELD"
+    ],
+    "apps/desktop/src/setup/MeetingQuickStartPanel.tsx": [
+      "MEETING_QUICK_START_PANEL"
+    ],
+    "apps/desktop/src/setup/PlatformRunbookPanel.tsx": [
+      "PLATFORM_RUNBOOK_PANEL"
+    ],
+    "apps/desktop/src/setup/PlatformSelector.tsx": [
+      "PLATFORM_SELECTOR"
+    ],
+    "apps/desktop/src/setup/SetupAssistant.tsx": [
+      "SETUPASSISTANT",
+      "SETUPASSISTANT_SETUPASSISTANT",
+      "SETUPASSISTANT_UPDATEVALUE",
+      "SETUPASSISTANT_UPDATEPLATFORM",
+      "SETUPASSISTANT_COPYCOMMAND",
+      "SETUPASSISTANT_RUNALLSMOKECHECKS",
+      "SETUPASSISTANT_MARKCHECK"
+    ],
+    "apps/desktop/src/setup/SidecarRunnerPanel.tsx": [
+      "SIDECAR_RUNNER_PANEL"
+    ],
+    "apps/desktop/src/setup/SmokeChecklist.tsx": [
+      "SMOKECHECKLIST",
+      "SMOKECHECKLIST_SMOKECHECKLIST"
+    ],
+    "apps/desktop/src/setup/platformConfig.ts": [
+      "PLATFORM_CONFIG"
+    ],
+    "apps/desktop/src/setup/platformRunbook.ts": [
+      "PLATFORM_RUNBOOK"
+    ],
+    "apps/desktop/src/setup/setupValues.ts": [
+      "SETUPVALUES",
+      "SETUPVALUES_LOADVALUES",
+      "SETUPVALUES_STOREVALUES",
+      "SETUPVALUES_HTTPBASEFROMWS",
+      "SETUPVALUES_ISSECUREVIEWERURL"
+    ],
+    "apps/desktop/src/setup/sidecarCommands.ts": [
+      "SIDECAR_COMMANDS"
+    ],
+    "apps/desktop/src/setup/sidecarRunner.ts": [
+      "SIDECAR_RUNNER"
+    ],
+    "apps/desktop/src/setup/smokeChecks.ts": [
+      "SMOKECHECKS",
+      "SMOKECHECKS_INITIALSMOKECHECKS",
+      "SMOKECHECKS_RUNSMOKECHECK",
+      "SMOKECHECKS_CHECKSERVER",
+      "SMOKECHECKS_CHECKGEMINI",
+      "SMOKECHECKS_BODY",
+      "SMOKECHECKS_CHECKVIEWER"
+    ],
+    "apps/desktop/src/setup/styles.ts": [
+      "STYLES"
+    ],
+    "apps/desktop/src/setup/types.ts": [
+      "TYPES"
     ],
     "apps/desktop/vite.config.ts": [
       "VITE_CONFIG"
     ],
     "apps/server/ai/gemini_live.py": [
       "GEMINI_LIVE"
+    ],
+    "apps/server/ai/google_stt_translate.py": [
+      "GOOGLE_STT_TRANSLATE"
     ],
     "apps/server/ai/live_session.py": [
       "LIVE_SESSION",
@@ -2583,6 +3982,12 @@
       "PROVIDERS_TRANSLATEDUTTERANCE",
       "PROVIDERS_STTPROVIDER",
       "PROVIDERS_TRANSLATIONPROVIDER"
+    ],
+    "apps/server/ai/subtitle_quality.py": [
+      "SUBTITLE_QUALITY",
+      "SUBTITLE_QUALITY_MODELS",
+      "SUBTITLE_QUALITY_ASSESS",
+      "SUBTITLE_QUALITY_HEURISTICS"
     ],
     "apps/server/api/v1/audio_stats.py": [
       "AUDIO_STATS",
@@ -2757,6 +4162,10 @@
       "CONTROL_MESSAGES_AUDIOSTOPPED",
       "CONTROL_MESSAGES_PARSE_CONTROL_MESSAGE"
     ],
+    "apps/server/ws/operator.py": [
+      "OPERATOR_WS",
+      "OPERATOR_WS_OPERATOR"
+    ],
     "apps/server/ws/sidecar.py": [
       "SIDECAR"
     ],
@@ -2782,6 +4191,9 @@
     "apps/web/src/components/SubtitleView.tsx": [
       "SUBTITLEVIEW",
       "SUBTITLEVIEW_SUBTITLEVIEW"
+    ],
+    "apps/web/src/hooks/usePacedSubtitle.ts": [
+      "USE_PACED_SUBTITLE"
     ],
     "apps/web/src/hooks/useViewerWS.ts": [
       "USEVIEWERWS",
@@ -2834,46 +4246,46 @@
   },
   "recently_changed": [
     {
-      "path": "apps/web/src/types/events.ts",
-      "mtime": 1779097333.8948815
+      "path": "apps/desktop/src-tauri/src/audio/voicemeeter_ffi.rs",
+      "mtime": 1779440873.741146
     },
     {
-      "path": "apps/web/src/lib/api.ts",
-      "mtime": 1779097333.892052
+      "path": "apps/server/ai/gemini_live.py",
+      "mtime": 1779439388.1430073
     },
     {
-      "path": "apps/web/src/hooks/useViewerWS.ts",
-      "mtime": 1779097333.8885822
+      "path": "apps/desktop/src/help/helpManualContent.ts",
+      "mtime": 1779411987.456256
+    },
+    {
+      "path": "apps/desktop/src-tauri/src/bin/voicemeeter_dump.rs",
+      "mtime": 1779411020.3737218
+    },
+    {
+      "path": "apps/desktop/scripts/vm_dump.py",
+      "mtime": 1779410759.119162
+    },
+    {
+      "path": "apps/desktop/src-tauri/src/lib.rs",
+      "mtime": 1779410352.1503224
+    },
+    {
+      "path": "apps/desktop/src-tauri/src/audio/mod.rs",
+      "mtime": 1779410092.7357192
+    },
+    {
+      "path": "apps/desktop/src-tauri/src/sidecar.rs",
+      "mtime": 1779356987.0918906
+    },
+    {
+      "path": "apps/client_sidecar/audio/device.py",
+      "mtime": 1779348597.3371496
     },
     {
       "path": "apps/web/src/components/SubtitleView.tsx",
-      "mtime": 1779097333.8846786
-    },
-    {
-      "path": "apps/web/src/components/AdminAudioStats.tsx",
-      "mtime": 1779097333.8817031
-    },
-    {
-      "path": "apps/server/ws/viewer.py",
-      "mtime": 1779097333.8777833
-    },
-    {
-      "path": "apps/server/ws/control_messages.py",
-      "mtime": 1779097333.8750992
-    },
-    {
-      "path": "apps/server/ws/bus.py",
-      "mtime": 1779097333.8718567
-    },
-    {
-      "path": "apps/server/ws/audio_stats.py",
-      "mtime": 1779097333.8692462
-    },
-    {
-      "path": "apps/server/ops/session_safety.py",
-      "mtime": 1779097333.8643284
+      "mtime": 1779346775.8255956
     }
   ],
   "generated_at": "2026-05-14T01:23:03.651301Z",
-  "updated_at": "2026-05-18T23:47:50.364901Z"
+  "updated_at": "2026-05-22T09:39:56.295064Z"
 }

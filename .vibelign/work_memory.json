@@ -1,269 +1,269 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-18T23:51:09.954486Z",
+  "updated_at": "2026-05-22T09:18:02.561685Z",
   "recent_events": [
     {
-      "time": "2026-05-18T23:47:49.408463Z",
+      "time": "2026-05-22T09:08:51.311596Z",
+      "kind": "modified",
+      "path": "deploy/data/postgres/base/16384/2696",
+      "message": "deploy/data/postgres/base/16384/2696 modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-22T09:08:51.349432Z",
       "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/2674",
-      "message": "2674에 앵커가 없습니다",
+      "path": "deploy/data/postgres/base/16384/16821",
+      "message": "16821에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T23:47:49.415364Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/2674",
-      "message": "deploy/data/postgres/base/16479/2674 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T23:47:49.423415Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/23662",
-      "message": "deploy/data/postgres/base/16479/23662 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T23:47:49.431293Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/2702",
-      "message": "deploy/data/postgres/base/16479/2702 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T23:47:49.437890Z",
+      "time": "2026-05-22T09:08:51.350523Z",
       "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/2619",
-      "message": "2619에 앵커가 없습니다",
+      "path": "deploy/data/postgres/base/16384/16821",
+      "message": "16821에 UI와 비즈니스 로직이 혼재할 수 있습니다",
+      "action": "UI 코드와 서비스/처리 로직을 분리하세요."
+    },
+    {
+      "time": "2026-05-22T09:08:51.357608Z",
+      "kind": "modified",
+      "path": "deploy/data/postgres/base/16384/16821",
+      "message": "deploy/data/postgres/base/16384/16821 modified",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-22T09:08:51.359824Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/16384/16821_fsm",
+      "message": "16821_fsm에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T23:47:49.445193Z",
+      "time": "2026-05-22T09:08:51.367253Z",
       "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/2619",
-      "message": "deploy/data/postgres/base/16479/2619 modified",
+      "path": "deploy/data/postgres/base/16384/16821_fsm",
+      "message": "deploy/data/postgres/base/16384/16821_fsm modified",
       "action": "Review the latest change and refresh transfer handoff if needed."
     },
     {
-      "time": "2026-05-18T23:47:49.453284Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/2666",
-      "message": "deploy/data/postgres/base/16479/2666 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T23:47:49.461103Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/23655",
-      "message": "deploy/data/postgres/base/16479/23655 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T23:47:49.468339Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/5002",
-      "message": "deploy/data/postgres/base/16479/5002 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T23:47:49.476179Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/23645",
-      "message": "deploy/data/postgres/base/16479/23645 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T23:47:49.483900Z",
-      "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/23607",
-      "message": "deploy/data/postgres/base/16479/23607 modified",
-      "action": "Review the latest change and refresh transfer handoff if needed."
-    },
-    {
-      "time": "2026-05-18T23:47:49.488188Z",
+      "time": "2026-05-22T09:08:51.375391Z",
       "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/1247",
-      "message": "1247에 앵커가 없습니다",
+      "path": "deploy/data/postgres/base/16384/2840",
+      "message": "2840에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T23:47:49.495776Z",
+      "time": "2026-05-22T09:08:51.383275Z",
       "kind": "modified",
-      "path": "deploy/data/postgres/base/16479/1247",
-      "message": "deploy/data/postgres/base/16479/1247 modified",
+      "path": "deploy/data/postgres/base/16384/2840",
+      "message": "deploy/data/postgres/base/16384/2840 modified",
       "action": "Review the latest change and refresh transfer handoff if needed."
     },
     {
-      "time": "2026-05-18T23:47:51.424593Z",
-      "kind": "commit",
-      "path": "git/b0c1038d47b7",
-      "message": "feat: gate silent sidecar audio chunks Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
-      "action": ""
+      "time": "2026-05-22T09:18:02.508420Z",
+      "kind": "deleted",
+      "path": "deploy/data/caddy/caddy/547233649",
+      "message": "deploy/data/caddy/caddy/547233649 deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
     },
     {
-      "time": "2026-05-18T23:48:16.142872Z",
-      "kind": "commit",
-      "path": "git/fd45858b9d54",
-      "message": "feat: stream Gemini Live transcript partials Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
-      "action": ""
+      "time": "2026-05-22T09:18:02.509898Z",
+      "kind": "deleted",
+      "path": "deploy/data/caddy/caddy/rw_test_4400656906022434228",
+      "message": "deploy/data/caddy/caddy/rw_test_4400656906022434228 deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
     },
     {
-      "time": "2026-05-18T23:49:20.045219Z",
-      "kind": "commit",
-      "path": "git/be0ec9485cd2",
-      "message": "feat: expose operator alerts Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
-      "action": ""
+      "time": "2026-05-22T09:18:02.511424Z",
+      "kind": "deleted",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/2009518640",
+      "message": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/2009518640 deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
     },
     {
-      "time": "2026-05-18T23:49:42.258260Z",
-      "kind": "commit",
-      "path": "git/4f356f528a66",
-      "message": "feat: enforce meeting duration safety Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
-      "action": ""
+      "time": "2026-05-22T09:18:02.519835Z",
+      "kind": "moved",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.key",
+      "message": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.key moved",
+      "action": "Review the latest change and refresh transfer handoff if needed."
     },
     {
-      "time": "2026-05-18T23:50:12.112297Z",
-      "kind": "commit",
-      "path": "git/bb5d1ebc6b4d",
-      "message": "docs(roadmap): document Slice 3 validation Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
-      "action": ""
+      "time": "2026-05-22T09:18:02.527112Z",
+      "kind": "deleted",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.key",
+      "message": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.key deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
     },
     {
-      "time": "2026-05-18T23:50:38.724785Z",
-      "kind": "commit",
-      "path": "git/6fc4102bca73",
-      "message": "chore: add sidecar VibeLign anchors Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
-      "action": ""
+      "time": "2026-05-22T09:18:02.528888Z",
+      "kind": "deleted",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/1307847026",
+      "message": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/1307847026 deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
     },
     {
-      "time": "2026-05-18T23:51:09.954486Z",
-      "kind": "commit",
-      "path": "git/fa3f2ba8d40f",
-      "message": "chore: add server VibeLign anchors Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent) Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>",
-      "action": ""
+      "time": "2026-05-22T09:18:02.536487Z",
+      "kind": "moved",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.crt",
+      "message": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.crt moved",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-22T09:18:02.543818Z",
+      "kind": "deleted",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.crt",
+      "message": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.crt deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
+    },
+    {
+      "time": "2026-05-22T09:18:02.545246Z",
+      "kind": "deleted",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/1487049700",
+      "message": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/1487049700 deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
+    },
+    {
+      "time": "2026-05-22T09:18:02.552836Z",
+      "kind": "moved",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.json",
+      "message": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.json moved",
+      "action": "Review the latest change and refresh transfer handoff if needed."
+    },
+    {
+      "time": "2026-05-22T09:18:02.560286Z",
+      "kind": "deleted",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.json",
+      "message": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.json deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
+    },
+    {
+      "time": "2026-05-22T09:18:02.561685Z",
+      "kind": "deleted",
+      "path": "deploy/data/caddy/caddy/locks/issue_cert_192.168.0.38.lock",
+      "message": "deploy/data/caddy/caddy/locks/issue_cert_192.168.0.38.lock deleted",
+      "action": "Confirm the deletion intent or restore the file if needed."
     }
   ],
   "relevant_files": [
     {
-      "path": "deploy/data/postgres/base/16479/2674",
+      "path": "deploy/data/postgres/base/16384/2840",
       "why": "Recently modified in watch.",
       "source": "watch"
     },
     {
-      "path": "deploy/data/postgres/base/16479/23662",
-      "why": "Recently modified in watch.",
+      "path": "deploy/data/caddy/caddy/547233649",
+      "why": "Recently deleted in watch.",
       "source": "watch"
     },
     {
-      "path": "deploy/data/postgres/base/16479/2702",
-      "why": "Recently modified in watch.",
+      "path": "deploy/data/caddy/caddy/rw_test_4400656906022434228",
+      "why": "Recently deleted in watch.",
       "source": "watch"
     },
     {
-      "path": "deploy/data/postgres/base/16479/2619",
-      "why": "Recently modified in watch.",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/2009518640",
+      "why": "Recently deleted in watch.",
       "source": "watch"
     },
     {
-      "path": "deploy/data/postgres/base/16479/2666",
-      "why": "Recently modified in watch.",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.key",
+      "why": "Recently deleted in watch.",
       "source": "watch"
     },
     {
-      "path": "deploy/data/postgres/base/16479/23655",
-      "why": "Recently modified in watch.",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/1307847026",
+      "why": "Recently deleted in watch.",
       "source": "watch"
     },
     {
-      "path": "deploy/data/postgres/base/16479/5002",
-      "why": "Recently modified in watch.",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.crt",
+      "why": "Recently deleted in watch.",
       "source": "watch"
     },
     {
-      "path": "deploy/data/postgres/base/16479/23645",
-      "why": "Recently modified in watch.",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/1487049700",
+      "why": "Recently deleted in watch.",
       "source": "watch"
     },
     {
-      "path": "deploy/data/postgres/base/16479/23607",
-      "why": "Recently modified in watch.",
+      "path": "deploy/data/caddy/caddy/certificates/local/192.168.0.38/192.168.0.38.json",
+      "why": "Recently deleted in watch.",
       "source": "watch"
     },
     {
-      "path": "deploy/data/postgres/base/16479/1247",
-      "why": "Recently modified in watch.",
+      "path": "deploy/data/caddy/caddy/locks/issue_cert_192.168.0.38.lock",
+      "why": "Recently deleted in watch.",
       "source": "watch"
     }
   ],
   "warnings": [
     {
-      "time": "2026-05-18T23:47:49.168390Z",
+      "time": "2026-05-22T09:08:51.239005Z",
       "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/2662",
-      "message": "2662에 앵커가 없습니다",
+      "path": "deploy/data/postgres/base/16384/16824",
+      "message": "16824에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T23:47:49.250693Z",
+      "time": "2026-05-22T09:08:51.253453Z",
       "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/2606",
-      "message": "2606에 앵커가 없습니다",
+      "path": "deploy/data/postgres/base/16384/16823",
+      "message": "16823에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T23:47:49.278296Z",
+      "time": "2026-05-22T09:08:51.266372Z",
       "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/2678",
-      "message": "2678에 앵커가 없습니다",
+      "path": "deploy/data/postgres/base/16384/16825",
+      "message": "16825에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T23:47:49.288071Z",
+      "time": "2026-05-22T09:08:51.281097Z",
       "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/2679",
-      "message": "2679에 앵커가 없습니다",
-      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
-    },
-    {
-      "time": "2026-05-18T23:47:49.321856Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/3455",
-      "message": "3455에 앵커가 없습니다",
-      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
-    },
-    {
-      "time": "2026-05-18T23:47:49.339392Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/2703",
-      "message": "2703에 앵커가 없습니다",
-      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
-    },
-    {
-      "time": "2026-05-18T23:47:49.373930Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/1249",
-      "message": "1249에 앵커가 없습니다",
-      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
-    },
-    {
-      "time": "2026-05-18T23:47:49.408463Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/2674",
-      "message": "2674에 앵커가 없습니다",
-      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
-    },
-    {
-      "time": "2026-05-18T23:47:49.437890Z",
-      "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/2619",
+      "path": "deploy/data/postgres/base/16384/2619",
       "message": "2619에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     },
     {
-      "time": "2026-05-18T23:47:49.488188Z",
+      "time": "2026-05-22T09:08:51.292670Z",
       "kind": "warning",
-      "path": "deploy/data/postgres/base/16479/1247",
-      "message": "1247에 앵커가 없습니다",
+      "path": "deploy/data/postgres/base/16384/16832",
+      "message": "16832에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-22T09:08:51.303159Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/16384/2696",
+      "message": "2696에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-22T09:08:51.349432Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/16384/16821",
+      "message": "16821에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-22T09:08:51.350523Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/16384/16821",
+      "message": "16821에 UI와 비즈니스 로직이 혼재할 수 있습니다",
+      "action": "UI 코드와 서비스/처리 로직을 분리하세요."
+    },
+    {
+      "time": "2026-05-22T09:08:51.359824Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/16384/16821_fsm",
+      "message": "16821_fsm에 앵커가 없습니다",
+      "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
+    },
+    {
+      "time": "2026-05-22T09:08:51.375391Z",
+      "kind": "warning",
+      "path": "deploy/data/postgres/base/16384/2840",
+      "message": "2840에 앵커가 없습니다",
       "action": "`vib anchor`를 실행하거나 직접 앵커를 추가하세요."
     }
   ],

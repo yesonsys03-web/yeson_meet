@@ -61,23 +61,179 @@
     "apps/desktop/src-tauri/build.rs": [
       "BUILD"
     ],
+    "apps/desktop/src-tauri/src/audio/mod.rs": [
+      "AUDIO_MOD"
+    ],
+    "apps/desktop/src-tauri/src/audio/voicemeeter_ffi.rs": [
+      "VOICEMEETER_FFI"
+    ],
+    "apps/desktop/src-tauri/src/bin/voicemeeter_dump.rs": [
+      "VOICEMEETER_DUMP"
+    ],
+    "apps/desktop/src-tauri/src/diagnostics.rs": [
+      "DIAGNOSTICS"
+    ],
     "apps/desktop/src-tauri/src/lib.rs": [
       "LIB"
     ],
     "apps/desktop/src-tauri/src/main.rs": [
       "MAIN"
     ],
+    "apps/desktop/src-tauri/src/sidecar.rs": [
+      "SIDECAR"
+    ],
     "apps/desktop/src/App.tsx": [
       "APP"
     ],
+    "apps/desktop/src/console/ConsoleNav.tsx": [
+      "CONSOLE_NAV"
+    ],
+    "apps/desktop/src/console/ContractPreview.tsx": [
+      "CONTRACT_PREVIEW"
+    ],
+    "apps/desktop/src/console/DesktopConsole.tsx": [
+      "DESKTOP_CONSOLE"
+    ],
+    "apps/desktop/src/console/LifecycleFields.tsx": [
+      "LIFECYCLE_FIELDS"
+    ],
+    "apps/desktop/src/console/LiveSubtitlePreview.tsx": [
+      "LIVE_SUBTITLE_PREVIEW"
+    ],
+    "apps/desktop/src/console/MeetingLifecyclePanel.tsx": [
+      "MEETING_LIFECYCLE_PANEL"
+    ],
+    "apps/desktop/src/console/SessionResultPanel.tsx": [
+      "SESSION_RESULT_PANEL"
+    ],
+    "apps/desktop/src/console/SubtitleFullscreenWindow.tsx": [
+      "SUBTITLE_FULLSCREEN_WINDOW"
+    ],
+    "apps/desktop/src/console/ViewerQrPanel.tsx": [
+      "VIEWER_QR_PANEL"
+    ],
+    "apps/desktop/src/console/consoleStyles.ts": [
+      "CONSOLE_STYLES"
+    ],
+    "apps/desktop/src/console/sessionApi.ts": [
+      "SESSION_API"
+    ],
+    "apps/desktop/src/console/types.ts": [
+      "CONSOLE_TYPES"
+    ],
+    "apps/desktop/src/console/useLiveSubtitleStream.ts": [
+      "USE_LIVE_SUBTITLE_STREAM"
+    ],
+    "apps/desktop/src/console/useMeetingLifecycle.ts": [
+      "USE_MEETING_LIFECYCLE"
+    ],
+    "apps/desktop/src/console/usePacedSubtitle.ts": [
+      "USE_PACED_SUBTITLE"
+    ],
+    "apps/desktop/src/console/useSubtitleFullscreenShortcut.ts": [
+      "USE_SUBTITLE_FULLSCREEN_SHORTCUT"
+    ],
+    "apps/desktop/src/console/utterances.ts": [
+      "CONSOLE_UTTERANCES"
+    ],
+    "apps/desktop/src/diagnostics/appLog.ts": [
+      "APP_LOG"
+    ],
+    "apps/desktop/src/help/HelpManualPanel.tsx": [
+      "HELP_MANUAL_PANEL"
+    ],
+    "apps/desktop/src/help/helpManualContent.ts": [
+      "HELP_MANUAL_CONTENT"
+    ],
+    "apps/desktop/src/help/helpManualStyles.ts": [
+      "HELP_MANUAL_STYLES"
+    ],
+    "apps/desktop/src/help/types.ts": [
+      "HELP_TYPES"
+    ],
     "apps/desktop/src/main.tsx": [
       "MAIN"
+    ],
+    "apps/desktop/src/settings/LogSettingsPanel.tsx": [
+      "LOG_SETTINGS_PANEL"
+    ],
+    "apps/desktop/src/settings/SettingsPanel.tsx": [
+      "SETTINGS_PANEL"
+    ],
+    "apps/desktop/src/settings/settingsStyles.ts": [
+      "SETTINGS_STYLES"
+    ],
+    "apps/desktop/src/setup/Field.tsx": [
+      "FIELD",
+      "FIELD_FIELD"
+    ],
+    "apps/desktop/src/setup/MeetingQuickStartPanel.tsx": [
+      "MEETING_QUICK_START_PANEL"
+    ],
+    "apps/desktop/src/setup/PlatformRunbookPanel.tsx": [
+      "PLATFORM_RUNBOOK_PANEL"
+    ],
+    "apps/desktop/src/setup/PlatformSelector.tsx": [
+      "PLATFORM_SELECTOR"
+    ],
+    "apps/desktop/src/setup/SetupAssistant.tsx": [
+      "SETUPASSISTANT",
+      "SETUPASSISTANT_SETUPASSISTANT",
+      "SETUPASSISTANT_UPDATEVALUE",
+      "SETUPASSISTANT_UPDATEPLATFORM",
+      "SETUPASSISTANT_COPYCOMMAND",
+      "SETUPASSISTANT_RUNALLSMOKECHECKS",
+      "SETUPASSISTANT_MARKCHECK"
+    ],
+    "apps/desktop/src/setup/SidecarRunnerPanel.tsx": [
+      "SIDECAR_RUNNER_PANEL"
+    ],
+    "apps/desktop/src/setup/SmokeChecklist.tsx": [
+      "SMOKECHECKLIST",
+      "SMOKECHECKLIST_SMOKECHECKLIST"
+    ],
+    "apps/desktop/src/setup/platformConfig.ts": [
+      "PLATFORM_CONFIG"
+    ],
+    "apps/desktop/src/setup/platformRunbook.ts": [
+      "PLATFORM_RUNBOOK"
+    ],
+    "apps/desktop/src/setup/setupValues.ts": [
+      "SETUPVALUES",
+      "SETUPVALUES_LOADVALUES",
+      "SETUPVALUES_STOREVALUES",
+      "SETUPVALUES_HTTPBASEFROMWS",
+      "SETUPVALUES_ISSECUREVIEWERURL"
+    ],
+    "apps/desktop/src/setup/sidecarCommands.ts": [
+      "SIDECAR_COMMANDS"
+    ],
+    "apps/desktop/src/setup/sidecarRunner.ts": [
+      "SIDECAR_RUNNER"
+    ],
+    "apps/desktop/src/setup/smokeChecks.ts": [
+      "SMOKECHECKS",
+      "SMOKECHECKS_INITIALSMOKECHECKS",
+      "SMOKECHECKS_RUNSMOKECHECK",
+      "SMOKECHECKS_CHECKSERVER",
+      "SMOKECHECKS_CHECKGEMINI",
+      "SMOKECHECKS_BODY",
+      "SMOKECHECKS_CHECKVIEWER"
+    ],
+    "apps/desktop/src/setup/styles.ts": [
+      "STYLES"
+    ],
+    "apps/desktop/src/setup/types.ts": [
+      "TYPES"
     ],
     "apps/desktop/vite.config.ts": [
       "VITE_CONFIG"
     ],
     "apps/server/ai/gemini_live.py": [
       "GEMINI_LIVE"
+    ],
+    "apps/server/ai/google_stt_translate.py": [
+      "GOOGLE_STT_TRANSLATE"
     ],
     "apps/server/ai/live_session.py": [
       "LIVE_SESSION",
@@ -93,6 +249,12 @@
       "PROVIDERS_TRANSLATEDUTTERANCE",
       "PROVIDERS_STTPROVIDER",
       "PROVIDERS_TRANSLATIONPROVIDER"
+    ],
+    "apps/server/ai/subtitle_quality.py": [
+      "SUBTITLE_QUALITY",
+      "SUBTITLE_QUALITY_MODELS",
+      "SUBTITLE_QUALITY_ASSESS",
+      "SUBTITLE_QUALITY_HEURISTICS"
     ],
     "apps/server/api/v1/audio_stats.py": [
       "AUDIO_STATS",
@@ -267,6 +429,10 @@
       "CONTROL_MESSAGES_AUDIOSTOPPED",
       "CONTROL_MESSAGES_PARSE_CONTROL_MESSAGE"
     ],
+    "apps/server/ws/operator.py": [
+      "OPERATOR_WS",
+      "OPERATOR_WS_OPERATOR"
+    ],
     "apps/server/ws/sidecar.py": [
       "SIDECAR"
     ],
@@ -292,6 +458,9 @@
     "apps/web/src/components/SubtitleView.tsx": [
       "SUBTITLEVIEW",
       "SUBTITLEVIEW_SUBTITLEVIEW"
+    ],
+    "apps/web/src/hooks/usePacedSubtitle.ts": [
+      "USE_PACED_SUBTITLE"
     ],
     "apps/web/src/hooks/useViewerWS.ts": [
       "USEVIEWERWS",
@@ -427,6 +596,26 @@
         "BUILD"
       ]
     },
+    "apps/desktop/src-tauri/src/audio/mod.rs": {
+      "anchors": [
+        "AUDIO_MOD"
+      ]
+    },
+    "apps/desktop/src-tauri/src/audio/voicemeeter_ffi.rs": {
+      "anchors": [
+        "VOICEMEETER_FFI"
+      ]
+    },
+    "apps/desktop/src-tauri/src/bin/voicemeeter_dump.rs": {
+      "anchors": [
+        "VOICEMEETER_DUMP"
+      ]
+    },
+    "apps/desktop/src-tauri/src/diagnostics.rs": {
+      "anchors": [
+        "DIAGNOSTICS"
+      ]
+    },
     "apps/desktop/src-tauri/src/lib.rs": {
       "anchors": [
         "LIB"
@@ -437,14 +626,237 @@
         "MAIN"
       ]
     },
+    "apps/desktop/src-tauri/src/sidecar.rs": {
+      "anchors": [
+        "SIDECAR"
+      ]
+    },
     "apps/desktop/src/App.tsx": {
       "anchors": [
         "APP"
       ]
     },
+    "apps/desktop/src/console/ConsoleNav.tsx": {
+      "anchors": [
+        "CONSOLE_NAV"
+      ]
+    },
+    "apps/desktop/src/console/ContractPreview.tsx": {
+      "anchors": [
+        "CONTRACT_PREVIEW"
+      ]
+    },
+    "apps/desktop/src/console/DesktopConsole.tsx": {
+      "anchors": [
+        "DESKTOP_CONSOLE"
+      ]
+    },
+    "apps/desktop/src/console/LifecycleFields.tsx": {
+      "anchors": [
+        "LIFECYCLE_FIELDS"
+      ]
+    },
+    "apps/desktop/src/console/LiveSubtitlePreview.tsx": {
+      "anchors": [
+        "LIVE_SUBTITLE_PREVIEW"
+      ]
+    },
+    "apps/desktop/src/console/MeetingLifecyclePanel.tsx": {
+      "anchors": [
+        "MEETING_LIFECYCLE_PANEL"
+      ]
+    },
+    "apps/desktop/src/console/SessionResultPanel.tsx": {
+      "anchors": [
+        "SESSION_RESULT_PANEL"
+      ]
+    },
+    "apps/desktop/src/console/SubtitleFullscreenWindow.tsx": {
+      "anchors": [
+        "SUBTITLE_FULLSCREEN_WINDOW"
+      ]
+    },
+    "apps/desktop/src/console/ViewerQrPanel.tsx": {
+      "anchors": [
+        "VIEWER_QR_PANEL"
+      ]
+    },
+    "apps/desktop/src/console/consoleStyles.ts": {
+      "anchors": [
+        "CONSOLE_STYLES"
+      ]
+    },
+    "apps/desktop/src/console/sessionApi.ts": {
+      "anchors": [
+        "SESSION_API"
+      ]
+    },
+    "apps/desktop/src/console/types.ts": {
+      "anchors": [
+        "CONSOLE_TYPES"
+      ]
+    },
+    "apps/desktop/src/console/useLiveSubtitleStream.ts": {
+      "anchors": [
+        "USE_LIVE_SUBTITLE_STREAM"
+      ]
+    },
+    "apps/desktop/src/console/useMeetingLifecycle.ts": {
+      "anchors": [
+        "USE_MEETING_LIFECYCLE"
+      ]
+    },
+    "apps/desktop/src/console/usePacedSubtitle.ts": {
+      "anchors": [
+        "USE_PACED_SUBTITLE"
+      ]
+    },
+    "apps/desktop/src/console/useSubtitleFullscreenShortcut.ts": {
+      "anchors": [
+        "USE_SUBTITLE_FULLSCREEN_SHORTCUT"
+      ]
+    },
+    "apps/desktop/src/console/utterances.ts": {
+      "anchors": [
+        "CONSOLE_UTTERANCES"
+      ]
+    },
+    "apps/desktop/src/diagnostics/appLog.ts": {
+      "anchors": [
+        "APP_LOG"
+      ]
+    },
+    "apps/desktop/src/help/HelpManualPanel.tsx": {
+      "anchors": [
+        "HELP_MANUAL_PANEL"
+      ]
+    },
+    "apps/desktop/src/help/helpManualContent.ts": {
+      "anchors": [
+        "HELP_MANUAL_CONTENT"
+      ]
+    },
+    "apps/desktop/src/help/helpManualStyles.ts": {
+      "anchors": [
+        "HELP_MANUAL_STYLES"
+      ]
+    },
+    "apps/desktop/src/help/types.ts": {
+      "anchors": [
+        "HELP_TYPES"
+      ]
+    },
     "apps/desktop/src/main.tsx": {
       "anchors": [
         "MAIN"
+      ]
+    },
+    "apps/desktop/src/settings/LogSettingsPanel.tsx": {
+      "anchors": [
+        "LOG_SETTINGS_PANEL"
+      ]
+    },
+    "apps/desktop/src/settings/SettingsPanel.tsx": {
+      "anchors": [
+        "SETTINGS_PANEL"
+      ]
+    },
+    "apps/desktop/src/settings/settingsStyles.ts": {
+      "anchors": [
+        "SETTINGS_STYLES"
+      ]
+    },
+    "apps/desktop/src/setup/Field.tsx": {
+      "anchors": [
+        "FIELD",
+        "FIELD_FIELD"
+      ]
+    },
+    "apps/desktop/src/setup/MeetingQuickStartPanel.tsx": {
+      "anchors": [
+        "MEETING_QUICK_START_PANEL"
+      ]
+    },
+    "apps/desktop/src/setup/PlatformRunbookPanel.tsx": {
+      "anchors": [
+        "PLATFORM_RUNBOOK_PANEL"
+      ]
+    },
+    "apps/desktop/src/setup/PlatformSelector.tsx": {
+      "anchors": [
+        "PLATFORM_SELECTOR"
+      ]
+    },
+    "apps/desktop/src/setup/SetupAssistant.tsx": {
+      "anchors": [
+        "SETUPASSISTANT",
+        "SETUPASSISTANT_SETUPASSISTANT",
+        "SETUPASSISTANT_UPDATEVALUE",
+        "SETUPASSISTANT_UPDATEPLATFORM",
+        "SETUPASSISTANT_COPYCOMMAND",
+        "SETUPASSISTANT_RUNALLSMOKECHECKS",
+        "SETUPASSISTANT_MARKCHECK"
+      ]
+    },
+    "apps/desktop/src/setup/SidecarRunnerPanel.tsx": {
+      "anchors": [
+        "SIDECAR_RUNNER_PANEL"
+      ]
+    },
+    "apps/desktop/src/setup/SmokeChecklist.tsx": {
+      "anchors": [
+        "SMOKECHECKLIST",
+        "SMOKECHECKLIST_SMOKECHECKLIST"
+      ]
+    },
+    "apps/desktop/src/setup/platformConfig.ts": {
+      "anchors": [
+        "PLATFORM_CONFIG"
+      ]
+    },
+    "apps/desktop/src/setup/platformRunbook.ts": {
+      "anchors": [
+        "PLATFORM_RUNBOOK"
+      ]
+    },
+    "apps/desktop/src/setup/setupValues.ts": {
+      "anchors": [
+        "SETUPVALUES",
+        "SETUPVALUES_LOADVALUES",
+        "SETUPVALUES_STOREVALUES",
+        "SETUPVALUES_HTTPBASEFROMWS",
+        "SETUPVALUES_ISSECUREVIEWERURL"
+      ]
+    },
+    "apps/desktop/src/setup/sidecarCommands.ts": {
+      "anchors": [
+        "SIDECAR_COMMANDS"
+      ]
+    },
+    "apps/desktop/src/setup/sidecarRunner.ts": {
+      "anchors": [
+        "SIDECAR_RUNNER"
+      ]
+    },
+    "apps/desktop/src/setup/smokeChecks.ts": {
+      "anchors": [
+        "SMOKECHECKS",
+        "SMOKECHECKS_INITIALSMOKECHECKS",
+        "SMOKECHECKS_RUNSMOKECHECK",
+        "SMOKECHECKS_CHECKSERVER",
+        "SMOKECHECKS_CHECKGEMINI",
+        "SMOKECHECKS_BODY",
+        "SMOKECHECKS_CHECKVIEWER"
+      ]
+    },
+    "apps/desktop/src/setup/styles.ts": {
+      "anchors": [
+        "STYLES"
+      ]
+    },
+    "apps/desktop/src/setup/types.ts": {
+      "anchors": [
+        "TYPES"
       ]
     },
     "apps/desktop/vite.config.ts": {
@@ -455,6 +867,11 @@
     "apps/server/ai/gemini_live.py": {
       "anchors": [
         "GEMINI_LIVE"
+      ]
+    },
+    "apps/server/ai/google_stt_translate.py": {
+      "anchors": [
+        "GOOGLE_STT_TRANSLATE"
       ]
     },
     "apps/server/ai/live_session.py": {
@@ -474,6 +891,14 @@
         "PROVIDERS_TRANSLATEDUTTERANCE",
         "PROVIDERS_STTPROVIDER",
         "PROVIDERS_TRANSLATIONPROVIDER"
+      ]
+    },
+    "apps/server/ai/subtitle_quality.py": {
+      "anchors": [
+        "SUBTITLE_QUALITY",
+        "SUBTITLE_QUALITY_MODELS",
+        "SUBTITLE_QUALITY_ASSESS",
+        "SUBTITLE_QUALITY_HEURISTICS"
       ]
     },
     "apps/server/api/v1/audio_stats.py": {
@@ -699,6 +1124,12 @@
         "CONTROL_MESSAGES_PARSE_CONTROL_MESSAGE"
       ]
     },
+    "apps/server/ws/operator.py": {
+      "anchors": [
+        "OPERATOR_WS",
+        "OPERATOR_WS_OPERATOR"
+      ]
+    },
     "apps/server/ws/sidecar.py": {
       "anchors": [
         "SIDECAR"
@@ -735,6 +1166,11 @@
       "anchors": [
         "SUBTITLEVIEW",
         "SUBTITLEVIEW_SUBTITLEVIEW"
+      ]
+    },
+    "apps/web/src/hooks/usePacedSubtitle.ts": {
+      "anchors": [
+        "USE_PACED_SUBTITLE"
       ]
     },
     "apps/web/src/hooks/useViewerWS.ts": {

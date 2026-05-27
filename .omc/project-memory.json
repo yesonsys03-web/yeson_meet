@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1779064195765,
+  "lastScanned": 1779840509500,
   "projectRoot": "/Users/usabatch/coding/yeson_dev/yeson_meet",
   "techStack": {
     "languages": [
@@ -56,14 +56,14 @@
       "path": "apps",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1779064195724,
+      "lastAccessed": 1779840509442,
       "keyFiles": []
     },
     "deploy": {
       "path": "deploy",
       "purpose": null,
       "fileCount": 3,
-      "lastAccessed": 1779064195725,
+      "lastAccessed": 1779840509442,
       "keyFiles": [
         "Caddyfile",
         "docker-compose.yml",
@@ -73,212 +73,56 @@
     "docs": {
       "path": "docs",
       "purpose": "Documentation",
-      "fileCount": 20,
-      "lastAccessed": 1779064195732,
+      "fileCount": 21,
+      "lastAccessed": 1779840509465,
       "keyFiles": [
         "ARCHITECTURE.html",
         "ARCHITECTURE.md",
         "DEPLOY.html",
         "DEPLOY.md",
-        "PLAN_VIEWER.bak.html"
+        "NATIVE_DESKTOP_HELPER_PLAN.md"
       ]
     },
     "generated": {
       "path": "generated",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1779064195733,
+      "lastAccessed": 1779840509466,
       "keyFiles": []
     },
     "packages": {
       "path": "packages",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1779064195734,
+      "lastAccessed": 1779840509466,
       "keyFiles": []
     },
     "vibelign_exports": {
       "path": "vibelign_exports",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1779064195735,
+      "lastAccessed": 1779840509467,
       "keyFiles": []
     },
     "deploy/data": {
       "path": "deploy/data",
       "purpose": "Data files",
       "fileCount": 1,
-      "lastAccessed": 1779064195738,
+      "lastAccessed": 1779840509468,
       "keyFiles": []
     }
   },
   "hotPaths": [
     {
-      "path": "apps/server/tests/test_ws_sidecar_binary.py",
-      "accessCount": 12,
-      "lastAccessed": 1779070968240,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/ws/sidecar.py",
-      "accessCount": 7,
-      "lastAccessed": 1779071172271,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/tests/conftest.py",
-      "accessCount": 6,
-      "lastAccessed": 1779069934957,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/ws/audio_stats.py",
-      "accessCount": 6,
-      "lastAccessed": 1779071116651,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/audio/capture.py",
-      "accessCount": 5,
-      "lastAccessed": 1779071196207,
-      "type": "file"
-    },
-    {
-      "path": "docs/ROADMAP.md",
-      "accessCount": 5,
-      "lastAccessed": 1779071748634,
-      "type": "file"
-    },
-    {
-      "path": "docs/PRD.md",
-      "accessCount": 4,
-      "lastAccessed": 1779070898322,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/transport/audio_ws.py",
+      "path": ".env",
       "accessCount": 3,
-      "lastAccessed": 1779070869492,
+      "lastAccessed": 1779843262304,
       "type": "file"
     },
     {
-      "path": "apps/client_sidecar/config/audio.py",
-      "accessCount": 3,
-      "lastAccessed": 1779070874395,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/db/session.py",
+      "path": "apps/server/ai/gemini_live.py",
       "accessCount": 2,
-      "lastAccessed": 1779069922987,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/audio/rms.py",
-      "accessCount": 2,
-      "lastAccessed": 1779070843169,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/audio/device.py",
-      "accessCount": 2,
-      "lastAccessed": 1779070843598,
-      "type": "file"
-    },
-    {
-      "path": ".vibelign/project_map.json",
-      "accessCount": 2,
-      "lastAccessed": 1779070864502,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/main.py",
-      "accessCount": 2,
-      "lastAccessed": 1779070870152,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/ws/control_messages.py",
-      "accessCount": 2,
-      "lastAccessed": 1779070875601,
-      "type": "file"
-    },
-    {
-      "path": "docs/SETUP_MEETING_PC.md",
-      "accessCount": 2,
-      "lastAccessed": 1779070876078,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/audio/resample.py",
-      "accessCount": 2,
-      "lastAccessed": 1779070905169,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/api/v1/audio_stats.py",
-      "accessCount": 2,
-      "lastAccessed": 1779070905545,
-      "type": "file"
-    },
-    {
-      "path": "apps/web/src/App.tsx",
-      "accessCount": 2,
-      "lastAccessed": 1779070910786,
-      "type": "file"
-    },
-    {
-      "path": "apps/web/src/components/AdminAudioStats.tsx",
-      "accessCount": 2,
-      "lastAccessed": 1779070967838,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/tests/test_ws_flow.py",
-      "accessCount": 1,
-      "lastAccessed": 1779064315972,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/audio/__init__.py",
-      "accessCount": 1,
-      "lastAccessed": 1779064398226,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/pyproject.toml",
-      "accessCount": 1,
-      "lastAccessed": 1779064398447,
-      "type": "file"
-    },
-    {
-      "path": "apps/server/main.py",
-      "accessCount": 1,
-      "lastAccessed": 1779064398575,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/tests/test_audio_main_smoke.py",
-      "accessCount": 1,
-      "lastAccessed": 1779070884696,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/tests/test_resample.py",
-      "accessCount": 1,
-      "lastAccessed": 1779070885173,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/tests/test_rms.py",
-      "accessCount": 1,
-      "lastAccessed": 1779070891216,
-      "type": "file"
-    },
-    {
-      "path": "apps/client_sidecar/tests/test_device_select.py",
-      "accessCount": 1,
-      "lastAccessed": 1779070891661,
+      "lastAccessed": 1779841478198,
       "type": "file"
     }
   ],

@@ -54,6 +54,50 @@ export const helpManualSections: HelpSection[] = [
     ],
   },
   {
+    id: "windows-voicemeeter",
+    eyebrow: "Windows 회의실 PC",
+    title: "Voicemeeter Banana 설치하고 연결하기",
+    summary:
+      "Windows에서는 회의 소리를 잡으려면 Voicemeeter Banana라는 무료 프로그램을 한 번만 설치하면 됩니다. 아래 순서대로만 따라하면 마이크와 시스템 소리가 모두 sidecar로 흘러갑니다.",
+    steps: [
+      {
+        title: "1. Voicemeeter Banana 다운로드 받기",
+        body:
+          "VB-Audio 공식 사이트에서 Voicemeeter Banana를 받습니다. 무료(도네이션웨어)입니다. 다운로드 주소: https://vb-audio.com/Voicemeeter/banana.htm",
+      },
+      {
+        title: "2. 설치하고 Windows 재부팅하기",
+        body:
+          "다운받은 설치 파일을 더블클릭하고 Next를 계속 눌러 설치를 마칩니다. 설치가 끝나면 반드시 Windows를 재부팅합니다. 가상 오디오 장치가 인식되려면 재부팅이 필요합니다.",
+      },
+      {
+        title: "3. 마이크 연결하기",
+        body:
+          "시작 메뉴에서 Voicemeeter Banana를 실행합니다. 화면 좌측 첫 번째 세로 줄(Strip 1) 맨 위 회색 박스를 클릭해 WDM 메뉴에서 사용 중인 마이크를 선택합니다. 그 다음 같은 세로 줄 우측의 A1, B1, B2 세 버튼을 모두 켭니다(밝게 빛나는 상태).",
+      },
+      {
+        title: "4. 회의 영상 소리 라우팅하기",
+        body:
+          "화면 가운데 'Voicemeeter VAIO'라고 적힌 세로 줄을 찾아 우측의 A1과 B2 두 버튼만 켭니다. B1은 반드시 꺼두어야 합니다. B1이 켜지면 메아리(하울링)가 발생합니다.",
+      },
+      {
+        title: "5. Windows 기본 출력 변경하기",
+        body:
+          "작업표시줄 우하단 스피커 아이콘을 우클릭하고 '사운드 설정'을 엽니다. 재생 탭에서 'Voicemeeter Input'을 선택하고 '기본값으로 설정'을 누릅니다. 이러면 PC의 모든 소리가 Voicemeeter를 통해 흐르게 됩니다.",
+      },
+      {
+        title: "6. 미팅 앱 마이크 설정하기",
+        body:
+          "Zoom, Google Meet, Teams 등 사용하는 회의 앱의 마이크 설정에서 'Voicemeeter Output'을 선택합니다. 이렇게 하면 내 목소리만 깔끔하게 상대방에게 전달되고 시스템 사운드는 미팅으로 되돌아가지 않습니다.",
+      },
+      {
+        title: "7. 설정이 잘 됐는지 확인하기",
+        body:
+          "운영자에게서 voicemeeter_dump.exe 파일을 받습니다(약 350KB). 바탕화면 등에 놓고 더블클릭하면 같은 폴더에 vm_dump.json 파일이 자동으로 만들어집니다. 검은 콘솔 창에 'Press Enter to close...'가 보이면 Enter 키로 창을 닫고, 만들어진 vm_dump.json을 운영자에게 보냅니다. 운영자가 그 파일로 라우팅이 올바른지 즉시 확인해 줍니다.",
+      },
+    ],
+  },
+  {
     id: "subtitle-check",
     eyebrow: "테스트 순서",
     title: "자막이 잘 나오는지 확인하기",

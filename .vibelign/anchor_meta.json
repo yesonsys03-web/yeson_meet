@@ -1588,5 +1588,278 @@
     ],
     "description": "events",
     "_source": "code"
+  },
+  "TYPES": {
+    "intent": "types",
+    "aliases": [
+      "types",
+      "type"
+    ],
+    "description": "types",
+    "_source": "code"
+  },
+  "SETUPVALUES_LOADVALUES": {
+    "intent": "setupvalues loadvalues",
+    "aliases": [
+      "setupvalues loadvalues",
+      "function raw stored platform"
+    ],
+    "description": "setupvalues loadvalues",
+    "_source": "code"
+  },
+  "SETUPVALUES_STOREVALUES": {
+    "intent": "setupvalues storevalues",
+    "aliases": [
+      "setupvalues storevalues",
+      "function"
+    ],
+    "description": "setupvalues storevalues",
+    "_source": "code"
+  },
+  "SETUPVALUES_HTTPBASEFROMWS": {
+    "intent": "setupvalues httpbasefromws",
+    "aliases": [
+      "setupvalues httpbasefromws",
+      "function"
+    ],
+    "description": "setupvalues httpbasefromws",
+    "_source": "code"
+  },
+  "SETUPVALUES_ISSECUREVIEWERURL": {
+    "intent": "setupvalues issecureviewerurl",
+    "aliases": [
+      "setupvalues issecureviewerurl",
+      "function"
+    ],
+    "description": "setupvalues issecureviewerurl",
+    "_source": "code"
+  },
+  "SETUPVALUES_POWERSHELLLITERAL": {
+    "intent": "setupvalues powershellliteral",
+    "aliases": [
+      "setupvalues powershellliteral",
+      "power shell literal"
+    ],
+    "description": "setupvalues powershellliteral",
+    "_source": "code"
+  },
+  "SETUPVALUES_SHELLLITERAL": {
+    "intent": "setupvalues shellliteral",
+    "aliases": [
+      "setupvalues shellliteral",
+      "shell literal"
+    ],
+    "description": "setupvalues shellliteral",
+    "_source": "code"
+  },
+  "SETUPVALUES_COMMANDVALUE": {
+    "intent": "setupvalues commandvalue",
+    "aliases": [
+      "setupvalues commandvalue",
+      "command value"
+    ],
+    "description": "setupvalues commandvalue",
+    "_source": "code"
+  },
+  "SETUPVALUES_SHELLCOMMANDVALUE": {
+    "intent": "setupvalues shellcommandvalue",
+    "aliases": [
+      "setupvalues shellcommandvalue",
+      "shell command value"
+    ],
+    "description": "setupvalues shellcommandvalue",
+    "_source": "code"
+  },
+  "SETUPVALUES_BUILDPOWERSHELL": {
+    "intent": "setupvalues buildpowershell",
+    "aliases": [
+      "setupvalues buildpowershell",
+      "function"
+    ],
+    "description": "setupvalues buildpowershell",
+    "_source": "code"
+  },
+  "SETUPVALUES_BUILDMACSHELL": {
+    "intent": "setupvalues buildmacshell",
+    "aliases": [
+      "setupvalues buildmacshell",
+      "function"
+    ],
+    "description": "setupvalues buildmacshell",
+    "_source": "code"
+  },
+  "SETUPVALUES_BUILDSIDECARCOMMAND": {
+    "intent": "setupvalues buildsidecarcommand",
+    "aliases": [
+      "setupvalues buildsidecarcommand",
+      "function"
+    ],
+    "description": "setupvalues buildsidecarcommand",
+    "_source": "code"
+  },
+  "PLATFORM_CONFIG": {
+    "intent": "platform config",
+    "aliases": [
+      "platform config",
+      "설정",
+      "const function"
+    ],
+    "description": "platform config",
+    "_source": "code"
+  },
+  "SIDECAR_COMMANDS": {
+    "intent": "sidecar commands",
+    "aliases": [
+      "sidecar commands",
+      "power shell literal"
+    ],
+    "description": "sidecar commands",
+    "_source": "code"
+  },
+  "PLATFORM_SELECTOR": {
+    "intent": "platform selector",
+    "aliases": [
+      "platform selector",
+      "설정",
+      "function config active"
+    ],
+    "description": "platform selector",
+    "_source": "code"
+  },
+  "SETUPASSISTANT_UPDATEVALUE": {
+    "intent": "setupassistant updatevalue",
+    "aliases": [
+      "setupassistant updatevalue",
+      "저장",
+      "update value next"
+    ],
+    "description": "setupassistant updatevalue",
+    "_source": "code"
+  },
+  "SETUPASSISTANT_UPDATEPLATFORM": {
+    "intent": "setupassistant updateplatform",
+    "aliases": [
+      "setupassistant updateplatform",
+      "저장",
+      "update platform next"
+    ],
+    "description": "setupassistant updateplatform",
+    "_source": "code"
+  },
+  "SETUPASSISTANT_COPYCOMMAND": {
+    "intent": "setupassistant copycommand",
+    "aliases": [
+      "setupassistant copycommand",
+      "copy command"
+    ],
+    "description": "setupassistant copycommand",
+    "_source": "code"
+  },
+  "SETUPASSISTANT_RUNALLSMOKECHECKS": {
+    "intent": "setupassistant runallsmokechecks",
+    "aliases": [
+      "setupassistant runallsmokechecks",
+      "run all smoke checks"
+    ],
+    "description": "setupassistant runallsmokechecks",
+    "_source": "code"
+  },
+  "SETUPASSISTANT_MARKCHECK": {
+    "intent": "setupassistant markcheck",
+    "aliases": [
+      "setupassistant markcheck",
+      "mark check"
+    ],
+    "description": "setupassistant markcheck",
+    "_source": "code"
+  },
+  "STYLES": {
+    "intent": "styles",
+    "aliases": [
+      "styles",
+      "const"
+    ],
+    "description": "styles",
+    "_source": "code"
+  },
+  "PLATFORM_RUNBOOK": {
+    "intent": "platform runbook",
+    "aliases": [
+      "platform runbook",
+      "type const"
+    ],
+    "description": "platform runbook",
+    "_source": "code"
+  },
+  "PLATFORM_RUNBOOK_PANEL": {
+    "intent": "platform runbook panel",
+    "aliases": [
+      "platform runbook panel",
+      "function runbook"
+    ],
+    "description": "platform runbook panel",
+    "_source": "code"
+  },
+  "SIDECAR_RUNNER": {
+    "intent": "sidecar runner",
+    "aliases": [
+      "sidecar runner",
+      "검증",
+      "유효성",
+      "상태",
+      "type has tauri runtime"
+    ],
+    "description": "sidecar runner",
+    "_source": "code"
+  },
+  "SIDECAR_RUNNER_PANEL": {
+    "intent": "sidecar runner panel",
+    "aliases": [
+      "sidecar runner panel",
+      "상태",
+      "function missing items can"
+    ],
+    "description": "sidecar runner panel",
+    "_source": "code"
+  },
+  "USE_MEETING_LIFECYCLE": {
+    "intent": "use meeting lifecycle",
+    "aliases": [
+      "use meeting lifecycle",
+      "저장",
+      "로그인",
+      "토큰",
+      "발급",
+      "initial draft function session"
+    ],
+    "description": "use meeting lifecycle",
+    "_source": "code"
+  },
+  "MEETING_LIFECYCLE_PANEL": {
+    "intent": "meeting lifecycle panel",
+    "aliases": [
+      "meeting lifecycle panel",
+      "function lifecycle can start"
+    ],
+    "description": "meeting lifecycle panel",
+    "_source": "code"
+  },
+  "LIFECYCLE_FIELDS": {
+    "intent": "lifecycle fields",
+    "aliases": [
+      "lifecycle fields",
+      "function text field"
+    ],
+    "description": "lifecycle fields",
+    "_source": "code"
+  },
+  "VOICEMEETER_FFI": {
+    "intent": "voicemeeter ffi",
+    "aliases": [
+      "voicemeeter ffi",
+      "64 char"
+    ],
+    "description": "voicemeeter ffi",
+    "_source": "code"
   }
 }

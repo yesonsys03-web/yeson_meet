@@ -574,6 +574,27 @@ git pull`}</Code>
           <p>“시스템 기본값”을 써도 될 때가 있지만, 테스트 중에는 직접 Voicemeeter Input으로 고정하는 편이 실수가 적습니다.</p>
         </>),
       },
+      {
+        id:"win-vm-dump", title:"voicemeeter_dump.exe로 설정 확인하기",
+        est:"2분", tag:{color:"green", label:"오디오"},
+        content:(<>
+          <p>위 4-1 ~ 4-3 설정이 제대로 들어갔는지 30초 만에 확인하는 진단 도구가 있습니다. 운영자에게 <code className="bg-slate-100 px-1 rounded">voicemeeter_dump.exe</code> 파일(약 350KB)을 받아 두세요.</p>
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>받은 <b>voicemeeter_dump.exe</b>를 바탕화면 등 아무 폴더에 놓습니다.</li>
+            <li>파일을 <b>더블클릭</b>합니다. 검은 콘솔 창이 잠깐 열리며 같은 폴더에 <code className="bg-slate-100 px-1 rounded">vm_dump.json</code> 파일이 자동으로 만들어집니다.</li>
+            <li>콘솔에 <code className="bg-slate-100 px-1 rounded">Edition : Banana</code>와 <code className="bg-slate-100 px-1 rounded">Press Enter to close...</code>가 보이면 <b>Enter</b> 키로 창을 닫습니다.</li>
+            <li>생성된 <code className="bg-slate-100 px-1 rounded">vm_dump.json</code>을 운영자에게 보냅니다.</li>
+          </ol>
+          <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-[12.5px] text-blue-900">
+            💡 운영자는 그 JSON 한 장으로 라우팅이 올바른지 즉시 확인합니다. 추후 “소리가 안 잡혀요” 같은 문제가 생기면 동일하게 실행해 보내주면 원격 진단이 가능합니다.
+          </div>
+        </>),
+        trouble:[
+          {symptom:"더블클릭하면 창이 바로 닫힘", fix:"파일을 한 번 더 더블클릭하거나, 명령 프롬프트에서 해당 폴더로 이동해 실행합니다. SmartScreen 경고가 뜨면 ‘추가 정보 → 실행’을 선택합니다."},
+          {symptom:"Voicemeeter is not installed 에러", fix:"Voicemeeter Banana가 먼저 설치되어 있어야 합니다. 4-1 단계가 완료됐는지 확인하고 Windows 재부팅을 거쳤는지도 확인합니다."},
+          {symptom:"vm_dump.json이 안 생김", fix:"콘솔의 빨간 에러 메시지를 운영자에게 그대로 캡처해 보냅니다. DLL 경로 또는 권한 문제일 수 있습니다."},
+        ],
+      },
     ],
   },
   {

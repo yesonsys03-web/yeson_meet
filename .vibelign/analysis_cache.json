@@ -1,21 +1,21 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-05-18T09:42:35.805262+00:00",
+  "generated_at": "2026-05-22T08:44:55.105966+00:00",
   "feature_flags": {
     "USE_ACTION_ENGINE": false
   },
-  "project_mtime_hash": "21bc0557df0da9642dc0bd77333aa17d",
+  "project_mtime_hash": "43fb58c92e890fe82d533e89ce53716c",
   "report": {
-    "project_score": 98,
+    "project_score": 90,
     "status": "Safe",
-    "anchor_coverage": 100,
+    "anchor_coverage": 99,
     "stats": {
-      "files_scanned": 1837,
-      "source_files_scanned": 77,
+      "files_scanned": 2013,
+      "source_files_scanned": 127,
       "oversized_entry_files": 0,
-      "missing_anchor_files": 0,
-      "anchor_coverage": 100,
-      "legacy_penalty": 3,
+      "missing_anchor_files": 1,
+      "anchor_coverage": 99,
+      "legacy_penalty": 18,
       "project_map_loaded": true,
       "mcp_status": {
         "claude": {
@@ -56,13 +56,79 @@
       },
       "prepared_tool_status": {},
       "checkpoint_engine_status": {
-        "engine_used": "python",
-        "last_fallback_reason": "legacy Python checkpoints visible"
+        "engine_used": "rust",
+        "last_fallback_reason": null
       },
-      "project_map_file_count": 77,
+      "project_map_file_count": 127,
       "project_map_generated_at": "2026-05-14T01:23:03.651301Z"
     },
     "issues": [
+      {
+        "found": "apps/desktop/scripts/vm_dump.py에 안전 구역 표시(앵커)가 없어요",
+        "why_it_matters": "apps/desktop/scripts/vm_dump.py에 안전 구역 표시(앵커)가 없어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
+        "next_step": "vm_dump.py에 앵커를 추가하면 AI가 딱 그 부분만 안전하게 고칠 수 있어요",
+        "path": "apps/desktop/scripts/vm_dump.py",
+        "severity": "medium",
+        "category": "anchor",
+        "recommended_command": "vib doctor --fix",
+        "can_auto_fix": true,
+        "auto_fix_label": "앵커 자동 추가"
+      },
+      {
+        "found": "apps/desktop/src/diagnostics/appLog.ts에 기능이 너무 많이 들어 있어요 (31개) — AI가 어디를 건드려야 할지 헷갈릴 수 있어요",
+        "why_it_matters": "apps/desktop/src/diagnostics/appLog.ts에 기능이 너무 많이 들어 있어요 (31개) — AI가 어디를 건드려야 할지 헷갈릴 수 있어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
+        "next_step": "appLog.ts을 기능별로 파일을 나눠보세요",
+        "path": "apps/desktop/src/diagnostics/appLog.ts",
+        "severity": "medium",
+        "category": "structure",
+        "recommended_command": null,
+        "can_auto_fix": false,
+        "auto_fix_label": null
+      },
+      {
+        "found": "apps/desktop/src/setup/styles.ts 파일이 조금 깁니다 (522줄)",
+        "why_it_matters": "apps/desktop/src/setup/styles.ts 파일이 조금 깁니다 (522줄) 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
+        "next_step": "styles.ts을 여러 파일로 나누는 걸 고려해보세요",
+        "path": "apps/desktop/src/setup/styles.ts",
+        "severity": "low",
+        "category": "structure",
+        "recommended_command": null,
+        "can_auto_fix": false,
+        "auto_fix_label": null
+      },
+      {
+        "found": "apps/server/ai/gemini_live.py 파일이 너무 깁니다 (1409줄) — AI가 실수할 위험이 높아요",
+        "why_it_matters": "apps/server/ai/gemini_live.py 파일이 너무 깁니다 (1409줄) — AI가 실수할 위험이 높아요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
+        "next_step": "gemini_live.py은 꼭 여러 파일로 나눠야 해요",
+        "path": "apps/server/ai/gemini_live.py",
+        "severity": "high",
+        "category": "structure",
+        "recommended_command": null,
+        "can_auto_fix": false,
+        "auto_fix_label": null
+      },
+      {
+        "found": "apps/server/ai/gemini_live.py에 기능이 너무 많이 들어 있어요 (77개) — AI가 어디를 건드려야 할지 헷갈릴 수 있어요",
+        "why_it_matters": "apps/server/ai/gemini_live.py에 기능이 너무 많이 들어 있어요 (77개) — AI가 어디를 건드려야 할지 헷갈릴 수 있어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
+        "next_step": "gemini_live.py을 기능별로 파일을 나눠보세요",
+        "path": "apps/server/ai/gemini_live.py",
+        "severity": "medium",
+        "category": "structure",
+        "recommended_command": null,
+        "can_auto_fix": false,
+        "auto_fix_label": null
+      },
+      {
+        "found": "apps/server/ai/subtitle_quality.py에 기능이 너무 많이 들어 있어요 (30개) — AI가 어디를 건드려야 할지 헷갈릴 수 있어요",
+        "why_it_matters": "apps/server/ai/subtitle_quality.py에 기능이 너무 많이 들어 있어요 (30개) — AI가 어디를 건드려야 할지 헷갈릴 수 있어요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
+        "next_step": "subtitle_quality.py을 기능별로 파일을 나눠보세요",
+        "path": "apps/server/ai/subtitle_quality.py",
+        "severity": "medium",
+        "category": "structure",
+        "recommended_command": null,
+        "can_auto_fix": false,
+        "auto_fix_label": null
+      },
       {
         "found": "apps/server/main.py에 실행 코드 말고 다른 기능도 섞여 있는 것 같아요",
         "why_it_matters": "apps/server/main.py에 실행 코드 말고 다른 기능도 섞여 있는 것 같아요 때문에 AI가 엉뚱한 곳까지 건드리거나 코드를 더 꼬이게 만들 수 있어요.",
@@ -76,7 +142,12 @@
       }
     ],
     "recommended_actions": [
-      "main.py에서 시작 코드 외의 기능은 다른 파일로 옮기세요"
+      "vib doctor --fix",
+      "appLog.ts을 기능별로 파일을 나눠보세요",
+      "styles.ts을 여러 파일로 나누는 걸 고려해보세요",
+      "gemini_live.py은 꼭 여러 파일로 나눠야 해요",
+      "gemini_live.py을 기능별로 파일을 나눠보세요",
+      "subtitle_quality.py을 기능별로 파일을 나눠보세요"
     ]
   }
 }
