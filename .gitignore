@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# Logs (may contain JWT / Device API Key in WS URLs — see server-latency.log incident)
+*.log
+
 # Node
 node_modules/
 dist/
@@ -47,9 +50,16 @@ Thumbs.db
 .vibelign/docs_html/
 .vibelign/docs_visual/
 .vibelign/memory_audit.jsonl
+.vibelign/*.json
+.vibelign/*.db
 .omc/sessions/
 .omc/state/
 .omc/logs/
+.omc/project-memory.json
+**/.omc/
+
+# Build artifacts that should never be committed
+*.exe
 
 # Generated build artifacts (markdown card HTML, etc.)
 generated/
