@@ -1,4 +1,8 @@
-"""Provider factory selects source by YESON_AUDIO_PROVIDER env, with auto fallback."""
+"""Provider factory selects source by YESON_AUDIO_PROVIDER env.
+
+Policy: default = ``native``. sounddevice is emergency-fallback opt-in.
+``auto`` is a deprecated transition mode kept for back-compat coverage.
+"""
 from __future__ import annotations
 
 import pytest
@@ -53,3 +57,25 @@ def test_factory_auto_prefers_native_when_bin_exists(monkeypatch, tmp_path):
     src = make_source()
     from apps.client_sidecar.audio.sources.native_pipe_source import NativePipeSource
     assert isinstance(src, NativePipeSource)
+
+
+def test_factory_default_is_native_with_existing_bin(monkeypatch, tmp_path):
+    """No YESON_AUDIO_PROVIDER set → default 'native' (not silent sounddevice fallback)."""
+    fake_bin = tmp_path / "yeson-mac-audio-helper"
+    fake_bin.write_bytes(b"\x00")
+    fake_bin.chmod(0o755)
+    monkeypatch.delenv("YESON_AUDIO_PROVIDER", raising=False)
+    monkeypatch.setenv("YESON_NATIVE_HELPER_BIN", str(fake_bin))
+    from apps.client_sidecar.audio.sources.factory import make_source
+    src = make_source()
+    from apps.client_sidecar.audio.sources.native_pipe_source import NativePipeSource
+    assert isinstance(src, NativePipeSource)
+
+
+def test_factory_default_native_raises_when_bin_missing(monkeypatch):
+    """No env set → default 'native' must surface FileNotFoundError, not auto-fallback."""
+    monkeypatch.delenv("YESON_AUDIO_PROVIDER", raising=False)
+    monkeypatch.setenv("YESON_NATIVE_HELPER_BIN", "/nonexistent/yeson-helper")
+    from apps.client_sidecar.audio.sources.factory import make_source
+    with pytest.raises(FileNotFoundError):
+        make_source()

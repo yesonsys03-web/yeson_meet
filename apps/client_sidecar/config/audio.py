@@ -25,8 +25,14 @@ RMS_SILENCE_GATE_ENABLED: bool = os.environ.get(
 ).lower() not in {"0", "false", "no", "off"}
 
 # === ANCHOR: AUDIO_PROVIDER_START ===
-# Provider selection. `auto` = try native, fallback to sounddevice on error.
-YESON_AUDIO_PROVIDER: str = os.environ.get("YESON_AUDIO_PROVIDER", "auto").lower()
+# Provider selection (policy: native-only, no silent fallback).
+#   native      — default; OS-level helper (macOS ScreenCaptureKit /
+#                 Phase 2 Windows WASAPI). Missing binary → FileNotFoundError.
+#   sounddevice — emergency fallback for BlackHole/Voicemeeter compat;
+#                 opt-in only via env override.
+#   auto        — transition aid (try native, silently fall back to
+#                 sounddevice). Deprecated; remove once Windows native lands.
+YESON_AUDIO_PROVIDER: str = os.environ.get("YESON_AUDIO_PROVIDER", "native").lower()
 # Where to find the native helper binary (release: bundled by Tauri; dev: target/)
 NATIVE_HELPER_BIN_PATH: str = os.environ.get(
     "YESON_NATIVE_HELPER_BIN",
