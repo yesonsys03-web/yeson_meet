@@ -63,6 +63,9 @@ def parse_log(path: Path, *, allow_empty: bool = False) -> dict[str, object]:
         if len(first_subtitle_ms_list) >= 2
         else first_subtitle_ms_list[0]
     )
+    # NOTE: despite the `subtitle_full_*` names, p50/p95 are percentiles of
+    # gemini_connect_to_first_subtitle_ms (first-token latency), NOT utterance-end→final.
+    # The v1 schema renames these honestly (ai.gemini_connect_to_first_subtitle_ms_p50).
     return {
         "subtitle_first_token_ms": first_subtitle_ms_list[0],
         "subtitle_full_p50_ms": int(statistics.median(first_subtitle_ms_list)),

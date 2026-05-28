@@ -29,7 +29,20 @@
 
 **Test totals (2026-05-27)**: Python 35 ✅ · Swift 8 ✅ · Vitest 3 ✅.
 
-**Next decision**: run Task 7 (4 baseline scenarios) → Phase 1 GO/HOLD per Task 7 Step 7 exit-criteria table.
+**Next decision**: run Task 7 (4 baseline scenarios) → native adoption / Task 24-25 GO/HOLD per Task 7 Step 7 exit-criteria table. Tasks 8-23 are already implemented, so this gates measurement/smoke continuation rather than Phase 1 coding start.
+
+### Post-implementation review deltas (2026-05-28)
+
+코드 리뷰에서 발견·수정된 사항. **본문 task 예제보다 커밋된 코드가 canonical.**
+
+| # | 영역 | 변경 |
+|---|---|---|
+| F1 | Task 7 Step 1 / Step 7 | Phase 0 런타임을 `YESON_AUDIO_PROVIDER=sounddevice` 로 강제하고, 집계 명령을 `--schema v1`(+env 인자, `permission_state=not_applicable`)로 통일 → Step 7 표의 `ai.*`/`capture.*` 키와 정합. Step 7 표의 `chunks_per_sec_sustained` 의존 제거(도구가 `null`만 출력) → `audio_queue_drop_count` 분당 환산으로 판정. |
+| F2 | `ScreenCaptureKitProvider` | SCStream 콜백 큐를 `.global()`(concurrent)→ 전용 serial `sampleQueue`. `pending` 데이터 레이스 제거. |
+| F3 | `AudioCapture.start` / `App.swift` | `start(frameHandler:)`를 `throws`→`async throws`. `startCapture()`를 `await`해 실제 시작 후에만 `started` emit(early-started 레이스 제거). |
+| F4 | `ScreenCaptureKitProvider` / Task 24 | 첫 버퍼에서 `audio_format_check: ... nonInterleaved=<bool> hasDataBuffer=<bool>` 1회 stderr 로그 추가. probe 를 `CMSampleBufferGetDataBuffer` guard **이전**으로 배치 → planar/buffer-nil 케이스도 항상 로깅(interleaved 가정은 여전히 Task 24 smoke 로 확정 필요). Task 24에 planar 검증·교체 절차 명시. |
+| F5 | `baseline_collect.py` / Task 10 | flat `subtitle_full_*`가 실은 first-token latency임을 주석. Task 10 본문 PCMConverter는 단일-shot(stale), 커밋본은 drain 루프임을 명시. |
+| F6 | Task 25 | native 재측정도 Task 7과 같은 `--schema v1` 출력으로 통일. flat native JSON을 만들면 `baseline_compare.py`가 schema mismatch로 비교를 거부한다. |
 
 **Goal:** macOS 시스템 오디오를 BlackHole 없이 ScreenCaptureKit로 직접 캡처해 기존 sidecar 파이프라인에 흘리고, 도입 전·후 자막 latency 및 토큰 사용량을 정량 비교한다. Native 실패 시 BlackHole sounddevice 경로로 자동 fallback.
 
@@ -58,7 +71,7 @@
 | 2/3 `baseline_collect.py` | `data["audio_queue_drop_count"]` | `data["capture"]["audio_queue_drop_count"]` |
 | 2/3 `baseline_collect.py` | `data["gemini_segment_count"]` | `data["ai"]["gemini_segment_count"]` |
 | 신규 | (없음) | `data["env"].*` — `--provider`, `--os`, `--os-version`, `--audio-route`, `--permission-state`, `--server-commit`, `--client-commit`, `--gemini-model`, `--gemini-modality` CLI 인자로 받기 |
-| 신규 | (없음) | `data["user_perceived"].*` — 별도 wrap 단계: `--speech-onset-unix-ms` 인자 받아 첫 `Gemini Live first subtitle yielded` 의 wall-clock 과 비교. silent 시나리오는 `null`. |
+| 신규 | (없음) | `data["user_perceived"].*` — 별도 wrap 단계: `--speech-onset-unix-ms` 인자와 첫 `Gemini Live first subtitle yielded` 의 wall-clock 차이를 계산해야 한다. **현재 커밋본은 raw onset 값을 그대로 넣으므로 이 인자는 사용하지 말고 `null` 유지**. PRD 지연 지표가 필요하면 먼저 true latency 계산을 구현한다. silent 시나리오는 `null`. |
 | 신규 | (없음) | `data["delivery"]["client_timing_artifact"]` — `--client-timing` 인자로 viewer JSON 경로. 없으면 `null`. |
 | 4/5 `baseline_compare.py` | flat `METRIC_KEYS` | dotted-path keys (`ai.gemini_connect_to_first_subtitle_ms_p50` 등). 비교 핵심 5 키는 schema §5 참조. |
 
@@ -672,8 +685,14 @@ docker compose --env-file /Users/usabatch/coding/yeson_dev/yeson_meet/.env \
   -f /Users/usabatch/coding/yeson_dev/yeson_meet/deploy/docker-compose.yml \
   logs -f --since=0s server > /tmp/yeson-server-zoom-1on1.log 2>&1 &
 
-# Terminal 2: 대시보드 dev 시작 (기존)
+# Terminal 2: 대시보드 dev 시작 (Phase 0 baseline 은 반드시 sounddevice 고정)
+# 이유: 기본 `auto` 는 helper binary 가 있으면 native 를 선택하므로 baseline 이 오염될 수 있음.
+export YESON_AUDIO_PROVIDER=sounddevice
+export YESON_NATIVE_HELPER_BIN=/nonexistent/yeson-mac-audio-helper
 pnpm --filter @yeson-meet/desktop tauri:dev
+
+# Tauri/sidecar 콘솔에서 반드시 확인:
+# sidecar audio mode → source=SoundDeviceSource url=...
 
 # Zoom 1:1 회의 5분 진행 (영어 화자 1명, 정해진 대본)
 # DevTools에서 copy(window.__yesonTimingExport()) → 저장
@@ -682,12 +701,24 @@ pnpm --filter @yeson-meet/desktop tauri:dev
 kill %1  # log capture stop
 mv /tmp/yeson-server-zoom-1on1.log docs/baselines/raw/2026-05-27-zoom-1on1.log
 
-# 지표 집계
+# 지표 집계 — 반드시 --schema v1 로 출력해야 Step 7 판정 표의 nested 키(ai.* / capture.*)와 정합.
+# env 인자는 schema v1 필수: 누락 시 스크립트가 에러로 알려줌.
 python scripts/baseline_collect.py \
   --log docs/baselines/raw/2026-05-27-zoom-1on1.log \
   --scenario zoom-1on1 \
-  --out docs/baselines/2026-05-27-zoom-1on1.json
+  --out docs/baselines/2026-05-27-zoom-1on1.json \
+  --schema v1 \
+  --provider sounddevice --os macOS --os-version "$(sw_vers -productVersion)" \
+  --audio-route "BlackHole 2ch + Multi-Output" --permission-state not_applicable \
+  --server-commit "$(git rev-parse --short HEAD)" --client-commit "$(git rev-parse --short HEAD)" \
+  --gemini-model gemini-3.1-flash-live-preview --gemini-modality AUDIO \
+  --duration-seconds 300
 ```
+
+> 시나리오 2~4도 동일하게 `--schema v1` + env 인자를 붙인다. silent 는 추가로 `--allow-empty`,
+> `--duration-seconds` 는 실제 측정 길이(Teams/YouTube=600, silent=300)로 맞춘다.
+> `--speech-onset-unix-ms` 는 현재 collector 가 latency delta 로 변환하지 못하므로 넣지 않는다.
+> PRD 기준 user-perceived latency 가 필요하면 `baseline_collect.py` 에 true delta 계산을 먼저 추가한다.
 
 - [ ] **Step 2: 시나리오 2 — Teams 3+ mixed 실측**
 
@@ -700,29 +731,13 @@ python scripts/baseline_collect.py \
 - [ ] **Step 4: 시나리오 4 — Silent room 실측**
 
 위 절차 동일, `<scenario>` = `silent`, 5분.
-주의: 자막 0개여도 OK. `baseline_collect.py`가 "no subtitle lines found"로 종료할 수 있음 — 그러면 silent용 별도 처리 추가 필요. **Step 5에서 처리.**
+주의: 자막 0개여도 OK. silent 수집은 **Step 5처럼 `--allow-empty`를 반드시 붙인다.**
 
-- [ ] **Step 5: Handle silent scenario edge case**
+- [ ] **Step 5: Silent scenario uses `--allow-empty`**
 
-If `baseline_collect.py` raises on silent log (no subtitles), update the parser to allow empty subtitle lists for explicit `--allow-empty` flag:
+`--allow-empty` support is already folded into Task 2-3. For the silent run, call the collector with `--allow-empty` so a no-subtitle log emits `null` AI fields instead of failing.
 
-Edit `scripts/baseline_collect.py` — replace the `if not first_subtitle_ms_list: raise` block with:
-
-```python
-    if not first_subtitle_ms_list:
-        if not allow_empty:
-            raise SystemExit("no 'Gemini Live first subtitle yielded' lines found")
-        return {
-            "subtitle_first_token_ms": None,
-            "subtitle_full_p50_ms": None,
-            "subtitle_full_p95_ms": None,
-            "audio_queue_drop_count": drop_total,
-            "gemini_segment_count": segment_count,
-            "empty_scenario": True,
-        }
-```
-
-Add `--allow-empty` to argparser. Update test to cover this path:
+Argparser support and this test are already present; keep them green:
 
 ```python
 def test_collect_empty_scenario_with_allow_empty(tmp_path):
@@ -748,18 +763,23 @@ git add docs/baselines/2026-05-27-*.json docs/baselines/raw/*.log scripts/baseli
 git commit -m "data(baselines): phase 0 measurements for 4 scenarios (BlackHole)"
 ```
 
-- [ ] **Step 7: Exit criteria — Phase 0 → Phase 1 진입 결정**
+- [ ] **Step 7: Exit criteria — native smoke/re-measurement 진행 결정**
 
 4 시나리오 측정이 끝나면 아래 표로 다음 단계를 박는다. 각 줄은 "이 수치면 → 이 행동" 단일 결정 규칙.
 
 | 신호 (4 시나리오 종합) | 의미 | 다음 행동 |
 |---|---|---|
-| `ai.gemini_connect_to_first_subtitle_ms_p50` > 5000 (Zoom·Teams·YouTube 중 2개 이상) | 자막 지연의 주범이 Gemini 쪽 — 캡처 레이어 교체로 안 풀림 | Phase 1 보류. server-side(prompt / segment 분리 / partial 전략) 먼저 손봄 |
-| `capture.audio_queue_drop_count` > 10 (1분 환산) 또는 `chunks_per_sec_sustained` < 45 | 캡처 안정성이 진짜 문제 | Phase 1 native 진입 — 가장 큰 가치 |
-| silent 시나리오에서 자막 1줄 이상 생성 | false positive (Gemini 가 무음에 환각) | Phase 1 보류. VAD/silence gate + prompt 재설계 먼저 |
-| 위 3개 모두 정상 | 기술적으로 sounddevice 가 충분 | Phase 1 native 진입 — 사용자 설치 UX 목적 (BlackHole/Voicemeeter 없애기) |
+| `ai.gemini_connect_to_first_subtitle_ms_p50` > 5000 (Zoom·Teams·YouTube 중 2개 이상) | 자막 지연의 주범이 Gemini 쪽 — 캡처 레이어 교체로 안 풀림 | Native 채택 보류. server-side(prompt / segment 분리 / partial 전략) 먼저 손봄 |
+| `capture.audio_queue_drop_count` / (`duration_seconds`/60) > 10 (분당 환산) | 캡처 안정성이 진짜 문제 | Task 24/25 진행 — native 캡처 검증 가치 큼 |
+| silent 시나리오에서 자막 1줄 이상 생성 | false positive (Gemini 가 무음에 환각) | Native 채택 보류. VAD/silence gate + prompt 재설계 먼저 |
+| 위 3개 모두 정상 | 기술적으로 sounddevice 가 충분 | Task 24/25 진행 — 사용자 설치 UX 목적 (BlackHole/Voicemeeter 없애기) |
 
-판정 결과는 commit 메시지 또는 `docs/baselines/comparison-<date>.md` 상단에 한 줄 명시: `"Phase 1 GO: <이유>"` 또는 `"Phase 1 HOLD: <원인 + 선행 작업>"`. 결과가 명백하지 않은 경계 케이스(예: drop 8개, P50 4800ms)면 시나리오 1개씩만 rerun 후 재판정.
+> ⚠️ **현 도구 한계**: `baseline_collect.py`는 `capture.chunks_per_sec_sustained` 와
+> `ai.gemini_segments_per_minute` 를 `null`로만 출력한다(로그에서 자동 산출 안 됨).
+> 따라서 위 표는 **자동 수집되는 `audio_queue_drop_count`** 만으로 캡처 안정성을 판정한다.
+> chunks/sec 가 꼭 필요하면 별도 파서(서버의 chunk-cadence 로그 라인 기반)를 먼저 추가할 것.
+
+판정 결과는 commit 메시지 또는 `docs/baselines/comparison-<date>.md` 상단에 한 줄 명시: `"Native GO: <이유>"` 또는 `"Native HOLD: <원인 + 선행 작업>"`. 결과가 명백하지 않은 경계 케이스(예: drop 8개, P50 4800ms)면 시나리오 1개씩만 rerun 후 재판정.
 
 ---
 
@@ -896,6 +916,10 @@ Expected: FAIL — `PCMConverter` undefined.
 
 **Files:**
 - Create: `apps/native_helper_mac/Sources/YesonMacAudioHelper/PCMConverter.swift`
+
+> ⚠️ **본문 코드는 stale**: 아래 예제는 `converter.convert`를 1회만 호출한다. 실제 커밋된
+> 구현(`Sources/YesonMacAudioHelperKit/PCMConverter.swift`)은 sample-rate 변환기의 filter tail 을
+> 비우기 위해 `while` 루프로 drain 한다(`status == .endOfStream` 또는 `samples == 0`까지). 코드 기준은 커밋본.
 
 - [ ] **Step 1: Write implementation**
 
@@ -2118,11 +2142,22 @@ cat /tmp/h.err
 ```
 Expected: `{"event":"started",...}` 보임. 권한 모달 떠서 거부했다면 macOS Settings → Privacy & Security → Screen Recording 에서 Terminal 허용 후 재시도.
 
+**⚠️ 오디오 포맷 검증 (필수)**: stderr 에 1회성 `audio_format_check: ... nonInterleaved=<bool> hasDataBuffer=<bool>` 라인이 찍혀야 한다.
+probe 는 `CMSampleBufferGetDataBuffer` guard **이전**에 있어 planar/buffer-nil 케이스도 항상 로깅된다.
+- `nonInterleaved=false` 면 현 interleaved 가정이 맞다 — 그대로 진행.
+- `nonInterleaved=true` 면 SCStream 이 **planar** 오디오를 주는 것이므로 `ScreenCaptureKitProvider`의
+  `memcpy` 경로(`totalLength/8` 프레임, 단일 버퍼를 interleaved 로 취급)가 **오디오를 깨뜨린다**.
+  이 경우 `CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer` + per-channel deinterleave 로 교체해야 한다.
+- `hasDataBuffer=false` 면 contiguous block buffer 가 아니라 현 memcpy 경로가 데이터를 못 읽는다 →
+  `nonInterleaved` 값과 함께 위 AudioBufferList 경로로 교체 판단.
+- `audio_format_check` 라인이 아예 없으면 콜백 자체가 안 불린 것(권한 미부여/스트림 시작 실패) — 그쪽을 먼저 본다.
+- `/tmp/h.pcm` 가 약 5초 × 32 KB/s ≈ 160 KB 면 데이터가 흐르는 것. 0 byte 면 캡처/권한 재확인.
+
 - [ ] **Step 3: Run dashboard with native provider**
 
 ```bash
-# .env에 임시 추가
-echo "YESON_AUDIO_PROVIDER=native" >> /Users/usabatch/coding/yeson_dev/yeson_meet/.env
+# 같은 shell 에서 Tauri dev 를 시작해야 sidecar 자식 프로세스가 env 를 상속한다.
+export YESON_AUDIO_PROVIDER=native
 
 # Dashboard dev 모드 시작
 pnpm --filter @yeson-meet/desktop tauri:dev
@@ -2151,10 +2186,10 @@ Gemini Live first subtitle yielded ...
 - sidecar 콘솔에서 NativePipeSource 가 chunks 를 받는지 확인
 - 권한 다시 확인
 
-- [ ] **Step 5: 종료 후 .env 원복**
+- [ ] **Step 5: 종료 후 shell env 원복**
 
 ```bash
-sed -i '' '/^YESON_AUDIO_PROVIDER=native$/d' /Users/usabatch/coding/yeson_dev/yeson_meet/.env
+unset YESON_AUDIO_PROVIDER
 ```
 
 ---
@@ -2165,12 +2200,12 @@ sed -i '' '/^YESON_AUDIO_PROVIDER=native$/d' /Users/usabatch/coding/yeson_dev/ye
 - Create: `docs/baselines/2026-MM-DD-<scenario>-native.json` (4개)
 - Create: `docs/baselines/raw/2026-MM-DD-<scenario>-native.log` (4개)
 
-Task 7과 동일 절차이되, `YESON_AUDIO_PROVIDER=native`로 .env 설정 후 진행.
+Task 7과 동일 절차이되, Tauri dev 를 시작하는 같은 shell 에서 `YESON_AUDIO_PROVIDER=native` 를 export 한 뒤 진행.
 
 - [ ] **Step 1: Set provider to native**
 
 ```bash
-echo "YESON_AUDIO_PROVIDER=native" >> /Users/usabatch/coding/yeson_dev/yeson_meet/.env
+export YESON_AUDIO_PROVIDER=native
 ```
 
 - [ ] **Step 2–5: 시나리오 1~4 native 재측정**
@@ -2191,22 +2226,28 @@ mv /tmp/yeson-server-zoom-1on1-native.log docs/baselines/raw/2026-05-27-zoom-1on
 python scripts/baseline_collect.py \
   --log docs/baselines/raw/2026-05-27-zoom-1on1-native.log \
   --scenario zoom-1on1-native \
-  --out docs/baselines/2026-05-27-zoom-1on1-native.json
+  --out docs/baselines/2026-05-27-zoom-1on1-native.json \
+  --schema v1 \
+  --provider native --os macOS --os-version "$(sw_vers -productVersion)" \
+  --audio-route "ScreenCaptureKit system default" --permission-state granted \
+  --server-commit "$(git rev-parse --short HEAD)" --client-commit "$(git rev-parse --short HEAD)" \
+  --gemini-model gemini-3.1-flash-live-preview --gemini-modality AUDIO \
+  --duration-seconds 300
 ```
 
-4개 시나리오 모두 동일 절차 반복.
+4개 시나리오 모두 동일 절차 반복. Teams/YouTube 는 `--duration-seconds 600`, silent 는 `--allow-empty --duration-seconds 300`.
 
-- [ ] **Step 6: .env 원복**
+- [ ] **Step 6: shell env 원복**
 
 ```bash
-sed -i '' '/^YESON_AUDIO_PROVIDER=native$/d' /Users/usabatch/coding/yeson_dev/yeson_meet/.env
+unset YESON_AUDIO_PROVIDER
 ```
 
 - [ ] **Step 7: Commit native baselines**
 
 ```bash
 git add docs/baselines/2026-05-27-*-native.json docs/baselines/raw/*-native.log
-git commit -m "data(baselines): phase 1 measurements for 4 scenarios (native ScreenCaptureKit)"
+git commit -m "data(baselines): native measurements for 4 scenarios (ScreenCaptureKit)"
 ```
 
 ---

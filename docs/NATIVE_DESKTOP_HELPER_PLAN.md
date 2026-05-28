@@ -78,6 +78,12 @@ Desktop App (Tauri)
 
 핵심은 **서버 전송 방식(WebSocket)이나 viewer 자막 구조를 바꾸는 것이 아니라, 클라이언트의 오디오 입력 계층만 교체하는 것**이다.
 
+> 📌 **OS-agnostic seam 위치 (2026-05-28 정합)**: 5절 Phase 1 산출물의 "OS-agnostic `AudioCapture` 추상화"는
+> 구현상 **Swift 공통 프로토콜이 아니라 stdout PCM 파이프 계약**(16 kHz mono s16le 640-byte 청크)으로 실현됐다.
+> Swift `AudioCapture` 프로토콜은 ScreenCaptureKit에 묶인 macOS 전용이고, OS 무관 재사용은 Python
+> `AudioSource` ABC + `NativePipeSource`(헬퍼 stdout 수신)에서 달성된다. **Phase 2 Windows(WASAPI)는
+> 동일 stdout PCM 계약만 지키면** 캡처 레이어 밖 공통 코드를 그대로 재사용한다(별도 Swift 프로토콜 공유 불필요).
+
 ### 4.1 Windows 방향
 
 - 우선 후보: **WASAPI loopback**
@@ -141,6 +147,11 @@ Desktop App (Tauri)
 - BlackHole 미설치 Mac에서 회의/영상 오디오가 서버로 안정 전송됨
 - 권한 미부여 상태를 앱이 명확히 감지하고 안내함
 - 캡처 레이어 밖 공통 코드(샘플레이트 변환·mono downmix·sidecar 전송)가 OS별 분기 없이 재사용되도록 설계됨
+
+> 📌 **권한 UX 범위 정합 (2026-05-28)**: Phase 1에서 헬퍼는 권한 상태를 stderr 이벤트
+> (`permission_required` / `permission_status` / `fatal:permission_denied`)로 **감지·노출**하는 데까지만 구현한다.
+> 이를 사용자에게 보여주는 **대시보드 안내·복구 UI는 Phase 3(데스크톱 앱 통합) 산출물**이다.
+> Phase 1 성공기준의 "앱이 안내함"은 이벤트 계측 수준으로 해석하고, 시각적 안내 UX는 Phase 3에서 평가한다.
 
 ### Phase 2 — Windows native capture PoC
 
@@ -288,6 +299,12 @@ macOS는 권한 정책 변화에 민감하다. ScreenCaptureKit 기반 접근은
 - 30분 회의 중 캡처 중단 0회
 - 정상 환경에서 약 50 chunks/sec 유지
 - 실시간 자막 P50 2초 이하 유지
+
+> ⚠️ **측정 도구 정합 (2026-05-28)**: 위 `chunks/sec` 계열 지표(8절 "chunks/sec 안정성", 5절 Phase 0·2 성공기준의 "50 chunks/sec")는
+> 현재 `scripts/baseline_collect.py`로 **자동 산출되지 않는다**(`capture.chunks_per_sec_sustained`는 `null`).
+> 자동 수집되는 것은 `audio_queue_drop_count`, `gemini_connect_to_first_subtitle_ms_*`, `gemini_segment_count`뿐.
+> chunks/sec를 실제 GO/HOLD·성공 판정에 쓰려면 서버의 chunk-cadence 로그 라인을 추가하고
+> 파서를 보강하는 작업이 Phase 0/1 선결과제다. (실행 plan F1 참조: `docs/plans/2026-05-27-native-audio.md`)
 
 ---
 
