@@ -21,7 +21,6 @@ import os
 
 from apps.client_sidecar.audio.source import AudioSource
 from apps.client_sidecar.audio.sources.native_pipe_source import NativePipeSource
-from apps.client_sidecar.audio.sources.sounddevice_source import SoundDeviceSource
 from apps.client_sidecar.config.audio import NATIVE_HELPER_BIN_PATH
 
 logger = logging.getLogger(__name__)
@@ -38,6 +37,7 @@ def make_source() -> AudioSource:
         logger.warning(
             "audio provider: sounddevice (emergency fallback — opted in via env)"
         )
+        from apps.client_sidecar.audio.sources.sounddevice_source import SoundDeviceSource
         return SoundDeviceSource()
     bin_path = os.environ.get("YESON_NATIVE_HELPER_BIN", NATIVE_HELPER_BIN_PATH)
     if provider == "native":
@@ -56,5 +56,6 @@ def make_source() -> AudioSource:
         "auto mode is deprecated, prefer YESON_AUDIO_PROVIDER=native or =sounddevice)",
         bin_path,
     )
+    from apps.client_sidecar.audio.sources.sounddevice_source import SoundDeviceSource
     return SoundDeviceSource()
 # === ANCHOR: SOURCE_FACTORY_END ===

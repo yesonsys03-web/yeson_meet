@@ -79,3 +79,32 @@ def test_factory_default_native_raises_when_bin_missing(monkeypatch):
     from apps.client_sidecar.audio.sources.factory import make_source
     with pytest.raises(FileNotFoundError):
         make_source()
+
+
+def test_factory_native_path_does_not_import_sounddevice(monkeypatch, tmp_path):
+    """Lean-bundle guard: the native path must NOT import the sounddevice chain.
+
+    Blocks `sounddevice`/`samplerate` imports and clears cached sidecar audio
+    modules, then forces a fresh factory import. Under eager imports the factory
+    import itself raises ImportError; under lazy imports the native branch builds
+    a NativePipeSource without touching sounddevice.
+    """
+    import sys
+
+    monkeypatch.setitem(sys.modules, "sounddevice", None)
+    monkeypatch.setitem(sys.modules, "samplerate", None)
+    # evict cached factory + audio modules so the factory re-import is truly fresh
+    for name in list(sys.modules):
+        if name.startswith("apps.client_sidecar.audio"):
+            monkeypatch.delitem(sys.modules, name, raising=False)
+
+    fake_bin = tmp_path / "yeson-mac-audio-helper"
+    fake_bin.write_bytes(b"\x00")
+    fake_bin.chmod(0o755)
+    monkeypatch.setenv("YESON_AUDIO_PROVIDER", "native")
+    monkeypatch.setenv("YESON_NATIVE_HELPER_BIN", str(fake_bin))
+
+    from apps.client_sidecar.audio.sources.factory import make_source
+    src = make_source()
+    from apps.client_sidecar.audio.sources.native_pipe_source import NativePipeSource
+    assert isinstance(src, NativePipeSource)
