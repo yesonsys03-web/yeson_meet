@@ -33,7 +33,7 @@ async def fixture_main() -> None:
     api_key = _required_env("YESON_DEVICE_API_KEY")
     session_id = UUID(_required_env("YESON_SESSION_ID"))
     url = f"{SERVER_WS_BASE}{SERVER_WS_PATH}?key={api_key}&session={session_id}"
-    print(f"sidecar fixture mode → {url}")
+    print(f"sidecar fixture mode → {url.split('?')[0]}?key=<redacted>")
     await send_events(url, fixture_stream(session_id))
 # === ANCHOR: MAIN_FIXTURE_MAIN_END ===
 
@@ -50,7 +50,7 @@ async def audio_main() -> None:
 
     source = make_source()
     url = f"{SERVER_WS_BASE}{SERVER_WS_PATH}?key={api_key}&session={session_id}"
-    print(f"sidecar audio mode → source={type(source).__name__} url={url}")
+    print(f"sidecar audio mode → source={type(source).__name__} url={url.split('?')[0]}?key=<redacted>")
 
     try:
         await stream_audio(url, source.chunks())

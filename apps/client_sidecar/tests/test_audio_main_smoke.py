@@ -94,3 +94,39 @@ async def test_audio_main_smoke(monkeypatch) -> None:
     assert "audio.started" in first_call_arg, (
         f"First send should contain 'audio.started', got: {first_call_arg!r}"
     )
+
+
+def test_audio_main_redacts_device_key(monkeypatch, capsys):
+    """The audio startup line is forwarded to the desktop app log, so it must
+    never contain the Device API Key or the raw ?key= query string."""
+    fake_key = "redactable-placeholder-value"
+    monkeypatch.setenv("YESON_DEVICE_API_KEY", fake_key)
+    monkeypatch.setenv("YESON_SESSION_ID", "00000000-0000-0000-0000-000000000000")
+
+    class _FakeSource:
+        async def chunks(self):
+            return
+            yield b""  # pragma: no cover — makes this an async generator
+
+        async def close(self):
+            pass
+
+    async def _fake_stream_audio(url, chunks):
+        return None
+
+    # audio_main imports these names inside the function, so patch them at the
+    # source module (the local `from … import` then binds the patched object).
+    monkeypatch.setattr(
+        "apps.client_sidecar.audio.sources.factory.make_source",
+        lambda: _FakeSource(),
+    )
+    monkeypatch.setattr(
+        "apps.client_sidecar.transport.audio_ws.stream_audio",
+        _fake_stream_audio,
+    )
+
+    asyncio.run(audio_main())
+
+    out = capsys.readouterr().out
+    assert fake_key not in out
+    assert "key=<redacted>" in out

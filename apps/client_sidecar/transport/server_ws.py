@@ -23,7 +23,7 @@ async def send_events(url: str, events: AsyncIterator[dict]) -> None:
     while True:
         try:
             async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
-                logger.info("connected to %s", url)
+                logger.info("connected to %s", url.split("?")[0])
                 backoff = 1.0  # reset
                 async for evt_dict in events:
                     await ws.send(json.dumps(evt_dict))
