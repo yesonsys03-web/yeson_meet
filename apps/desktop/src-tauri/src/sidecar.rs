@@ -86,6 +86,26 @@ fn set_process_group(command: &mut Command) {
     }
 }
 
+/// Open the macOS Screen Recording privacy pane so the user can grant the
+/// permission the native audio helper needs. Invoked from the capture-failure
+/// banner. Best-effort: falls back to opening System Settings if the deep-link
+/// pane is unavailable.
+#[tauri::command]
+pub fn open_screen_recording_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+            .spawn()
+            .map_err(|error| format!("failed to open settings: {error}"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("opening Screen Recording settings is only supported on macOS".to_string())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SidecarStartRequest {

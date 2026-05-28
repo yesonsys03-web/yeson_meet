@@ -2,6 +2,7 @@
 import { ContractPreview } from "./ContractPreview";
 import { LifecycleFields } from "./LifecycleFields";
 import { LiveSubtitlePreview } from "./LiveSubtitlePreview";
+import { NativeCaptureBanner } from "./NativeCaptureBanner";
 import { SessionResultPanel } from "./SessionResultPanel";
 import { consoleStyles } from "./consoleStyles";
 import { useMeetingLifecycle } from "./useMeetingLifecycle";
@@ -59,6 +60,7 @@ export function MeetingLifecyclePanel() {
             copyViewerUrl={lifecycle.copyViewerUrl}
             downloadReport={lifecycle.downloadReport}
           />
+          <NativeCaptureBanner />
           <LiveSubtitlePreview
             operatorToken={lifecycle.draft.operatorToken}
             sessionId={lifecycle.createdSession?.session_id ?? null}

@@ -15,6 +15,7 @@ pub fn run() {
             sidecar::start_sidecar,
             sidecar::stop_sidecar,
             sidecar::sidecar_status,
+            sidecar::open_screen_recording_settings,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
