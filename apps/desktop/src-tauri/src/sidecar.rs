@@ -179,6 +179,7 @@ pub fn start_sidecar(
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            add_native_helper_env(&mut command, &app);
             set_process_group(&mut command);
             let child = command
                 .spawn()
@@ -210,6 +211,7 @@ pub fn start_sidecar(
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            add_native_helper_env(&mut command, &app);
             set_process_group(&mut command);
             let child = command
                 .spawn()
@@ -225,6 +227,53 @@ pub fn start_sidecar(
     *child_slot = Some(child);
 
     Ok(status(true, Some(pid), detail))
+}
+
+/// Locate the native audio helper that Tauri's externalBin packages next
+/// to the main exe (macOS: `Contents/MacOS/yeson-mac-audio-helper`, dev:
+/// `target/debug/yeson-mac-audio-helper`). Returns None when no bundled
+/// helper is present — caller then leaves YESON_NATIVE_HELPER_BIN unset
+/// and Python's config default kicks in. Windows WASAPI helper (Phase 2)
+/// will hook into the same dispatch.
+fn locate_bundled_native_helper() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+
+    let (basename, target_triple) = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        ("yeson-mac-audio-helper", "aarch64-apple-darwin")
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        ("yeson-mac-audio-helper", "x86_64-apple-darwin")
+    } else {
+        return None;
+    };
+    let with_triple = format!("{basename}-{target_triple}");
+
+    let candidates = [
+        dir.join(basename),
+        dir.join(&with_triple),
+        dir.join("binaries").join(basename),
+        dir.join("binaries").join(&with_triple),
+    ];
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+/// If a bundled native helper exists, pin the sidecar to `native` provider
+/// and point it at that binary. When no helper is bundled (dev CLI run,
+/// or Windows pre-Phase-2), we leave the env unset and let Python's
+/// `config/audio.py` defaults surface a clear missing-helper error rather
+/// than silently overriding with a path that doesn't exist.
+fn add_native_helper_env(command: &mut Command, app: &tauri::AppHandle) {
+    if let Some(helper) = locate_bundled_native_helper() {
+        emit_backend_log(
+            app,
+            "info",
+            "sidecar",
+            format!("native audio helper located: {}", helper.display()),
+        );
+        command
+            .env("YESON_NATIVE_HELPER_BIN", &helper)
+            .env("YESON_AUDIO_PROVIDER", "native");
+    }
 }
 
 /// Locate the PyInstaller-built sidecar binary that Tauri's externalBin
