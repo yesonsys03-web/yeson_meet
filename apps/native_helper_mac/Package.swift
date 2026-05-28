@@ -6,7 +6,9 @@ import PackageDescription
 // - Executable is a thin shell that calls into the library
 let package = Package(
     name: "YesonMacAudioHelper",
-    platforms: [.macOS(.v14)],
+    // Min macOS 14.2 (Sonoma): ScreenCaptureKit system-audio capture stability floor
+    // per docs/NATIVE_DESKTOP_HELPER_PLAN.md §4.2/§9. 14.0–14.1 use BlackHole compat mode.
+    platforms: [.macOS("14.2")],
     targets: [
         .target(
             name: "YesonMacAudioHelperKit",

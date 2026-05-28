@@ -2,7 +2,8 @@ import Foundation
 import AVFoundation
 
 // === ANCHOR: PCM_CONVERTER_START ===
-/// Resamples float32 interleaved input to 16 kHz mono Int16 little-endian.
+/// Resamples float32 **non-interleaved (planar)** input to 16 kHz mono Int16 little-endian.
+/// Source layout matches ScreenCaptureKit audio (verified live: nonInterleaved=true).
 public final class PCMConverter {
     private let converter: AVAudioConverter
     private let sourceFormat: AVAudioFormat
@@ -15,7 +16,7 @@ public final class PCMConverter {
             commonFormat: .pcmFormatFloat32,
             sampleRate: sourceSampleRate,
             channels: sourceChannels,
-            interleaved: true
+            interleaved: false
         ) else {
             fatalError("source format invalid: sr=\(sourceSampleRate) ch=\(sourceChannels)")
         }
@@ -35,19 +36,24 @@ public final class PCMConverter {
         self.converter = conv
     }
 
-    /// Process N source frames (interleaved float32) and return s16le LE bytes at 16 kHz mono.
-    /// `floats` must contain at least `frameCount * sourceChannels` samples.
+    /// Process N source frames of **channel-major planar** float32 and return s16le LE bytes
+    /// at 16 kHz mono. `planarFloats` is laid out `[ch0(frameCount) | ch1(frameCount) | ...]`
+    /// and must contain at least `frameCount * sourceChannels` samples.
     /// Loops until the resampler flushes its filter tail (one process() = one shot).
-    public func process(floats: inout [Float], frameCount: AVAudioFrameCount) throws -> Data {
+    public func process(planarFloats: inout [Float], frameCount: AVAudioFrameCount) throws -> Data {
         if frameCount == 0 { return Data() }
         guard let inBuf = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: frameCount) else {
             throw NSError(domain: "PCMConverter", code: 1)
         }
         inBuf.frameLength = frameCount
         let ch = Int(sourceChannels)
-        floats.withUnsafeBufferPointer { ptr in
-            guard let dst = inBuf.floatChannelData?[0], let src = ptr.baseAddress else { return }
-            dst.update(from: src, count: Int(frameCount) * ch)
+        let n = Int(frameCount)
+        // Non-interleaved buffer: copy each channel slice into its own channel pointer.
+        planarFloats.withUnsafeBufferPointer { ptr in
+            guard let chans = inBuf.floatChannelData, let src = ptr.baseAddress else { return }
+            for c in 0..<ch {
+                chans[c].update(from: src + c * n, count: n)
+            }
         }
 
         // Step buffer sized generously to drain the resampler in 1-2 convert calls.

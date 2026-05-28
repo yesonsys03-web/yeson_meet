@@ -26,7 +26,9 @@ public protocol AudioCapture {
 
     /// Start capture. Subsequent PCM frames flow to `frameHandler`.
     /// frameHandler is invoked with already-converted 16 kHz mono Int16 LE Data of size 640 bytes (20 ms).
-    func start(frameHandler: @escaping (Data) -> Void) throws
+    /// `async throws`: the call completes only after capture has actually started, so a
+    /// successful return is a real readiness signal (no racy "started" before startup failure).
+    func start(frameHandler: @escaping (Data) -> Void) async throws
     func stop()
     func dispose()
 }

@@ -22,7 +22,7 @@ struct YesonMacAudioHelperApp {
         }
 
         do {
-            try provider.start { chunk in
+            try await provider.start { chunk in
                 ipc.emitChunk(chunk)
             }
             ipc.emitEvent(name: "started", payload: [:])
