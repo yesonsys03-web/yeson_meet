@@ -103,9 +103,26 @@ async def main() -> None:
 # === ANCHOR: MAIN_MAIN_END ===
 
 
+# === ANCHOR: MAIN__INSTALL_OS_TRUST_STORE_START ===
+def _install_os_trust_store() -> None:
+    """Make stdlib ssl (used by websockets) trust the OS certificate store.
+
+    The meeting server runs behind Caddy ``tls internal`` (private CA). Instead
+    of shipping/pinning that CA, defer to the OS trust store — the same source
+    the desktop webview uses — so a root CA registered once on the meeting PC
+    (ROADMAP: "회의실 PC Root CA 신뢰 등록") is honored by the sidecar too.
+    Identical on macOS (Keychain) and Windows (cert store).
+    """
+    import truststore
+
+    truststore.inject_into_ssl()
+# === ANCHOR: MAIN__INSTALL_OS_TRUST_STORE_END ===
+
+
 # === ANCHOR: MAIN_RUN_START ===
 def run() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    _install_os_trust_store()
     asyncio.run(main())
 # === ANCHOR: MAIN_RUN_END ===
 

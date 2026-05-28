@@ -9,6 +9,7 @@ dependencies = [
   "sounddevice>=0.5",
   "numpy>=2.1",
   "samplerate>=0.2.1",
+  "truststore>=0.10.4",
 ]
 
 [build-system]
