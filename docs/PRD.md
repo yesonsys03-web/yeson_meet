@@ -294,6 +294,7 @@ Session.visibility 값:
 - 사내 PyQt5 툴 1개 PoC 통합
 
 #### β-5 — 인스톨러 + 자동 업데이트
+> (2026-05-28) macOS: sidecar PyInstaller 단일 실행파일 + truststore(OS 신뢰저장소) standalone **local/internal beta seam**. Windows sidecar·codesign·notarization·Updater·CA 배포 자동화 잔여.
 - Tauri MSI / DMG, PyInstaller로 sidecar 단일 실행파일
 - macOS 노타리제이션 + Windows 코드사인
 - Tauri Updater

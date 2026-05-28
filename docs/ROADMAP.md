@@ -303,12 +303,14 @@ Slice 5 통과 시점에 다음을 결정한 뒤 β로 진입:
 
 ### β-5 — 인스톨러 + 자동 업데이트 (3~4일)
 
+> (2026-05-28) **macOS standalone sidecar local/internal beta seam** — PyInstaller lean 번들 + truststore(OS 신뢰저장소) TLS (`topyeson`). 설계: `docs/superpowers/specs/2026-05-28-standalone-mac-sidecar-design.md`. 잔여: MSI/DMG·codesign·notarization·Updater·Windows sidecar·CA 배포 자동화.
+
 - [ ] Tauri MSI 빌드 스크립트 1순위, DMG 빌드 스크립트 2순위
-- [ ] PyInstaller로 sidecar 단일 실행파일
+- [ ] PyInstaller로 sidecar 단일 실행파일 — macOS local/internal beta seam ✅ 2026-05-28 (lean native-only); Windows ⏳ Phase 2
 - [ ] macOS 코드사인 + 노타리제이션
 - [ ] Windows 코드사인
 - [ ] Tauri Updater (GitHub Releases 또는 사내 정적 서버)
-- [ ] 사내 root CA 인증서 배포 자동화
+- [ ] 사내 root CA 인증서 배포 자동화 — 미완료. 이번 slice 는 truststore 로 **소비 경로만** OS 신뢰저장소에 맞춤; 회의실 PC Keychain root CA 등록/Always Trust 절차는 별도 운영 과제
 
 ### β-6 — Google / Dropbox 사용자별 opt-in (1주+)
 

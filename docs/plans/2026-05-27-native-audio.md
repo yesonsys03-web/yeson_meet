@@ -31,6 +31,8 @@
 
 **Next decision**: run Task 7 (4 baseline scenarios) → native adoption / Task 24-25 GO/HOLD per Task 7 Step 7 exit-criteria table. Tasks 8-23 are already implemented, so this gates measurement/smoke continuation rather than Phase 1 coding start.
 
+> (2026-05-28) Packaging seam 후속: Python sidecar standalone(PyInstaller lean + truststore)은 별도 슬라이스로 분리 — `docs/superpowers/plans/2026-05-28-standalone-mac-sidecar.md` (spec: `docs/superpowers/specs/2026-05-28-standalone-mac-sidecar-design.md`). 범위는 codesign/notarization 전 local/internal beta.
+
 ### Post-implementation review deltas (2026-05-28)
 
 코드 리뷰에서 발견·수정된 사항. **본문 task 예제보다 커밋된 코드가 canonical.**
