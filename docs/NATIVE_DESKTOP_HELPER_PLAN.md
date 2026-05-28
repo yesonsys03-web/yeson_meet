@@ -153,6 +153,15 @@ Desktop App (Tauri)
 > 이를 사용자에게 보여주는 **대시보드 안내·복구 UI는 Phase 3(데스크톱 앱 통합) 산출물**이다.
 > Phase 1 성공기준의 "앱이 안내함"은 이벤트 계측 수준으로 해석하고, 시각적 안내 UX는 Phase 3에서 평가한다.
 
+> 📌 **macOS packaging seam — 코드 완료 (2026-05-28)**: 헬퍼 릴리스 바이너리를 Tauri `externalBin`
+> 으로 `.app`에 동봉하도록 와이어링하고, Python 사이드카의 기본 provider 를 `auto`→`native`로 고정.
+> Tauri 측 `sidecar.rs::locate_bundled_native_helper`가 번들된 헬퍼 경로를 찾아 `YESON_NATIVE_HELPER_BIN`
+> + `YESON_AUDIO_PROVIDER=native` 를 사이드카 환경으로 주입한다. Mac `tauri.macos.conf.json`이
+> `beforeBuildCommand`/`beforeDevCommand`에서 `build-release.sh`를 선행 호출해 클린 클론에서도
+> 자가-부트스트랩된다. Operator 검증 대기 항목: ① `pnpm tauri build` 산출 `.app`이
+> `Contents/MacOS/yeson-mac-audio-helper`를 포함 ② 번들 실행에서 첫 자막 정상 — 이 두 가지 통과 후
+> Phase 1 packaging seam done 으로 마감, Phase 2(Windows WASAPI)로 진행.
+
 ### Phase 2 — Windows native capture PoC
 
 목표: Voicemeeter 없이 Windows 시스템 오디오를 캡처해 Phase 1에서 정의한 `AudioCapture` 추상화의 두 번째 구현체로 끼워넣는다.
