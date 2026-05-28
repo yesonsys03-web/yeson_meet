@@ -1,9 +1,9 @@
 {
   "build": {
-    "beforeDevCommand": "pnpm build:native-helper-mac && pnpm dev:vite",
-    "beforeBuildCommand": "pnpm build:native-helper-mac && pnpm build:vite"
+    "beforeDevCommand": "pnpm build:native-helper-mac && pnpm build:sidecar-mac && pnpm dev:vite",
+    "beforeBuildCommand": "pnpm build:native-helper-mac && pnpm build:sidecar-mac && pnpm build:vite"
   },
   "bundle": {
-    "externalBin": ["binaries/yeson-mac-audio-helper"]
+    "externalBin": ["binaries/yeson-mac-audio-helper", "binaries/yeson-sidecar"]
   }
 }

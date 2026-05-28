@@ -7,6 +7,7 @@
     "dev:vite": "vite",
     "build:vite": "tsc --noEmit && vite build",
     "build:native-helper-mac": "../native_helper_mac/scripts/build-release.sh",
+    "build:sidecar-mac": "../client_sidecar/scripts/build-sidecar.sh",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "test": "vitest run",
