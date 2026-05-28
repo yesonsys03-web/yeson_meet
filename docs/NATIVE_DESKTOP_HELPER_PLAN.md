@@ -144,8 +144,8 @@ Desktop App (Tauri)
 
 성공 기준:
 
-- BlackHole 미설치 Mac에서 회의/영상 오디오가 서버로 안정 전송됨
-- 권한 미부여 상태를 앱이 명확히 감지하고 안내함
+- ✅ (2026-05-28) BlackHole 미설치 Mac에서 회의/영상 오디오가 서버로 안정 전송됨 — native E2E로 Gemini 자막까지 실측 확인(`docs/plans/2026-05-27-native-audio.md` Task 24). planar deinterleave 버그 수정 후 통과.
+- ✅ (2026-05-28) 권한 미부여 상태를 앱이 명확히 감지하고 안내함 — sidecar가 `NATIVE_STATUS permission_denied`를 내고, 데스크톱에 "화면 기록 권한 필요 + [시스템 설정 열기]" 배너 표시(라이브 검증).
 - 캡처 레이어 밖 공통 코드(샘플레이트 변환·mono downmix·sidecar 전송)가 OS별 분기 없이 재사용되도록 설계됨
 
 > 📌 **권한 UX 범위 정합 (2026-05-28)**: Phase 1에서 헬퍼는 권한 상태를 stderr 이벤트
@@ -173,6 +173,10 @@ Desktop App (Tauri)
 ### Phase 3 — 데스크톱 앱 통합
 
 목표: 현재 Tauri 데스크톱 앱에서 native helper를 실행·상태 관리·진단할 수 있게 한다.
+
+> 📌 **일부 착수 (2026-05-28)**: "캡처 상태 표시(권한 필요)"의 권한 케이스 → native 실패 배너로 구현,
+> "sidecar lifecycle 관리" → 앱 종료 시 sidecar+helper 프로세스 그룹 정리(고아 방지) 구현·실측. 나머지(레벨 미터,
+> 소스 선택, 무음/장치없음/전송실패 상태)는 미착수.
 
 산출물:
 

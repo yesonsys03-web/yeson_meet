@@ -175,6 +175,7 @@
 > **오디오 캡처 경로 단계**:
 > - **현재 (MVP-α)**: Windows + Voicemeeter / Mac + BlackHole — 본 §5.2 가 정의하는 경로
 > - **계획 (Phase 1~2 native)**: BlackHole/Voicemeeter 없는 ScreenCaptureKit(Mac) / WASAPI(Win) 직접 캡처 — `docs/NATIVE_DESKTOP_HELPER_PLAN.md` + `docs/INTEGRATION_DESIGN.md` §3 참조. native 안정화 이후 §5.2 는 fallback 경로로 격하.
+> - **진행 (2026-05-28)**: Phase 1 macOS native(ScreenCaptureKit) **E2E 기능 검증 완료** — Gemini 자막까지 실측, native 실패 시 권한 배너 포함. Windows(WASAPI)는 미구현. §5.2 fallback 격하는 native-only 컷오버 시점.
 
 - 회의실 PC: **Windows + Voicemeeter를 MVP-α 1순위**로 시스템 오디오 수신. Mac + BlackHole은 2순위 검증 경로로 유지
 - **오디오 청크를 사내 서버에 WSS push** (회의실 PC는 Gemini 직접 호출 X)

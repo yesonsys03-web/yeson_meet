@@ -23,7 +23,7 @@
 | 19-20 — NativePipeSource | ✅ done | commit `52c4ea9` |
 | 21-22 — Provider factory + config | ✅ done | commit `dfb7fd5` |
 | 23 — Wire factory into main.py | ✅ done | commit `6a8e449`; existing `test_audio_main_smoke.py` pins `YESON_AUDIO_PROVIDER=sounddevice` (auto would pick native when helper binary is built locally) |
-| 24 — End-to-end smoke | ⚠ **manual** | requires dashboard dev + Screen Recording grant |
+| 24 — End-to-end smoke | ✅ done | 2026-05-28 native E2E: ScreenCaptureKit→sidecar→Gemini→viewer 자막 표시 실측. planar 버그(F-델타) 발견·수정 후 통과. 부수 수정: 앱 종료 시 sidecar/helper 그룹 정리(lifecycle), native 실패 시 권한 배너(실패 UX) — 별도 커밋 |
 | 25 — Native re-measurements | ⚠ **manual** | requires Task 7 baselines + dashboard run |
 | 26 — Comparison reports | ⚠ **manual** | depends on Task 25 outputs |
 

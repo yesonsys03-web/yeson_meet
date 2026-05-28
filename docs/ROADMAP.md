@@ -8,6 +8,7 @@
 > - 본 ROADMAP 의 Slice 0~5 / β-1~β-7 는 **현재 MVP-α path (Voicemeeter/BlackHole + sounddevice)** 기준으로 일정/완료 기준이 적혀 있다.
 > - **Native helper track (Phase 0~4)** 은 별도 트랙으로 `docs/NATIVE_DESKTOP_HELPER_PLAN.md` 와 `docs/plans/2026-05-27-native-audio.md` 에서 관리. Phase 0 baseline 측정 → Phase 1 macOS native → Phase 2 Windows native 순.
 > - Native track 안정화 시점에 본 ROADMAP 의 Slice 2 산출물 / β-1 의 Voicemeeter 자동 감지 항목은 fallback 카테고리로 격하 후 재기술 필요.
+> - **(2026-05-28) Phase 1 macOS native E2E 기능 검증 완료**: ScreenCaptureKit 캡처 → Gemini 자막 실측(planar 버그 수정 포함), native 실패 시 권한 배너 + 앱 종료 시 sidecar/helper 프로세스 정리. 정량 비교(Task 7 baseline)와 위 격하는 native-only 컷오버 시점까지 보류.
 
 ---
 
