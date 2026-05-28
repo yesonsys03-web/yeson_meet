@@ -6,6 +6,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::Mutex,
     thread,
+    time::Duration,
 };
 use tauri::Emitter;
 
@@ -18,10 +19,70 @@ impl Drop for SidecarState {
     fn drop(&mut self) {
         if let Ok(mut child_slot) = self.child.lock() {
             if let Some(mut child) = child_slot.take() {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_child(&mut child);
             }
         }
+    }
+}
+
+/// Terminate the sidecar and its whole process group (uv -> python -> native
+/// helper). The sidecar is spawned as a process-group leader, so signalling the
+/// negative pgid reaps grandchildren that a direct `child.kill()` (SIGKILL to uv
+/// only) would orphan — notably the macOS audio helper, which would otherwise
+/// keep capturing after the app closes.
+fn terminate_child(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let pgid = child.id() as i32; // == pid: spawned via process_group(0)
+        // SIGTERM the group → python runs its cleanup (helper.terminate) and the
+        // helper's own SIGTERM handler stops the ScreenCaptureKit stream.
+        let _ = Command::new("/bin/kill")
+            .arg("-TERM")
+            .arg(format!("-{pgid}"))
+            .status();
+        let mut exited = false;
+        for _ in 0..10 {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                exited = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        // Backstop: SIGKILL the group if anything is still alive after ~1s.
+        if !exited {
+            let _ = Command::new("/bin/kill")
+                .arg("-KILL")
+                .arg(format!("-{pgid}"))
+                .status();
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+/// Stop the sidecar process group if running. Safe to call on app exit.
+pub fn shutdown(state: &SidecarState) {
+    if let Ok(mut child_slot) = state.child.lock() {
+        if let Some(mut child) = child_slot.take() {
+            terminate_child(&mut child);
+        }
+    }
+}
+
+/// Spawn the sidecar as a new process-group leader so the whole subtree
+/// (uv -> python -> native helper) can be signalled together at shutdown.
+fn set_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = command;
     }
 }
 
@@ -84,7 +145,8 @@ pub fn start_sidecar(
                     sidecar_exe.display()
                 ),
             );
-            let child = Command::new(&sidecar_exe)
+            let mut command = Command::new(&sidecar_exe);
+            command
                 .env("SERVER_WS_BASE", request.server_ws_base.trim())
                 .env("YESON_DEVICE_API_KEY", request.device_api_key.trim())
                 .env("YESON_SESSION_ID", request.session_id.trim())
@@ -96,7 +158,9 @@ pub fn start_sidecar(
                 .env("PYTHONUTF8", "1")
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stderr(Stdio::piped());
+            set_process_group(&mut command);
+            let child = command
                 .spawn()
                 .map_err(|error| format!("failed to start bundled sidecar: {error}"))?;
             let detail = format!("sidecar started (bundled: {})", sidecar_exe.display());
@@ -110,7 +174,8 @@ pub fn start_sidecar(
                 "sidecar",
                 "starting dev sidecar via uv+python",
             );
-            let child = Command::new("uv")
+            let mut command = Command::new("uv");
+            command
                 .args(["run", "python", "-m", "apps.client_sidecar.main"])
                 .current_dir(&project_dir)
                 .env("SERVER_WS_BASE", request.server_ws_base.trim())
@@ -124,7 +189,9 @@ pub fn start_sidecar(
                 .env("PYTHONUTF8", "1")
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stderr(Stdio::piped());
+            set_process_group(&mut command);
+            let child = command
                 .spawn()
                 .map_err(|error| format!("failed to start sidecar with uv: {error}"))?;
             let detail = format!("sidecar started in {}", project_dir.display());
@@ -182,16 +249,7 @@ pub fn stop_sidecar(state: tauri::State<'_, SidecarState>) -> Result<SidecarStat
         return Ok(status(false, None, "sidecar is not running"));
     };
 
-    if child
-        .try_wait()
-        .map_err(|error| error.to_string())?
-        .is_none()
-    {
-        child
-            .kill()
-            .map_err(|error| format!("failed to stop sidecar: {error}"))?;
-        let _ = child.wait();
-    }
+    terminate_child(&mut child);
 
     Ok(status(false, None, "sidecar stopped"))
 }

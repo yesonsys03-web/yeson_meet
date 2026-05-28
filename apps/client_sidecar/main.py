@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import sys
 from uuid import UUID
 
@@ -59,12 +60,37 @@ async def audio_main() -> None:
 async def main() -> None:
     mode = os.environ.get("YESON_SIDECAR_MODE", "audio").lower()
     if mode == "fixture":
-        await fixture_main()
+        run_coro = fixture_main()
     elif mode == "audio":
-        await audio_main()
+        run_coro = audio_main()
     else:
         sys.stderr.write(f"unknown YESON_SIDECAR_MODE: {mode!r} (must be 'fixture' or 'audio')\n")
         sys.exit(2)
+
+    # Graceful shutdown: on SIGTERM/SIGINT, cancel the running task so its
+    # finally-block (source.close → native helper terminate) runs. A default
+    # SIGTERM would kill the process without cleanup, orphaning the helper.
+    loop = asyncio.get_running_loop()
+    stop = asyncio.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except (NotImplementedError, RuntimeError):
+            pass  # unsupported (e.g. Windows / non-main thread)
+
+    work = asyncio.ensure_future(run_coro)
+    waiter = asyncio.ensure_future(stop.wait())
+    done, _ = await asyncio.wait({work, waiter}, return_when=asyncio.FIRST_COMPLETED)
+    if work in done:
+        waiter.cancel()
+        await work  # surface result / exception
+        return
+    # signal received → cancel work so its finally-block runs cleanup
+    work.cancel()
+    try:
+        await work
+    except asyncio.CancelledError:
+        pass
 # === ANCHOR: MAIN_MAIN_END ===
 
 
