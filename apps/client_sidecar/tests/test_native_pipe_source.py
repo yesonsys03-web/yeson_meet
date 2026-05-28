@@ -54,6 +54,39 @@ async def test_native_pipe_source_raises_if_bin_missing():
 
 
 @pytest.mark.asyncio
+async def test_native_pipe_source_raises_on_permission_denied(monkeypatch, tmp_path):
+    """Helper fatal/permission_denied surfaces as NativeCaptureError, not silent EOF."""
+    from apps.client_sidecar.audio.sources.native_pipe_source import (
+        NativeCaptureError,
+        NativePipeSource,
+    )
+
+    bin_path = tmp_path / "yeson-helper"
+    bin_path.write_bytes(b"\x00")
+    bin_path.chmod(0o755)
+
+    fake_proc = MagicMock()
+    fake_proc.stdout = asyncio.StreamReader()
+    fake_proc.stdout.feed_eof()  # no audio: helper died before producing PCM
+    fake_proc.stderr = asyncio.StreamReader()
+    fake_proc.stderr.feed_data(b'{"event":"permission_required","payload":{"status":"denied"}}\n')
+    fake_proc.stderr.feed_data(b'{"event":"fatal","payload":{"reason":"permission_denied"}}\n')
+    fake_proc.stderr.feed_eof()
+    fake_proc.returncode = 3
+
+    async def fake_create(*args, **kwargs):
+        return fake_proc
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
+
+    src = NativePipeSource(bin_path=str(bin_path))
+    with pytest.raises(NativeCaptureError) as excinfo:
+        async for _ in src.chunks():
+            pass
+    assert excinfo.value.reason == "permission_denied"
+    await src.close()
+
+
+@pytest.mark.asyncio
 async def test_native_pipe_source_drains_stderr_json_events(monkeypatch, tmp_path, caplog):
     """stderr JSON-line events are logged so the operator sees helper lifecycle."""
     import logging

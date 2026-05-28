@@ -18,6 +18,18 @@ from apps.client_sidecar.config.audio import CHUNK_BYTES
 logger = logging.getLogger(__name__)
 
 
+class NativeCaptureError(RuntimeError):
+    """Native helper failed to capture (permission denied, start failure, crash).
+
+    Carries a machine-readable ``reason`` (from the helper's ``fatal`` event) so
+    the sidecar can surface a recognizable status instead of dying silently.
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(f"native capture failed: {reason}")
+        self.reason = reason
+
+
 class NativePipeSource(AudioSource):
     """Spawn native helper, stream stdout PCM, parse stderr JSON events."""
 
@@ -25,6 +37,7 @@ class NativePipeSource(AudioSource):
         self._bin_path = bin_path
         self._proc: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task[None] | None = None
+        self._failure_reason: str | None = None
 
     async def _spawn(self) -> asyncio.subprocess.Process:
         if not os.path.isfile(self._bin_path):
@@ -50,7 +63,9 @@ class NativePipeSource(AudioSource):
                 evt = json.loads(line)
                 logger.info("native helper event: %s", evt)
                 if evt.get("event") == "fatal":
-                    logger.error("native helper fatal: %s", evt.get("payload"))
+                    payload = evt.get("payload") or {}
+                    self._failure_reason = payload.get("reason") or "fatal"
+                    logger.error("native helper fatal: %s", payload)
             except json.JSONDecodeError:
                 logger.warning("native helper non-json stderr: %r", line[:200])
 
@@ -67,7 +82,17 @@ class NativePipeSource(AudioSource):
             if e.partial:
                 logger.warning("native helper closed mid-chunk (%d bytes)", len(e.partial))
             else:
-                logger.info("native helper stdout closed cleanly")
+                logger.info("native helper stdout closed")
+
+        # Helper exited: let stderr events drain so a `fatal` reason is captured,
+        # then surface it as a typed error instead of ending the stream silently.
+        if self._stderr_task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(self._stderr_task), timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+        if self._failure_reason is not None:
+            raise NativeCaptureError(self._failure_reason)
 
     async def close(self) -> None:
         if self._proc is not None and self._proc.returncode is None:

@@ -11,6 +11,8 @@ from uuid import UUID
 
 from apps.client_sidecar.config.constants import SERVER_WS_BASE, SERVER_WS_PATH
 
+logger = logging.getLogger(__name__)
+
 
 # === ANCHOR: MAIN__REQUIRED_ENV_START ===
 def _required_env(name: str) -> str:
@@ -40,6 +42,7 @@ async def fixture_main() -> None:
 async def audio_main() -> None:
     """S2 audio mode — provider factory selects source, then stream to server WS."""
     from apps.client_sidecar.audio.sources.factory import make_source
+    from apps.client_sidecar.audio.sources.native_pipe_source import NativeCaptureError
     from apps.client_sidecar.transport.audio_ws import stream_audio
 
     api_key = _required_env("YESON_DEVICE_API_KEY")
@@ -51,6 +54,12 @@ async def audio_main() -> None:
 
     try:
         await stream_audio(url, source.chunks())
+    except NativeCaptureError as exc:
+        # Native-only target: no silent death. Emit a recognizable status line
+        # (forwarded to the desktop app log) so the cause is visible/actionable.
+        print(f"NATIVE_STATUS {exc.reason}", flush=True)
+        logger.error("native capture failed: reason=%s", exc.reason)
+        raise
     finally:
         await source.close()
 # === ANCHOR: MAIN_AUDIO_MAIN_END ===
