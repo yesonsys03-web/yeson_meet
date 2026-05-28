@@ -152,7 +152,7 @@ export function SetupAssistant() {
           />
           <Field
             label="Sidecar project folder"
-            help="패키지 앱에서 sidecar를 실행할 yeson_meet 폴더입니다. 비워두면 개발 실행 위치 주변에서 자동으로 찾습니다."
+            help="dev/fallback sounddevice 실행 전용입니다. 비워두면 패키지 앱은 번들된 네이티브 sidecar를 사용합니다."
             value={values.sidecarProjectDir}
             onChange={(value) => updateValue("sidecarProjectDir", value)}
           />

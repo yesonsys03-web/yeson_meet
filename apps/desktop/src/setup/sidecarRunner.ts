@@ -48,7 +48,7 @@ function validateSidecarValues(values: SetupValues): void {
     throw new Error("WebSocket 서버 주소를 입력하세요. 로컬 테스트는 ws://127.0.0.1:8000, LAN 테스트는 wss://192.168.0.38 입니다.");
   }
   if (!values.audioDeviceName.trim()) {
-    throw new Error("오디오 장치 이름을 입력하세요. Mac 기본값은 (?i)blackhole입니다.");
+    throw new Error("dev/fallback sounddevice 실행 시 오디오 장치 이름이 필요합니다.");
   }
 }
 

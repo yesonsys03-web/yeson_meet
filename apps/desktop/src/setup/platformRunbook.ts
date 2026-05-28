@@ -16,26 +16,26 @@ export type PlatformRunbook = {
 export const PLATFORM_RUNBOOKS: Record<SetupPlatform, PlatformRunbook> = {
   mac: {
     title: "Mac client 실행 순서",
-    intro: "Mac 회의실 PC는 BlackHole로 회의 소리를 받아서 yeson-meet sidecar로 보냅니다.",
+    intro: "패키지 Mac 앱은 번들된 네이티브 ScreenCaptureKit sidecar로 회의 소리를 직접 캡처해 yeson-meet 서버로 보냅니다. BlackHole 설치는 필요 없습니다.",
     steps: [
       {
-        title: "BlackHole 설치",
-        detail: "Mac에 BlackHole 2ch를 설치하고, 사운드 입력 장치 목록에 BlackHole이 보이는지 확인합니다.",
-      },
-      {
-        title: "회의 소리를 BlackHole로 보내기",
-        detail: "Google Meet/Zoom/Teams의 스피커를 BlackHole 또는 BlackHole이 포함된 Multi-Output Device로 맞춥니다.",
+        title: "화면 기록 권한 허용 (Screen Recording)",
+        detail: "시스템 설정 > 개인정보 보호 및 보안 > 화면 기록에서 yeson-meet 앱을 허용합니다. ScreenCaptureKit이 시스템 오디오를 캡처하려면 이 권한이 필요합니다.",
       },
       {
         title: "Live Meeting에서 회의 만들기",
         detail: "테스트 계정으로 로그인하고 Start meeting을 누른 뒤, Setup 탭으로 돌아와 Session ID와 Viewer URL이 채워졌는지 봅니다.",
       },
       {
-        title: "zsh 명령 실행",
-        detail: "Sidecar project folder를 yeson_meet 폴더로 지정하고, Device API Key를 붙여넣은 뒤 앱 버튼이나 zsh 명령으로 실행합니다.",
+        title: "번들 sidecar 시작",
+        detail: "Device API Key를 붙여넣고 'Sidecar 시작' 버튼을 누르면 번들된 네이티브 sidecar가 실행됩니다. 별도 Terminal 명령은 필요 없습니다.",
+      },
+      {
+        title: "(dev/fallback) BlackHole + zsh 경로",
+        detail: "개발/대체 경로에서만: BlackHole 2ch를 설치하고 회의 스피커를 BlackHole로 보낸 뒤, Sidecar project folder를 yeson_meet 폴더로 지정하고 오디오 장치 이름을 (?i)blackhole로 둔 채 zsh 명령으로 실행합니다.",
       },
     ],
-    reminder: "Mac 기본 오디오 장치 이름은 (?i)blackhole입니다. Device API Key는 저장하지 않으니 오디오 테스트 직전에 다시 붙여넣으세요. 아직 Python sidecar는 앱에 완전 내장하지 않고 yeson_meet 폴더 경로로 실행합니다.",
+    reminder: "패키지 Mac 앱은 번들된 네이티브 sidecar를 사용하므로 BlackHole/오디오 장치 이름 설정은 필요 없습니다. (dev/fallback sounddevice 실행 시에만 오디오 장치 이름 (?i)blackhole이 쓰입니다.) Device API Key는 저장하지 않으니 sidecar 시작 직전에 다시 붙여넣으세요.",
   },
   windows: {
     title: "Windows client 실행 순서",

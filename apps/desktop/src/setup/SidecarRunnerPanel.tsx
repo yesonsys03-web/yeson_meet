@@ -47,8 +47,8 @@ export function SidecarRunnerPanel({ values }: SidecarRunnerPanelProps) {
         <p style={styles.eyebrow}>sidecar runner</p>
         <h2 style={styles.sectionTitle}>3. 앱에서 sidecar 실행</h2>
         <p style={styles.runnerIntro}>
-          Mac 클라이언트는 Terminal 명령을 복사하지 않아도, 아래 버튼으로 audio sidecar를 실행/중지할 수 있습니다.
-          현재는 Sidecar project folder의 <code>uv</code>와 <code>apps.client_sidecar</code>를 사용합니다.
+          패키지 Mac 앱은 번들된 네이티브 ScreenCaptureKit sidecar를 자동으로 실행합니다. 아래 버튼으로 sidecar를 시작/중지할 수 있습니다.
+          Sidecar project folder가 설정된 경우에는 dev/fallback 경로(<code>uv</code> + <code>apps.client_sidecar</code>)를 사용합니다.
         </p>
       </div>
 
@@ -86,7 +86,7 @@ function sidecarMissingItems(values: SetupValues): string[] {
   if (!values.deviceApiKey.trim()) items.push("테스트용 오디오 키(Device API Key)를 입력해야 합니다.");
   if (!values.sessionId.trim() || values.sessionId.includes("<")) items.push("Live Meeting에서 회의를 만들고 Session ID를 채워야 합니다.");
   if (!values.serverWsBase.trim() || values.serverWsBase.includes("<")) items.push("WebSocket 서버 주소가 필요합니다.");
-  if (!values.audioDeviceName.trim()) items.push("오디오 장치 이름이 필요합니다. Mac 기본값은 (?i)blackhole입니다.");
+  if (!values.audioDeviceName.trim()) items.push("오디오 장치 이름이 필요합니다. dev/fallback sounddevice 실행 시 필요합니다.");
   return items;
 }
 // === ANCHOR: SIDECAR_RUNNER_PANEL_END ===

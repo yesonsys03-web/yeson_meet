@@ -31,7 +31,7 @@
     "shortDescription": "yeson-meet meeting room client",
     "longDescription": "Desktop client for starting yeson-meet meeting room caption sidecars.",
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "14.2"
     }
   }
 }
