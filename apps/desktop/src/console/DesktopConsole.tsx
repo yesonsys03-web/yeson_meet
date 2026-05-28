@@ -6,6 +6,7 @@ import { SettingsPanel } from "../settings/SettingsPanel";
 import { SetupAssistant } from "../setup/SetupAssistant";
 import { ConsoleNav } from "./ConsoleNav";
 import { MeetingLifecyclePanel } from "./MeetingLifecyclePanel";
+import { NativeCaptureBanner } from "./NativeCaptureBanner";
 import { consoleStyles } from "./consoleStyles";
 import type { ConsoleView } from "./types";
 
@@ -20,6 +21,7 @@ export function DesktopConsole() {
     <div style={consoleStyles.page}>
       <ConsoleNav activeView={activeView} onChange={setActiveView} />
       <main style={consoleStyles.content}>
+        <NativeCaptureBanner />
         <section hidden={activeView !== "setup"}>
           <SetupAssistant />
         </section>
