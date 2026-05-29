@@ -1,9 +1,6 @@
 // yeson-win-audio-helper: Windows WASAPI loopback → stdout 16k mono s16le PCM.
-// Pure modules (ipc, pcm) build everywhere; capture is Windows-only.
-mod ipc;
-mod pcm;
-#[cfg(windows)]
-mod capture;
+// Shared modules now live in the crate lib (src/lib.rs) so the stream_dump tool
+// can reuse pcm/capture. This bin = the production stdout-PCM helper.
 
 #[cfg(not(windows))]
 fn main() {
@@ -16,6 +13,7 @@ fn main() {
     use std::io::{self, Write};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use yeson_win_audio_helper::{capture, ipc, pcm};
 
     const VERSION: &str = env!("CARGO_PKG_VERSION");
 

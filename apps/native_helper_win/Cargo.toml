@@ -4,13 +4,36 @@ version = "0.1.0"
 edition = "2021"
 description = "Windows WASAPI loopback audio helper for yeson-meet (stdout PCM, stderr JSON)"
 
+# Shared pure modules (pcm/ipc/source/stream) live in the lib so both the
+# production helper bin and the all-in-one stream_dump test bin reuse them.
+[lib]
+name = "yeson_win_audio_helper"
+path = "src/lib.rs"
+
+# Production helper: stdout PCM + stderr JSON (spec contract).
 [[bin]]
 name = "yeson-win-audio-helper"
 path = "src/main.rs"
 
+# All-in-one test tool: capture (WASAPI on Windows / PCM file anywhere) →
+# WebSocket stream to the server, so subtitles can be validated with a single
+# self-contained exe (no Python/uv/repo). Mirrors the voicemeeter_dump precedent.
+[[bin]]
+name = "yeson-win-stream-dump"
+path = "src/bin/stream_dump.rs"
+
 [dependencies]
 serde_json = "1"
 rubato = "0.15"
+# WS streaming + TLS for the stream_dump test tool (all-target: the PCM-file
+# source + streamer build/run on macOS for a dry-run against the same server).
+# native-tls chosen over rustls for cross-compile reliability: on the Windows
+# target it uses SChannel (zero C deps), on macOS SecureTransport — both build
+# cleanly when cross-compiling from macOS. The mac↔win TLS-backend difference is
+# covered by proving the protocol on macOS + the YESON_TLS_INSECURE escape hatch.
+tungstenite = { version = "0.24", features = ["native-tls"] }
+native-tls = "0.2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 # cpal + ctrlc only on Windows so macOS `cargo test` of pure modules stays lean.
 [target.'cfg(windows)'.dependencies]
