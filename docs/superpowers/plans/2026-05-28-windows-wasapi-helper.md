@@ -1176,7 +1176,7 @@ Recorded so it isn't lost: `device_watch.rs` (default-device change tracking wit
 >
 > Chosen over the originally-listed local `scripts/build-release.ps1` + `package.json build:native-helper-win`: the helper is built in CI (windows-latest), matching the existing sidecar PyInstaller step — no local Windows build path needed. Base `beforeBuildCommand` stays `pnpm build:vite` (no helper build), so `before*Command` wiring was unnecessary.
 >
-> Verified on macOS: `cargo check` (src-tauri, Windows arm type-checks), JSON/YAML valid. **Unverified (needs CI/VM):** the MSVC helper build itself (the crate lib compiles `stream` = tungstenite+rustls/ring unconditionally; cross-compiled to windows-**gnu** already, MSVC likely OK but unconfirmed), externalBin bundling, and the runtime `locate_bundled_native_helper` hit.
+> Verified on macOS: `cargo check` (src-tauri, Windows arm type-checks), JSON/YAML valid. **CI-verified (2026-05-29, run 26619947760, dispatched on the `topyeson` ref):** windows-latest build fully green — the new "Build native audio helper" step (native MSVC) and "Build Tauri Windows installer" (with the new externalBin) both passed. So rustls/**ring** *does* compile under MSVC (the lib compiles `stream` = tungstenite+rustls/ring unconditionally — no feature-gating needed) and externalBin bundling works. Artifact `yeson-meet-desktop-windows` (~73 MB NSIS .exe/.msi) ships the helper. **Sole remaining unverified:** the runtime `locate_bundled_native_helper` hit (needs an actual install+run on Windows).
 >
 > Still Phase 2b: `device_watch.rs`, Job-Object orphan cleanup. (Windows PyInstaller sidecar bundle already exists in the workflow.)
 
