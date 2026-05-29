@@ -1,0 +1,23 @@
+[package]
+name = "yeson-win-audio-helper"
+version = "0.1.0"
+edition = "2021"
+description = "Windows WASAPI loopback audio helper for yeson-meet (stdout PCM, stderr JSON)"
+
+[[bin]]
+name = "yeson-win-audio-helper"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+rubato = "0.15"
+
+# cpal + ctrlc only on Windows so macOS `cargo test` of pure modules stays lean.
+[target.'cfg(windows)'.dependencies]
+cpal = "0.15"
+ctrlc = "3"
+
+# A worker-thread panic must abort the whole process AFTER the panic hook
+# emits `fatal` (spec §3 panic propagation).
+[profile.release]
+panic = "abort"
