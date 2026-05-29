@@ -2,6 +2,6 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "externalBin": ["binaries/yeson-sidecar"]
+    "externalBin": ["binaries/yeson-win-audio-helper", "binaries/yeson-sidecar"]
   }
 }

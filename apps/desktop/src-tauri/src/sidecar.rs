@@ -230,11 +230,10 @@ pub fn start_sidecar(
 }
 
 /// Locate the native audio helper that Tauri's externalBin packages next
-/// to the main exe (macOS: `Contents/MacOS/yeson-mac-audio-helper`, dev:
-/// `target/debug/yeson-mac-audio-helper`). Returns None when no bundled
-/// helper is present — caller then leaves YESON_NATIVE_HELPER_BIN unset
-/// and Python's config default kicks in. Windows WASAPI helper (Phase 2)
-/// will hook into the same dispatch.
+/// to the main exe (macOS: `Contents/MacOS/yeson-mac-audio-helper`, Windows:
+/// `yeson-win-audio-helper.exe` alongside the exe, dev: `target/debug/...`).
+/// Returns None when no bundled helper is present — caller then leaves
+/// YESON_NATIVE_HELPER_BIN unset and Python's config default kicks in.
 fn locate_bundled_native_helper() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
@@ -243,15 +242,19 @@ fn locate_bundled_native_helper() -> Option<PathBuf> {
         ("yeson-mac-audio-helper", "aarch64-apple-darwin")
     } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
         ("yeson-mac-audio-helper", "x86_64-apple-darwin")
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        ("yeson-win-audio-helper", "x86_64-pc-windows-msvc")
     } else {
         return None;
     };
-    let with_triple = format!("{basename}-{target_triple}");
+    let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    let plain = format!("{basename}{suffix}");
+    let with_triple = format!("{basename}-{target_triple}{suffix}");
 
     let candidates = [
-        dir.join(basename),
+        dir.join(&plain),
         dir.join(&with_triple),
-        dir.join("binaries").join(basename),
+        dir.join("binaries").join(&plain),
         dir.join("binaries").join(&with_triple),
     ];
     candidates.into_iter().find(|path| path.is_file())

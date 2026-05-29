@@ -9,6 +9,7 @@ on:
       - ".github/workflows/windows-desktop.yml"
       - "apps/client_sidecar/**"
       - "apps/desktop/**"
+      - "apps/native_helper_win/**"
       - "packages/ui/**"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -65,6 +66,13 @@ jobs:
           uv run --with pyinstaller pyinstaller --noconfirm --clean --onefile --name yeson-sidecar --paths . --collect-all sounddevice --collect-all samplerate --collect-all numpy apps/client_sidecar/main.py
           New-Item -ItemType Directory -Force apps/desktop/src-tauri/binaries
           Copy-Item dist/yeson-sidecar.exe apps/desktop/src-tauri/binaries/yeson-sidecar-x86_64-pc-windows-msvc.exe
+
+      - name: Build native audio helper
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path apps/native_helper_win/Cargo.toml --bin yeson-win-audio-helper
+          New-Item -ItemType Directory -Force apps/desktop/src-tauri/binaries
+          Copy-Item apps/native_helper_win/target/release/yeson-win-audio-helper.exe apps/desktop/src-tauri/binaries/yeson-win-audio-helper-x86_64-pc-windows-msvc.exe
 
       - name: Build Tauri Windows installer
         shell: pwsh

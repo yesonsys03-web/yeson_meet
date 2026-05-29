@@ -1169,6 +1169,17 @@ git commit -m "docs(native-audio): record Windows WASAPI Phase 2 1차 status"
 
 Recorded so it isn't lost: `device_watch.rs` (default-device change tracking with restart/gap/dup-event policy), `scripts/build-release.ps1`, `package.json` `build:native-helper-win`, `sidecar.rs::locate_bundled_native_helper()` Windows x86_64 + `.exe` suffix, `tauri.windows.conf.json` externalBin + before*Command, Job-Object orphan cleanup, Windows PyInstaller sidecar bundle.
 
+> 📌 (2026-05-29) **Tauri packaged wiring landed (3 additive edits).** The production-capture path is wired so the bundled installer ships and launches the WASAPI helper:
+> - `sidecar.rs::locate_bundled_native_helper()` — added Windows x86_64 arm (`yeson-win-audio-helper`, `x86_64-pc-windows-msvc`) + `.exe` suffix, mirroring `locate_bundled_sidecar`. (`add_native_helper_env` unchanged — still injects `YESON_NATIVE_HELPER_BIN` + `provider=native`.)
+> - `tauri.windows.conf.json` externalBin — added `binaries/yeson-win-audio-helper`.
+> - `.github/workflows/windows-desktop.yml` — added a `cargo build --release --bin yeson-win-audio-helper` (native **MSVC**) step that copies to `binaries/yeson-win-audio-helper-x86_64-pc-windows-msvc.exe`, plus `apps/native_helper_win/**` to the push paths-filter.
+>
+> Chosen over the originally-listed local `scripts/build-release.ps1` + `package.json build:native-helper-win`: the helper is built in CI (windows-latest), matching the existing sidecar PyInstaller step — no local Windows build path needed. Base `beforeBuildCommand` stays `pnpm build:vite` (no helper build), so `before*Command` wiring was unnecessary.
+>
+> Verified on macOS: `cargo check` (src-tauri, Windows arm type-checks), JSON/YAML valid. **Unverified (needs CI/VM):** the MSVC helper build itself (the crate lib compiles `stream` = tungstenite+rustls/ring unconditionally; cross-compiled to windows-**gnu** already, MSVC likely OK but unconfirmed), externalBin bundling, and the runtime `locate_bundled_native_helper` hit.
+>
+> Still Phase 2b: `device_watch.rs`, Job-Object orphan cleanup. (Windows PyInstaller sidecar bundle already exists in the workflow.)
+
 ---
 
 ## Execution Handoff
