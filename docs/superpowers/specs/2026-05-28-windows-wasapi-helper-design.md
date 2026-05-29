@@ -24,12 +24,14 @@ PoC에서는 Python 측은 `config/audio.py`의 dev 기본 경로 분기 외에 
 
 ---
 
-## 2. 계약 (Mac 헬퍼와 동일)
+## 2. 계약 (Mac 헬퍼와 동일한 골격)
 
 `apps/native_helper_mac` 의 `IPC` / `AudioContract` 를 그대로 따른다.
 
 - **stdout**: PCM 바이너리 스트림. 640바이트 = 320 samples × 2 bytes, 16kHz mono Int16 **little-endian**, 20ms 프레임.
 - **stderr**: 한 줄당 JSON 객체 `{"event": <name>, "payload": {...}}` + `\n`.
+
+> 📌 **payload 정합 범위**: 동일한 것은 **이벤트 골격**(`{event,payload}` + 개행, stdout 640B 프레임)이지 모든 payload 내용이 아니다. 예) Mac 헬퍼는 `started` 를 **빈 payload**(`App.swift` → `emitEvent(name:"started", payload:[:])`)로 내지만, Windows 는 §3처럼 `{device, source_sample_rate, source_channels}` 로 **enrich** 한다. 소비자(`native_pipe_source.py`)는 payload 를 파싱하지 않고 INFO 로깅만 하므로 안전하다 — payload 차이가 계약 위반이 아니다.
 
 소비자(`apps/client_sidecar/audio/sources/native_pipe_source.py`):
 - stdout 을 `readexactly(640)` 으로 읽어 청크 yield.
@@ -46,9 +48,12 @@ starting       {"version": "<helper version>"}
 started        {"device": "<name>", "source_sample_rate": 48000, "source_channels": 2}
                # 캡처 소스(장치 mix format) 정보. stdout 출력은 항상 16k mono(§2 계약)
 device_changed {"from": "<old>", "to": "<new>"}      # Phase 2b. 변경 감지 시 stream 재시작 후 emit
+dropped        {"frames_total": <n>}                 # bounded channel overflow 누적. 값 변할 때만 emit(coalesced)
 fatal          {"reason": "<code>", "detail": "<msg>"}
-stopping       {}
+stopping       {"dropped_frames_total": <n>}         # 종료 시 최종 드롭 누적 보고
 ```
+
+**`dropped` 이벤트 (overflow 가시화)**: bounded audio channel(§4) 이 넘쳐 콜백이 프레임을 버리면, worker 가 누적 드롭 카운트를 `dropped` 이벤트로 stderr 에 표면화한다(값이 변할 때만, coalesced). 스펙 §4 "조용히 무시하지 않는다" 의 구체 이행이다. 드롭은 정상(무음)이 아니라 backpressure/CPU 스파이크 신호이므로 operator 가 봐야 한다. Python 소비자는 모르는 이벤트를 INFO 로깅만 하므로 호환된다. 종료 시 `stopping.payload.dropped_frames_total` 로 최종 누적을 한 번 더 기록한다.
 
 `fatal.reason` 코드:
 - `no_default_render_device` — 기본 출력 장치 없음
@@ -64,7 +69,11 @@ stopping       {}
 
 **panic 전파**: worker thread 의 panic 은 기본값에선 해당 스레드만 죽이고 프로세스를 종료하지 않는다(stdout 정지 → fatal 누락). 따라서 release 프로파일에 **`panic = "abort"`** 를 설정해 panic hook(= `fatal` JSON flush) 실행 후 프로세스를 non-zero 로 abort 시킨다. (대안: main 이 worker join 을 감시해 죽으면 fatal+exit. 1차는 `panic = "abort"` 채택.)
 
+> 📌 **abort 보장은 release 전용**: `panic = "abort"` 는 `[profile.release]` 에만 있어 debug 빌드(`cargo test`)는 unwind 한다. 실측(스모크/E2E/Task 5b)은 모두 `--release` 로 수행하므로 계약이 성립한다. 단, 본 설계엔 별도 spawn 된 worker thread 가 없고 캡처 변환은 **main 루프**에서 돌며 cpal 콜백 스레드는 `try_send`+`fetch_add` 만 하므로(패닉 불가), 현실적 non-main 패닉 경로는 없다. panic hook 은 stdout 이 아닌 **stderr 만** 사용해 stdout 락(아래)과 교착하지 않는다.
+
 **broken pipe = 부모 종료 → 즉시 exit**: stdout write 가 `ERROR_BROKEN_PIPE`(부모 sidecar 가 사라짐)를 받으면 fatal 로 시끄럽게 내지 않고(읽을 부모가 없음) 헬퍼도 즉시 종료한다. 이는 고아 프로세스(§8)의 최저비용 방지책이며 **1차 범위에 포함**한다.
+
+> ⚠️ **broken-pipe 는 Windows 에서 1차(사실상 유일한) 고아 방어선이며, 무음 구간에 눈먼다.** 두 사실이 겹친다: (1) sidecar 의 graceful 종료 경로(SIGTERM/SIGINT → cancel → `source.close()` → 헬퍼 `terminate()`)는 `main.py` 가 `loop.add_signal_handler` 를 `try/except NotImplementedError` 로 감싸 두는데, asyncio 시그널 핸들러는 **Windows ProactorEventLoop 에서 미지원**이라 이 경로가 Windows 에선 no-op 이다 → Mac 을 지키던 graceful 정리가 Windows 엔 없다. (2) WASAPI loopback 은 **무음 시 무패킷**(본 §8)이라 worker 가 stdout write 를 하지 않으므로, 부모가 무음 순간에 죽으면 broken-pipe 가 잡히지 않고 헬퍼는 오디오 재개까지 잔존한다. 즉 데스크톱 셸이 sidecar 를 하드킬하는 **실제 제품 시나리오**에서 broken-pipe 가 1차 방어선인데 무음에 구멍이 있다. 회의는 거의 연속 오디오라 PoC(§6 E2E)는 통과하지만, 근본 해결(Job Object)은 Phase 2b 다. 무음 keepalive 프레임 합성으로 메우지 **않는다** — Mac 의 RMS-게이팅 동작과 갈라지고 ~50 chunks/sec 측정치를 오염시킨다.
 
 ---
 
@@ -101,7 +110,11 @@ apps/native_helper_win/
 
 > 📌 **cpal loopback 메커니즘**: cpal 0.15+ 에서 **출력 장치에 대해 입력 스트림을 열면** WASAPI loopback 이 된다(`Device::build_input_stream` on output device). 장치 열거·기본장치 조회도 cpal 로 처리.
 
-> 📌 **callback 안전 규칙**: cpal/WASAPI callback 안에서는 resample, JSON emit, stdout write/flush 를 하지 않는다. callback 은 raw frames + timestamp/format metadata 를 bounded channel 로 넘기고 즉시 반환한다. 별도 worker thread 가 channel 을 drain 하면서 `pcm.rs` 변환, 640B framing, stdout write/flush 를 수행한다. channel overflow 는 `stream_error` fatal 로 surface 하거나 drop 정책을 명시해야 하며, 조용히 무시하지 않는다.
+> 📌 **callback 안전 규칙**: cpal/WASAPI callback 안에서는 resample, JSON emit, stdout write/flush 를 하지 않는다. callback 은 raw frames + timestamp/format metadata 를 bounded channel 로 넘기고 즉시 반환한다. 별도 worker thread 가 channel 을 drain 하면서 `pcm.rs` 변환, 640B framing, stdout write/flush 를 수행한다. channel overflow 는 `stream_error` fatal 로 surface 하거나 drop 정책을 명시해야 하며, 조용히 무시하지 않는다. **채택 정책(1차)**: drop-newest + `AtomicU64` 카운터 증가, worker 가 `dropped` 이벤트(§3)로 가시화. 카운터를 두고도 emit 하지 않으면 규칙 위반(조용한 드롭)이다.
+
+> 📌 **stdout 단일 소유 / println 금지**: 헬퍼는 `io::stdout().lock()` 을 ipc data 싱크로 **프로그램 수명 내내 보유**한다(`'static`, Rust ≥1.61). 그 락이 잡힌 동안 어디서든 `println!`/`print!` 를 호출하면 **즉시 교착**한다. 모든 출력은 `ipc` 경유만 허용하고, 디버그 출력조차 stdout 으로 내지 않는다(필요 시 stderr). panic hook 도 stderr 전용이라 안전하다.
+
+> 📌 **프레임 정렬 가정**: `pcm.rs` 다운믹스는 콜백 버퍼가 `channels` 의 배수(완전 interleaved 프레임)라고 가정한다. cpal 은 통상 완전 프레임만 전달하지만, 비정렬 버퍼가 오면 `chunks_exact` 가 잔여 샘플을 **carry 없이 폐기**해 느린 desync 가 된다. 1차는 `debug_assert!(len % channels == 0)` 로 가정을 명시·검출한다(릴리스 무비용).
 
 ---
 
@@ -147,6 +160,7 @@ apps/native_helper_win/
   - `YESON_AUDIO_PROVIDER=native` + `YESON_NATIVE_HELPER_BIN=<helper.exe>` 로 sidecar 기동.
   - Zoom/Teams/브라우저 영상 재생 → sidecar/server `audio_stats` 또는 raw receive log 기준 **~50 chunks/sec** 수신 → viewer 한국어 자막.
   - sidecar 정상 종료/강제 종료 후 `yeson-win-audio-helper.exe` 잔존 없음 확인. 잔존하면 PoC 통과는 가능하되 Phase 2b Job Object/cleanup blocker 로 기록.
+  - **무음 중 하드킬 시나리오**(§3·§8 blind spot 실측): 오디오를 멈춘 *무음 순간*에 sidecar 를 하드킬(`Stop-Process -Force`)한 뒤 헬퍼 잔존을 확인한다. 무음엔 stdout write 가 없어 broken-pipe 가 안 잡히므로 잔존이 예상되며, 이 결과를 Phase 2b Job Object 의 구체적 정당화 근거로 §9 체크리스트에 기록한다(PoC 차단 아님).
   - **Phase 2 성공기준 그대로**(plan §5): Voicemeeter 없이 자막 생성, 수동 라우팅 불필요, 공통 코드 동일 경로 재사용.
 - **(선택) 사전 타입 검증** (Mac): `cargo check --target x86_64-pc-windows-msvc` (cargo-xwin) 로 Windows 없이 컴파일 오류 조기 포착.
 
@@ -156,7 +170,7 @@ apps/native_helper_win/
 
 - **PyInstaller Windows sidecar 번들** — 별도 패키징 슬라이스. 본 E2E 는 `uv` sidecar 로 검증(헬퍼 PoC 에 번들 불필요). ROADMAP "Windows sidecar ⏳ Phase 2" 는 후속.
 - **Tauri packaged Windows app wiring** — §5에 Phase 2b 체크리스트로 보존하되, 1차 PoC 성공 조건에서는 제외.
-- **기본장치 변경 자동 추적** — stream restart/gap/중복 이벤트 정책이 필요하므로 Phase 2b. 1차는 프로세스 재시작으로 새 기본장치를 반영한다.
+- **기본장치 변경 자동 추적** — stream restart/gap/중복 이벤트 정책이 필요하므로 Phase 2b. 1차는 프로세스 재시작으로 새 기본장치를 반영한다. 캡처 *중* 기본장치가 바뀌면 WASAPI 가 스트림을 무효화 → cpal stream error → `fatal:stream_error` 로 표면화(조용히 죽지 않음)되고 sidecar/desktop 의 재시작이 새 장치를 흡수한다.
 - **Windows 코드사인 / 인스톨러(MSI)** — Phase 4.
 - **데스크톱 UI**: 장치 선택기, 레벨 미터, Windows 전용 실패 배너 문구 — Phase 3. (배너는 현재 `fatal.reason` 을 일반적으로 표시.)
 - **앱별(프로세스) 오디오 분리 캡처** — 향후. 1차는 전체 시스템 오디오.
@@ -176,6 +190,7 @@ apps/native_helper_win/
 | **소스 mix format 가변** (48k/44.1k/96k, f32/i16, interleaved) | 고정 가정 시 깨짐 | `pcm.rs` 가 `GetMixFormat`(cpal `default_input_config`) 결과를 동적 처리. Mac 의 planar 가정 이식 불가 |
 | **종료 graceful성**: Windows `terminate()` = TerminateProcess(하드킬) | `stopping` 미발생 가능 | OS 가 프로세스 종료 시 stream/COM 정리. PoC 수용 |
 | **고아 프로세스**: 앱/sidecar 종료 시 헬퍼 잔존 | 리소스 누수 | **1차: broken-pipe(부모 종료) 감지 시 헬퍼 즉시 exit** — 최저비용 방지책. Job Object 기반 견고 정리는 Phase 2b. E2E 에서 잔존 확인, 잔존 시 Phase 2b blocker 로 승격 |
+| **broken-pipe 가 Windows 1차 방어선인데 무음에 눈멈** | 무음 순간 부모 하드킬 시 헬퍼가 오디오 재개까지 잔존 | asyncio 시그널 핸들러 미지원으로 sidecar graceful 정리가 Windows 에선 no-op(§3) → broken-pipe 가 유일 방어선. 무음 무패킷이라 write 없는 구간엔 감지 불가. **PoC 수용**(연속 오디오), 근본 해결은 Phase 2b Job Object. E2E(§6)에서 *무음 중 하드킬* 시나리오로 잔존 실측 → Phase 2b 정당화 근거로 기록. keepalive 합성은 채택 안 함(Mac 동작 갈림·측정 오염) |
 | cpal loopback 제약이 PoC 막음 | 일정 리스크 | raw `windows`/`wasapi` 크레이트 폴백 경로 확보 |
 
 ---
@@ -187,9 +202,11 @@ apps/native_helper_win/
 - [ ] Rust 단위테스트 (pcm/ipc; `device_watch` 는 Phase 2b) — Mac+Windows 통과
 - [ ] `scripts/build-release.ps1`
 - [ ] callback→bounded channel→worker thread 구조 검증(콜백 안에서 stdout write/resample 금지)
+- [ ] overflow 가시화 검증: drop-newest 카운터 → worker 가 `dropped` 이벤트 emit + 종료 시 `stopping.dropped_frames_total` (조용한 드롭 없음, §4)
 - [ ] fatal 계약 검증: 모든 start/stream/format 실패가 fatal JSON flush 후 non-zero exit
 - [ ] panic 전파 검증: worker panic → release `panic = "abort"` 로 panic hook(fatal) 후 프로세스 abort
 - [ ] broken-pipe 종료 검증: 부모 종료 시 헬퍼 stdout write 실패 → 즉시 exit(고아 없음)
+- [ ] 무음 중 하드킬 잔존 실측: 무음 순간 sidecar 하드킬 → 헬퍼 잔존 여부 기록(broken-pipe blind spot, Phase 2b Job Object 정당화)
 - [ ] `package.json` `build:native-helper-win` (Phase 2b packaged app)
 - [ ] `sidecar.rs::locate_bundled_native_helper()` Windows x86_64 (Phase 2b packaged app)
 - [ ] `tauri.windows.conf.json` externalBin + before*Command (Phase 2b packaged app)

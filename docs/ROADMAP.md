@@ -10,6 +10,7 @@
 > - Native track 안정화 시점에 본 ROADMAP 의 Slice 2 산출물 / β-1 의 Voicemeeter 자동 감지 항목은 fallback 카테고리로 격하 후 재기술 필요.
 > - **(2026-05-28) Phase 1 macOS native E2E 기능 검증 완료**: ScreenCaptureKit 캡처 → Gemini 자막 실측(planar 버그 수정 포함), native 실패 시 권한 배너 + 앱 종료 시 sidecar/helper 프로세스 정리. 정량 비교(Task 7 baseline)와 위 격하는 native-only 컷오버 시점까지 보류.
 > - **(2026-05-28) Phase 1 macOS packaging seam 코드 완료**: 헬퍼 Tauri `externalBin` 번들링 + Python provider 기본값 `auto`→`native` 고정 + `tauri.macos.conf.json`에서 `build-release.sh` 자가-부트스트랩. Operator 검증(번들 `.app`에 헬퍼 포함 & 실행 자막) 후 Phase 1 packaging seam done → Phase 2 Windows WASAPI 진입.
+> - **(2026-05-29) Phase 2 Windows WASAPI 캡처→자막 E2E 기능 검증 완료**: 실제 Windows VM에서 유튜브 소리 → **Voicemeeter 없이** → 한국어 자막 실측. cpal WASAPI loopback(F32) → 16k mono 640B → 서버 → Gemini 자막 viewer(서버 로그 `AI utterance published` 확인). 단일 exe 올인원 테스트 도구(`apps/native_helper_win`, macOS→windows-gnu 크로스컴파일)로 검증. 교훈: `native-tls`(SChannel)가 WS 바이너리 미전송 → `rustls`(ring) 교체로 해결. **Phase 2b 잔여**: 프로덕션 helper+sidecar Windows 직접 E2E, 기본장치 변경 추적, Tauri 번들. 설계: `docs/superpowers/specs|plans/2026-05-28-windows-wasapi-helper*.md`.
 
 ---
 
