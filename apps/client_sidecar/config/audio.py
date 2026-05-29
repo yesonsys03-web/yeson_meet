@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 TARGET_SAMPLE_RATE: int = 16000
 TARGET_CHANNELS: int = 1
@@ -33,13 +34,27 @@ RMS_SILENCE_GATE_ENABLED: bool = os.environ.get(
 #   auto        — transition aid (try native, silently fall back to
 #                 sounddevice). Deprecated; remove once Windows native lands.
 YESON_AUDIO_PROVIDER: str = os.environ.get("YESON_AUDIO_PROVIDER", "native").lower()
-# Where to find the native helper binary (release: bundled by Tauri; dev: target/)
+# Where to find the native helper binary (release: bundled by Tauri; dev: target/).
+# Dev default is platform-correct so a dev who doesn't set YESON_NATIVE_HELPER_BIN
+# still gets a sensible path. Release path is Tauri-injected (unaffected).
+_REPO_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
+if sys.platform == "win32":
+    _NATIVE_HELPER_DEFAULT = os.path.join(
+        _REPO_ROOT,
+        "apps",
+        "native_helper_win",
+        "target",
+        "release",
+        "yeson-win-audio-helper.exe",
+    )
+else:
+    _NATIVE_HELPER_DEFAULT = os.path.join(
+        _REPO_ROOT, "target", "native-helper-mac", "yeson-mac-audio-helper"
+    )
 NATIVE_HELPER_BIN_PATH: str = os.environ.get(
-    "YESON_NATIVE_HELPER_BIN",
-    os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-        "target", "native-helper-mac", "yeson-mac-audio-helper",
-    ),
+    "YESON_NATIVE_HELPER_BIN", _NATIVE_HELPER_DEFAULT
 )
 # === ANCHOR: AUDIO_PROVIDER_END ===
 # === ANCHOR: AUDIO_END ===
