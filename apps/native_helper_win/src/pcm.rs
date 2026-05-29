@@ -60,6 +60,9 @@ impl PcmConverter {
     }
 
     /// Feed interleaved i16 frames (normalized to f32 internally).
+    /// Reserved defensive path: only wired in if Task 0's spike observes a non-F32
+    /// (I16) mix format. Unused by the F32 production path, exercised by tests.
+    #[allow(dead_code)]
     pub fn push_i16(&mut self, interleaved: &[i16]) -> Vec<[u8; FRAME_BYTES]> {
         let as_f32: Vec<f32> = interleaved.iter().map(|&s| s as f32 / 32768.0).collect();
         self.push_f32(&as_f32)
