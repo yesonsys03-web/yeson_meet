@@ -1176,9 +1176,20 @@ Recorded so it isn't lost: `device_watch.rs` (default-device change tracking wit
 >
 > Chosen over the originally-listed local `scripts/build-release.ps1` + `package.json build:native-helper-win`: the helper is built in CI (windows-latest), matching the existing sidecar PyInstaller step — no local Windows build path needed. Base `beforeBuildCommand` stays `pnpm build:vite` (no helper build), so `before*Command` wiring was unnecessary.
 >
-> Verified on macOS: `cargo check` (src-tauri, Windows arm type-checks), JSON/YAML valid. **CI-verified (2026-05-29, run 26619947760, dispatched on the `topyeson` ref):** windows-latest build fully green — the new "Build native audio helper" step (native MSVC) and "Build Tauri Windows installer" (with the new externalBin) both passed. So rustls/**ring** *does* compile under MSVC (the lib compiles `stream` = tungstenite+rustls/ring unconditionally — no feature-gating needed) and externalBin bundling works. Artifact `yeson-meet-desktop-windows` (~73 MB NSIS .exe/.msi) ships the helper. **Sole remaining unverified:** the runtime `locate_bundled_native_helper` hit (needs an actual install+run on Windows).
+> Verified on macOS: `cargo check` (src-tauri, Windows arm type-checks), JSON/YAML valid. **CI-verified (2026-05-29, run 26619947760, dispatched on the `topyeson` ref):** windows-latest build fully green — the new "Build native audio helper" step (native MSVC) and "Build Tauri Windows installer" (with the new externalBin) both passed. So rustls/**ring** *does* compile under MSVC (the lib compiles `stream` = tungstenite+rustls/ring unconditionally — no feature-gating needed) and externalBin bundling works. Artifact `yeson-meet-desktop-windows` (~73 MB NSIS .exe/.msi) ships the helper.
 >
-> Still Phase 2b: `device_watch.rs`, Job-Object orphan cleanup. (Windows PyInstaller sidecar bundle already exists in the workflow.)
+> **RUNTIME-VERIFIED (2026-06-04):** installed the `yeson-meet-desktop-windows` NSIS build on real Windows and confirmed the full production path `Tauri → sidecar(PyInstaller) → yeson-win-audio-helper.exe (WASAPI stdout-PCM) → server → subtitles`. The `locate_bundled_native_helper` runtime hit — the sole remaining unverified item — is now closed. **Phase 2 is done.**
+>
+> Still Phase 2b (2 items): **(1) Job-Object orphan cleanup**, **(2) `device_watch.rs`** (default-device change tracking). (Windows PyInstaller sidecar bundle already exists in the workflow.) Separate item: Tauri-crash subtree cleanup (Tauri-level job) — the Windows analog of the Mac process-group fix.
+>
+> 📌 (2026-06-04) **Phase 2b item (1) Job-Object orphan cleanup — code landed (Mac-side), Windows runtime test pending.**
+> Placement decision (advisor-checked): the job lives in the **Python sidecar**, not Tauri. The Task 5b acceptance test is `Stop-Process -Name python -Force` during silence → helper must be gone. A Tauri-level job *fails* that test (Tauri still alive → handle not closed); a Python-level `KILL_ON_JOB_CLOSE` job whose sole handle is held by the sidecar *passes* (sidecar death → OS reaps helper), and also covers Tauri's hard `child.kill()`.
+> - New module `apps/client_sidecar/audio/sources/win_job_object.py` — stdlib `ctypes`+kernel32 (no pywin32): `CreateJobObjectW` → `SetInformationJobObject(JOBOBJECT_EXTENDED_LIMIT_INFORMATION, KILL_ON_JOB_CLOSE)` → `OpenProcess(pid)` → `AssignProcessToJobObject`. argtypes/restype pinned so 64-bit HANDLEs don't truncate. `JobHandle` kept on `self` for the helper's lifetime (premature close/GC would reap the live helper). No-op + `None` off Windows.
+> - `native_pipe_source.py` — binds on `_spawn` (`self._job = bind_process_to_job(proc.pid)`), releases in `close()` after terminate/kill.
+> - Mac verification: `uv run pytest apps/client_sidecar/tests -q` → 40 passed (3 new in `test_win_job_object.py`; off-Windows no-op, JobHandle idempotency, spawn-binds/close-releases wiring).
+> - **WINDOWS RUNTIME TEST PENDING (the only real proof):** in the installed bundle, play audio → **pause (true silence)** → `Stop-Process -Name python -Force` (do NOT Ctrl-C, skip the graceful path) → `Get-Process yeson-win-audio-helper -ErrorAction SilentlyContinue` must list **nothing**. Re-run with the binding reverted to confirm it *would* have lingered (baseline). Record pass/fail in spec §9.
+>
+> Separate Phase 2b item still open: Tauri-crash subtree cleanup (Tauri-level job, [[project_sidecar_orphan_on_close]] Windows analog) — NOT covered by the Python-level job.
 
 ---
 

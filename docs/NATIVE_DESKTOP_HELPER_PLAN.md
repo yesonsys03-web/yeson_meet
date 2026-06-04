@@ -182,7 +182,8 @@ Desktop App (Tauri)
 > 📌 **E2E 기능 검증 완료 (2026-05-29)**: 실제 Windows VM에서 **유튜브 소리 → Voicemeeter 없이 → 한국어 자막** 까지 실측. cpal **WASAPI loopback**(기본 출력 장치, **F32** mix format)으로 캡처 → 16kHz mono 640B s16le 변환 → 서버 `/ws/sidecar` 수신 → **Gemini Live 한국어 자막** viewer 표시(서버 로그 `first audio chunk received` + `AI utterance published` 50+건 확인). 즉 spec Task 0(cpal loopback GATE)·캡처·서버 파이프라인이 실하드웨어에서 동작 확정.
 > - **검증 경로**: 윈도에 uv/repo/Python 없이 **단일 exe** 로 검증하기 위해, 캡처 + WebSocket 스트리밍을 자체 수행하는 올인원 테스트 도구(`apps/native_helper_win` 의 `stream_dump` 바이너리, macOS 에서 windows-gnu 크로스컴파일)를 사용. 프로덕션 경로(`yeson-win-audio-helper.exe` stdout-PCM 헬퍼 + uv sidecar)의 Windows 직접 E2E 는 별개로 후속.
 > - **핵심 교훈 (TLS)**: Rust `native-tls` 는 OS별 백엔드가 달라(macOS=SecureTransport, Windows=**SChannel**), SChannel 이 WebSocket **바이너리 프레임을 전송하지 못하는** 증상(텍스트 control 은 전달, 640B 오디오는 0건 → 서버 ~40s ping-timeout 종료). **`rustls`(ring provider)로 교체**해 해결 — macOS↔Windows 동일 스택이라 macOS 검증이 그대로 전이되고 ring 은 windows-gnu 크로스컴파일에 C 의존성 없음.
-> - **Phase 2b 잔여**: 프로덕션 helper+sidecar Windows E2E, 기본장치 변경 자동 추적, Tauri `externalBin` 번들/`build-release.ps1`. (설계·계획: `docs/superpowers/specs|plans/2026-05-28-windows-wasapi-helper*.md`)
+> - **프로덕션 번들 E2E 검증 완료 (2026-06-04)**: CI 아티팩트 `yeson-meet-desktop-windows`(NSIS setup) 설치본으로 Windows 실기에서 `Tauri → sidecar(PyInstaller) → yeson-win-audio-helper.exe` 프로덕션 경로 자막까지 실측. 런타임 `locate_bundled_native_helper` 히트 = 직전까지 유일 미검증 항목 닫힘 → **Phase 2 닫힘**.
+> - **Phase 2b 잔여(2건)**: ① **Job Object 고아정리** — 무음 중 sidecar가 강제종료되면 WASAPI loopback이 stdout write를 안 해 broken-pipe가 안 걸려 helper.exe 잔존. fix는 Python-level Job Object(`KILL_ON_JOB_CLOSE`)로 sidecar 종료 시 OS가 helper를 reap. ② 기본장치 변경 자동 추적(`device_watch.rs`). 별도 항목: Tauri 크래시 시 subtree 정리(Tauri-level job, [[project_sidecar_orphan_on_close]] 윈도 대응). (설계·계획: `docs/superpowers/specs|plans/2026-05-28-windows-wasapi-helper*.md`)
 
 ### Phase 3 — 데스크톱 앱 통합
 
