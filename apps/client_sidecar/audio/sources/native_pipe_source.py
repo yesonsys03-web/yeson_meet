@@ -13,6 +13,7 @@ import os
 from collections.abc import AsyncIterator
 
 from apps.client_sidecar.audio.source import AudioSource
+from apps.client_sidecar.audio.sources.win_job_object import JobHandle, bind_process_to_job
 from apps.client_sidecar.config.audio import CHUNK_BYTES
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class NativePipeSource(AudioSource):
         self._proc: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self._failure_reason: str | None = None
+        self._job: JobHandle | None = None
 
     async def _spawn(self) -> asyncio.subprocess.Process:
         if not os.path.isfile(self._bin_path):
@@ -49,6 +51,9 @@ class NativePipeSource(AudioSource):
         )
         logger.info("native helper spawned pid=%s bin=%s", proc.pid, self._bin_path)
         self._proc = proc
+        # Windows: bind the helper to a kill-on-close Job Object so a hard-killed
+        # sidecar can't orphan it during silence (no-op / None off Windows).
+        self._job = bind_process_to_job(proc.pid)
         self._stderr_task = asyncio.create_task(self._drain_stderr(proc.stderr))
         return proc
 
@@ -105,4 +110,9 @@ class NativePipeSource(AudioSource):
         if self._stderr_task is not None:
             self._stderr_task.cancel()
             self._stderr_task = None
+        # Release the job handle last: closing it KILL_ON_JOB_CLOSE-reaps the
+        # helper, a backstop if terminate()/kill() above didn't take.
+        if self._job is not None:
+            self._job.close()
+            self._job = None
 # === ANCHOR: NATIVE_PIPE_SOURCE_END ===
