@@ -121,6 +121,13 @@ def _install_os_trust_store() -> None:
 
 # === ANCHOR: MAIN_RUN_START ===
 def run() -> None:
+    # Force UTF-8 stdio in-process: more reliable than PYTHONUTF8 in frozen
+    # (PyInstaller) builds. Korean device names logged on Windows would otherwise
+    # be encoded as cp949 — invalid UTF-8 to the desktop log reader.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     _install_os_trust_store()
     asyncio.run(main())

@@ -418,12 +418,26 @@ fn spawn_output_forwarder<R>(
     };
     let app = app.clone();
     thread::spawn(move || {
-        let reader = BufReader::new(pipe);
-        for line in reader.lines() {
-            match line {
-                Ok(message) => {
+        // Read raw bytes, not `lines()`: the pipe aggregates output from the
+        // whole sidecar subtree (uv -> python -> native helper) and on Windows
+        // some component can emit codepage bytes (e.g. cp949 Korean device
+        // names) that aren't valid UTF-8. `lines()` would error AND break the
+        // forwarder, silently dropping every later log line. `read_until` +
+        // `from_utf8_lossy` tolerates any encoding; a `\n` boundary never splits
+        // a UTF-8 multibyte char, so lossy decode only replaces truly bad bytes.
+        let mut reader = BufReader::new(pipe);
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    while matches!(buf.last(), Some(b'\n') | Some(b'\r')) {
+                        buf.pop();
+                    }
+                    let message = String::from_utf8_lossy(&buf).into_owned();
                     let inferred_level = infer_sidecar_log_level(&message).unwrap_or(level);
-                    emit_backend_log(&app, inferred_level, source, message)
+                    emit_backend_log(&app, inferred_level, source, message);
                 }
                 Err(error) => {
                     emit_backend_log(
