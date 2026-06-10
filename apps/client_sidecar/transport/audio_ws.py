@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import websockets
 from websockets.exceptions import ConnectionClosed
 
+from apps.client_sidecar.audio.rms import pcm16_dbfs
 from apps.client_sidecar.config.audio import (
     TARGET_CHANNELS,
     TARGET_SAMPLE_RATE,
@@ -57,7 +58,7 @@ async def stream_audio(url: str, chunks: AsyncIterator[bytes], reporter=None) ->
                     async for chunk in chunks:
                         seq += 1
                         if reporter is not None:
-                            reporter.note_chunk(time.monotonic())
+                            reporter.note_chunk(time.monotonic(), pcm16_dbfs(chunk))
                         await ws.send(chunk)  # binary
                         if seq % CHUNK_META_INTERVAL == 0:
                             await ws.send(json.dumps({
