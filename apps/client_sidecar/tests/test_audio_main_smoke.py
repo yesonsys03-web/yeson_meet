@@ -111,7 +111,7 @@ def test_audio_main_redacts_device_key(monkeypatch, capsys):
         async def close(self):
             pass
 
-    async def _fake_stream_audio(url, chunks):
+    async def _fake_stream_audio(url, chunks, reporter=None):
         return None
 
     # audio_main imports these names inside the function, so patch them at the

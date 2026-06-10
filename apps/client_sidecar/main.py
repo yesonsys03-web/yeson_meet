@@ -44,6 +44,10 @@ async def audio_main() -> None:
     from apps.client_sidecar.audio.sources.factory import make_source
     from apps.client_sidecar.audio.sources.native_pipe_source import NativeCaptureError
     from apps.client_sidecar.transport.audio_ws import stream_audio
+    from apps.client_sidecar.transport.capture_status import (
+        CaptureStatusReporter,
+        run_watchdog,
+    )
 
     api_key = _required_env("YESON_DEVICE_API_KEY")
     session_id = UUID(_required_env("YESON_SESSION_ID"))
@@ -52,8 +56,14 @@ async def audio_main() -> None:
     url = f"{SERVER_WS_BASE}{SERVER_WS_PATH}?key={api_key}&session={session_id}"
     print(f"sidecar audio mode → source={type(source).__name__} url={url.split('?')[0]}?key=<redacted>")
 
+    # Live capture-status heartbeat: the watchdog prints CAPTURE_STATUS <state>
+    # on each transition (forwarded to the desktop app log → status chip).
+    reporter = CaptureStatusReporter()
+    watchdog = asyncio.create_task(
+        run_watchdog(reporter, lambda state: print(f"CAPTURE_STATUS {state}", flush=True))
+    )
     try:
-        await stream_audio(url, source.chunks())
+        await stream_audio(url, source.chunks(), reporter)
     except NativeCaptureError as exc:
         # Native-only target: no silent death. Emit a recognizable status line
         # (forwarded to the desktop app log) so the cause is visible/actionable.
@@ -61,6 +71,11 @@ async def audio_main() -> None:
         logger.error("native capture failed: reason=%s", exc.reason)
         raise
     finally:
+        watchdog.cancel()
+        try:
+            await watchdog
+        except asyncio.CancelledError:
+            pass
         await source.close()
 # === ANCHOR: MAIN_AUDIO_MAIN_END ===
 
