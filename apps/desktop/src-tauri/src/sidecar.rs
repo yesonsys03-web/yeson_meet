@@ -86,6 +86,23 @@ fn set_process_group(command: &mut Command) {
     }
 }
 
+/// Suppress the console window Windows would otherwise pop for a
+/// console-subsystem child (the PyInstaller sidecar exe). Without
+/// CREATE_NO_WINDOW a cmd window flashes on every meeting start when the GUI
+/// app spawns the sidecar. No-op off Windows; does not affect the piped stdio.
+fn set_no_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = command;
+    }
+}
+
 /// Open the macOS Screen Recording privacy pane so the user can grant the
 /// permission the native audio helper needs. Invoked from the capture-failure
 /// banner. Best-effort: falls back to opening System Settings if the deep-link
@@ -181,6 +198,7 @@ pub fn start_sidecar(
                 .stderr(Stdio::piped());
             add_native_helper_env(&mut command, &app);
             set_process_group(&mut command);
+            set_no_window(&mut command);
             let child = command
                 .spawn()
                 .map_err(|error| format!("failed to start bundled sidecar: {error}"))?;
@@ -213,6 +231,7 @@ pub fn start_sidecar(
                 .stderr(Stdio::piped());
             add_native_helper_env(&mut command, &app);
             set_process_group(&mut command);
+            set_no_window(&mut command);
             let child = command
                 .spawn()
                 .map_err(|error| format!("failed to start sidecar with uv: {error}"))?;

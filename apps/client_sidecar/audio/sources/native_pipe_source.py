@@ -44,10 +44,19 @@ class NativePipeSource(AudioSource):
     async def _spawn(self) -> asyncio.subprocess.Process:
         if not os.path.isfile(self._bin_path):
             raise FileNotFoundError(f"native helper not found: {self._bin_path}")
+        # Windows: suppress the console window the helper exe (a console-subsystem
+        # binary) would otherwise flash. CREATE_NO_WINDOW only exists on Windows,
+        # so gate on os.name to keep the macOS path importable/working.
+        spawn_kwargs: dict = {}
+        if os.name == "nt":
+            import subprocess
+
+            spawn_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         proc = await asyncio.create_subprocess_exec(
             self._bin_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **spawn_kwargs,
         )
         logger.info("native helper spawned pid=%s bin=%s", proc.pid, self._bin_path)
         self._proc = proc
