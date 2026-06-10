@@ -61,6 +61,11 @@ export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = fal
           status={stream.ended ? "ended" : stream.connected ? "live" : "connecting"}
         />
       ) : null}
+      {stream.providerError ? (
+        <p style={consoleStyles.subtitleError}>
+          ⚠ AI 번역 서비스 오류 — 자막을 생성할 수 없습니다. Gemini 결제·사용량·API 키를 확인하세요. ({stream.providerError})
+        </p>
+      ) : null}
       {latest ? (
         <div style={consoleStyles.subtitleStack}>
           {previousSubtitleText ? (

@@ -194,6 +194,22 @@ async def _persist_and_publish_ai_utterance(
     )
 
 
+async def _publish_provider_error(session_uuid: UUID, error: BaseException) -> None:
+    """Surface a permanent AI-provider failure (billing/quota/auth) to operator
+    clients so the meeting host sees why subtitles stopped, instead of silence.
+    Forwarded verbatim by /ws/operator; unknown to viewers, which ignore it."""
+    await bus.publish(
+        session_uuid,
+        {
+            "type": "ai.status",
+            "status": "provider_error",
+            "session_id": str(session_uuid),
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "detail": str(error)[:200],
+        },
+    )
+
+
 async def _last_utterance_seq(session_pk: int) -> int:
     async with AsyncSessionLocal() as db:
         value = (
@@ -326,6 +342,9 @@ async def ws_sidecar(ws: WebSocket) -> None:
                                     session_pk,
                                     session_uuid,
                                     ai_sequence_normalizer.normalize(utterance),
+                                ),
+                                on_permanent_error=lambda error: _publish_provider_error(
+                                    session_uuid, error
                                 ),
                             )
                             await new_ai_session.start()

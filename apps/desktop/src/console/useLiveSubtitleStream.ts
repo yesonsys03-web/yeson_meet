@@ -27,6 +27,9 @@ export type LiveSubtitleState = {
   connected: boolean;
   ended: boolean;
   error: string | null;
+  // Set when the server reports a permanent AI-provider failure (e.g. Gemini
+  // billing/quota/auth). Cleared once subtitles resume. null = healthy.
+  providerError: string | null;
 };
 
 const initialState: LiveSubtitleState = {
@@ -35,6 +38,7 @@ const initialState: LiveSubtitleState = {
   connected: false,
   ended: false,
   error: null,
+  providerError: null,
 };
 
 export function useLiveSubtitleStream(sessionId: string | null, operatorToken: string): LiveSubtitleState {
@@ -115,13 +119,20 @@ export function useLiveSubtitleStream(sessionId: string | null, operatorToken: s
         ws?.close();
         return;
       }
+      if (event.type === "ai.status") {
+        const detail = event.detail ?? event.status;
+        appLogger.error("subtitle", "AI provider status", { detail });
+        setState((current) => ({ ...current, providerError: detail }));
+        return;
+      }
       if (event.seq < lastSeqRef.current) return;
       lastSeqRef.current = Math.max(lastSeqRef.current, event.seq);
       subtitleTimingRecorder.markArrival({ seq: event.seq, isFinal: event.is_final });
       logEventLatency(event);
       setState((current) => {
         const utterances = upsertUtterance(current.utterances, event);
-        return { ...current, utterances, latest: latestUtterance(utterances) };
+        // A fresh subtitle means the provider recovered — clear any prior error.
+        return { ...current, utterances, latest: latestUtterance(utterances), providerError: null };
       });
     }
 
@@ -138,7 +149,13 @@ export function useLiveSubtitleStream(sessionId: string | null, operatorToken: s
 function parseDomainEvent(raw: string): DomainEvent | null {
   try {
     const event = JSON.parse(raw) as DomainEvent;
-    if (event.type === "utterance.transcribed" || event.type === "session.ended") return event;
+    if (
+      event.type === "utterance.transcribed" ||
+      event.type === "session.ended" ||
+      event.type === "ai.status"
+    ) {
+      return event;
+    }
   } catch (error) {
     appLogger.warn("subtitle", "Ignoring malformed subtitle event", { detail: error instanceof Error ? error.message : String(error) });
   }

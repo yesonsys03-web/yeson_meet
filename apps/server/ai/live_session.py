@@ -12,6 +12,9 @@ from apps.server.ai.providers import STTProvider, TranslatedUtterance
 logger = logging.getLogger(__name__)
 
 OnUtterance = Callable[[TranslatedUtterance], Awaitable[None] | None]
+# Invoked once each time the provider is rejected with a permanent error
+# (billing/quota/auth) so the caller can surface a status to the operator.
+OnPermanentError = Callable[[BaseException], Awaitable[None] | None]
 DEFAULT_RECONNECT_DELAYS = (0.5, 1.0, 2.0, 5.0)
 # Audio queue capacity (chunks of ~20ms PCM each). 1500 ≈ 30s. Provider가 늦으면
 # 큐가 가득 차고, 그 시점부터 가장 오래된 chunk를 drop해서 "최근 30초 audio"만
@@ -28,6 +31,12 @@ _PERMANENT_ERROR_SIGNATURES: tuple[str, ...] = (
     "spending cap",
     "quota",
     "billing",
+    # "prepayment credits are depleted": Gemini Live 1011 close reason. The
+    # WebSocket close-reason 123-byte limit truncates the trailing "billing" to
+    # "billi", so match the (intact, earlier) credit-depletion phrase instead.
+    "prepayment",
+    "credit",
+    "depleted",
     "permission denied",
     "invalid api key",
     "invalid_api_key",
@@ -56,9 +65,11 @@ class AudioLiveSession:
         lang_hint: str = "en",
         reconnect_delays: Sequence[float] = DEFAULT_RECONNECT_DELAYS,
         audio_queue_max_chunks: int = DEFAULT_AUDIO_QUEUE_MAX_CHUNKS,
+        on_permanent_error: OnPermanentError | None = None,
     ) -> None:
         self._provider: STTProvider = provider
         self._on_utterance: OnUtterance = on_utterance
+        self._on_permanent_error: OnPermanentError | None = on_permanent_error
         self._lang_hint: str = lang_hint
         self._reconnect_delays: tuple[float, ...] = tuple(reconnect_delays)
         self._queue: asyncio.Queue[bytes | None] = asyncio.Queue(
@@ -146,6 +157,7 @@ class AudioLiveSession:
                             "error_message": str(error)[:200],
                         },
                     )
+                    await self._emit_permanent_error(error)
                 else:
                     logger.exception("AI live session provider disconnected")
             if not self._stopping:
@@ -155,6 +167,18 @@ class AudioLiveSession:
                     else self._reconnect_delay(failures)
                 )
                 await asyncio.sleep(delay)
+
+    async def _emit_permanent_error(self, error: BaseException) -> None:
+        # Best-effort notifier: a failure here must never kill the session loop
+        # (it would re-raise out of _run and stop reconnect attempts entirely).
+        if self._on_permanent_error is None:
+            return
+        try:
+            result = self._on_permanent_error(error)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.exception("on_permanent_error callback failed")
 
     async def _consume_provider_stream(self) -> bool:
         emitted = False

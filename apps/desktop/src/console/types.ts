@@ -47,5 +47,15 @@ export type SessionEnded = {
   ended_at: string;
 };
 
-export type DomainEvent = UtteranceTranscribed | SessionEnded;
+// Server-side AI provider status (e.g. Gemini billing/quota/auth failure). Lets
+// the operator see why subtitles stopped instead of silent dead air.
+export type AiStatusEvent = {
+  type: "ai.status";
+  status: string;
+  session_id: string;
+  occurred_at: string;
+  detail?: string;
+};
+
+export type DomainEvent = UtteranceTranscribed | SessionEnded | AiStatusEvent;
 // === ANCHOR: CONSOLE_TYPES_END ===

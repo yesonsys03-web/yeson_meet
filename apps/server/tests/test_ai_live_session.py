@@ -184,6 +184,17 @@ def test_is_permanent_provider_error_detects_auth() -> None:
     assert is_permanent_provider_error(Exception("Invalid API key supplied")) is True
 
 
+def test_is_permanent_provider_error_detects_depleted_credits() -> None:
+    # Real Gemini Live 1011 close reason. The WebSocket close-reason 123-byte
+    # limit truncates "billing" -> "billi", so a "billing" signature alone
+    # misses it — "prepayment credits are depleted" must be matched instead.
+    err = Exception(
+        "1011 None. Your prepayment credits are depleted. Please go to "
+        "AI Studio at https://ai.studio/projects to manage your project and billi"
+    )
+    assert is_permanent_provider_error(err) is True
+
+
 def test_is_permanent_provider_error_skips_transient() -> None:
     assert is_permanent_provider_error(Exception("1011 None. Internal error encountered.")) is False
     assert is_permanent_provider_error(ConnectionError("provider disconnected")) is False
@@ -238,4 +249,32 @@ async def test_audio_live_session_uses_long_backoff_for_permanent_error(monkeypa
 
     assert sleep_calls, "expected _run to call asyncio.sleep at least once"
     assert sleep_calls[0] == PERMANENT_ERROR_BACKOFF_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_audio_live_session_notifies_on_permanent_error(monkeypatch) -> None:
+    original_sleep = asyncio.sleep
+
+    async def fast_sleep(_delay: float) -> None:
+        await original_sleep(0)
+
+    from apps.server.ai import live_session as live_session_module
+
+    monkeypatch.setattr(live_session_module.asyncio, "sleep", fast_sleep)
+
+    seen: list[BaseException] = []
+    session = AudioLiveSession(
+        provider=PermanentErrorProvider(),
+        on_utterance=lambda u: None,
+        on_permanent_error=lambda error: seen.append(error),
+    )
+    await session.start()
+    for _ in range(20):
+        if seen:
+            break
+        await original_sleep(0.01)
+    await session.stop()
+
+    assert seen, "expected on_permanent_error to fire for a permanent provider error"
+    assert "spending cap" in str(seen[0]).lower()
 # === ANCHOR: TEST_AI_LIVE_SESSION_END ===
