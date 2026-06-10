@@ -95,6 +95,14 @@ pub fn start() -> Result<(Capture, CaptureFormat, Receiver<RawBlock>, Receiver<S
     ))
 }
 
+/// Freshly re-query the current default output device name (each call hits
+/// WASAPI `GetDefaultAudioEndpoint` — not cached). Used by the worker's device
+/// poll to detect a default-device change. None if there is no default output.
+pub fn current_default_device_name() -> Option<String> {
+    let host = cpal::default_host();
+    host.default_output_device().and_then(|d| d.name().ok())
+}
+
 #[cfg(all(test, windows))]
 mod smoke {
     use super::*;
