@@ -45,6 +45,7 @@ async def audio_main() -> None:
     from apps.client_sidecar.audio.sources.native_pipe_source import NativeCaptureError
     from apps.client_sidecar.transport.audio_ws import stream_audio
     from apps.client_sidecar.transport.capture_status import (
+        MARKER,
         CaptureStatusReporter,
         run_watchdog,
     )
@@ -60,7 +61,7 @@ async def audio_main() -> None:
     # on each transition (forwarded to the desktop app log → status chip).
     reporter = CaptureStatusReporter()
     watchdog = asyncio.create_task(
-        run_watchdog(reporter, lambda state: print(f"CAPTURE_STATUS {state}", flush=True))
+        run_watchdog(reporter, lambda state: print(f"{MARKER}{state}", flush=True))
     )
     try:
         await stream_audio(url, source.chunks(), reporter)
