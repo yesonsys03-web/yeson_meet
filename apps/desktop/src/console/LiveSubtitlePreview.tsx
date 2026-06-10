@@ -2,6 +2,8 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
+import { CaptureStatusChip } from "./CaptureStatusChip";
+import { useCaptureStatus, type CaptureState } from "./captureStatus";
 import { consoleStyles } from "./consoleStyles";
 import type { UtteranceTranscribed } from "./types";
 import { useLiveSubtitleStream } from "./useLiveSubtitleStream";
@@ -16,6 +18,7 @@ type LiveSubtitlePreviewProps = {
 
 export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = false }: LiveSubtitlePreviewProps) {
   const stream = useLiveSubtitleStream(sessionId, operatorToken);
+  const captureStatus = useCaptureStatus();
   const fullscreen = useSubtitleFullscreenShortcut({ operatorToken, sessionId, windowMode });
   const panelStyle = {
     ...consoleStyles.subtitlePanel,
@@ -59,6 +62,7 @@ export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = fal
           isFullscreen={fullscreen.isFullscreen}
           onToggleFullscreen={fullscreen.toggleFullscreen}
           status={stream.ended ? "ended" : stream.connected ? "live" : "connecting"}
+          captureStatus={captureStatus}
         />
       ) : null}
       {stream.providerError ? (
@@ -162,10 +166,12 @@ function SubtitleHeader({
   isFullscreen,
   onToggleFullscreen,
   status,
+  captureStatus = null,
 }: {
   isFullscreen: boolean;
   onToggleFullscreen: () => Promise<void>;
   status: "idle" | "connecting" | "live" | "ended";
+  captureStatus?: CaptureState | null;
 }) {
   return (
     <div style={consoleStyles.subtitleHeader}>
@@ -174,6 +180,7 @@ function SubtitleHeader({
         <span style={consoleStyles.subtitleShortcutHint}>F 자막 전용 전체화면 · Esc/F 종료</span>
       </div>
       <div style={consoleStyles.subtitleHeaderActions}>
+        {captureStatus ? <CaptureStatusChip state={captureStatus} /> : null}
         <button type="button" onClick={() => void onToggleFullscreen()} style={consoleStyles.subtitleFullscreenButton}>
           {isFullscreen ? "전체화면 종료" : "전체화면"}
         </button>
