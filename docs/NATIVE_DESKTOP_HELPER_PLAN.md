@@ -198,6 +198,14 @@ Desktop App (Tauri)
 > 📌 **일부 착수 (2026-05-28)**: "캡처 상태 표시(권한 필요)"의 권한 케이스 → native 실패 배너로 구현,
 > "sidecar lifecycle 관리" → 앱 종료 시 sidecar+helper 프로세스 그룹 정리(고아 방지) 구현·실측. 나머지(레벨 미터,
 > 소스 선택, 무음/장치없음/전송실패 상태)는 미착수.
+>
+> 📌 **Slice 1 코드 완료·Windows E2E 대기 (2026-06-10)**: 실시간 캡처 상태칩(⚪연결중/🟢정상/🟡무음/🔴전송끊김).
+> 사이드카 워치독이 `CAPTURE_STATUS <state>` stdout 마커를 전이 시 emit(`capture_status.py` 순수 결정기+리포터,
+> `audio_ws`/`main` 배선) → Rust가 app-log로 포워딩(무변경) → 데스크톱이 마커 파싱(`captureStatus.ts`, 기존
+> `nativeCaptureStatus` 패턴) → 자막 헤더 상태칩(`CaptureStatusChip`). 캡처 *실패*(장치없음/권한)는 기존 배너 유지.
+> 무음=10초+정보성+비대칭 히스테리시스(화자 비의존). Mac 검증: 사이드카 pytest 50 + 데스크톱 vitest 12 + tsc 클린,
+> 코드리뷰 APPROVE. **Windows 4상태 라이브 E2E 대기**(다음 CI 빌드). **비범위(후속)**: dBFS 레벨 미터(네이티브 RMS 미배선),
+> 캡처 소스 선택(네이티브는 기본장치 고정). 설계·계획: `docs/superpowers/specs|plans/2026-06-10-capture-status-ux*.md`.
 
 산출물:
 
