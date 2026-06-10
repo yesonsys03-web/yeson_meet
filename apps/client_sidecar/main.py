@@ -44,6 +44,7 @@ async def audio_main() -> None:
     from apps.client_sidecar.audio.sources.factory import make_source
     from apps.client_sidecar.audio.sources.native_pipe_source import NativeCaptureError
     from apps.client_sidecar.transport.audio_ws import stream_audio
+    from apps.client_sidecar.config.audio import RMS_DBFS_THRESHOLD
     from apps.client_sidecar.transport.capture_status import (
         MARKER,
         CaptureStatusReporter,
@@ -59,7 +60,7 @@ async def audio_main() -> None:
 
     # Live capture-status heartbeat: the watchdog prints CAPTURE_STATUS <state>
     # on each transition (forwarded to the desktop app log → status chip).
-    reporter = CaptureStatusReporter()
+    reporter = CaptureStatusReporter(rms_threshold_dbfs=RMS_DBFS_THRESHOLD)
     watchdog = asyncio.create_task(
         run_watchdog(reporter, lambda state: print(f"{MARKER}{state}", flush=True))
     )
