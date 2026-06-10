@@ -27,7 +27,7 @@ slice 1의 `last_chunk_at`은 Mac에서 무음에도 계속 갱신 → **Mac에�
 | 적용 범위 | **양 플랫폼 통일** — Windows도 청크흐름 대신 RMS 기반으로 | "무음 = 들리는 소리 없음" 단일 코드경로. Windows도 동일 동작(무음=청크없음=loud없음=silent) |
 | 슬라이스 범위 | **무음 판정만** — 레벨 미터 아님 | RMS는 loud/silent 판정에만. dBFS 미터는 별도 후속 슬라이스(YAGNI) |
 | 무음 신호 | "마지막으로 *소리 있던* 청크" 시각(`last_loud_at`) ≥ 10초 경과 | 청크 존재(`last_chunk_at`)는 connecting 탈출에만 |
-| RMS 임계 | 기존 `YESON_RMS_DBFS_THRESHOLD`(기본 **-60 dBFS**) 재사용 | 사이드카가 이미 받는 env, 일관·조정 가능 |
+| RMS 임계 | 기존 `config.audio.RMS_DBFS_THRESHOLD` 재사용 (env `YESON_RMS_DBFS_THRESHOLD`; 코드 기본 **-45**, 번들 앱이 -60 주입) | 이미 있는 단일 상수, 일관·조정 가능 |
 | RMS 계산 위치 | `audio_ws.py::stream_audio`(청크 바이트 보유), 기존 `rms.py` 재사용 | 스칼라 dbfs만 리포터로 전달 → 리포터 순수 유지 |
 | 데스크톱 | **무변경** | 같은 `CAPTURE_STATUS` 마커·4상태. 칩/파서 그대로 |
 
@@ -116,7 +116,7 @@ reporter.note_chunk(time.monotonic(), dbfs)
 - **알려진 minor 엣지**: Windows에서 회의 시작부터 한 번도 소리가 안 난 경우 청크가 0개라 `connecting`에
   머묾(Mac은 조용한 청크가 와서 즉시 `silent`). 소리가 한 번이라도 나면 해소. slice 1 출하 동작과
   동일이라 수용. (필요 시 후속에서 connecting 타임아웃으로 통일.)
-- **임계값 튜닝** — -60 dBFS 기본. 실측에서 너무 민감/둔감하면 env로 조정(코드 변경 불필요).
+- **임계값 튜닝** — `RMS_DBFS_THRESHOLD`(코드 기본 -45, 번들 -60). 실측에서 너무 민감/둔감하면 env로 조정(코드 변경 불필요).
 
 ---
 
