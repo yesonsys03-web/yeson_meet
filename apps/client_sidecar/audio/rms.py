@@ -19,6 +19,17 @@ def rms_dbfs(samples_float32: np.ndarray) -> float:
 # === ANCHOR: RMS_RMS_DBFS_END ===
 
 
+# === ANCHOR: RMS_PCM16_DBFS_START ===
+def pcm16_dbfs(chunk: bytes) -> float:
+    """RMS dBFS of a 16-bit little-endian mono PCM chunk (what the sidecar sends).
+
+    Converts to normalized float32 then defers to ``rms_dbfs``. Empty/odd input
+    is treated as silence-floor by ``rms_dbfs`` (size 0 → -120.0)."""
+    samples = np.frombuffer(chunk, dtype="<i2").astype(np.float32) / 32768.0
+    return rms_dbfs(samples)
+# === ANCHOR: RMS_PCM16_DBFS_END ===
+
+
 # === ANCHOR: RMS_RMSLOGGER_START ===
 class RmsLogger:
     """1-second moving average to avoid log spam (≈50 chunks @ 20ms)."""
