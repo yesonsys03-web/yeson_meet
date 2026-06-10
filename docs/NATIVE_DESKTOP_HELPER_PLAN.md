@@ -206,6 +206,13 @@ Desktop App (Tauri)
 > 무음=10초+정보성+비대칭 히스테리시스(화자 비의존). Mac 검증: 사이드카 pytest 50 + 데스크톱 vitest 12 + tsc 클린,
 > 코드리뷰 APPROVE. **Windows 4상태 라이브 E2E 대기**(다음 CI 빌드). **비범위(후속)**: dBFS 레벨 미터(네이티브 RMS 미배선),
 > 캡처 소스 선택(네이티브는 기본장치 고정). 설계·계획: `docs/superpowers/specs|plans/2026-06-10-capture-status-ux*.md`.
+>
+> 📌 **Slice 2 코드 완료·Mac 실증 OK·Windows 회귀 대기 (2026-06-10)**: RMS 기반 무음 감지. slice 1의 무음은 청크 *존재* 기반이라
+> Mac에서 안 떴음 — **실측: SCK는 무음에도 풀레이트 청크 송출(6초 무음=158KB)**. 수정: 무음을 청크 *소리크기*(RMS dBFS)로 판정 →
+> `capture_status.py`에 `last_loud_at`(소리 있던 마지막 청크) 추가, 10초+ 없으면 silent. `last_chunk_at`은 connecting 탈출용. RMS는
+> `audio_ws`가 청크당 `pcm16_dbfs`(rms.py)로 계산, 임계 `RMS_DBFS_THRESHOLD`(코드 -45/번들 -60). **양 플랫폼 통일**(Windows 무음=청크없음,
+> Mac 무음=조용한 청크 — 둘 다 loud없음→silent). 데스크톱 무변경. Mac 실측: 조용한 청크 계속 흘려도 SILENT 도달 확인(slice 1 대비 개선),
+> 사이드카 pytest 56 + 데스크톱 vitest 12 + tsc 클린. **Windows 4상태 회귀 E2E 대기**. 비범위: dBFS 레벨미터(후속). 설계·계획: `docs/superpowers/specs|plans/2026-06-10-rms-silence-detection*.md`.
 
 산출물:
 
