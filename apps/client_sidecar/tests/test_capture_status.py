@@ -1,4 +1,4 @@
-"""Pure capture-status decider + reporter coalescing."""
+"""Pure capture-status decider + reporter coalescing (RMS-loudness silence)."""
 from apps.client_sidecar.transport.capture_status import (
     ACTIVE,
     CONNECTING,
@@ -8,82 +8,103 @@ from apps.client_sidecar.transport.capture_status import (
     compute_state,
 )
 
-T = 10.0  # silence threshold used in tests
+T = 10.0      # silence time threshold
+LOUD = -10.0  # dBFS above the -45 default → counts as audio
+QUIET = -80.0 # dBFS below threshold → silence
 
 
 def test_connecting_before_first_connect():
-    assert (
-        compute_state(ws_connected=False, ever_connected=False, last_chunk_at=None, now=5.0, threshold=T)
-        == CONNECTING
-    )
+    assert compute_state(
+        ws_connected=False, ever_connected=False,
+        last_chunk_at=None, last_loud_at=None, now=5.0, threshold=T,
+    ) == CONNECTING
 
 
 def test_connecting_after_connect_before_first_chunk():
-    assert (
-        compute_state(ws_connected=True, ever_connected=True, last_chunk_at=None, now=5.0, threshold=T)
-        == CONNECTING
-    )
+    assert compute_state(
+        ws_connected=True, ever_connected=True,
+        last_chunk_at=None, last_loud_at=None, now=5.0, threshold=T,
+    ) == CONNECTING
 
 
-def test_active_on_recent_chunk():
-    assert (
-        compute_state(ws_connected=True, ever_connected=True, last_chunk_at=100.0, now=105.0, threshold=T)
-        == ACTIVE
-    )
+def test_active_on_recent_loud_chunk():
+    assert compute_state(
+        ws_connected=True, ever_connected=True,
+        last_chunk_at=105.0, last_loud_at=100.0, now=105.0, threshold=T,
+    ) == ACTIVE
 
 
-def test_silent_after_threshold():
-    # gap exactly at threshold counts as silent
-    assert (
-        compute_state(ws_connected=True, ever_connected=True, last_chunk_at=100.0, now=110.0, threshold=T)
-        == SILENT
-    )
+def test_silent_after_threshold_since_last_loud():
+    # gap from last LOUD chunk hits threshold → silent (even though a chunk arrived at 105)
+    assert compute_state(
+        ws_connected=True, ever_connected=True,
+        last_chunk_at=105.0, last_loud_at=100.0, now=110.0, threshold=T,
+    ) == SILENT
+
+
+def test_silent_when_chunks_flow_but_never_loud():
+    # THE Mac case: chunks present (last_chunk_at recent) but no loud chunk ever → silent
+    assert compute_state(
+        ws_connected=True, ever_connected=True,
+        last_chunk_at=110.0, last_loud_at=None, now=110.0, threshold=T,
+    ) == SILENT
 
 
 def test_transport_down_after_disconnect():
-    assert (
-        compute_state(ws_connected=False, ever_connected=True, last_chunk_at=100.0, now=101.0, threshold=T)
-        == TRANSPORT_DOWN
-    )
+    assert compute_state(
+        ws_connected=False, ever_connected=True,
+        last_chunk_at=100.0, last_loud_at=100.0, now=101.0, threshold=T,
+    ) == TRANSPORT_DOWN
 
 
 def test_transport_down_takes_priority_over_silence():
-    # ws down + recent chunk → transport_down, not active/silent
-    assert (
-        compute_state(ws_connected=False, ever_connected=True, last_chunk_at=100.0, now=100.5, threshold=T)
-        == TRANSPORT_DOWN
-    )
+    assert compute_state(
+        ws_connected=False, ever_connected=True,
+        last_chunk_at=100.0, last_loud_at=100.0, now=100.5, threshold=T,
+    ) == TRANSPORT_DOWN
 
 
 def test_reporter_emits_only_on_transition():
     r = CaptureStatusReporter(threshold=T)
     r.set_connected(True)
-    r.note_chunk(now=100.0)
-    assert r.poll(now=101.0) == ACTIVE   # first active → emit
-    assert r.poll(now=102.0) is None     # still active → coalesced
-    # 10s with no new chunk → silent
-    assert r.poll(now=111.0) == SILENT
-    assert r.poll(now=112.0) is None     # still silent → coalesced
+    r.note_chunk(now=100.0, dbfs=LOUD)
+    assert r.poll(now=101.0) == ACTIVE
+    assert r.poll(now=102.0) is None
+    assert r.poll(now=111.0) == SILENT   # 11s since last loud
+    assert r.poll(now=112.0) is None
 
 
 def test_reporter_instant_recovery_from_silent():
     r = CaptureStatusReporter(threshold=T)
     r.set_connected(True)
-    r.note_chunk(now=100.0)
+    r.note_chunk(now=100.0, dbfs=LOUD)
     assert r.poll(now=111.0) == SILENT
-    # a single new chunk → next poll is active immediately (asymmetric hysteresis)
-    r.note_chunk(now=111.5)
-    assert r.poll(now=111.6) == ACTIVE
+    r.note_chunk(now=111.5, dbfs=LOUD)         # one loud chunk
+    assert r.poll(now=111.6) == ACTIVE          # instant recovery
+
+
+def test_reporter_mac_silence_despite_flowing_chunks():
+    # Regression guard for the whole slice: on Mac, chunks keep arriving during
+    # silence (last_chunk_at advances) but they are all quiet → still goes silent.
+    r = CaptureStatusReporter(threshold=T)
+    r.set_connected(True)
+    r.note_chunk(now=100.0, dbfs=LOUD)
+    assert r.poll(now=100.5) == ACTIVE
+    for t in (101.0, 103.0, 105.0, 107.0, 109.0):
+        r.note_chunk(now=t, dbfs=QUIET)        # quiet chunks STILL arrive (the Mac trap)
+    assert r.poll(now=109.5) is None             # 9.5s since last loud — ACTIVE state unchanged (coalesced, no transition)
+    r.note_chunk(now=110.5, dbfs=QUIET)
+    assert r.poll(now=110.5) == SILENT          # 10.5s since last loud → silent
 
 
 def test_reporter_transport_down_then_reconnect():
     r = CaptureStatusReporter(threshold=T)
     r.set_connected(True)
-    r.note_chunk(now=100.0)
+    r.note_chunk(now=100.0, dbfs=LOUD)
     assert r.poll(now=100.1) == ACTIVE
-    r.set_connected(False)               # ws dropped
+    r.set_connected(False)
     assert r.poll(now=100.2) == TRANSPORT_DOWN
-    r.set_connected(True)                # reconnected; recent chunk still within threshold
+    r.set_connected(True)
     assert r.poll(now=100.3) == ACTIVE
 
 
