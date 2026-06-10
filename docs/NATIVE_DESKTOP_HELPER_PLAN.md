@@ -187,7 +187,9 @@ Desktop App (Tauri)
 >
 > 📌 **Phase 2b ① 완료 (2026-06-10)**: Job Object 고아정리 — 테스터가 Windows 실기에서 Task 5b(무음 중 `yeson-sidecar.exe` 작업끝내기 → `yeson-win-audio-helper.exe` 사라짐) **실증 PASS**. Python-level `KILL_ON_JOB_CLOSE` 설계 검증됨.
 >
-> 📌 **Phase 2b ② 코드 완료·E2E 대기 (2026-06-10)**: 기본 출력장치 변경 추적(`device_watch.rs`). 문제 = WASAPI loopback이 시작 시점 기본장치 하나에 묶여, 회의 중 출력장치 *강등*(헤드폰/BT 꽂음)되면 옛 장치가 무음만 받아 자막이 조용히 끊김(장치 *제거*는 별개로 cpal 에러→fatal 유지). **감지 = 폴링**(IMMNotificationClient 이벤트 대비 자가보정·COM/크레이트 0으로 채택), 헬퍼 **인프로세스 재빌드**(stdout 유지, sidecar/server/WS 무변경)로 새 기본장치 전환 + `device_changed` 이벤트. 코드 완료(`device_watch.rs` 순수 모듈 + main 폴/재빌드), Mac `cargo test` 15 + windows-gnu 크로스 `cargo check` CLEAN. **Windows 실기 E2E(전환→자막 재개)는 다음 CI 빌드 후 대기**. 범위 = 강등 전환만; 제거 시 자가치유는 보류. (설계·계획: `docs/superpowers/specs|plans/2026-06-10-windows-default-device-watch*.md`). **Mac은 무관** — ScreenCaptureKit이 시스템 믹스를 탭해 장치-무관.
+> 📌 **Phase 2b ② 완료 — E2E 실증 PASS (2026-06-10)**: 기본 출력장치 변경 추적(`device_watch.rs`). 문제 = WASAPI loopback이 시작 시점 기본장치 하나에 묶여, 회의 중 출력장치 *강등*(헤드폰/BT 꽂음)되면 옛 장치가 무음만 받아 자막이 조용히 끊김(장치 *제거*는 별개로 cpal 에러→fatal 유지). **감지 = 폴링**(IMMNotificationClient 이벤트 대비 자가보정·COM/크레이트 0으로 채택), 헬퍼 **인프로세스 재빌드**(stdout 유지, sidecar/server/WS 무변경)로 새 기본장치 전환 + `device_changed` 이벤트. 코드 완료(`device_watch.rs` 순수 모듈 + main 폴/재빌드), Mac `cargo test` 15 + windows-gnu 크로스 `cargo check` CLEAN. **Windows 실기 E2E PASS**(CI run 27246298588 설치본): 회의 중 출력장치 전환 → 자막 재개 확인 + 무회귀(전환 후 무음 하드킬 고아정리 유지) 확인. 범위 = 강등 전환만; 제거 시 자가치유는 보류. (설계·계획: `docs/superpowers/specs|plans/2026-06-10-windows-default-device-watch*.md`). **Mac은 무관** — ScreenCaptureKit이 시스템 믹스를 탭해 장치-무관. → **Phase 2b 두 항목(①②) 모두 닫힘.**
+>
+> 📌 **별도: Windows cmd 콘솔 깜빡임 수정 — E2E PASS (2026-06-10)**: 회의 시작 시 콘솔-서브시스템 자식(sidecar exe/helper exe)에 `CREATE_NO_WINDOW` 미설정으로 cmd 창이 깜빡이던 것 수정(`sidecar.rs` `set_no_window` + `native_pipe_source.py` win 게이트). 같은 CI 빌드로 회의 시작 시 창 안 뜸 실증.
 
 ### Phase 3 — 데스크톱 앱 통합
 
