@@ -184,6 +184,10 @@ Desktop App (Tauri)
 > - **핵심 교훈 (TLS)**: Rust `native-tls` 는 OS별 백엔드가 달라(macOS=SecureTransport, Windows=**SChannel**), SChannel 이 WebSocket **바이너리 프레임을 전송하지 못하는** 증상(텍스트 control 은 전달, 640B 오디오는 0건 → 서버 ~40s ping-timeout 종료). **`rustls`(ring provider)로 교체**해 해결 — macOS↔Windows 동일 스택이라 macOS 검증이 그대로 전이되고 ring 은 windows-gnu 크로스컴파일에 C 의존성 없음.
 > - **프로덕션 번들 E2E 검증 완료 (2026-06-04)**: CI 아티팩트 `yeson-meet-desktop-windows`(NSIS setup) 설치본으로 Windows 실기에서 `Tauri → sidecar(PyInstaller) → yeson-win-audio-helper.exe` 프로덕션 경로 자막까지 실측. 런타임 `locate_bundled_native_helper` 히트 = 직전까지 유일 미검증 항목 닫힘 → **Phase 2 닫힘**.
 > - **Phase 2b 잔여(2건)**: ① **Job Object 고아정리** — 무음 중 sidecar가 강제종료되면 WASAPI loopback이 stdout write를 안 해 broken-pipe가 안 걸려 helper.exe 잔존. fix는 Python-level Job Object(`KILL_ON_JOB_CLOSE`)로 sidecar 종료 시 OS가 helper를 reap. ② 기본장치 변경 자동 추적(`device_watch.rs`). 별도 항목: Tauri 크래시 시 subtree 정리(Tauri-level job, [[project_sidecar_orphan_on_close]] 윈도 대응). (설계·계획: `docs/superpowers/specs|plans/2026-05-28-windows-wasapi-helper*.md`)
+>
+> 📌 **Phase 2b ① 완료 (2026-06-10)**: Job Object 고아정리 — 테스터가 Windows 실기에서 Task 5b(무음 중 `yeson-sidecar.exe` 작업끝내기 → `yeson-win-audio-helper.exe` 사라짐) **실증 PASS**. Python-level `KILL_ON_JOB_CLOSE` 설계 검증됨.
+>
+> 📌 **Phase 2b ② 코드 완료·E2E 대기 (2026-06-10)**: 기본 출력장치 변경 추적(`device_watch.rs`). 문제 = WASAPI loopback이 시작 시점 기본장치 하나에 묶여, 회의 중 출력장치 *강등*(헤드폰/BT 꽂음)되면 옛 장치가 무음만 받아 자막이 조용히 끊김(장치 *제거*는 별개로 cpal 에러→fatal 유지). **감지 = 폴링**(IMMNotificationClient 이벤트 대비 자가보정·COM/크레이트 0으로 채택), 헬퍼 **인프로세스 재빌드**(stdout 유지, sidecar/server/WS 무변경)로 새 기본장치 전환 + `device_changed` 이벤트. 코드 완료(`device_watch.rs` 순수 모듈 + main 폴/재빌드), Mac `cargo test` 15 + windows-gnu 크로스 `cargo check` CLEAN. **Windows 실기 E2E(전환→자막 재개)는 다음 CI 빌드 후 대기**. 범위 = 강등 전환만; 제거 시 자가치유는 보류. (설계·계획: `docs/superpowers/specs|plans/2026-06-10-windows-default-device-watch*.md`). **Mac은 무관** — ScreenCaptureKit이 시스템 믹스를 탭해 장치-무관.
 
 ### Phase 3 — 데스크톱 앱 통합
 
