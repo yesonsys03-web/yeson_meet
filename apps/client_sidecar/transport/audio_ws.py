@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
@@ -25,8 +26,12 @@ CHUNK_META_INTERVAL = 50  # emit chunk_meta every N chunks (≈1s)
 
 
 # === ANCHOR: AUDIO_WS_STREAM_AUDIO_START ===
-async def stream_audio(url: str, chunks: AsyncIterator[bytes]) -> None:
-    """Connect, send audio.started, stream binary chunks, periodic chunk_meta, audio.stopped on exit."""
+async def stream_audio(url: str, chunks: AsyncIterator[bytes], reporter=None) -> None:
+    """Connect, send audio.started, stream binary chunks, periodic chunk_meta, audio.stopped on exit.
+
+    `reporter` (optional CaptureStatusReporter): updated on connect / per chunk /
+    disconnect so a watchdog can surface live capture status. None disables it.
+    """
     backoff = 1.0
     seq = 0
     stopped_reason: str | None = None
@@ -36,6 +41,8 @@ async def stream_audio(url: str, chunks: AsyncIterator[bytes]) -> None:
             async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
                 logger.info("audio ws connected: %s", _safe_url(url))
                 backoff = 1.0
+                if reporter is not None:
+                    reporter.set_connected(True)
 
                 # audio.started
                 await ws.send(json.dumps({
@@ -49,6 +56,8 @@ async def stream_audio(url: str, chunks: AsyncIterator[bytes]) -> None:
                 try:
                     async for chunk in chunks:
                         seq += 1
+                        if reporter is not None:
+                            reporter.note_chunk(time.monotonic())
                         await ws.send(chunk)  # binary
                         if seq % CHUNK_META_INTERVAL == 0:
                             await ws.send(json.dumps({
@@ -71,6 +80,8 @@ async def stream_audio(url: str, chunks: AsyncIterator[bytes]) -> None:
                 return
         except (ConnectionClosed, OSError) as e:
             logger.warning("audio ws closed: %s — reconnect in %.1fs", e, backoff)
+            if reporter is not None:
+                reporter.set_connected(False)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
 # === ANCHOR: AUDIO_WS_STREAM_AUDIO_END ===
