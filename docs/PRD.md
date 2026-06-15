@@ -173,6 +173,7 @@
 ### 5.2 회의 중
 
 > **오디오 캡처 경로 단계**:
+> - **완료 (2026-06-15 native-only 컷오버)**: native(SCK/WASAPI) 직접 캡처가 **유일** 경로. 아래 Voicemeeter/BlackHole + sounddevice 서술은 **제거된 레거시**(코드·데스크톱 UX에서 삭제, git 히스토리 보존). 본 §5.2 의 가상오디오 경로는 더 이상 운영되지 않음. 상세: `docs/superpowers/specs|plans/2026-06-15-native-only-cutover*.md`.
 > - **현재 (MVP-α)**: Windows + Voicemeeter / Mac + BlackHole — 본 §5.2 가 정의하는 경로
 > - **계획 (Phase 1~2 native)**: BlackHole/Voicemeeter 없는 ScreenCaptureKit(Mac) / WASAPI(Win) 직접 캡처 — `docs/NATIVE_DESKTOP_HELPER_PLAN.md` + `docs/INTEGRATION_DESIGN.md` §3 참조. native 안정화 이후 §5.2 는 fallback 경로로 격하.
 > - **진행 (2026-05-28)**: Phase 1 macOS native(ScreenCaptureKit) **E2E 기능 검증 완료** — Gemini 자막까지 실측, native 실패 시 권한 배너 포함. **Packaging seam 코드 완료** — Tauri `externalBin`으로 헬퍼 `.app` 동봉, Python provider 기본값 `auto`→`native` 고정, `tauri.macos.conf.json`이 `build-release.sh` 자가-부트스트랩(operator `.app` 실측 검증 대기). Windows(WASAPI)는 미구현. §5.2 fallback 격하는 native-only 컷오버 시점.
