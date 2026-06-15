@@ -10,8 +10,8 @@ import { listen } from "@tauri-apps/api/event";
 export const SEGMENTS = 6;
 export const LEVEL_FLOOR_DBFS = -54; // empty bar at/below
 export const LEVEL_CEIL_DBFS = -6; // full bar at/above
-export const WARN_DBFS = -12; // a lit segment whose edge exceeds this → yellow
-export const CLIP_DBFS = -6; // a lit segment whose edge exceeds this → red
+export const WARN_DBFS = -16; // a lit segment whose top edge exceeds this → yellow
+export const CLIP_DBFS = -10; // a lit segment whose top edge exceeds this → red (hot)
 
 /** Map a dBFS value to a count of filled segments in [0, segments]. */
 export function dbfsToSegments(dbfs: number, segments: number = SEGMENTS): number {
@@ -25,6 +25,16 @@ export function dbfsToSegments(dbfs: number, segments: number = SEGMENTS): numbe
 export function segmentEdgeDbfs(index: number, segments: number = SEGMENTS): number {
   const span = LEVEL_CEIL_DBFS - LEVEL_FLOOR_DBFS;
   return LEVEL_FLOOR_DBFS + ((index + 1) / segments) * span;
+}
+
+export type SegmentRole = "green" | "yellow" | "red";
+
+/** Color role of a lit segment by its top-edge dBFS. green ≤ WARN < yellow ≤ CLIP < red. */
+export function segmentColorRole(index: number, segments: number = SEGMENTS): SegmentRole {
+  const edge = segmentEdgeDbfs(index, segments);
+  if (edge > CLIP_DBFS) return "red";
+  if (edge > WARN_DBFS) return "yellow";
+  return "green";
 }
 
 type CaptureLevelPayload = { dbfs: number };

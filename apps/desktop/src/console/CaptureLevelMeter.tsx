@@ -1,7 +1,7 @@
 // === ANCHOR: CAPTURE_LEVEL_METER_START ===
 import type { CSSProperties } from "react";
 
-import { CLIP_DBFS, SEGMENTS, WARN_DBFS, dbfsToSegments, segmentEdgeDbfs } from "./captureLevel";
+import { SEGMENTS, dbfsToSegments, segmentColorRole, type SegmentRole } from "./captureLevel";
 import type { CaptureState } from "./captureStatus";
 
 const GREEN = "#22c55e";
@@ -10,12 +10,7 @@ const RED = "#f87171";
 const EMPTY_BG = "#1e293b";
 const EMPTY_BORDER = "#334155";
 
-function litColor(index: number): string {
-  const edge = segmentEdgeDbfs(index);
-  if (edge > CLIP_DBFS) return RED;
-  if (edge > WARN_DBFS) return YELLOW;
-  return GREEN;
-}
+const ROLE_COLOR: Record<SegmentRole, string> = { green: GREEN, yellow: YELLOW, red: RED };
 
 /**
  * Live loudness meter shown beside the capture-status chip.
@@ -36,7 +31,7 @@ export function CaptureLevelMeter({ dbfs, state }: { dbfs: number | null; state:
           height: 11,
           borderRadius: 1,
           boxSizing: "border-box",
-          background: on ? litColor(i) : EMPTY_BG,
+          background: on ? ROLE_COLOR[segmentColorRole(i)] : EMPTY_BG,
           border: on ? "none" : `1px solid ${EMPTY_BORDER}`,
         };
         return <span key={i} style={cell} />;
