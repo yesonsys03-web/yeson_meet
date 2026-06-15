@@ -74,7 +74,7 @@ class CaptureStatusReporter:
         self._ever_connected = False
         self._last_chunk_at: float | None = None
         self._last_loud_at: float | None = None
-        self._levels: deque[tuple[float, float]] = deque(maxlen=200)
+        self._levels: deque[tuple[float, float]] = deque(maxlen=200)  # 200 @ ≤50 Hz ≈ 4 s; LEVEL_STALE_S=1.5 s needs ≤75 entries
         self._emitted: str | None = None
 
     def set_connected(self, ok: bool) -> None:
@@ -113,6 +113,7 @@ class CaptureStatusReporter:
             return None
         cutoff = now - LEVEL_WINDOW_S
         recent = [d for (t, d) in self._levels if t >= cutoff]
+        # staleness guard is the fast path; the window filter also drops chunks older than LEVEL_WINDOW_S
         if not recent:
             return None
         return sum(recent) / len(recent)
@@ -120,7 +121,8 @@ class CaptureStatusReporter:
 
 def level_marker(dbfs: float) -> str:
     """Canonical CAPTURE_LEVEL stdout line for one meter sample (1 decimal)."""
-    return f"{LEVEL_MARKER}{dbfs:.1f}"
+    rounded = round(dbfs, 1) + 0.0  # + 0.0 collapses -0.0 → 0.0 after rounding
+    return f"{LEVEL_MARKER}{rounded:.1f}"
 
 
 async def run_watchdog(

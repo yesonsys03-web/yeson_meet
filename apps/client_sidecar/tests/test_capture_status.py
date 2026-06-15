@@ -145,6 +145,7 @@ def test_level_none_when_stale():
 def test_level_marker_format():
     assert level_marker(-28.37) == "CAPTURE_LEVEL -28.4"
     assert level_marker(-6.0) == "CAPTURE_LEVEL -6.0"
+    assert level_marker(-0.049) == "CAPTURE_LEVEL 0.0"
 
 
 async def test_watchdog_emits_full_state_and_level_lines():
