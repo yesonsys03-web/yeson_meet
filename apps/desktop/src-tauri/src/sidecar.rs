@@ -147,6 +147,11 @@ struct BackendLogEvent {
     message: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct CaptureLevelEvent {
+    dbfs: f32,
+}
+
 #[tauri::command]
 pub fn start_sidecar(
     app: tauri::AppHandle,
@@ -455,6 +460,14 @@ fn spawn_output_forwarder<R>(
                         buf.pop();
                     }
                     let message = String::from_utf8_lossy(&buf).into_owned();
+                    // Capture-level telemetry (~1/s) goes to a dedicated event,
+                    // NOT the app-log, so the diagnostic log stays readable.
+                    if let Some(rest) = message.strip_prefix("CAPTURE_LEVEL ") {
+                        if let Ok(dbfs) = rest.trim().parse::<f32>() {
+                            let _ = app.emit("capture-level", CaptureLevelEvent { dbfs });
+                            continue;
+                        }
+                    }
                     let inferred_level = infer_sidecar_log_level(&message).unwrap_or(level);
                     emit_backend_log(&app, inferred_level, source, message);
                 }
