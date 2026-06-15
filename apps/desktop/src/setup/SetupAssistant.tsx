@@ -51,7 +51,6 @@ export function SetupAssistant() {
       const next = {
         ...current,
         platform,
-        audioDeviceName: PLATFORM_CONFIG[platform].audioDeviceName,
       };
       storeValues(next);
       return next;
@@ -143,12 +142,6 @@ export function SetupAssistant() {
             help="회의를 만들면 자동으로 채워집니다. 폰이나 노트북에서 자막을 확인할 주소입니다."
             value={values.viewerUrl}
             onChange={(value) => updateValue("viewerUrl", value)}
-          />
-          <Field
-            label="오디오 장치 이름"
-            help={platformConfig.audioDeviceHelp}
-            value={values.audioDeviceName}
-            onChange={(value) => updateValue("audioDeviceName", value)}
           />
           <Field
             label="Sidecar project folder"

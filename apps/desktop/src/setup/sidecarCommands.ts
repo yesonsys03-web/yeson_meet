@@ -1,5 +1,4 @@
 // === ANCHOR: SIDECAR_COMMANDS_START ===
-import { PLATFORM_CONFIG } from "./platformConfig";
 import type { SetupValues } from "./types";
 
 function powerShellLiteral(value: string): string {
@@ -31,7 +30,6 @@ export function buildWindowsSidecarCommand(values: SetupValues): string {
     `$env:YESON_DEVICE_API_KEY=${powerShellValue(values.deviceApiKey, "<plaintext-device-key>")}`,
     `$env:YESON_SESSION_ID=${powerShellValue(values.sessionId, "<session-uuid>")}`,
     '$env:YESON_SIDECAR_MODE="audio"',
-    `$env:YESON_AUDIO_DEVICE_NAME=${powerShellValue(values.audioDeviceName, PLATFORM_CONFIG.windows.audioDeviceName)}`,
     "uv run python -m apps.client_sidecar.main",
   ].join("\n");
 }
@@ -44,7 +42,6 @@ export function buildMacSidecarCommand(values: SetupValues): string {
     `export YESON_DEVICE_API_KEY=${shellValue(values.deviceApiKey, "<plaintext-device-key>")}`,
     `export YESON_SESSION_ID=${shellValue(values.sessionId, "<session-uuid>")}`,
     'export YESON_SIDECAR_MODE="audio"',
-    `export YESON_AUDIO_DEVICE_NAME=${shellValue(values.audioDeviceName, PLATFORM_CONFIG.mac.audioDeviceName)}`,
     "export YESON_RMS_DBFS_THRESHOLD='-60'",
     "export YESON_RMS_SILENCE_GATE_ENABLED='0'",
     "uv run python -m apps.client_sidecar.main",

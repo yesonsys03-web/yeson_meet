@@ -1,5 +1,5 @@
 // === ANCHOR: SETUPVALUES_START ===
-import { defaultPlatform, PLATFORM_CONFIG } from "./platformConfig";
+import { defaultPlatform } from "./platformConfig";
 import type { SetupValues } from "./types";
 
 const STORAGE_KEY = "yeson-meet-desktop-setup";
@@ -14,7 +14,6 @@ function defaultValues(): SetupValues {
     deviceApiKey: "",
     sessionId: "",
     viewerUrl: "https://192.168.0.38/v/<viewer-token>",
-    audioDeviceName: PLATFORM_CONFIG[platform].audioDeviceName,
     sidecarProjectDir: "",
   };
 }
@@ -32,7 +31,6 @@ export function loadValues(): SetupValues {
       ...DEFAULT_VALUES,
       ...stored,
       platform,
-      audioDeviceName: stored.audioDeviceName ?? PLATFORM_CONFIG[platform].audioDeviceName,
       deviceApiKey: "",
     };
   } catch {
