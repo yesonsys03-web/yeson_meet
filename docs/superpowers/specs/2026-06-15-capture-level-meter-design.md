@@ -101,9 +101,14 @@ Rust spawn_output_forwarder
   `captureStatus`가 있을 때 `<CaptureLevelMeter dbfs={level} state={captureStatus} />` 렌더.
   비전체화면 분기에서만(기존 칩과 동일 조건).
 
-### 4.4 매핑 상수
+### 4.4 매핑 상수 + 색상 등급
 `captureLevel.ts`에 모음: `LEVEL_FLOOR_DBFS = -54`, `LEVEL_CEIL_DBFS = -6`, `SEGMENTS = 6`,
-과대 경고 임계 `WARN_DBFS = -12`, `CLIP_DBFS = -6`. env 불필요.
+과대 경고 임계 `WARN_DBFS = -16`, `CLIP_DBFS = -10`. env 불필요.
+- **임계값 정정(구현 중 발견)**: 초안의 `WARN=-12 / CLIP=-6`은 8 dB/칸 해상도와 안 맞아
+  (상위 칸 edge `-46,-38,-30,-22,-14,-6`) 빨강이 절대 안 뜨고 노랑은 top 칸 하나뿐인 버그가 있었음.
+  칸 경계에 맞춰 `WARN=-16 / CLIP=-10`로 조정 → i4(-14)=노랑, i5(-6)=빨강, i0~3=초록의 단계 표시.
+- 색상 결정은 순수 함수 `segmentColorRole(index) -> "green"|"yellow"|"red"`로 분리(단위 테스트).
+  `CaptureLevelMeter`는 role→hex 매핑만 담당.
 
 ## 5. 테스트 계획
 
