@@ -11,14 +11,6 @@ CHUNK_MS: int = 20
 CHUNK_SAMPLES: int = 320  # 16000 * 0.02
 CHUNK_BYTES: int = 640    # 320 samples * 2 bytes (int16)
 
-# Device selection (regex matched against sounddevice.query_devices()[i]['name'])
-DEVICE_NAME_REGEX: str = os.environ.get("YESON_AUDIO_DEVICE_NAME", r"(?i)blackhole")
-DEVICE_INDEX: int | None = (
-    int(os.environ["YESON_AUDIO_DEVICE_INDEX"])
-    if os.environ.get("YESON_AUDIO_DEVICE_INDEX")
-    else None
-)
-
 # RMS dBFS threshold for silence detection.
 RMS_DBFS_THRESHOLD: float = float(os.environ.get("YESON_RMS_DBFS_THRESHOLD", "-45"))
 RMS_SILENCE_GATE_ENABLED: bool = os.environ.get(
@@ -26,14 +18,10 @@ RMS_SILENCE_GATE_ENABLED: bool = os.environ.get(
 ).lower() not in {"0", "false", "no", "off"}
 
 # === ANCHOR: AUDIO_PROVIDER_START ===
-# Provider selection (policy: native-only, no silent fallback).
-#   native      — default; OS-level helper (macOS ScreenCaptureKit /
-#                 Phase 2 Windows WASAPI). Missing binary → FileNotFoundError.
-#   sounddevice — emergency fallback for BlackHole/Voicemeeter compat;
-#                 opt-in only via env override.
-#   auto        — transition aid (try native, silently fall back to
-#                 sounddevice). Deprecated; remove once Windows native lands.
-YESON_AUDIO_PROVIDER: str = os.environ.get("YESON_AUDIO_PROVIDER", "native").lower()
+# Native-only capture (2026-06-15 cutover): the OS-level helper (macOS
+# ScreenCaptureKit / Windows WASAPI) is the sole path. Missing binary →
+# FileNotFoundError (see audio/sources/factory.py). The sounddevice path and
+# the YESON_AUDIO_PROVIDER / device-name knobs were removed.
 # Where to find the native helper binary (release: bundled by Tauri; dev: target/).
 # Dev default is platform-correct so a dev who doesn't set YESON_NATIVE_HELPER_BIN
 # still gets a sensible path. Release path is Tauri-injected (unaffected).
