@@ -2,7 +2,9 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
+import { CaptureLevelMeter } from "./CaptureLevelMeter";
 import { CaptureStatusChip } from "./CaptureStatusChip";
+import { useCaptureLevel } from "./captureLevel";
 import { useCaptureStatus, type CaptureState } from "./captureStatus";
 import { consoleStyles } from "./consoleStyles";
 import type { UtteranceTranscribed } from "./types";
@@ -19,6 +21,7 @@ type LiveSubtitlePreviewProps = {
 export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = false }: LiveSubtitlePreviewProps) {
   const stream = useLiveSubtitleStream(sessionId, operatorToken);
   const captureStatus = useCaptureStatus();
+  const captureLevel = useCaptureLevel();
   const fullscreen = useSubtitleFullscreenShortcut({ operatorToken, sessionId, windowMode });
   const panelStyle = {
     ...consoleStyles.subtitlePanel,
@@ -63,6 +66,7 @@ export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = fal
           onToggleFullscreen={fullscreen.toggleFullscreen}
           status={stream.ended ? "ended" : stream.connected ? "live" : "connecting"}
           captureStatus={captureStatus}
+          level={captureLevel}
         />
       ) : null}
       {stream.providerError ? (
@@ -167,11 +171,13 @@ function SubtitleHeader({
   onToggleFullscreen,
   status,
   captureStatus = null,
+  level = null,
 }: {
   isFullscreen: boolean;
   onToggleFullscreen: () => Promise<void>;
   status: "idle" | "connecting" | "live" | "ended";
   captureStatus?: CaptureState | null;
+  level?: number | null;
 }) {
   return (
     <div style={consoleStyles.subtitleHeader}>
@@ -181,6 +187,7 @@ function SubtitleHeader({
       </div>
       <div style={consoleStyles.subtitleHeaderActions}>
         {captureStatus ? <CaptureStatusChip state={captureStatus} /> : null}
+        {captureStatus ? <CaptureLevelMeter dbfs={level} state={captureStatus} /> : null}
         <button type="button" onClick={() => void onToggleFullscreen()} style={consoleStyles.subtitleFullscreenButton}>
           {isFullscreen ? "전체화면 종료" : "전체화면"}
         </button>
