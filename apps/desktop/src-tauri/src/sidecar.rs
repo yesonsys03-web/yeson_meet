@@ -129,7 +129,6 @@ pub struct SidecarStartRequest {
     server_ws_base: String,
     device_api_key: String,
     session_id: String,
-    audio_device_name: String,
     project_dir: Option<String>,
 }
 
@@ -193,7 +192,6 @@ pub fn start_sidecar(
                 .env("YESON_DEVICE_API_KEY", request.device_api_key.trim())
                 .env("YESON_SESSION_ID", request.session_id.trim())
                 .env("YESON_SIDECAR_MODE", "audio")
-                .env("YESON_AUDIO_DEVICE_NAME", request.audio_device_name.trim())
                 .env("YESON_RMS_DBFS_THRESHOLD", "-60")
                 .env("YESON_RMS_SILENCE_GATE_ENABLED", "0")
                 .env("PYTHONIOENCODING", "utf-8")
@@ -226,7 +224,6 @@ pub fn start_sidecar(
                 .env("YESON_DEVICE_API_KEY", request.device_api_key.trim())
                 .env("YESON_SESSION_ID", request.session_id.trim())
                 .env("YESON_SIDECAR_MODE", "audio")
-                .env("YESON_AUDIO_DEVICE_NAME", request.audio_device_name.trim())
                 .env("YESON_RMS_DBFS_THRESHOLD", "-60")
                 .env("YESON_RMS_SILENCE_GATE_ENABLED", "0")
                 .env("PYTHONIOENCODING", "utf-8")
@@ -377,7 +374,6 @@ fn validate_request(request: &SidecarStartRequest) -> Result<(), String> {
     require_value("SERVER_WS_BASE", &request.server_ws_base)?;
     require_value("YESON_DEVICE_API_KEY", &request.device_api_key)?;
     require_value("YESON_SESSION_ID", &request.session_id)?;
-    require_value("YESON_AUDIO_DEVICE_NAME", &request.audio_device_name)?;
     Ok(())
 }
 
