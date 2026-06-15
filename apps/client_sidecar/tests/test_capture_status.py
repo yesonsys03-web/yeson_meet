@@ -6,6 +6,7 @@ from apps.client_sidecar.transport.capture_status import (
     TRANSPORT_DOWN,
     CaptureStatusReporter,
     compute_state,
+    level_marker,
 )
 
 T = 10.0      # silence time threshold
@@ -111,3 +112,33 @@ def test_reporter_transport_down_then_reconnect():
 def test_reporter_starts_connecting():
     r = CaptureStatusReporter(threshold=T)
     assert r.poll(now=0.5) == CONNECTING
+
+
+def test_level_none_before_any_chunk():
+    r = CaptureStatusReporter(threshold=T)
+    assert r.level(now=1.0) is None
+
+
+def test_level_mean_of_recent_chunks():
+    r = CaptureStatusReporter(threshold=T)
+    r.note_chunk(now=100.0, dbfs=-20.0)
+    r.note_chunk(now=100.5, dbfs=-30.0)
+    assert r.level(now=100.6) == -25.0  # mean of chunks within the 1s window
+
+
+def test_level_excludes_chunks_outside_window():
+    r = CaptureStatusReporter(threshold=T)
+    r.note_chunk(now=100.0, dbfs=-60.0)  # >1s before now=101.2 → excluded
+    r.note_chunk(now=101.0, dbfs=-20.0)
+    assert r.level(now=101.2) == -20.0
+
+
+def test_level_none_when_stale():
+    r = CaptureStatusReporter(threshold=T)
+    r.note_chunk(now=100.0, dbfs=-20.0)
+    assert r.level(now=102.0) is None  # >1.5s since last chunk → no signal
+
+
+def test_level_marker_format():
+    assert level_marker(-28.37) == "CAPTURE_LEVEL -28.4"
+    assert level_marker(-6.0) == "CAPTURE_LEVEL -6.0"

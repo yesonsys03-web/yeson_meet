@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 from collections.abc import Callable
 
 # Silence threshold: well above natural conversational pauses so we flag
@@ -19,6 +20,10 @@ SILENCE_THRESHOLD_S = 10.0
 # Chunk RMS at/above this dBFS counts as "audio present". Matches
 # config.audio.RMS_DBFS_THRESHOLD's default; main.py injects the configured value.
 RMS_SILENCE_DBFS = -45.0
+
+LEVEL_MARKER = "CAPTURE_LEVEL "
+LEVEL_WINDOW_S = 1.0  # rolling mean window for the meter
+LEVEL_STALE_S = 1.5   # no chunk within this → no signal (None)
 
 CONNECTING = "connecting"
 ACTIVE = "active"
@@ -69,6 +74,7 @@ class CaptureStatusReporter:
         self._ever_connected = False
         self._last_chunk_at: float | None = None
         self._last_loud_at: float | None = None
+        self._levels: deque[tuple[float, float]] = deque(maxlen=200)
         self._emitted: str | None = None
 
     def set_connected(self, ok: bool) -> None:
@@ -80,6 +86,7 @@ class CaptureStatusReporter:
         self._last_chunk_at = now
         if dbfs >= self._rms_threshold:
             self._last_loud_at = now
+        self._levels.append((now, dbfs))
 
     def poll(self, now: float) -> str | None:
         """Return the new state iff it changed since the last emit, else None."""
@@ -95,6 +102,25 @@ class CaptureStatusReporter:
             return None
         self._emitted = state
         return state
+
+    def level(self, now: float) -> float | None:
+        """Mean dBFS over the last LEVEL_WINDOW_S, or None if no recent chunk.
+
+        Independent of the silence state machine — this feeds the live meter.
+        Returns None when the stream is stale (Windows silence = no packets) so
+        the desktop never shows a frozen level."""
+        if self._last_chunk_at is None or now - self._last_chunk_at > LEVEL_STALE_S:
+            return None
+        cutoff = now - LEVEL_WINDOW_S
+        recent = [d for (t, d) in self._levels if t >= cutoff]
+        if not recent:
+            return None
+        return sum(recent) / len(recent)
+
+
+def level_marker(dbfs: float) -> str:
+    """Canonical CAPTURE_LEVEL stdout line for one meter sample (1 decimal)."""
+    return f"{LEVEL_MARKER}{dbfs:.1f}"
 
 
 async def run_watchdog(
