@@ -2,7 +2,7 @@
 """Fixture utterance generator. 1초마다 PRD 부록 B sample round-robin 발화.
 
 Slice 1: 오디오 캡처/Gemini 호출 없이 자막 fan-out 골격만 검증.
-Slice 2: 이 모듈 → sounddevice 캡처로 교체.
+fixture 모드 전용 — 실제 캡처는 native 헬퍼(NativePipeSource)가 담당.
 """
 from __future__ import annotations
 

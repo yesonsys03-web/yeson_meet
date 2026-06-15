@@ -145,7 +145,7 @@ export function SetupAssistant() {
           />
           <Field
             label="Sidecar project folder"
-            help="dev/fallback sounddevice 실행 전용입니다. 비워두면 패키지 앱은 번들된 네이티브 sidecar를 사용합니다."
+            help="dev에서 소스로 sidecar를 실행할 때만 필요합니다. 비워두면 패키지 앱은 번들된 네이티브 sidecar를 사용합니다."
             value={values.sidecarProjectDir}
             onChange={(value) => updateValue("sidecarProjectDir", value)}
           />

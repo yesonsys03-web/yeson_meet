@@ -9,8 +9,8 @@ from collections.abc import AsyncIterator
 class AudioSource(abc.ABC):
     """Async iterator producing 640-byte 16kHz mono s16le PCM chunks.
 
-    Implementations: SoundDeviceSource (BlackHole/Voicemeeter), NativePipeSource
-    (ScreenCaptureKit/WASAPI native helper subprocess).
+    Implementation: NativePipeSource (ScreenCaptureKit/WASAPI native helper
+    subprocess) — the sole capture path after the 2026-06-15 native-only cutover.
     """
 
     @abc.abstractmethod
