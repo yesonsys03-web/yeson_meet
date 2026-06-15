@@ -57,11 +57,16 @@ Rust spawn_output_forwarder
   - 최근 1초 `(t, dbfs)` 롤링 버퍼(deque) 추가. `note_chunk(now, dbfs)`에서 append + 1초보다 오래된 항목 정리.
   - 신규 `level(now) -> float | None`: 버퍼 내 최근 1초 dBFS 평균. 최근 ~1.5초 청크가 없으면 `None`(무신호).
   - `poll()`/`compute_state`는 **무변경**(순수성 유지). 레벨은 별도 메서드.
-- `run_watchdog`: 1초 틱마다 `poll` 결과(전이)는 기존대로 `emit(state)`, 추가로 `level(now)`가
-  `None`이 아니고 ws 연결 상태면 `emit(f"{LEVEL_MARKER}{dbfs:.1f}")`. 레벨은 전이-coalesce
-  하지 않고 매 틱 emit(텔레메트리). `emit` 콜백은 기존 시그니처 그대로(문자열 1개).
-  - 주의: 레벨 emit은 ws 미연결(transport_down)·청크 없음(connecting)일 때 생략 → 데스크톱이
-    굳이 staleness 처리 안 해도 됨(표시 규칙이 state로 거름).
+- `run_watchdog`: 1초 틱마다 `poll`(전이) + `level(now)`(텔레메트리)를 함께 emit. level은
+  reporter가 청크 staleness(최근 ~1.5초 무청크 → `None`)를 판단하므로 transport_down·connecting
+  (청크 없음)에선 자연히 미emit → 데스크톱 staleness 불필요(표시 규칙이 state로도 거름).
+- **마커 형식 단독 소유로 정제**: 현재 main.py 콜백이 `print(f"{MARKER}{state}")`로 접두사를
+  붙인다. 레벨에 같은 콜백을 쓰면 `CAPTURE_STATUS CAPTURE_LEVEL ...` 이중 접두사가 된다. 따라서
+  워치독이 전이 시 `emit(f"{MARKER}{state}")`, 레벨 시 `emit(level_marker(dbfs))`로 **완성된
+  마커 줄**을 넘기고, main.py 콜백은 `lambda line: print(line, flush=True)`로 단순화한다. `emit`
+  시그니처(문자열 1개)는 그대로, 의미만 "완성된 줄"로 통일 → 마커 정의·형식이 capture_status.py
+  한 곳에 모인다(응집도↑). main.py import에서 미사용이 된 `MARKER` 제거.
+- 신규 순수 헬퍼 `level_marker(dbfs) -> str` = `f"{LEVEL_MARKER}{dbfs:.1f}"` (단위 테스트).
 
 ### 4.2 Rust 포워더 — `apps/desktop/src-tauri/src/sidecar.rs`
 앵커 `SIDECAR` 내부 수정. 신규 파일 없음.
