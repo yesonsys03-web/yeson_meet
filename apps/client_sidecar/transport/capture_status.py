@@ -130,12 +130,18 @@ async def run_watchdog(
     interval: float = 1.0,
     now_fn: Callable[[], float] = time.monotonic,
 ) -> None:
-    """Poll the reporter every `interval`s and `emit` each transition. Runs as a
-    standalone asyncio task so it detects silence even while the send loop blocks
-    awaiting the next chunk (native path emits no packets during silence)."""
+    """Poll every `interval`s. On each state transition emit a full
+    `CAPTURE_STATUS <state>` line; every tick the stream is live emit a
+    `CAPTURE_LEVEL <dbfs>` line. Owning the full marker text here keeps marker
+    formatting in one module (the caller just prints whatever it receives).
+    Runs standalone so silence is detected even while the send loop blocks."""
     while True:
         await asyncio.sleep(interval)
-        state = reporter.poll(now_fn())
+        now = now_fn()
+        state = reporter.poll(now)
         if state is not None:
-            emit(state)
+            emit(f"{MARKER}{state}")
+        level = reporter.level(now)
+        if level is not None:
+            emit(level_marker(level))
 # === ANCHOR: CAPTURE_STATUS_END ===

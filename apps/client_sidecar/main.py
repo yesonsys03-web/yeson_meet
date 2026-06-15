@@ -46,7 +46,6 @@ async def audio_main() -> None:
     from apps.client_sidecar.transport.audio_ws import stream_audio
     from apps.client_sidecar.config.audio import RMS_DBFS_THRESHOLD
     from apps.client_sidecar.transport.capture_status import (
-        MARKER,
         CaptureStatusReporter,
         run_watchdog,
     )
@@ -62,7 +61,7 @@ async def audio_main() -> None:
     # on each transition (forwarded to the desktop app log → status chip).
     reporter = CaptureStatusReporter(rms_threshold_dbfs=RMS_DBFS_THRESHOLD)
     watchdog = asyncio.create_task(
-        run_watchdog(reporter, lambda state: print(f"{MARKER}{state}", flush=True))
+        run_watchdog(reporter, lambda line: print(line, flush=True))
     )
     try:
         await stream_audio(url, source.chunks(), reporter)

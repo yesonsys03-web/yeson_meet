@@ -1,4 +1,6 @@
 """Pure capture-status decider + reporter coalescing (RMS-loudness silence)."""
+import asyncio
+
 from apps.client_sidecar.transport.capture_status import (
     ACTIVE,
     CONNECTING,
@@ -7,6 +9,7 @@ from apps.client_sidecar.transport.capture_status import (
     CaptureStatusReporter,
     compute_state,
     level_marker,
+    run_watchdog,
 )
 
 T = 10.0      # silence time threshold
@@ -142,3 +145,44 @@ def test_level_none_when_stale():
 def test_level_marker_format():
     assert level_marker(-28.37) == "CAPTURE_LEVEL -28.4"
     assert level_marker(-6.0) == "CAPTURE_LEVEL -6.0"
+
+
+async def test_watchdog_emits_full_state_and_level_lines():
+    emitted: list[str] = []
+    r = CaptureStatusReporter(threshold=T)
+    r.set_connected(True)
+    r.note_chunk(now=100.0, dbfs=LOUD)
+
+    task = asyncio.create_task(
+        run_watchdog(r, emitted.append, interval=0.001, now_fn=lambda: 100.0)
+    )
+    await asyncio.sleep(0.03)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    # State line is fully formed (MARKER prepended by the watchdog, not the caller)
+    assert "CAPTURE_STATUS active" in emitted
+    # Level telemetry emitted every tick while the stream is live
+    assert any(m.startswith("CAPTURE_LEVEL ") for m in emitted)
+
+
+async def test_watchdog_skips_level_when_no_chunk():
+    emitted: list[str] = []
+    r = CaptureStatusReporter(threshold=T)
+    r.set_connected(True)  # connected but no chunk yet → connecting, no level
+
+    task = asyncio.create_task(
+        run_watchdog(r, emitted.append, interval=0.001, now_fn=lambda: 100.0)
+    )
+    await asyncio.sleep(0.03)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    assert "CAPTURE_STATUS connecting" in emitted
+    assert not any(m.startswith("CAPTURE_LEVEL ") for m in emitted)
