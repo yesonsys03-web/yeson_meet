@@ -64,6 +64,12 @@ def compute_state(
     stuck on "connecting" forever.
 
     Priority: transport_down > no_audio > connecting > silent > active.
+
+    Note: the `no_audio` branch assumes the reporter invariant
+    `ws_connected=True ⇒ ever_connected=True`. A direct caller passing
+    `ws_connected=True, ever_connected=False` with a stale `connected_at`
+    would get NO_AUDIO rather than CONNECTING — that combination is not
+    produced by CaptureStatusReporter.
     """
     if not ws_connected:
         return TRANSPORT_DOWN if ever_connected else CONNECTING
@@ -111,6 +117,10 @@ class CaptureStatusReporter:
 
     def poll(self, now: float) -> str | None:
         """Return the new state iff it changed since the last emit, else None."""
+        # Latch here, not in set_connected(), because set_connected() takes no
+        # clock. poll() runs on the injected `now`, so we stamp connect time on
+        # the first poll while connected (≤1s late vs the 30s threshold —
+        # negligible, and keeps the clock injected/testable).
         if self._ws_connected and self._connected_at is None:
             self._connected_at = now
         state = compute_state(

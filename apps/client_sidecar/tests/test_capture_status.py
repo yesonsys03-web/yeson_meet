@@ -243,7 +243,7 @@ def test_reporter_escalates_connecting_to_no_audio():
     r = CaptureStatusReporter(threshold=T, stale_threshold=STALE)
     r.set_connected(True)
     assert r.poll(now=100.0) == CONNECTING   # connected, no chunk yet; connected_at=100
-    assert r.poll(now=129.0) is None          # still connecting (29s)
+    assert r.poll(now=129.0) is None          # state unchanged (still connecting, 29s)
     assert r.poll(now=130.0) == NO_AUDIO       # 30s with no audio → escalate
 
 
@@ -263,3 +263,16 @@ def test_reporter_active_silent_no_audio_progression():
     assert r.poll(now=100.5) == ACTIVE
     assert r.poll(now=111.0) == SILENT          # 11s since last loud
     assert r.poll(now=131.0) == NO_AUDIO         # 31s since last loud
+
+
+def test_reporter_no_audio_persists_across_reconnect():
+    # Spec: connected_at is NOT reset on reconnect. After no_audio escalates,
+    # a transport_down then reconnect re-fires no_audio immediately (>=30s elapsed).
+    r = CaptureStatusReporter(threshold=T, stale_threshold=STALE)
+    r.set_connected(True)
+    assert r.poll(now=100.0) == CONNECTING
+    assert r.poll(now=130.0) == NO_AUDIO
+    r.set_connected(False)
+    assert r.poll(now=131.0) == TRANSPORT_DOWN
+    r.set_connected(True)
+    assert r.poll(now=132.0) == NO_AUDIO   # connected_at NOT reset → still >=30s → no_audio
