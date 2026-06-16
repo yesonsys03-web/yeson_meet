@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { subscribeAppLogs, type AppLogEntry } from "../diagnostics/appLog";
 
 // The sidecar prints `CAPTURE_STATUS <state>` on each capture-state transition
-// (connecting/active/silent/transport_down). Rust forwards it into the app log;
+// (connecting/active/silent/no_audio/transport_down). Rust forwards it into the app log;
 // we promote the latest one into a live status chip. Mirrors nativeCaptureStatus.
 const MARKER = "CAPTURE_STATUS ";
 
