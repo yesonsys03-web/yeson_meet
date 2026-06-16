@@ -1,6 +1,4 @@
 // === ANCHOR: LIB_START ===
-#[cfg(target_os = "windows")]
-pub mod audio;
 mod diagnostics;
 mod sidecar;
 
