@@ -129,6 +129,7 @@ jobs:
           name: yeson-sidecar-windows
           path: dist/yeson-sidecar.exe
           if-no-files-found: error
+          retention-days: 7
 
       - name: Upload desktop installer bundle
         uses: actions/upload-artifact@v4
@@ -139,3 +140,4 @@ jobs:
             apps/desktop/src-tauri/target/release/bundle/**/*.exe
             apps/desktop/src-tauri/target/release/bundle/**/*.msi
           if-no-files-found: error
+          retention-days: 7
