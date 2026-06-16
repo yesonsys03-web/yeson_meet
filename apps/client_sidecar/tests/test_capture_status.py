@@ -4,6 +4,7 @@ import asyncio
 from apps.client_sidecar.transport.capture_status import (
     ACTIVE,
     CONNECTING,
+    NO_AUDIO,
     SILENT,
     TRANSPORT_DOWN,
     CaptureStatusReporter,
@@ -187,3 +188,78 @@ async def test_watchdog_skips_level_when_no_chunk():
 
     assert "CAPTURE_STATUS connecting" in emitted
     assert not any(m.startswith("CAPTURE_LEVEL ") for m in emitted)
+
+
+# --- no_audio state tests ---
+
+STALE = 30.0  # no-audio escalation threshold
+
+
+def test_no_audio_when_silent_from_start_after_stale():
+    # Windows zero-packets from the start: no chunk ever, connected 30s ago → no_audio
+    assert compute_state(
+        ws_connected=True, ever_connected=True,
+        last_chunk_at=None, last_loud_at=None, now=130.0,
+        threshold=T, connected_at=100.0, stale_threshold=STALE,
+    ) == NO_AUDIO
+
+
+def test_connecting_before_stale_with_no_chunk():
+    # same case, only 29s in → still connecting (not yet escalated)
+    assert compute_state(
+        ws_connected=True, ever_connected=True,
+        last_chunk_at=None, last_loud_at=None, now=129.0,
+        threshold=T, connected_at=100.0, stale_threshold=STALE,
+    ) == CONNECTING
+
+
+def test_no_audio_after_stale_since_last_loud():
+    # was active, then quiet past the stale threshold → no_audio (escalates from silent)
+    assert compute_state(
+        ws_connected=True, ever_connected=True,
+        last_chunk_at=130.0, last_loud_at=100.0, now=130.0,
+        threshold=T, connected_at=100.0, stale_threshold=STALE,
+    ) == NO_AUDIO
+
+
+def test_silent_between_thresholds_since_last_loud():
+    # 10s..30s since last loud → still silent, not yet no_audio
+    assert compute_state(
+        ws_connected=True, ever_connected=True,
+        last_chunk_at=120.0, last_loud_at=100.0, now=120.0,
+        threshold=T, connected_at=100.0, stale_threshold=STALE,
+    ) == SILENT
+
+
+def test_transport_down_takes_priority_over_no_audio():
+    assert compute_state(
+        ws_connected=False, ever_connected=True,
+        last_chunk_at=None, last_loud_at=None, now=200.0,
+        threshold=T, connected_at=100.0, stale_threshold=STALE,
+    ) == TRANSPORT_DOWN
+
+
+def test_reporter_escalates_connecting_to_no_audio():
+    r = CaptureStatusReporter(threshold=T, stale_threshold=STALE)
+    r.set_connected(True)
+    assert r.poll(now=100.0) == CONNECTING   # connected, no chunk yet; connected_at=100
+    assert r.poll(now=129.0) is None          # still connecting (29s)
+    assert r.poll(now=130.0) == NO_AUDIO       # 30s with no audio → escalate
+
+
+def test_reporter_recovers_from_no_audio_on_loud_chunk():
+    r = CaptureStatusReporter(threshold=T, stale_threshold=STALE)
+    r.set_connected(True)
+    assert r.poll(now=100.0) == CONNECTING
+    assert r.poll(now=130.0) == NO_AUDIO
+    r.note_chunk(now=131.0, dbfs=LOUD)
+    assert r.poll(now=131.1) == ACTIVE          # instant recovery
+
+
+def test_reporter_active_silent_no_audio_progression():
+    r = CaptureStatusReporter(threshold=T, stale_threshold=STALE)
+    r.set_connected(True)
+    r.note_chunk(now=100.0, dbfs=LOUD)
+    assert r.poll(now=100.5) == ACTIVE
+    assert r.poll(now=111.0) == SILENT          # 11s since last loud
+    assert r.poll(now=131.0) == NO_AUDIO         # 31s since last loud

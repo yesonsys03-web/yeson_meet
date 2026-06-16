@@ -17,6 +17,11 @@ from collections.abc import Callable
 # "audio genuinely stopped for a while" (informational), never speech cadence.
 SILENCE_THRESHOLD_S = 10.0
 
+# Long-silence escalation: no loud audio for this many seconds (well past the
+# informational SILENCE_THRESHOLD_S) → escalate the silent chip to an actionable
+# "check your output device" advisory. Still informational, auto-clears on sound.
+STALE_THRESHOLD_S = 30.0
+
 # Chunk RMS at/above this dBFS counts as "audio present". Matches
 # config.audio.RMS_DBFS_THRESHOLD's default; main.py injects the configured value.
 RMS_SILENCE_DBFS = -45.0
@@ -29,6 +34,7 @@ CONNECTING = "connecting"
 ACTIVE = "active"
 SILENT = "silent"
 TRANSPORT_DOWN = "transport_down"
+NO_AUDIO = "no_audio"
 
 MARKER = "CAPTURE_STATUS "
 
@@ -41,6 +47,8 @@ def compute_state(
     last_loud_at: float | None,
     now: float,
     threshold: float = SILENCE_THRESHOLD_S,
+    connected_at: float | None = None,
+    stale_threshold: float = STALE_THRESHOLD_S,
 ) -> str:
     """Pure: derive the capture state from connection + loudness facts.
 
@@ -48,10 +56,20 @@ def compute_state(
     presence, so it fires on Mac (silent packets keep flowing) as well as Windows
     (no packets in silence). `last_chunk_at` only distinguishes "connecting"
     (no chunk yet) from a flowing-but-quiet stream.
-    Priority: transport_down > connecting > silent > active.
+
+    `no_audio` escalates silence after `stale_threshold`s with no loud audio,
+    measured from the last loud chunk or — if audio was never loud — from
+    `connected_at`. That second baseline covers the Windows "no packets from the
+    start" case, where `last_chunk_at` stays None and the state would otherwise be
+    stuck on "connecting" forever.
+
+    Priority: transport_down > no_audio > connecting > silent > active.
     """
     if not ws_connected:
         return TRANSPORT_DOWN if ever_connected else CONNECTING
+    reference = last_loud_at if last_loud_at is not None else connected_at
+    if reference is not None and now - reference >= stale_threshold:
+        return NO_AUDIO
     if last_chunk_at is None:
         return CONNECTING
     if last_loud_at is None or now - last_loud_at >= threshold:
@@ -67,11 +85,14 @@ class CaptureStatusReporter:
         self,
         threshold: float = SILENCE_THRESHOLD_S,
         rms_threshold_dbfs: float = RMS_SILENCE_DBFS,
+        stale_threshold: float = STALE_THRESHOLD_S,
     ) -> None:
         self._threshold = threshold
         self._rms_threshold = rms_threshold_dbfs
+        self._stale_threshold = stale_threshold
         self._ws_connected = False
         self._ever_connected = False
+        self._connected_at: float | None = None
         self._last_chunk_at: float | None = None
         self._last_loud_at: float | None = None
         self._levels: deque[tuple[float, float]] = deque(maxlen=200)  # 200 @ ≤50 Hz ≈ 4 s; LEVEL_STALE_S=1.5 s needs ≤75 entries
@@ -90,6 +111,8 @@ class CaptureStatusReporter:
 
     def poll(self, now: float) -> str | None:
         """Return the new state iff it changed since the last emit, else None."""
+        if self._ws_connected and self._connected_at is None:
+            self._connected_at = now
         state = compute_state(
             ws_connected=self._ws_connected,
             ever_connected=self._ever_connected,
@@ -97,6 +120,8 @@ class CaptureStatusReporter:
             last_loud_at=self._last_loud_at,
             now=now,
             threshold=self._threshold,
+            connected_at=self._connected_at,
+            stale_threshold=self._stale_threshold,
         )
         if state == self._emitted:
             return None
