@@ -8,9 +8,9 @@ import { subscribeAppLogs, type AppLogEntry } from "../diagnostics/appLog";
 // we promote the latest one into a live status chip. Mirrors nativeCaptureStatus.
 const MARKER = "CAPTURE_STATUS ";
 
-export type CaptureState = "connecting" | "active" | "silent" | "transport_down";
+export type CaptureState = "connecting" | "active" | "silent" | "no_audio" | "transport_down";
 
-const KNOWN: readonly CaptureState[] = ["connecting", "active", "silent", "transport_down"];
+const KNOWN: readonly CaptureState[] = ["connecting", "active", "silent", "no_audio", "transport_down"];
 
 /** Extract a known capture state from a `CAPTURE_STATUS <state>` line, else null. */
 export function parseCaptureStatus(message: string): CaptureState | null {

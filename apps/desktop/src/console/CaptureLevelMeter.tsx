@@ -14,12 +14,13 @@ const ROLE_COLOR: Record<SegmentRole, string> = { green: GREEN, yellow: YELLOW, 
 
 /**
  * Live loudness meter shown beside the capture-status chip.
- * Renders only in active/silent states (the chip carries connecting/transport_down);
- * silent always shows an empty bar, which also covers Windows silence (no chunks → dbfs null).
+ * Renders only in active/silent/no_audio states (the chip carries
+ * connecting/transport_down); silent and no_audio always show an empty bar,
+ * which also covers Windows silence (no chunks → dbfs null).
  */
 export function CaptureLevelMeter({ dbfs, state }: { dbfs: number | null; state: CaptureState }) {
   if (state === "connecting" || state === "transport_down") return null;
-  const filled = state === "silent" ? 0 : dbfsToSegments(dbfs ?? -120);
+  const filled = state === "silent" || state === "no_audio" ? 0 : dbfsToSegments(dbfs ?? -120);
 
   const wrap: CSSProperties = { display: "inline-flex", alignItems: "center", gap: 2 };
   return (

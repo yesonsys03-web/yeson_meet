@@ -13,6 +13,7 @@ describe("parseCaptureStatus", () => {
     expect(parseCaptureStatus("CAPTURE_STATUS silent")).toBe("silent");
     expect(parseCaptureStatus("CAPTURE_STATUS transport_down")).toBe("transport_down");
     expect(parseCaptureStatus("CAPTURE_STATUS connecting")).toBe("connecting");
+    expect(parseCaptureStatus("CAPTURE_STATUS no_audio")).toBe("no_audio");
   });
 
   it("returns null for non-markers and unknown states", () => {
