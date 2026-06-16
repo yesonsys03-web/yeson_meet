@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.server.db.models import Session
 from apps.server.ops.alerts import raise_meeting_max_duration_alert
+from apps.server.domain.events import SessionEnded, serialize
+from apps.server.ws.bus import bus
 
 DEFAULT_MAX_DURATION_HOURS = 3.0
 MAX_DURATION_ENV = "YESON_MEETING_MAX_DURATION_HOURS"
@@ -53,6 +55,16 @@ async def enforce_meeting_duration_limit(
     meeting.ended_at = ended_at
     await db.commit()
     raise_meeting_max_duration_alert(str(meeting.external_id))
+    await bus.publish(
+        meeting.external_id,
+        serialize(
+            SessionEnded(
+                session_id=meeting.external_id,
+                occurred_at=ended_at,
+                ended_at=ended_at,
+            )
+        ),
+    )
     return True
 
 

@@ -82,3 +82,46 @@ async def test_enforce_meeting_duration_limit_leaves_active_session_live(
     assert meeting.status == "live"
     assert meeting.ended_at is None
     assert operator_alerts.active() == []
+
+
+@pytest.mark.asyncio
+async def test_enforce_meeting_duration_limit_publishes_session_ended(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apps.server.ws.bus import bus
+
+    monkeypatch.setenv("YESON_MEETING_MAX_DURATION_HOURS", "3")
+    now = datetime.now(timezone.utc)
+    meeting = await _create_meeting(db_session, now - timedelta(hours=3, minutes=1))
+
+    queue = bus.subscribe(meeting.external_id)
+    try:
+        enforced = await enforce_meeting_duration_limit(db_session, meeting, now=now)
+        assert enforced is True
+        payload = queue.get_nowait()
+    finally:
+        bus.unsubscribe(meeting.external_id, queue)
+
+    assert payload["type"] == "session.ended"
+    assert payload["session_id"] == str(meeting.external_id)
+
+
+@pytest.mark.asyncio
+async def test_enforce_meeting_duration_limit_active_session_does_not_publish(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apps.server.ws.bus import bus
+
+    monkeypatch.setenv("YESON_MEETING_MAX_DURATION_HOURS", "3")
+    now = datetime.now(timezone.utc)
+    meeting = await _create_meeting(db_session, now - timedelta(hours=2))
+
+    queue = bus.subscribe(meeting.external_id)
+    try:
+        enforced = await enforce_meeting_duration_limit(db_session, meeting, now=now)
+        assert enforced is False
+        assert queue.empty()
+    finally:
+        bus.unsubscribe(meeting.external_id, queue)
