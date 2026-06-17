@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.server.auth.password import hash_password
 from apps.server.db.models import AppUser, Session
-from apps.server.ops.alerts import MEETING_MAX_DURATION_EXCEEDED, operator_alerts
+from apps.server.ops.alerts import (
+    MEETING_MAX_DURATION_EXCEEDED,
+    MEETING_SIDECAR_DISCONNECTED,
+    operator_alerts,
+    raise_meeting_disconnect_alert,
+)
 from apps.server.ops.session_safety import enforce_meeting_duration_limit
 
 
@@ -114,6 +119,14 @@ async def test_enforce_meeting_duration_limit_publishes_session_ended(
 
     assert payload["type"] == "session.ended"
     assert payload["session_id"] == str(meeting.external_id)
+
+
+def test_raise_meeting_disconnect_alert_records_critical() -> None:
+    raise_meeting_disconnect_alert("abc-123")
+    alerts = operator_alerts.active()
+    assert len(alerts) == 1
+    assert alerts[0].code == f"{MEETING_SIDECAR_DISCONNECTED}:abc-123"
+    assert alerts[0].severity == "critical"
 
 
 @pytest.mark.asyncio

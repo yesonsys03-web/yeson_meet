@@ -88,6 +88,7 @@ class OperatorAlertStore:
 
 GEMINI_API_KEY_MISSING = "gemini_api_key_missing"
 MEETING_MAX_DURATION_EXCEEDED = "meeting_max_duration_exceeded"
+MEETING_SIDECAR_DISCONNECTED = "meeting_sidecar_disconnected"
 operator_alerts = OperatorAlertStore()
 
 
@@ -118,4 +119,20 @@ def raise_meeting_max_duration_alert(session_id: str) -> None:
         ),
     )
 # === ANCHOR: ALERTS_RAISE_MEETING_MAX_DURATION_ALERT_END ===
+
+
+# === ANCHOR: ALERTS_RAISE_MEETING_DISCONNECT_ALERT_START ===
+def raise_meeting_disconnect_alert(session_id: str) -> None:
+    """Raise a non-secret alert when a meeting is force-ended because its
+    sidecar stayed disconnected past YESON_MEETING_DISCONNECT_GRACE_SECONDS."""
+    _ = operator_alerts.raise_alert(
+        code=f"{MEETING_SIDECAR_DISCONNECTED}:{session_id}",
+        severity="critical",
+        message=(
+            "Meeting sidecar disconnected past "
+            "YESON_MEETING_DISCONNECT_GRACE_SECONDS and the meeting was "
+            f"automatically ended: session={session_id}."
+        ),
+    )
+# === ANCHOR: ALERTS_RAISE_MEETING_DISCONNECT_ALERT_END ===
 # === ANCHOR: ALERTS_END ===
