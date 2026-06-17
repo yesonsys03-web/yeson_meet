@@ -83,7 +83,6 @@ export function SidecarRunnerPanel({ values }: SidecarRunnerPanelProps) {
 
 function sidecarMissingItems(values: SetupValues): string[] {
   const items: string[] = [];
-  if (!values.deviceApiKey.trim()) items.push("테스트용 오디오 키(Device API Key)를 입력해야 합니다.");
   if (!values.sessionId.trim() || values.sessionId.includes("<")) items.push("Live Meeting에서 회의를 만들고 Session ID를 채워야 합니다.");
   if (!values.serverWsBase.trim() || values.serverWsBase.includes("<")) items.push("WebSocket 서버 주소가 필요합니다.");
   return items;

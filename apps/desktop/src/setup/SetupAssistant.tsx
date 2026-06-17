@@ -114,58 +114,62 @@ export function SetupAssistant() {
 
       <MeetingQuickStartPanel />
 
-      <main style={styles.grid}>
-        <section style={styles.panel}>
-          <h2 style={styles.sectionTitle}>실행 환경 값</h2>
-          <PlatformSelector value={values.platform} onChange={updatePlatform} />
-          <Field
-            label="WebSocket 서버 주소"
-            help="로컬 테스트는 ws://127.0.0.1:8000, LAN HTTPS 테스트는 wss://192.168.0.38 처럼 입력합니다."
-            value={values.serverWsBase}
-            onChange={(value) => updateValue("serverWsBase", value)}
-          />
-          <Field
-            label="테스트용 오디오 키 (Device API Key)"
-            help="sidecar가 서버에 접속할 때 필요한 회의실 PC용 키입니다. 보안을 위해 저장하지 않으므로 Sidecar 시작 직전에 붙여넣어야 합니다."
-            value={values.deviceApiKey}
-            secret
-            onChange={(value) => updateValue("deviceApiKey", value)}
-          />
-          <Field
-            label="Session ID"
-            help="회의를 만들면 자동으로 채워집니다. 필요할 때만 직접 수정하세요."
-            value={values.sessionId}
-            onChange={(value) => updateValue("sessionId", value)}
-          />
-          <Field
-            label="Viewer URL"
-            help="회의를 만들면 자동으로 채워집니다. 폰이나 노트북에서 자막을 확인할 주소입니다."
-            value={values.viewerUrl}
-            onChange={(value) => updateValue("viewerUrl", value)}
-          />
-          <Field
-            label="Sidecar project folder"
-            help="dev에서 소스로 sidecar를 실행할 때만 필요합니다. 비워두면 패키지 앱은 번들된 네이티브 sidecar를 사용합니다."
-            value={values.sidecarProjectDir}
-            onChange={(value) => updateValue("sidecarProjectDir", value)}
-          />
-        </section>
+      <details style={{ marginTop: 24 }}>
+        <summary style={styles.sectionTitle}>고급 설정 (수동 실행 · 문제 해결)</summary>
 
-        <section style={styles.panelDark}>
-          <h2 style={styles.sectionTitleDark}>{platformConfig.commandTitle}</h2>
-          <pre style={styles.code}>{sidecarCommand}</pre>
-          <button type="button" onClick={copyCommand} style={styles.primaryButton}>
-            {copied ? "복사 완료" : platformConfig.copyLabel}
-          </button>
-          <p style={styles.commandHint}>{platformConfig.commandHint}</p>
-        </section>
-      </main>
+        <main style={styles.grid}>
+          <section style={styles.panel}>
+            <h2 style={styles.sectionTitle}>실행 환경 값</h2>
+            <PlatformSelector value={values.platform} onChange={updatePlatform} />
+            <Field
+              label="WebSocket 서버 주소"
+              help="로컬 테스트는 ws://127.0.0.1:8000, LAN HTTPS 테스트는 wss://192.168.0.38 처럼 입력합니다."
+              value={values.serverWsBase}
+              onChange={(value) => updateValue("serverWsBase", value)}
+            />
+            <Field
+              label="테스트용 오디오 키 (Device API Key)"
+              help="sidecar가 서버에 접속할 때 필요한 회의실 PC용 키입니다. 보안을 위해 저장하지 않으므로 Sidecar 시작 직전에 붙여넣어야 합니다."
+              value={values.deviceApiKey}
+              secret
+              onChange={(value) => updateValue("deviceApiKey", value)}
+            />
+            <Field
+              label="Session ID"
+              help="회의를 만들면 자동으로 채워집니다. 필요할 때만 직접 수정하세요."
+              value={values.sessionId}
+              onChange={(value) => updateValue("sessionId", value)}
+            />
+            <Field
+              label="Viewer URL"
+              help="회의를 만들면 자동으로 채워집니다. 폰이나 노트북에서 자막을 확인할 주소입니다."
+              value={values.viewerUrl}
+              onChange={(value) => updateValue("viewerUrl", value)}
+            />
+            <Field
+              label="Sidecar project folder"
+              help="dev에서 소스로 sidecar를 실행할 때만 필요합니다. 비워두면 패키지 앱은 번들된 네이티브 sidecar를 사용합니다."
+              value={values.sidecarProjectDir}
+              onChange={(value) => updateValue("sidecarProjectDir", value)}
+            />
+          </section>
 
-      <PlatformRunbookPanel platform={values.platform} />
+          <section style={styles.panelDark}>
+            <h2 style={styles.sectionTitleDark}>{platformConfig.commandTitle}</h2>
+            <pre style={styles.code}>{sidecarCommand}</pre>
+            <button type="button" onClick={copyCommand} style={styles.primaryButton}>
+              {copied ? "복사 완료" : platformConfig.copyLabel}
+            </button>
+            <p style={styles.commandHint}>{platformConfig.commandHint}</p>
+          </section>
+        </main>
 
-      <SidecarRunnerPanel values={values} />
+        <PlatformRunbookPanel platform={values.platform} />
 
-      <SmokeChecklist checks={checks} onRunAll={runAllSmokeChecks} running={runningChecks} />
+        <SidecarRunnerPanel values={values} />
+
+        <SmokeChecklist checks={checks} onRunAll={runAllSmokeChecks} running={runningChecks} />
+      </details>
     </div>
   );
 }
