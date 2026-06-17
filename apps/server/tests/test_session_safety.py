@@ -19,6 +19,7 @@ from apps.server.ops.alerts import (
 from apps.server.ops.session_safety import (
     disconnect_grace,
     enforce_meeting_duration_limit,
+    enforce_sidecar_disconnect_limit,
     session_disconnect_exceeds_grace,
 )
 
@@ -180,3 +181,94 @@ async def test_enforce_meeting_duration_limit_active_session_does_not_publish(
         assert queue.empty()
     finally:
         bus.unsubscribe(meeting.external_id, queue)
+
+
+@pytest.mark.asyncio
+async def test_enforce_disconnect_ends_long_gone_session(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("YESON_MEETING_DISCONNECT_GRACE_SECONDS", "300")
+    now = datetime.now(timezone.utc)
+    meeting = await _create_meeting(db_session, now - timedelta(hours=1))
+    meeting.disconnected_at = now - timedelta(seconds=301)
+    await db_session.flush()
+
+    enforced = await enforce_sidecar_disconnect_limit(db_session, meeting, now=now)
+
+    assert enforced is True
+    assert meeting.status == "ended"
+    assert meeting.ended_at == now
+    alerts = operator_alerts.active()
+    assert len(alerts) == 1
+    assert alerts[0].code == f"{MEETING_SIDECAR_DISCONNECTED}:{meeting.external_id}"
+
+
+@pytest.mark.asyncio
+async def test_enforce_disconnect_ignores_connected_session(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("YESON_MEETING_DISCONNECT_GRACE_SECONDS", "300")
+    now = datetime.now(timezone.utc)
+    meeting = await _create_meeting(db_session, now - timedelta(hours=1))
+    # disconnected_at is None -> still connected
+    enforced = await enforce_sidecar_disconnect_limit(db_session, meeting, now=now)
+
+    assert enforced is False
+    assert meeting.status == "live"
+    assert operator_alerts.active() == []
+
+
+@pytest.mark.asyncio
+async def test_enforce_disconnect_ignores_within_grace(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("YESON_MEETING_DISCONNECT_GRACE_SECONDS", "300")
+    now = datetime.now(timezone.utc)
+    meeting = await _create_meeting(db_session, now - timedelta(hours=1))
+    meeting.disconnected_at = now - timedelta(seconds=120)
+    await db_session.flush()
+
+    enforced = await enforce_sidecar_disconnect_limit(db_session, meeting, now=now)
+
+    assert enforced is False
+    assert meeting.status == "live"
+
+
+@pytest.mark.asyncio
+async def test_enforce_disconnect_noop_on_ended_session(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("YESON_MEETING_DISCONNECT_GRACE_SECONDS", "300")
+    now = datetime.now(timezone.utc)
+    meeting = await _create_meeting(db_session, now - timedelta(hours=1))
+    meeting.status = "ended"
+    meeting.disconnected_at = now - timedelta(seconds=301)
+    await db_session.flush()
+
+    enforced = await enforce_sidecar_disconnect_limit(db_session, meeting, now=now)
+
+    assert enforced is False
+
+
+@pytest.mark.asyncio
+async def test_enforce_disconnect_publishes_session_ended(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from apps.server.ws.bus import bus
+
+    monkeypatch.setenv("YESON_MEETING_DISCONNECT_GRACE_SECONDS", "300")
+    now = datetime.now(timezone.utc)
+    meeting = await _create_meeting(db_session, now - timedelta(hours=1))
+    meeting.disconnected_at = now - timedelta(seconds=301)
+    await db_session.flush()
+
+    queue = bus.subscribe(meeting.external_id)
+    try:
+        enforced = await enforce_sidecar_disconnect_limit(db_session, meeting, now=now)
+        assert enforced is True
+        payload = queue.get_nowait()
+    finally:
+        bus.unsubscribe(meeting.external_id, queue)
+
+    assert payload["type"] == "session.ended"
+    assert payload["session_id"] == str(meeting.external_id)

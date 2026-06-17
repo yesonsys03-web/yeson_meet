@@ -9,7 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.server.db.models import Session
-from apps.server.ops.alerts import raise_meeting_max_duration_alert
+from apps.server.ops.alerts import (
+    raise_meeting_disconnect_alert,
+    raise_meeting_max_duration_alert,
+)
 from apps.server.domain.events import SessionEnded, serialize
 from apps.server.ws.bus import bus
 
@@ -94,6 +97,39 @@ def session_disconnect_exceeds_grace(
     current = now or datetime.now(timezone.utc)
     return _as_utc(current) - _as_utc(disconnected_at) >= disconnect_grace()
 # === ANCHOR: SESSION_SAFETY_SESSION_DISCONNECT_EXCEEDS_GRACE_END ===
+
+
+# === ANCHOR: SESSION_SAFETY_ENFORCE_SIDECAR_DISCONNECT_LIMIT_START ===
+async def enforce_sidecar_disconnect_limit(
+    db: AsyncSession,
+    meeting: Session,
+    now: datetime | None = None,
+) -> bool:
+    """Mark a live meeting ended once its sidecar has been gone past the grace period."""
+    if meeting.status == "ended":
+        return False
+    if meeting.disconnected_at is None:
+        return False
+    ended_at = _as_utc(now or datetime.now(timezone.utc))
+    if not session_disconnect_exceeds_grace(meeting.disconnected_at, ended_at):
+        return False
+
+    meeting.status = "ended"
+    meeting.ended_at = ended_at
+    await db.commit()
+    raise_meeting_disconnect_alert(str(meeting.external_id))
+    await bus.publish(
+        meeting.external_id,
+        serialize(
+            SessionEnded(
+                session_id=meeting.external_id,
+                occurred_at=ended_at,
+                ended_at=ended_at,
+            )
+        ),
+    )
+    return True
+# === ANCHOR: SESSION_SAFETY_ENFORCE_SIDECAR_DISCONNECT_LIMIT_END ===
 
 
 # === ANCHOR: SESSION_SAFETY__AS_UTC_START ===
