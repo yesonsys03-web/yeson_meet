@@ -1,4 +1,5 @@
 // === ANCHOR: LIB_START ===
+mod credentials;
 mod diagnostics;
 mod sidecar;
 
