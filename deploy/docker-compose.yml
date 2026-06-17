@@ -62,6 +62,7 @@ services:
       GOOGLE_TRANSLATE_LOCATION: ${GOOGLE_TRANSLATE_LOCATION:-global}
       ACCESS_MODE: ${ACCESS_MODE:-lan}
       SERVER_HOST: ${SERVER_HOST:-localhost}
+      VIEWER_BASE: ${VIEWER_BASE:-https://localhost}
       STORAGE_ROOT: /var/lib/yeson-meet/storage
     volumes:
       - ./data/storage:/var/lib/yeson-meet/storage
@@ -91,3 +92,11 @@ services:
       - ../apps/web/dist:/srv/web:ro
     depends_on:
       - server
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate --url http://caddy:8080
+    depends_on:
+      - caddy
