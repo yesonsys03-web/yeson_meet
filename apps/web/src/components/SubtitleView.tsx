@@ -1,13 +1,16 @@
 // === ANCHOR: SUBTITLEVIEW_START ===
 import { usePacedSubtitle } from "../hooks/usePacedSubtitle";
 import { useViewerWS } from "../hooks/useViewerWS";
+import { previousUtterance } from "../lib/utterances";
 
 // === ANCHOR: SUBTITLEVIEW_SUBTITLEVIEW_START ===
 export function SubtitleView({ token }: { token: string }) {
-  const { latest: streamLatest, connected, ended, error } = useViewerWS(token);
+  const { latest: streamLatest, connected, ended, error, utterances } = useViewerWS(token);
   // 자막이 너무 빨리 다음 seq로 갱신되면 사용자가 읽을 시간이 부족하다.
   // 길이에 비례한 최소 표시 시간을 보장하면서 다음 자막은 큐에 보관해 노출.
   const latest = usePacedSubtitle(streamLatest);
+  // 표시 중인(페이싱된) seq 기준 직전 발화 — 운영자 프리뷰와 동일한 catch-up.
+  const previous = previousUtterance(utterances, latest?.seq ?? null);
 
   return (
     <main className="min-h-screen bg-slate-900 text-slate-100 flex flex-col">
@@ -37,6 +40,11 @@ export function SubtitleView({ token }: { token: string }) {
           <div className="text-slate-400 text-3xl">자막을 기다리는 중…</div>
         ) : (
           <div className="text-center max-w-5xl space-y-4">
+            {previous?.text_ko ? (
+              <div className="text-2xl md:text-3xl text-slate-400 opacity-50 leading-snug">
+                {previous.text_ko}
+              </div>
+            ) : null}
             <div className="text-5xl font-bold leading-tight">{latest.text_ko}</div>
             <div className="text-2xl opacity-60">{latest.text_en}</div>
           </div>
