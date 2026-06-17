@@ -65,6 +65,11 @@ def test_safety_poll_interval_env_override(monkeypatch: pytest.MonkeyPatch) -> N
     assert safety_poll_interval() == 5.0
 
 
+def test_safety_poll_interval_malformed_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("YESON_MEETING_SAFETY_POLL_SECONDS", "abc")
+    assert safety_poll_interval() == 60.0
+
+
 @pytest.mark.asyncio
 async def test_sweep_ends_overdue_session(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
@@ -130,3 +135,41 @@ async def test_watchdog_sweeps_then_cancels_cleanly(
 
     assert refreshed.status == "ended"
     assert len(operator_alerts.active()) == 1
+
+
+@pytest.mark.asyncio
+async def test_watchdog_survives_sweep_exception(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("YESON_MEETING_MAX_DURATION_HOURS", "3")
+    now = datetime.now(timezone.utc)
+    meeting = await _create_live_meeting(db_session, now - timedelta(hours=3, minutes=1))
+
+    real = _factory(db_session)
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient DB blip")
+        return real()
+
+    task = asyncio.create_task(
+        run_meeting_safety_watchdog(0.01, session_factory=flaky)
+    )
+    refreshed = None
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        async with real() as db2:
+            refreshed = (
+                await db2.execute(select(Session).where(Session.id == meeting.id))
+            ).scalar_one()
+        if refreshed.status == "ended":
+            break
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert calls["n"] >= 2  # first sweep raised; loop survived and retried
+    assert refreshed is not None and refreshed.status == "ended"

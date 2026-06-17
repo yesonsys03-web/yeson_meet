@@ -34,7 +34,12 @@ POLL_SECONDS_ENV = "YESON_MEETING_SAFETY_POLL_SECONDS"
 # === ANCHOR: SESSION_SAFETY_SCHEDULER_POLL_INTERVAL_START ===
 def safety_poll_interval() -> float:
     """Watchdog poll interval in seconds; non-positive disables the watchdog."""
-    return float(os.environ.get(POLL_SECONDS_ENV, str(DEFAULT_POLL_SECONDS)))
+    raw = os.environ.get(POLL_SECONDS_ENV, str(DEFAULT_POLL_SECONDS))
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using default", POLL_SECONDS_ENV, raw)
+        return DEFAULT_POLL_SECONDS
 # === ANCHOR: SESSION_SAFETY_SCHEDULER_POLL_INTERVAL_END ===
 
 
