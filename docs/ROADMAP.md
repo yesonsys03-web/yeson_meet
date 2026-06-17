@@ -154,7 +154,7 @@
 - [~] 비용/지연 단순 로그 (Prometheus는 β-7)  ← AI publish latency structured log + Gemini usage token/cost structured log 완료, 실제 Gemini 응답 usage metadata/E2E 비용 검증은 미완료
 - [x] **latency budget 4구간 분해 문서**: 캡처→서버 WSS / 서버→Gemini / Gemini→파싱 / 서버→viewer (P50 ≤ 2초 미달 시 partial subtitle 전략 즉시 도입)  ← ARCH §5.3 문서화 + local synthetic E2E 계측 완료: phrase-end→first viewer subtitle P50 1419.8ms / max 1522.3ms, server→viewer P50 5.2ms. 실제 LAN 구간은 회의실 PC 분리 검증 필요
 - [x] 🔴 **API Key health check** — 서버 시작 시 + 실패 시 운영자 알림 (ARCH §12.3)  ← `/api/v1/health/ai` + startup log + `/api/v1/operator/alerts` critical alert 완료
-- [~] 🔴 **회의 시간 안전 타이머** — 회의당 최대 N시간 (기본 3h) 도달 시 자동 종료 + alert (좀비 세션 비용 방지)  ← sidecar 오디오 ingress에서 `YESON_MEETING_MAX_DURATION_HOURS` 초과 세션 자동 종료 + operator alert 단위 검증 완료, background scheduler/3시간 E2E는 미완료
+- [~] 🔴 **회의 시간 안전 타이머** — 회의당 최대 N시간 (기본 3h) 도달 시 자동 종료 + alert (좀비 세션 비용 방지)  ← sidecar 오디오 ingress + lifespan background watchdog(`apps/server/ops/session_safety_scheduler.py`, env `YESON_MEETING_SAFETY_POLL_SECONDS` 기본 60s, ≤0 비활성)로 오디오 흐름과 무관하게 wall-clock 초과 세션 자동 종료 + operator alert + viewer `SessionEnded` 통지(공유 `enforce_meeting_duration_limit`). 단위/sweep/loop 테스트 완료. 3시간 라이브 E2E는 수동/운영자 검증 남음
 - [~] 🟡 **partial→final 자막 안정화** — `is_final` 플래그 + viewer가 `seq` 키로 마지막 partial 교체  ← viewer state upsert + Gemini provider seq 재시작 보정(`AISequenceNormalizer`) 검증 완료, 1분 E2E에서 seq 1~8 partial/final 수신·DB 저장 완료. 브라우저 시각 깜빡임 E2E는 미완료
 - [~] 🟡 **VAD 또는 RMS 임계값으로 무음 청크 차단** (비용 절감)  ← sidecar RMS silence gate 구현·단위 검증 완료 (`YESON_RMS_DBFS_THRESHOLD`, `YESON_RMS_SILENCE_GATE_ENABLED`), 실제 회의실 threshold 튜닝 미완료
 - [x] 시스템 프롬프트에 "혼합 언어 한국어 그대로 두기" 명시
@@ -171,7 +171,7 @@
 - [x] local synthetic 자막 지연 P50 ≤ 2초  ← wall-clock phrase-end→first viewer subtitle P50 1419.8ms / max 1522.3ms, server→viewer P50 5.2ms / max 82.4ms
 - [~] LAN 분리 환경 자막 지연 P50 ≤ 2초  ← Windows 회의실 앱으로 실제 운영 경로가 단순화된 뒤 측정
 - [~] Gemini 세션 끊김 → 5초 안에 재연결, 자막 일부 손실 외 회의 진행 유지  ← provider disconnect retry 단위 검증 완료, 실제 Gemini WS 끊김 E2E 미완료
-- [~] 좀비 회의 자동 종료 (3시간 도달 테스트)  ← sidecar ingress 최대 시간 안전장치 단위 검증 완료, wall-clock 3시간 E2E는 Windows 앱 검증 단계에서 측정
+- [~] 좀비 회의 자동 종료 (3시간 도달 테스트)  ← sidecar ingress + lifespan background watchdog(오디오 흐름 없는 좀비 세션까지 커버) 단위/sweep/loop 검증 완료, wall-clock 3시간 라이브 E2E는 Windows 앱 검증 단계에서 측정
 - [~] partial→final 갱신 시 viewer 깜빡임 없음  ← 동일 `seq` final이 partial을 교체하는 상태 로직 검증 완료, 브라우저 시각 E2E 미완료
 
 ---
