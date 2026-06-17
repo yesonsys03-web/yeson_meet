@@ -1,27 +1,59 @@
 // === ANCHOR: MEETING_QUICK_START_PANEL_START ===
+import { useEffect, useState } from "react";
 import { LiveSubtitlePreview } from "../console/LiveSubtitlePreview";
 import { useMeetingLifecycle } from "../console/useMeetingLifecycle";
+import { EMPTY_META, loadCredentialsMeta, saveCredentials, type CredentialsMeta } from "./credentials";
+import { loadValues } from "./setupValues";
 import { styles } from "./styles";
 
 export function MeetingQuickStartPanel() {
   const lifecycle = useMeetingLifecycle();
-  const canStartMeeting = Boolean(lifecycle.draft.operatorToken) && !lifecycle.busy;
+  const [meta, setMeta] = useState<CredentialsMeta>(EMPTY_META);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState(() => ({
+    serverWsBase: loadValues().serverWsBase,
+    email: "admin@yeson.local",
+    password: "",
+    deviceApiKey: "",
+  }));
   const activeSessionId = lifecycle.createdSession?.session_id ?? null;
+  const registered = meta.hasCredentials && !editing;
+
+  useEffect(() => {
+    void refreshMeta();
+  }, []);
+
+  async function refreshMeta() {
+    const next = await loadCredentialsMeta();
+    setMeta(next);
+    setForm((current) => ({
+      ...current,
+      serverWsBase: next.serverWsBase || current.serverWsBase,
+      email: next.email || current.email,
+    }));
+  }
+
+  async function registerAndStart() {
+    await saveCredentials(form);
+    await refreshMeta();
+    setEditing(false);
+    await lifecycle.startMeetingOneClick();
+  }
 
   return (
     <section style={styles.quickStartPanel}>
       <div style={styles.quickStartHeader}>
         <div>
-          <p style={styles.eyebrow}>one-screen test flow</p>
-          <h2 style={styles.quickStartTitle}>회의 생성부터 sidecar 실행까지 한 화면에서</h2>
+          <p style={styles.eyebrow}>one-click meeting start</p>
+          <h2 style={styles.quickStartTitle}>버튼 하나로 회의 시작</h2>
           <p style={styles.quickStartIntro}>
-            더 이상 Live Meeting 탭과 Setup Assistant를 왕복하지 않아도 됩니다. 먼저 로그인하고 회의를 만들면 Session ID와 Viewer URL이 아래 실행값에 자동 반영됩니다.
+            한 번 자격증명을 등록하면, 다음부터는 로그인·회의 생성·sidecar 실행이 자동으로 진행됩니다.
           </p>
         </div>
         <div style={styles.quickStartSteps}>
-          <span>1 로그인</span>
-          <span>2 회의 생성</span>
-          <span>3 Sidecar 시작</span>
+          <span>로그인</span>
+          <span>회의 생성</span>
+          <span>Sidecar</span>
         </div>
       </div>
 
@@ -31,26 +63,53 @@ export function MeetingQuickStartPanel() {
 
       <div style={styles.quickStartGrid}>
         <div style={styles.quickStartCard}>
-          <h3 style={styles.quickStartCardTitle}>회의 정보</h3>
-          <div style={styles.fieldRow}>
-            <QuickField label="Operator email" value={lifecycle.draft.email} type="email" onChange={(value) => lifecycle.updateDraft("email", value)} />
-            <QuickField label="Operator password" value={lifecycle.draft.password} type="password" onChange={(value) => lifecycle.updateDraft("password", value)} />
-          </div>
-          <button type="button" onClick={lifecycle.login} disabled={lifecycle.busy} style={styles.secondaryLightButton}>
-            {lifecycle.draft.operatorToken ? "Operator login 완료" : "Login operator"}
-          </button>
-          <div style={styles.fieldRow}>
-            <QuickField label="Meeting title" value={lifecycle.draft.title} onChange={(value) => lifecycle.updateDraft("title", value)} />
-            <QuickField label="Client label" value={lifecycle.draft.clientLabel} onChange={(value) => lifecycle.updateDraft("clientLabel", value)} />
-          </div>
-          <div style={styles.quickStartActions}>
-            <button type="button" onClick={lifecycle.startMeeting} disabled={!canStartMeeting} style={{ ...styles.primaryButton, ...(!canStartMeeting ? styles.disabledButton : null) }}>
-              {lifecycle.draft.operatorToken ? "회의 만들기" : "로그인 후 회의 만들기"}
-            </button>
-            <button type="button" onClick={lifecycle.finishMeeting} disabled={lifecycle.busy || !activeSessionId} style={{ ...styles.secondaryLightButton, ...(lifecycle.busy || !activeSessionId ? styles.disabledButton : null) }}>
-              회의 종료
-            </button>
-          </div>
+          {registered ? (
+            <>
+              <h3 style={styles.quickStartCardTitle}>준비 완료</h3>
+              {activeSessionId ? (
+                <button type="button" onClick={lifecycle.finishMeeting} disabled={lifecycle.busy} style={styles.primaryButton}>
+                  회의 종료
+                </button>
+              ) : (
+                <button type="button" onClick={lifecycle.startMeetingOneClick} disabled={lifecycle.busy} style={styles.primaryButton}>
+                  {lifecycle.busy ? "회의 시작 중..." : "회의 시작"}
+                </button>
+              )}
+              <div style={styles.quickStartSessionBox}>
+                <span>서버</span>
+                <strong>{meta.serverWsBase || "(미설정)"}</strong>
+              </div>
+              <div style={styles.quickStartSessionBox}>
+                <span>운영자</span>
+                <strong>{meta.email || "(미설정)"}</strong>
+              </div>
+              <div style={styles.quickStartSessionBox}>
+                <span>Device Key</span>
+                <strong>{meta.hasDeviceKey ? "저장됨 ✓" : "없음"}</strong>
+              </div>
+              <button type="button" onClick={() => setEditing(true)} style={styles.secondaryLightButton}>
+                자격증명 변경
+              </button>
+            </>
+          ) : (
+            <>
+              <h3 style={styles.quickStartCardTitle}>처음 한 번만 등록</h3>
+              <QuickField label="WebSocket 서버 주소" value={form.serverWsBase} onChange={(value) => setForm((c) => ({ ...c, serverWsBase: value }))} />
+              <QuickField label="Operator email" value={form.email} type="email" onChange={(value) => setForm((c) => ({ ...c, email: value }))} />
+              <QuickField label="Operator password" value={form.password} type="password" onChange={(value) => setForm((c) => ({ ...c, password: value }))} /> {/* vibelign: allow-secret — field name only, not a key value */}
+              <QuickField label="Device API Key" value={form.deviceApiKey} type="password" onChange={(value) => setForm((c) => ({ ...c, deviceApiKey: value }))} /> {/* vibelign: allow-secret — field name only, not a key value */}
+              <div style={styles.quickStartActions}>
+                <button type="button" onClick={registerAndStart} disabled={lifecycle.busy} style={styles.primaryButton}>
+                  기억하고 회의 시작
+                </button>
+                {meta.hasCredentials ? (
+                  <button type="button" onClick={() => setEditing(false)} disabled={lifecycle.busy} style={styles.secondaryLightButton}>
+                    취소
+                  </button>
+                ) : null}
+              </div>
+            </>
+          )}
           <div style={lifecycle.errorText ? styles.quickStartError : styles.quickStartStatus}>
             {lifecycle.errorText || lifecycle.statusText}
           </div>
@@ -73,7 +132,7 @@ export function MeetingQuickStartPanel() {
               </button>
             </>
           ) : (
-            <p style={styles.quickStartEmpty}>회의를 만들면 Session ID와 Viewer URL이 여기에 표시되고, 아래 sidecar 실행값에도 자동으로 채워집니다.</p>
+            <p style={styles.quickStartEmpty}>회의를 시작하면 Session ID와 Viewer URL이 여기에 표시됩니다.</p>
           )}
         </div>
       </div>
