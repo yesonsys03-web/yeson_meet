@@ -343,7 +343,7 @@ Slice 5 통과 시점에 다음을 결정한 뒤 β로 진입:
 
 ## Phase 5+ — 외부 배포 / 고도 기능 (장기 보류)
 
-- [ ] Tunnel 모드 (Cloudflare Tunnel)
+- [~] Tunnel 모드 (Cloudflare Tunnel) — Quick Tunnel(임시·계정불필) 코드/런북 완료: cloudflared compose 서비스(profile opt-in) + Caddy :8080 origin + `tunnel-quick.sh`가 `VIEWER_BASE` 자동 설정. 라이브 터널 E2E는 운영자 수동. Named Tunnel(고정 도메인)·SSO/PIN은 후속
 - [ ] HTTPS 공개 도메인 + 외부 인증 모델 (사내 SSO 또는 매직링크)
 - [ ] Google OAuth verification (Production 모드)
 - [ ] MCP 익스포트 (Claude/외부 AI가 회의 컨텍스트 호출)

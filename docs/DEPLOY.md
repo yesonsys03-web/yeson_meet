@@ -318,3 +318,24 @@ docker compose up -d
 - Google OAuth verification 신청 (스코프별)
 - macOS / Windows 코드사인 + 노타리제이션
 - 회의 데이터 외부 노출 정책 재검토 (법무 필수)
+
+### Quick Tunnel (핸드폰 셀룰러 접속) — 계정 불필요
+
+회의실 와이파이가 서버에 닿지 않을 때, 핸드폰이 각자 셀룰러로 공개 URL을 열어 자막을 본다.
+전제: 서버가 인터넷 egress 가능(이미 Gemini 호출로 충족).
+
+1. 회의 시작 전, `deploy/` 에서: `./tunnel-quick.sh`
+   - cloudflared(Quick Tunnel) 기동 → `https://<랜덤>.trycloudflare.com` 발급
+   - 그 URL을 `deploy/.env`의 `VIEWER_BASE`에 기록 → server 재생성
+   - 출력된 URL이 참가자 viewer base
+2. 운영자 앱에서 회의 시작 → QR이 자동으로 `https://<랜덤>.trycloudflare.com/v/<token>` 을 담음
+3. 참가자: 셀룰러 상태로 QR 스캔 (룸 와이파이 불필요)
+4. 종료: `docker compose --profile tunnel down` (또는 cloudflared만 stop)
+
+수동 폴백(스크립트 로그 파싱 실패 시): `docker compose logs cloudflared` 에서
+`https://...trycloudflare.com` 복사 → `deploy/.env`의 `VIEWER_BASE=` 에 설정 →
+`docker compose up -d server`.
+
+보안: 인터넷 노출 시 게이트는 세션별 viewer 토큰(32B, 회의 종료 시 만료)뿐이다. QR은
+회의실에서만 배포하고, trycloudflare URL은 터널이 떠 있는 동안만 유효하다. URL은 재시작마다
+바뀐다(Quick Tunnel). 고정 도메인/SSO·PIN은 후속(Named Tunnel / 위 Phase 5+ 항목).
