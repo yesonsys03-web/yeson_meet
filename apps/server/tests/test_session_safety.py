@@ -48,6 +48,15 @@ async def _create_meeting(
 
 
 @pytest.mark.asyncio
+async def test_new_session_disconnected_at_defaults_none(
+    db_session: AsyncSession,
+) -> None:
+    now = datetime.now(timezone.utc)
+    meeting = await _create_meeting(db_session, now - timedelta(minutes=1))
+    assert meeting.disconnected_at is None
+
+
+@pytest.mark.asyncio
 async def test_enforce_meeting_duration_limit_ends_overdue_session(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
