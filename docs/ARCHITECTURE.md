@@ -589,6 +589,7 @@ yeson-meet/
 | 비영어 발화 (한국어 섞임) | 프롬프트 가정 어긋남 | 시스템 프롬프트에 "혼합 언어 한국어 그대로" 명시 |
 | 동시 회의 → Gemini 한도 | 회의 시작 실패 | 활성 세션 카운트, 한도 초과 거부 |
 | 비용 폭주 (좀비 세션) | 청구 충격 | `YESON_MEETING_MAX_DURATION_HOURS`(기본 3h) 초과 시 sidecar ingress + lifespan background watchdog(오디오 흐름과 무관, env `YESON_MEETING_SAFETY_POLL_SECONDS` 기본 60s·≤0 비활성)로 자동 종료 + operator alert + viewer `SessionEnded` 통지 |
+| 좀비 세션 (사이드카 끊김) | 비용/좀비 | 사이드카 WS 끊김 `YESON_MEETING_DISCONNECT_GRACE_SECONDS`(기본 300s·≤0 비활성) 초과 시 lifespan watchdog가 자동 종료 + operator alert + viewer `SessionEnded` 통지 (`disconnected_at` 컬럼 + WS lifecycle stamp/clear + 재시작 re-stamp) |
 
 ### 12.4 Slice 4 — 회의 라이프사이클
 | 케이스 | 영향 | 처리 |

@@ -196,7 +196,7 @@
 - [x] `/api/v1/sessions/{id}/end` → MD 리포트 생성 (영어 원문 + 한국어 번역 로그)
 - [x] `/api/v1/sessions/{id}/report` 다운로드
 - [x] viewer: 회의 종료 시 "회의 종료됨" 화면
-- [~] **좀비 세션 자동 종료** — sidecar ingress 최대 시간 초과 자동 종료는 완료, disconnect N분 scheduler는 Windows 앱/sidecar heartbeat 이후 구현
+- [~] **좀비 세션 자동 종료** — sidecar ingress 최대 시간 초과 자동 종료는 완료. disconnect N분 scheduler 구현 완료: `disconnected_at` 컬럼 + WS lifecycle stamp/clear + 공유 워치독 sweep(`enforce_sidecar_disconnect_limit`, env `YESON_MEETING_DISCONNECT_GRACE_SECONDS` 기본 300s) + 재시작 re-stamp. 단위/sweep 테스트 완료. 라이브 disconnect E2E는 수동 검증 남음
 - [~] **회의 종료 시 큐 flush + timeout** — 현재 dev sidecar는 서버 종료 이벤트 수신/flush 계약 없음. Slice 5 SQLite 오프라인 큐와 함께 구현
 - [x] **같은 Device 동시 회의 방지** — sidecar 연결 시 동일 device의 다른 live session 거부
 - [~] **MD 리포트 streaming 생성** — 현재 Markdown report 생성/다운로드 완료, 1시간+ streaming 최적화는 장시간 부하 측정 후 β/운영 안정화에서 수행
@@ -212,7 +212,7 @@
 - [~] 30분 모의 회의(YouTube 영어 영상)를 시작 → 진행 → 종료  ← Windows 앱 실행 UX + 실제 회의실 PC 오디오 라우팅 준비 후 측정
 - [x] MD 리포트 다운로드 → 발화 시간순 정렬 + 영어/한국어 매칭  ← `/api/v1/sessions/{id}/report` + desktop Markdown preview + server lifecycle tests 완료
 - [~] viewer 3대(PC/폰/태블릿) 동시 자막 정상  ← viewer URL/QR 및 fan-out 구현 완료, 실제 다중 단말 LAN QA는 Windows 앱 검증 단계
-- [~] 운영자 앱 강제 종료 시 5분 후 서버가 좀비 세션 정리  ← 최대 회의 시간 안전장치/동시 device guard 완료, heartbeat 기반 disconnect scheduler는 Slice 5 계약으로 이월
+- [~] 운영자 앱 강제 종료 시 5분 후 서버가 좀비 세션 정리  ← 최대 회의 시간 안전장치/동시 device guard 완료. heartbeat-free disconnect scheduler 코드 완료(`disconnected_at` + WS lifecycle stamp/clear + 공유 워치독 sweep `enforce_sidecar_disconnect_limit`, env `YESON_MEETING_DISCONNECT_GRACE_SECONDS` 기본 300s + 재시작 re-stamp, server-only). 라이브 disconnect E2E는 수동 검증 남음
 - [~] 회의 종료 직후 sidecar 잔여 청크가 리포트에 포함됨  ← 종료/report 경로 완료, sidecar flush 계약은 SQLite 오프라인 큐와 함께 이월
 
 ---
