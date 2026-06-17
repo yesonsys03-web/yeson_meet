@@ -1,7 +1,10 @@
 // === ANCHOR: USE_MEETING_LIFECYCLE_START ===
 import { useMemo, useState } from "react";
 import { loadValues, storeValues } from "../setup/setupValues";
+import { loadOperatorLogin } from "../setup/credentials";
+import { startSidecar } from "../setup/sidecarRunner";
 import { createSession, endSession, fetchSessionReport, loginOperator, sessionRequestBody } from "./sessionApi";
+import { runOneClickStart } from "./oneClickStart";
 import type { CreatedSession, EndedSession, MeetingDraft } from "./types";
 
 const initialDraft: MeetingDraft = {
@@ -65,6 +68,33 @@ export function useMeetingLifecycle() {
     });
   }
 
+  async function startMeetingOneClick() {
+    await runAction(async () => {
+      const result = await runOneClickStart({
+        loadOperatorLogin,
+        login: async (email, password) => (await loginOperator(email, password)).access_token,
+        createSession: ({ title, operatorToken }) => createSession({ ...draft, title, operatorToken }),
+        startSidecar: async ({ serverWsBase, sessionId }) => {
+          await startSidecar({ ...loadValues(), serverWsBase, sessionId, deviceApiKey: "" });
+        },
+        now: () => new Date(),
+      });
+      setCreatedSession(result.session);
+      setEndedSession(null);
+      setReportText("");
+      updateDraft("operatorToken", result.operatorToken);
+      updateDraft("title", result.title);
+      storeSessionHandoff(result.session);
+      if (result.sidecarStarted) {
+        setStatusText(`회의 시작 완료: ${result.session.session_id}`);
+      } else {
+        setErrorText(
+          `회의는 생성됐지만 sidecar 시작에 실패했습니다: ${result.sidecarError ?? ""} — 필요하면 '회의 종료'를 누르세요.`,
+        );
+      }
+    });
+  }
+
   async function finishMeeting() {
     await runAction(async () => {
       if (!createdSession) throw new Error("먼저 회의를 시작하세요.");
@@ -103,6 +133,7 @@ export function useMeetingLifecycle() {
     finishMeeting,
     login,
     startMeeting,
+    startMeetingOneClick,
     updateDraft,
   };
 
