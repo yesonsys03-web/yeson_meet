@@ -31,6 +31,23 @@
     encode zstd gzip
 }
 
+# Tunnel origin: plain HTTP for cloudflared (public TLS handled by Cloudflare).
+# Reachable only on the internal docker network (not published to the host).
+:8080 {
+    handle /api/* {
+        reverse_proxy server:8000
+    }
+    handle /ws/* {
+        reverse_proxy server:8000
+    }
+    handle {
+        root * /srv/web
+        try_files {path} /index.html
+        file_server
+    }
+    encode zstd gzip
+}
+
 # Optional: redirect plain HTTP to HTTPS
 :80 {
     redir https://{host}{uri} permanent
