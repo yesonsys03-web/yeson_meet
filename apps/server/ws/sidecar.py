@@ -34,6 +34,7 @@ from apps.server.domain.events import UtteranceTranscribed, serialize
 from apps.server.ops.session_safety import (
     enforce_meeting_duration_limit,
     session_started_at_exceeds_max_duration,
+    stamp_sidecar_disconnected,
 )
 from apps.server.ws.audio_stats import audio_stats
 from apps.server.ws.bus import bus
@@ -273,6 +274,9 @@ async def ws_sidecar(ws: WebSocket) -> None:
         if meeting.device_id is None:
             meeting.device_id = device.id
             await db.commit()
+        if meeting.disconnected_at is not None:
+            meeting.disconnected_at = None
+            await db.commit()
         if await enforce_meeting_duration_limit(db, meeting):
             await ws.close(code=status.WS_1008_POLICY_VIOLATION)
             return
@@ -430,6 +434,11 @@ async def ws_sidecar(ws: WebSocket) -> None:
             if _active_ai_sessions.get(session_uuid) is ai_session:
                 del _active_ai_sessions[session_uuid]
             await ai_session.stop()
+        try:
+            async with AsyncSessionLocal() as db:
+                await stamp_sidecar_disconnected(db, session_pk)
+        except Exception:
+            logger.exception("Failed to stamp sidecar disconnect", extra=trace_extra)
     # NOTE(s4-session-lifecycle): do not audio_stats.discard() here — admin
     # view + tests rely on snapshot surviving sidecar disconnect to show final
     # totals. Session-end eviction is owned by S4 /api/v1/sessions/{id}/end.
