@@ -21,7 +21,9 @@ from apps.server.ops.alerts import sync_gemini_config_alert
 from apps.server.ops.session_safety_scheduler import (
     run_meeting_safety_watchdog,
     safety_poll_interval,
+    stamp_live_sessions_disconnected,
 )
+from apps.server.db.session import AsyncSessionLocal
 from apps.server.ws.operator import router as ws_operator_router
 from apps.server.ws.sidecar import router as ws_sidecar_router
 from apps.server.ws.viewer import router as ws_viewer_router
@@ -67,6 +69,15 @@ async def lifespan(app: FastAPI):
 
     interval = safety_poll_interval()
     if interval > 0:
+        try:
+            stamped = await stamp_live_sessions_disconnected(AsyncSessionLocal)
+            if stamped:
+                logger.info(
+                    "Stamped live sessions disconnected at startup",
+                    extra={"count": stamped},
+                )
+        except Exception:
+            logger.exception("Startup disconnect re-stamp failed")
         watchdog = asyncio.create_task(run_meeting_safety_watchdog(interval))
     else:
         watchdog = None
