@@ -2,7 +2,8 @@
 """yeson-meet FastAPI server entrypoint."""
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 import logging
 
 from fastapi import FastAPI
@@ -17,6 +18,10 @@ from apps.server.api.v1.utterances import router as utterances_router
 from apps.server.api.v1.audio_stats import router as audio_stats_router
 from apps.server.ai.gemini_live import gemini_config_health
 from apps.server.ops.alerts import sync_gemini_config_alert
+from apps.server.ops.session_safety_scheduler import (
+    run_meeting_safety_watchdog,
+    safety_poll_interval,
+)
 from apps.server.ws.operator import router as ws_operator_router
 from apps.server.ws.sidecar import router as ws_sidecar_router
 from apps.server.ws.viewer import router as ws_viewer_router
@@ -59,7 +64,20 @@ async def lifespan(app: FastAPI):
         logger.info("Gemini Live configured", extra={"model": gemini_health["model"]})
     else:
         logger.warning("Gemini Live disabled: GEMINI_API_KEY is not configured")
-    yield
+
+    interval = safety_poll_interval()
+    if interval > 0:
+        watchdog = asyncio.create_task(run_meeting_safety_watchdog(interval))
+    else:
+        watchdog = None
+        logger.info("Meeting safety watchdog disabled (poll interval <= 0)")
+    try:
+        yield
+    finally:
+        if watchdog is not None:
+            watchdog.cancel()
+            with suppress(asyncio.CancelledError):
+                await watchdog
 
 
 app = FastAPI(title="yeson-meet", version="0.1.0", lifespan=lifespan)
