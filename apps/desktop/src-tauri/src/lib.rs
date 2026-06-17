@@ -15,6 +15,10 @@ pub fn run() {
             sidecar::stop_sidecar,
             sidecar::sidecar_status,
             sidecar::open_screen_recording_settings,
+            credentials::save_credentials,
+            credentials::clear_credentials,
+            credentials::credentials_meta,
+            credentials::load_operator_login,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

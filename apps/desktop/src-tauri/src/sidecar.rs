@@ -175,6 +175,8 @@ pub fn start_sidecar(
     }
     *child_slot = None;
 
+    let device_api_key = crate::credentials::resolve_device_key(&request.device_api_key)?; // vibelign: allow-secret
+
     let (mut child, detail) = match locate_bundled_sidecar() {
         Some(sidecar_exe) => {
             emit_backend_log(
@@ -189,7 +191,7 @@ pub fn start_sidecar(
             let mut command = Command::new(&sidecar_exe);
             command
                 .env("SERVER_WS_BASE", request.server_ws_base.trim())
-                .env("YESON_DEVICE_API_KEY", request.device_api_key.trim())
+                .env("YESON_DEVICE_API_KEY", device_api_key.trim())
                 .env("YESON_SESSION_ID", request.session_id.trim())
                 .env("YESON_SIDECAR_MODE", "audio")
                 .env("YESON_RMS_DBFS_THRESHOLD", "-60")
@@ -221,7 +223,7 @@ pub fn start_sidecar(
                 .args(["run", "python", "-m", "apps.client_sidecar.main"])
                 .current_dir(&project_dir)
                 .env("SERVER_WS_BASE", request.server_ws_base.trim())
-                .env("YESON_DEVICE_API_KEY", request.device_api_key.trim())
+                .env("YESON_DEVICE_API_KEY", device_api_key.trim())
                 .env("YESON_SESSION_ID", request.session_id.trim())
                 .env("YESON_SIDECAR_MODE", "audio")
                 .env("YESON_RMS_DBFS_THRESHOLD", "-60")
@@ -372,7 +374,6 @@ pub fn sidecar_status(state: tauri::State<'_, SidecarState>) -> Result<SidecarSt
 
 fn validate_request(request: &SidecarStartRequest) -> Result<(), String> {
     require_value("SERVER_WS_BASE", &request.server_ws_base)?;
-    require_value("YESON_DEVICE_API_KEY", &request.device_api_key)?;
     require_value("YESON_SESSION_ID", &request.session_id)?;
     Ok(())
 }
