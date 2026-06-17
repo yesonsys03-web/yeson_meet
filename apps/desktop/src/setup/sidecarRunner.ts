@@ -37,9 +37,6 @@ export async function startSidecar(values: SetupValues): Promise<SidecarStatus> 
 }
 
 function validateSidecarValues(values: SetupValues): void {
-  if (!values.deviceApiKey.trim()) {
-    throw new Error("테스트용 오디오 키(Device API Key)를 먼저 입력하세요. 이 값은 저장되지 않아서 sidecar 시작 직전에 매번 붙여넣어야 합니다.");
-  }
   if (!values.sessionId.trim() || values.sessionId.includes("<")) {
     throw new Error("Live Meeting에서 회의를 만든 뒤 생성된 Session ID가 필요합니다.");
   }
