@@ -17,6 +17,7 @@ from apps.server.ops.session_safety_scheduler import (
     _sweep_once,
     run_meeting_safety_watchdog,
     safety_poll_interval,
+    stamp_live_sessions_disconnected,
 )
 
 
@@ -173,3 +174,75 @@ async def test_watchdog_survives_sweep_exception(
 
     assert calls["n"] >= 2  # first sweep raised; loop survived and retried
     assert refreshed is not None and refreshed.status == "ended"
+
+
+async def _create_disconnected_meeting(
+    db_session: AsyncSession, disconnected_at: datetime
+) -> Session:
+    now = datetime.now(timezone.utc)
+    meeting = await _create_live_meeting(db_session, now - timedelta(minutes=10))
+    meeting.disconnected_at = disconnected_at
+    await db_session.commit()
+    return meeting
+
+
+@pytest.mark.asyncio
+async def test_sweep_ends_long_disconnected_session(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("YESON_MEETING_MAX_DURATION_HOURS", "3")
+    monkeypatch.setenv("YESON_MEETING_DISCONNECT_GRACE_SECONDS", "300")
+    now = datetime.now(timezone.utc)
+    meeting = await _create_disconnected_meeting(db_session, now - timedelta(seconds=301))
+
+    ended = await _sweep_once(_factory(db_session))
+
+    assert ended == 1
+    async with _factory(db_session)() as db2:
+        refreshed = (
+            await db2.execute(select(Session).where(Session.id == meeting.id))
+        ).scalar_one()
+    assert refreshed.status == "ended"
+
+
+@pytest.mark.asyncio
+async def test_sweep_keeps_connected_and_within_grace(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("YESON_MEETING_MAX_DURATION_HOURS", "3")
+    monkeypatch.setenv("YESON_MEETING_DISCONNECT_GRACE_SECONDS", "300")
+    now = datetime.now(timezone.utc)
+    connected = await _create_live_meeting(db_session, now - timedelta(minutes=10))
+    within = await _create_disconnected_meeting(db_session, now - timedelta(seconds=60))
+
+    ended = await _sweep_once(_factory(db_session))
+
+    assert ended == 0
+    async with _factory(db_session)() as db2:
+        for m in (connected, within):
+            refreshed = (
+                await db2.execute(select(Session).where(Session.id == m.id))
+            ).scalar_one()
+            assert refreshed.status == "live"
+
+
+@pytest.mark.asyncio
+async def test_stamp_live_sessions_disconnected_stamps_only_null_live(
+    db_session: AsyncSession,
+) -> None:
+    now = datetime.now(timezone.utc)
+    null_live = await _create_live_meeting(db_session, now - timedelta(minutes=5))
+    already = await _create_disconnected_meeting(db_session, now - timedelta(minutes=2))
+
+    stamped = await stamp_live_sessions_disconnected(_factory(db_session), now=now)
+
+    assert stamped == 1
+    async with _factory(db_session)() as db2:
+        refreshed_null = (
+            await db2.execute(select(Session).where(Session.id == null_live.id))
+        ).scalar_one()
+        refreshed_already = (
+            await db2.execute(select(Session).where(Session.id == already.id))
+        ).scalar_one()
+    assert refreshed_null.disconnected_at == now
+    assert refreshed_already.disconnected_at == now - timedelta(minutes=2)

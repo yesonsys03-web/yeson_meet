@@ -17,13 +17,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from apps.server.db.models import Session
 from apps.server.db.session import AsyncSessionLocal
-from apps.server.ops.session_safety import enforce_meeting_duration_limit
+from apps.server.ops.session_safety import (
+    enforce_meeting_duration_limit,
+    enforce_sidecar_disconnect_limit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,17 +49,51 @@ def safety_poll_interval() -> float:
 
 # === ANCHOR: SESSION_SAFETY_SCHEDULER_SWEEP_ONCE_START ===
 async def _sweep_once(session_factory: async_sessionmaker) -> int:
-    """Force-end every over-duration live meeting; return how many were ended."""
+    """Force-end every over-duration or long-disconnected live meeting."""
     ended = 0
     async with session_factory() as db:
         live = (
             await db.execute(select(Session).where(Session.status == "live"))
         ).scalars().all()
         for meeting in live:
-            if await enforce_meeting_duration_limit(db, meeting):
+            if await enforce_meeting_duration_limit(db, meeting) or (
+                await enforce_sidecar_disconnect_limit(db, meeting)
+            ):
                 ended += 1
     return ended
 # === ANCHOR: SESSION_SAFETY_SCHEDULER_SWEEP_ONCE_END ===
+
+
+# === ANCHOR: SESSION_SAFETY_SCHEDULER_STAMP_LIVE_DISCONNECTED_START ===
+async def stamp_live_sessions_disconnected(
+    session_factory: async_sessionmaker,
+    now: datetime | None = None,
+) -> int:
+    """Stamp disconnected_at=now on every live session lacking it (startup only).
+
+    On a fresh boot no sidecar is connected yet, so live rows with a NULL
+    disconnected_at are made eligible for the disconnect watchdog. A genuinely
+    live sidecar reconnects within its backoff and clears the stamp well inside
+    the grace period, so no active meeting is wrongly ended.
+    """
+    when = now or datetime.now(timezone.utc)
+    stamped = 0
+    async with session_factory() as db:
+        live = (
+            await db.execute(
+                select(Session).where(
+                    Session.status == "live",
+                    Session.disconnected_at.is_(None),
+                )
+            )
+        ).scalars().all()
+        for meeting in live:
+            meeting.disconnected_at = when
+            stamped += 1
+        if stamped:
+            await db.commit()
+    return stamped
+# === ANCHOR: SESSION_SAFETY_SCHEDULER_STAMP_LIVE_DISCONNECTED_END ===
 
 
 # === ANCHOR: SESSION_SAFETY_SCHEDULER_RUN_WATCHDOG_START ===
