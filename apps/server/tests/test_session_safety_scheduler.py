@@ -101,3 +101,32 @@ async def test_sweep_keeps_fresh_session_live(
         ).scalar_one()
     assert refreshed.status == "live"
     assert operator_alerts.active() == []
+
+
+@pytest.mark.asyncio
+async def test_watchdog_sweeps_then_cancels_cleanly(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("YESON_MEETING_MAX_DURATION_HOURS", "3")
+    now = datetime.now(timezone.utc)
+    meeting = await _create_live_meeting(db_session, now - timedelta(hours=3, minutes=1))
+
+    task = asyncio.create_task(
+        run_meeting_safety_watchdog(0.01, session_factory=_factory(db_session))
+    )
+    # Give the loop time to run at least one sweep.
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        async with _factory(db_session)() as db2:
+            refreshed = (
+                await db2.execute(select(Session).where(Session.id == meeting.id))
+            ).scalar_one()
+        if refreshed.status == "ended":
+            break
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert refreshed.status == "ended"
+    assert len(operator_alerts.active()) == 1
