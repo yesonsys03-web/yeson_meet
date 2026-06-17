@@ -16,7 +16,11 @@ from apps.server.ops.alerts import (
     operator_alerts,
     raise_meeting_disconnect_alert,
 )
-from apps.server.ops.session_safety import enforce_meeting_duration_limit
+from apps.server.ops.session_safety import (
+    disconnect_grace,
+    enforce_meeting_duration_limit,
+    session_disconnect_exceeds_grace,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -119,6 +123,35 @@ async def test_enforce_meeting_duration_limit_publishes_session_ended(
 
     assert payload["type"] == "session.ended"
     assert payload["session_id"] == str(meeting.external_id)
+
+
+def test_disconnect_grace_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("YESON_MEETING_DISCONNECT_GRACE_SECONDS", raising=False)
+    assert disconnect_grace() == timedelta(seconds=300)
+
+
+def test_disconnect_grace_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("YESON_MEETING_DISCONNECT_GRACE_SECONDS", "30")
+    assert disconnect_grace() == timedelta(seconds=30)
+
+
+def test_disconnect_grace_non_positive_disables(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("YESON_MEETING_DISCONNECT_GRACE_SECONDS", "0")
+    assert disconnect_grace() == timedelta.max
+
+
+def test_disconnect_grace_malformed_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("YESON_MEETING_DISCONNECT_GRACE_SECONDS", "xyz")
+    assert disconnect_grace() == timedelta(seconds=300)
+
+
+def test_session_disconnect_exceeds_grace_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("YESON_MEETING_DISCONNECT_GRACE_SECONDS", "300")
+    now = datetime.now(timezone.utc)
+    assert session_disconnect_exceeds_grace(now - timedelta(seconds=301), now) is True
+    assert session_disconnect_exceeds_grace(now - timedelta(seconds=299), now) is False
 
 
 def test_raise_meeting_disconnect_alert_records_critical() -> None:

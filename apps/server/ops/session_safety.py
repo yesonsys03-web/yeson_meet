@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.server.db.models import Session
@@ -14,6 +15,8 @@ from apps.server.ws.bus import bus
 
 DEFAULT_MAX_DURATION_HOURS = 3.0
 MAX_DURATION_ENV = "YESON_MEETING_MAX_DURATION_HOURS"
+DEFAULT_DISCONNECT_GRACE_SECONDS = 300.0
+DISCONNECT_GRACE_ENV = "YESON_MEETING_DISCONNECT_GRACE_SECONDS"
 
 
 # === ANCHOR: SESSION_SAFETY_MEETING_MAX_DURATION_START ===
@@ -66,6 +69,31 @@ async def enforce_meeting_duration_limit(
         ),
     )
     return True
+
+
+# === ANCHOR: SESSION_SAFETY_DISCONNECT_GRACE_START ===
+def disconnect_grace() -> timedelta:
+    """Grace before a disconnected live meeting is force-ended; non-positive disables it."""
+    raw = os.environ.get(DISCONNECT_GRACE_ENV, str(DEFAULT_DISCONNECT_GRACE_SECONDS))
+    try:
+        seconds = float(raw)
+    except ValueError:
+        seconds = DEFAULT_DISCONNECT_GRACE_SECONDS
+    if seconds <= 0:
+        return timedelta.max
+    return timedelta(seconds=seconds)
+# === ANCHOR: SESSION_SAFETY_DISCONNECT_GRACE_END ===
+
+
+# === ANCHOR: SESSION_SAFETY_SESSION_DISCONNECT_EXCEEDS_GRACE_START ===
+def session_disconnect_exceeds_grace(
+    disconnected_at: datetime,
+    now: datetime | None = None,
+) -> bool:
+    """Return True when a disconnected live meeting should be force-ended."""
+    current = now or datetime.now(timezone.utc)
+    return _as_utc(current) - _as_utc(disconnected_at) >= disconnect_grace()
+# === ANCHOR: SESSION_SAFETY_SESSION_DISCONNECT_EXCEEDS_GRACE_END ===
 
 
 # === ANCHOR: SESSION_SAFETY__AS_UTC_START ===
