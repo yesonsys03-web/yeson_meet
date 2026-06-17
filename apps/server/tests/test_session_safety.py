@@ -21,6 +21,7 @@ from apps.server.ops.session_safety import (
     enforce_meeting_duration_limit,
     enforce_sidecar_disconnect_limit,
     session_disconnect_exceeds_grace,
+    stamp_sidecar_disconnected,
 )
 
 
@@ -272,3 +273,32 @@ async def test_enforce_disconnect_publishes_session_ended(
 
     assert payload["type"] == "session.ended"
     assert payload["session_id"] == str(meeting.external_id)
+
+
+@pytest.mark.asyncio
+async def test_stamp_sidecar_disconnected_sets_timestamp_on_live(
+    db_session: AsyncSession,
+) -> None:
+    now = datetime.now(timezone.utc)
+    meeting = await _create_meeting(db_session, now - timedelta(minutes=5))
+    await db_session.commit()
+
+    await stamp_sidecar_disconnected(db_session, meeting.id, now=now)
+
+    await db_session.refresh(meeting)
+    assert meeting.disconnected_at == now
+
+
+@pytest.mark.asyncio
+async def test_stamp_sidecar_disconnected_skips_ended(
+    db_session: AsyncSession,
+) -> None:
+    now = datetime.now(timezone.utc)
+    meeting = await _create_meeting(db_session, now - timedelta(minutes=5))
+    meeting.status = "ended"
+    await db_session.commit()
+
+    await stamp_sidecar_disconnected(db_session, meeting.id, now=now)
+
+    await db_session.refresh(meeting)
+    assert meeting.disconnected_at is None

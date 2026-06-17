@@ -132,6 +132,23 @@ async def enforce_sidecar_disconnect_limit(
 # === ANCHOR: SESSION_SAFETY_ENFORCE_SIDECAR_DISCONNECT_LIMIT_END ===
 
 
+# === ANCHOR: SESSION_SAFETY_STAMP_SIDECAR_DISCONNECTED_START ===
+async def stamp_sidecar_disconnected(
+    db: AsyncSession,
+    session_pk: int,
+    now: datetime | None = None,
+) -> None:
+    """Record the disconnect instant on a still-live meeting; no-op if ended."""
+    meeting = (
+        await db.execute(select(Session).where(Session.id == session_pk))
+    ).scalar_one_or_none()
+    if meeting is None or meeting.status != "live":
+        return
+    meeting.disconnected_at = _as_utc(now or datetime.now(timezone.utc))
+    await db.commit()
+# === ANCHOR: SESSION_SAFETY_STAMP_SIDECAR_DISCONNECTED_END ===
+
+
 # === ANCHOR: SESSION_SAFETY__AS_UTC_START ===
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
