@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { loadValues, storeValues } from "../setup/setupValues";
 import { loadOperatorLogin } from "../setup/credentials";
-import { startSidecar } from "../setup/sidecarRunner";
+import { startSidecar, stopSidecar } from "../setup/sidecarRunner";
 import { createSession, endSession, fetchSessionReport, loginOperator, sessionRequestBody } from "./sessionApi";
 import { runOneClickStart } from "./oneClickStart";
 import type { CreatedSession, EndedSession, MeetingDraft } from "./types";
@@ -100,6 +100,16 @@ export function useMeetingLifecycle() {
       if (!createdSession) throw new Error("먼저 회의를 시작하세요.");
       const ended = await endSession(createdSession.session_id, draft.operatorToken);
       setEndedSession(ended);
+      // Best-effort: the meeting is already ended server-side, so a sidecar that
+      // is not running (or already exited) must not block the end UX. Errors are
+      // logged inside sidecarRunner; swallow here so state still clears.
+      try {
+        await stopSidecar();
+      } catch {
+        // ignore — meeting end already succeeded
+      }
+      // Clear the active session so the one-click button reverts to "회의 시작".
+      setCreatedSession(null);
       setStatusText(`회의 종료 완료: ${ended.ended_at}`);
     });
   }
