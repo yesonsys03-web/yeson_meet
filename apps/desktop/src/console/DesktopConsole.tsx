@@ -5,7 +5,6 @@ import { HelpManualPanel } from "../help/HelpManualPanel";
 import { SettingsPanel } from "../settings/SettingsPanel";
 import { SetupAssistant } from "../setup/SetupAssistant";
 import { ConsoleNav } from "./ConsoleNav";
-import { MeetingLifecyclePanel } from "./MeetingLifecyclePanel";
 import { NativeCaptureBanner } from "./NativeCaptureBanner";
 import { consoleStyles } from "./consoleStyles";
 import type { ConsoleView } from "./types";
@@ -24,9 +23,6 @@ export function DesktopConsole() {
         <NativeCaptureBanner />
         <section hidden={activeView !== "setup"}>
           <SetupAssistant />
-        </section>
-        <section hidden={activeView !== "meet"}>
-          <MeetingLifecyclePanel />
         </section>
         <section hidden={activeView !== "help"}>
           <HelpManualPanel />

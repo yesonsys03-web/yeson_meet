@@ -1,5 +1,5 @@
 // === ANCHOR: CONSOLE_TYPES_START ===
-export type ConsoleView = "setup" | "meet" | "help" | "history" | "settings";
+export type ConsoleView = "setup" | "help" | "history" | "settings";
 
 export type MeetingDraft = {
   email: string;

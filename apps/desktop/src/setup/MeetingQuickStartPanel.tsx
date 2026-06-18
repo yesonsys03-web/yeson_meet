@@ -1,5 +1,5 @@
 // === ANCHOR: MEETING_QUICK_START_PANEL_START ===
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { LiveSubtitlePreview } from "../console/LiveSubtitlePreview";
 import { useMeetingLifecycle } from "../console/useMeetingLifecycle";
 import { EMPTY_META, loadCredentialsMeta, saveCredentials, type CredentialsMeta } from "./credentials";
@@ -131,6 +131,17 @@ export function MeetingQuickStartPanel() {
                 Viewer URL 복사
               </button>
             </>
+          ) : lifecycle.endedSession ? (
+            <>
+              <div style={styles.quickStartSessionBox}>
+                <span>회의록</span>
+                <strong>{lifecycle.endedSession.report_path}</strong>
+              </div>
+              <button type="button" onClick={lifecycle.downloadReport} disabled={lifecycle.busy} style={styles.secondaryButton}>
+                {lifecycle.busy ? "불러오는 중..." : "회의록(Markdown) 불러오기"}
+              </button>
+              {lifecycle.reportText ? <pre style={reportTextStyle}>{lifecycle.reportText}</pre> : null}
+            </>
           ) : (
             <p style={styles.quickStartEmpty}>회의를 시작하면 Session ID와 Viewer URL이 여기에 표시됩니다.</p>
           )}
@@ -139,6 +150,18 @@ export function MeetingQuickStartPanel() {
     </section>
   );
 }
+
+const reportTextStyle: CSSProperties = {
+  marginTop: 10,
+  maxHeight: 220,
+  overflow: "auto",
+  whiteSpace: "pre-wrap",
+  fontSize: 12,
+  lineHeight: 1.5,
+  background: "rgba(255,255,255,0.08)",
+  padding: 10,
+  borderRadius: 8,
+};
 
 function QuickField({
   label,

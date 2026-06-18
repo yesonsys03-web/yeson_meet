@@ -116,8 +116,11 @@ export function useMeetingLifecycle() {
 
   async function downloadReport() {
     await runAction(async () => {
-      if (!createdSession) throw new Error("먼저 회의를 시작하세요.");
-      setReportText(await fetchSessionReport(createdSession.session_id, draft.operatorToken));
+      // After 회의 종료, createdSession is cleared (button reverts to 회의 시작) but
+      // the report is still fetchable via the ended session's id.
+      const sessionId = createdSession?.session_id ?? endedSession?.session_id;
+      if (!sessionId) throw new Error("먼저 회의를 시작하세요.");
+      setReportText(await fetchSessionReport(sessionId, draft.operatorToken));
       setStatusText("Markdown 리포트를 불러왔습니다.");
     });
   }
