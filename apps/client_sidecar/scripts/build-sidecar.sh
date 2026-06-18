@@ -4,7 +4,8 @@ set -euo pipefail
 # Build the Python client sidecar into a standalone single-file executable and
 # stage it where Tauri's externalBin expects it. Mirrors
 # native_helper_mac/scripts/build-release.sh. Lean native-only: excludes
-# numpy/sounddevice/samplerate (sounddevice fallback is dev-only).
+# sounddevice/samplerate (their dev-only fallback). numpy is NOT excluded — the
+# native audio path imports it via audio/rms.py (RMS dBFS silence detection).
 
 # repo root = scripts/../../.. (apps/client_sidecar/scripts -> repo root)
 cd "$(dirname "$0")/../../.."
@@ -20,7 +21,6 @@ uv run --project apps/client_sidecar pyinstaller \
     --collect-submodules truststore \
     --exclude-module sounddevice \
     --exclude-module samplerate \
-    --exclude-module numpy \
     --distpath target/sidecar-dist \
     --workpath target/sidecar-build \
     --specpath target/sidecar-build \
