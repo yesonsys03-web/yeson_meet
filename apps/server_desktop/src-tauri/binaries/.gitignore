@@ -1,0 +1,4 @@
+# Staged PyInstaller --onedir server bundle is a build artifact (built by
+# apps/server_desktop/scripts/build-server.sh). Keep the staging dir tracked,
+# but never commit the heavy frozen bundle (grpc/genai/_internal libs).
+yeson-server-*/

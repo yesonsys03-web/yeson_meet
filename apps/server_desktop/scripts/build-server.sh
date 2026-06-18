@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build the packaged yeson-server console into a standalone PyInstaller --onedir
+# bundle and stage it where Tauri's externalBin expects it.
+#
+# NET-NEW (Slice 2): unlike apps/client_sidecar/scripts/build-sidecar.sh (which
+# only collects `truststore`), this freezes the heavy native server deps
+# proven in the Slice 0 probe: grpc + google-genai + bcrypt. Gemini-only —
+# google.cloud.speech/translate are intentionally NOT collected (they are the
+# heaviest, most Windows-fragile surface and the server's google.cloud imports
+# are lazy, so the Gemini path never loads them). See .omc/plans/open-questions.md.
+#
+# Uses --onedir (NOT --onefile): the heavy grpc/genai deps + the SQLite WAL
+# checkpoint on teardown are far more robust without onefile's temp-extract.
+
+# repo root = scripts/../../.. (apps/server_desktop/scripts -> repo root)
+cd "$(dirname "$0")/../../.."
+[[ -f apps/server_desktop/sidecar/server_entry.py ]] || {
+    echo "ERROR: repo root detection failed (cwd: $(pwd))" >&2
+    exit 1
+}
+
+PY_VERSION="3.12"
+BUILD_VENV="target/server-build-venv"
+DIST="target/server-dist"
+WORK="target/server-build"
+
+echo "Preparing Python ${PY_VERSION} build venv (server deps + pyinstaller)…"
+uv venv --clear --python "${PY_VERSION}" "${BUILD_VENV}"
+# Install the server project (pulls fastapi/uvicorn/grpc/google-genai/bcrypt/
+# aiosqlite/sqlalchemy/passlib/…) plus PyInstaller into the build venv.
+VIRTUAL_ENV="${BUILD_VENV}" uv pip install --python "${BUILD_VENV}/bin/python" \
+    ./apps/server "pyinstaller>=6.21"
+
+echo "Building yeson-server (PyInstaller --onedir, Gemini-only)…"
+# --paths . puts the repo root on PyInstaller's analysis path so the entry's
+# absolute `apps.server.*` / `apps.server_desktop.*` imports resolve.
+#
+# Flag set is the Slice-0-verified Gemini-only set:
+#   grpc (genai needs it) + google.genai + google.api_core submodules + bcrypt.
+#   NO --collect-all google.cloud.speech / google.cloud.translate.
+"${BUILD_VENV}/bin/pyinstaller" \
+    --noconfirm --clean --onedir \
+    --name yeson-server \
+    --paths . \
+    --collect-submodules grpc \
+    --collect-data grpc \
+    --hidden-import grpc._cython.cygrpc \
+    --collect-all google.genai \
+    --collect-submodules google.api_core \
+    --hidden-import aiosqlite \
+    --distpath "${DIST}" \
+    --workpath "${WORK}" \
+    --specpath "${WORK}" \
+    apps/server_desktop/sidecar/server_entry.py
+
+OUT_DIR="${DIST}/yeson-server"
+OUT_BIN="${OUT_DIR}/yeson-server"
+if [[ ! -x "${OUT_BIN}" ]]; then
+    echo "ERROR: expected binary at ${OUT_BIN}" >&2
+    exit 1
+fi
+
+# Map host arch → Tauri target-triple suffix expected by externalBin.
+# (Same mapping as apps/client_sidecar/scripts/build-sidecar.sh.)
+case "$(uname -m)" in
+    arm64)   TRIPLE="aarch64-apple-darwin" ;;
+    x86_64)  TRIPLE="x86_64-apple-darwin" ;;
+    *)
+        echo "ERROR: unsupported host arch: $(uname -m)" >&2
+        exit 1
+        ;;
+esac
+
+# Stage the whole onedir tree (binary + _internal libs) under the triple name.
+DEST_DIR="apps/server_desktop/src-tauri/binaries/yeson-server-${TRIPLE}"
+rm -rf "${DEST_DIR}"
+mkdir -p "$(dirname "${DEST_DIR}")"
+cp -R "${OUT_DIR}" "${DEST_DIR}"
+echo "→ ${DEST_DIR}"
+echo "  bundle size: $(du -sh "${DEST_DIR}" | cut -f1)"
+echo "  entry binary: ${DEST_DIR}/yeson-server"

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "yeson-server-console",
+  "version": "0.0.0",
+  "identifier": "com.yeson.server-console",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5274",
+    "beforeDevCommand": "pnpm dev:vite",
+    "beforeBuildCommand": "pnpm build:vite"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "yeson server console",
+        "width": 1100,
+        "height": 760,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "nsis", "msi"],
+    "icon": ["icons/icon.icns", "icons/icon.ico", "icons/icon.png"],
+    "category": "Business",
+    "shortDescription": "yeson-meet server operator console",
+    "longDescription": "Desktop console that runs and supervises the packaged yeson-meet server.",
+    "resources": ["binaries/yeson-server-*/**/*"],
+    "macOS": {
+      "minimumSystemVersion": "14.2"
+    }
+  }
+}

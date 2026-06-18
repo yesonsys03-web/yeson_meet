@@ -24,6 +24,7 @@ __pycache__/
 # Rust / Tauri
 target/
 apps/desktop/src-tauri/binaries/
+apps/server_desktop/src-tauri/binaries/yeson-server-*/
 
 # Compose volumes
 deploy/data/
@@ -67,3 +68,4 @@ generated/
 
 # Tauri build output (extra safety)
 apps/desktop/src-tauri/gen/
+apps/server_desktop/src-tauri/gen/
