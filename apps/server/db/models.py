@@ -21,19 +21,25 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Uuid,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+
+# Dialect-portable surrogate-key type. PostgreSQL keeps native ``BIGINT`` (zero
+# regression); SQLite renders ``INTEGER`` so that a ``PRIMARY KEY`` column gets
+# rowid autoincrement (SQLite only autoincrements ``INTEGER PRIMARY KEY``, never
+# ``BIGINT``). FK columns use the same type so cross-dialect joins stay aligned.
+_BigIntId = BigInteger().with_variant(Integer, "sqlite")
 
 
 # === ANCHOR: MODELS_APPUSER_START ===
 class AppUser(Base):
     __tablename__ = "app_user"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_BigIntId, primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
@@ -53,7 +59,7 @@ class AppUser(Base):
 class Device(Base):
     __tablename__ = "device"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_BigIntId, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     api_key_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(
@@ -69,15 +75,19 @@ class Device(Base):
 class Session(Base):
     __tablename__ = "session"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_BigIntId, primary_key=True, autoincrement=True)
     external_id: Mapped[PyUUID] = mapped_column(
-        UUID(as_uuid=True), unique=True, nullable=False
+        # Dialect-portable UUID (PR1.1): SQLAlchemy 2.0 Uuid(as_uuid=True)
+        # compiles to native ``uuid`` on PostgreSQL (zero regression vs the
+        # prior postgresql.UUID) and to ``CHAR(32)`` on SQLite, round-tripping
+        # ``uuid.UUID`` on both backends so a cold SQLite file boots cleanly.
+        Uuid(as_uuid=True), unique=True, nullable=False
     )
     owner_user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("app_user.id"), nullable=False
+        _BigIntId, ForeignKey("app_user.id"), nullable=False
     )
     device_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("device.id"), nullable=True
+        _BigIntId, ForeignKey("device.id"), nullable=True
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     client_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -106,9 +116,9 @@ class Session(Base):
 class SessionToken(Base):
     __tablename__ = "session_token"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_BigIntId, primary_key=True, autoincrement=True)
     session_id: Mapped[int] = mapped_column(
-        BigInteger,
+        _BigIntId,
         ForeignKey("session.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -128,9 +138,9 @@ class SessionToken(Base):
 class Utterance(Base):
     __tablename__ = "utterance"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_BigIntId, primary_key=True, autoincrement=True)
     session_id: Mapped[int] = mapped_column(
-        BigInteger,
+        _BigIntId,
         ForeignKey("session.id", ondelete="CASCADE"),
         nullable=False,
     )
