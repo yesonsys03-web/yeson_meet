@@ -67,10 +67,16 @@ public final class ScreenCaptureKitProvider: NSObject, AudioCapture, SCStreamOut
     }
 
     public func stop() {
-        Task {
-            try? await stream?.stopCapture()
-            stream = nil
-        }
+        guard let stream = stream else { return }
+        self.stream = nil
+        // Wait for ScreenCaptureKit to fully release the system audio tap before
+        // returning (the caller exits right after). A fire-and-forget Task let the
+        // process exit mid-teardown, leaving the tap dirty so a helper restarted
+        // immediately after inherited a *silent* stream ("오디오 없음"). Bounded so
+        // a stuck stopCapture can't outlast the parent's SIGKILL backstop.
+        let done = DispatchSemaphore(value: 0)
+        stream.stopCapture { _ in done.signal() }
+        _ = done.wait(timeout: .now() + 2.0)
     }
 
     public func dispose() {

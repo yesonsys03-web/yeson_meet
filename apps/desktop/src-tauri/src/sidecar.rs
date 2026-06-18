@@ -41,14 +41,17 @@ fn terminate_child(child: &mut Child) {
             .arg(format!("-{pgid}"))
             .status();
         let mut exited = false;
-        for _ in 0..10 {
+        // ~3s: give the macOS helper time to await SCStream.stopCapture() so the
+        // system audio tap is released cleanly. A 1s window let the SIGKILL backstop
+        // cut teardown short, leaving the next capture silent on restart.
+        for _ in 0..30 {
             if matches!(child.try_wait(), Ok(Some(_))) {
                 exited = true;
                 break;
             }
             thread::sleep(Duration::from_millis(100));
         }
-        // Backstop: SIGKILL the group if anything is still alive after ~1s.
+        // Backstop: SIGKILL the group if anything is still alive after ~3s.
         if !exited {
             let _ = Command::new("/bin/kill")
                 .arg("-KILL")

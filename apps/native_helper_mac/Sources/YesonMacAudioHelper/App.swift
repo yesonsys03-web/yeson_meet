@@ -34,7 +34,10 @@ struct YesonMacAudioHelperApp {
 
         signal(SIGINT, SIG_IGN)
         signal(SIGTERM, SIG_IGN)
-        let sigSrc = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        // Background queue (not .main): dispose() now blocks until stopCapture()
+        // completes, and main is parked in Task.sleep below — handling teardown off
+        // the main queue keeps that synchronous wait from deadlocking.
+        let sigSrc = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
         sigSrc.setEventHandler {
             ipc.emitEvent(name: "stopping", payload: [:])
             provider.dispose()
