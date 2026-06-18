@@ -21,13 +21,22 @@ export function DesktopConsole() {
       <ConsoleNav activeView={activeView} onChange={setActiveView} />
       <main style={consoleStyles.content}>
         <NativeCaptureBanner />
-        <section hidden={activeView !== "setup"}>
+        <section
+          hidden={activeView !== "setup"}
+          style={activeView === "setup" ? consoleStyles.sectionFill : undefined}
+        >
           <SetupAssistant />
         </section>
-        <section hidden={activeView !== "help"}>
+        <section
+          hidden={activeView !== "help"}
+          style={activeView === "help" ? consoleStyles.sectionScroll : undefined}
+        >
           <HelpManualPanel />
         </section>
-        <section hidden={activeView !== "settings"}>
+        <section
+          hidden={activeView !== "settings"}
+          style={activeView === "settings" ? consoleStyles.sectionScroll : undefined}
+        >
           <SettingsPanel />
         </section>
       </main>

@@ -11,19 +11,31 @@ export const statusStyles: Record<SmokeStatus, CSSProperties> = {
 
 export const styles: Record<string, CSSProperties> = {
   page: {
-    minHeight: "100vh",
-    padding: 32,
+    flex: 1,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
     color: "#0f172a",
     background:
       "radial-gradient(circle at top left, #dbeafe 0, transparent 30%), linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%)",
     fontFamily: "Aptos, 'Segoe UI', sans-serif",
   },
   hero: {
+    flexShrink: 0,
     display: "grid",
     gridTemplateColumns: "minmax(0, 1fr) 320px",
     gap: 24,
     alignItems: "stretch",
-    marginBottom: 24,
+    padding: "28px 32px 16px",
+    background: "#eef2ff",
+    borderBottom: "1px solid rgba(148,163,184,.25)",
+  },
+  scrollBody: {
+    flex: 1,
+    minHeight: 0,
+    overflowY: "auto",
+    padding: 32,
   },
   eyebrow: {
     margin: 0,

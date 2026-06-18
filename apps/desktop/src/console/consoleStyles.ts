@@ -3,14 +3,17 @@ import type { CSSProperties } from "react";
 
 export const consoleStyles: Record<string, CSSProperties> = {
   page: {
-    minHeight: "100vh",
+    height: "100vh",
+    overflow: "hidden",
     display: "grid",
     gridTemplateColumns: "260px minmax(0, 1fr)",
+    gridTemplateRows: "minmax(0, 1fr)",
     color: "#e2e8f0",
     background: "#020617",
     fontFamily: "Aptos, 'Segoe UI', sans-serif",
   },
   sidebar: {
+    overflowY: "auto",
     padding: 22,
     borderRight: "1px solid rgba(148,163,184,.18)",
     background: "linear-gradient(180deg, #0f172a, #020617)",
@@ -49,8 +52,24 @@ export const consoleStyles: Record<string, CSSProperties> = {
   },
   content: {
     minWidth: 0,
+    height: "100%",
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
     background:
       "radial-gradient(circle at 15% 0%, rgba(56,189,248,.16), transparent 28%), linear-gradient(135deg, #020617, #0f172a 54%, #111827)",
+  },
+  sectionFill: {
+    flex: 1,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+  },
+  sectionScroll: {
+    flex: 1,
+    minHeight: 0,
+    overflowY: "auto",
   },
   panel: {
     maxWidth: 1180,

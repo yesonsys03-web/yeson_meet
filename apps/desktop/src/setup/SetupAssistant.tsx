@@ -99,19 +99,18 @@ export function SetupAssistant() {
     <div style={styles.page}>
       <section style={styles.hero}>
         <div>
-          <p style={styles.eyebrow}>yeson-meet · Mac / Windows client setup</p>
-          <h1 style={styles.title}>회의실 PC 실행 준비</h1>
-          <p style={styles.subtitle}>
-            담당자가 탭을 오가거나 터미널 명령을 외우지 않아도 되도록, 로그인·회의 생성·sidecar 실행·자막 확인을 한 화면에 모았습니다.
-          </p>
+          <p style={styles.eyebrow}>yeson-meet</p>
+          <h1 style={styles.title}>미팅 실시간 자막</h1>
+          <p style={styles.subtitle}>번역과 보고서 작성</p>
         </div>
         <div style={styles.statusCard}>
-          <span style={styles.statusLabel}>현재 검증 범위</span>
-          <strong>회의 생성 + sidecar 실행</strong>
-          <small>Session ID와 Viewer URL은 회의를 만들면 자동으로 실행값에 반영됩니다.</small>
+          <span style={styles.statusLabel}>이 화면에서 하는 일</span>
+          <strong>실시간 자막 · 번역 · 보고서</strong>
+          <small>회의를 시작하면 참가자에게 번역 자막이 송출되고, 종료하면 보고서가 자동으로 만들어집니다.</small>
         </div>
       </section>
 
+      <div style={styles.scrollBody}>
       <MeetingQuickStartPanel />
 
       <details style={{ marginTop: 24 }}>
@@ -170,6 +169,7 @@ export function SetupAssistant() {
 
         <SmokeChecklist checks={checks} onRunAll={runAllSmokeChecks} running={runningChecks} />
       </details>
+      </div>
     </div>
   );
 }

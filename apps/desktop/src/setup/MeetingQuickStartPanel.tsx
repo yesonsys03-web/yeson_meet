@@ -47,13 +47,13 @@ export function MeetingQuickStartPanel() {
           <p style={styles.eyebrow}>one-click meeting start</p>
           <h2 style={styles.quickStartTitle}>버튼 하나로 회의 시작</h2>
           <p style={styles.quickStartIntro}>
-            한 번 자격증명을 등록하면, 다음부터는 로그인·회의 생성·sidecar 실행이 자동으로 진행됩니다.
+            처음 한 번만 로그인 정보를 등록하면, 이후에는 버튼 하나로 회의가 시작되고 참가자 자막 송출까지 자동으로 이어집니다.
           </p>
         </div>
         <div style={styles.quickStartSteps}>
           <span>로그인</span>
-          <span>회의 생성</span>
-          <span>Sidecar</span>
+          <span>회의 시작</span>
+          <span>자막 송출</span>
         </div>
       </div>
 
