@@ -2,3 +2,8 @@
 # apps/server_desktop/scripts/build-server.sh). Keep the staging dir tracked,
 # but never commit the heavy frozen bundle (grpc/genai/_internal libs).
 yeson-server-*/
+# Vendored cloudflared quick-tunnel binary (P4.1b): ~50-70MB official binary,
+# downloaded per dev-host triple by scripts/fetch-cloudflared.sh. Never commit it
+# (same rationale as the frozen server bundle); the committed cloudflared-stub.sh
+# stays tracked for the offline tunnel tests.
+cloudflared-*/

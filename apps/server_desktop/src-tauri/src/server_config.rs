@@ -196,6 +196,22 @@ pub fn meta() -> Result<ServerConfigMeta, String> {
     Ok(load_ensured()?.to_meta())
 }
 
+/// Persist the public `viewer_base` programmatically (P4.1b tunnel lifecycle).
+///
+/// The tunnel manager calls this with the captured `https://<rand>.trycloudflare.com`
+/// URL so the NEXT server spawn injects it as `VIEWER_BASE` (`inject_secrets`),
+/// and with `""` to clear it back to the LAN default on stop. This is the
+/// non-secret keychain SoT path (parallel to `save_server_config`'s
+/// `apply`-then-`save`), kept separate so the tunnel lifecycle does not have to
+/// round-trip through the operator-facing `ServerConfigInput` (which would also
+/// require resubmitting every other non-secret field). Generated-once JWT_SECRET
+/// is preserved by `load_ensured`.
+pub fn set_viewer_base(viewer_base: &str) -> Result<(), String> {
+    let mut config = load_ensured()?;
+    config.viewer_base = viewer_base.trim().to_string();
+    save(&config)
+}
+
 #[tauri::command]
 pub fn save_server_config(request: ServerConfigInput) -> Result<ServerConfigMeta, String> {
     let mut config = load_ensured()?;

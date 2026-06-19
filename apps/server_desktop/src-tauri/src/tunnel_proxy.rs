@@ -92,7 +92,12 @@ fn percent_decode(input: &str) -> String {
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
+        // A `%XX` escape needs exactly 3 bytes (`%`, hi, lo). `i + 3 <= len`
+        // admits a `%XX` that OCCUPIES the final three bytes (the old
+        // `i + 2 < len` dropped a trailing escape, so a path ending in `%2e`
+        // smuggled a literal `%2e` past normalization — fail-open). Fail-closed:
+        // decode the trailing escape too.
+        if bytes[i] == b'%' && i + 3 <= bytes.len() {
             let hi = hex_val(bytes[i + 1]);
             let lo = hex_val(bytes[i + 2]);
             if let (Some(hi), Some(lo)) = (hi, lo) {
@@ -292,12 +297,47 @@ async fn forward_http(
     let mut out_req = Request::from_parts(parts, Full::new(body_bytes));
     // Forward the original path+query (allowlist already cleared the path; the
     // server re-validates tokens etc.). The URI carries it through unchanged.
-    let _ = out_req.headers_mut(); // (kept explicit for clarity / future tweaks)
+    // Defense-in-depth (Nit 2): strip hop-by-hop / Connection / Upgrade control
+    // headers and clear any inbound `X-Forwarded-*` an edge might have set, so a
+    // crafted public request can neither smuggle an upgrade on the plain-HTTP
+    // path nor spoof the forwarded chain. The WS path keeps its upgrade headers
+    // (handled separately in `proxy_upgrade`); this is HTTP-only.
+    strip_hop_by_hop_headers(out_req.headers_mut());
 
     let resp = sender.send_request(out_req).await?;
     let (parts, body) = resp.into_parts();
     let bytes = body.collect().await?.to_bytes();
     Ok(Response::from_parts(parts, Full::new(bytes)))
+}
+
+/// Remove hop-by-hop, connection-control, and upgrade-control headers from a
+/// plain-HTTP request before forwarding, plus any inbound `X-Forwarded-*`
+/// (defense-in-depth). Hop-by-hop headers are scoped to a single transport hop
+/// (RFC 9110/7230) and must not be relayed across the proxy; clearing
+/// `connection`/`upgrade`/`x-forwarded-*` also denies a crafted public request
+/// the ability to coax the viewer-only HTTP path into an upgrade or to spoof the
+/// forwarded chain. The viewer WS upgrade is forwarded by `proxy_upgrade`, which
+/// deliberately preserves the headers the handshake needs — this is HTTP-only.
+fn strip_hop_by_hop_headers(headers: &mut hyper::HeaderMap) {
+    use hyper::header::{HeaderName, CONNECTION, UPGRADE};
+    const HOP_BY_HOP: [&str; 7] = [
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "x-forwarded-for",
+    ];
+    headers.remove(CONNECTION);
+    headers.remove(UPGRADE);
+    headers.remove("x-forwarded-host");
+    headers.remove("x-forwarded-proto");
+    for name in HOP_BY_HOP {
+        if let Ok(header) = HeaderName::from_bytes(name.as_bytes()) {
+            headers.remove(header);
+        }
+    }
 }
 
 /// Proxy a WebSocket upgrade: open a parallel upgrade to the upstream, relay the
@@ -479,6 +519,52 @@ mod tests {
         assert!(!allows("/ws/sidecar."), "trailing dot (distinct path) denied");
         // backslash separator smuggling
         assert!(!allows("/ws\\sidecar"));
+    }
+
+    // Nit 3 (off-by-one): a `%XX` occupying the FINAL three bytes must decode.
+    // The old `i + 2 < len` bound dropped a trailing escape, so `/v/.%2e` kept a
+    // literal `%2e` instead of collapsing to `..` and could fail-open.
+    #[test]
+    fn decodes_trailing_percent_escape() {
+        // bare trailing escape decodes to its byte.
+        assert_eq!(percent_decode("%2e"), ".");
+        assert_eq!(percent_decode("/a/%2e"), "/a/.");
+        // a path ending in `%2e` (a `.` segment) canonicalizes away the trailing
+        // dot rather than smuggling a literal `%2e` segment through.
+        assert_eq!(normalize_path("/v/%2e"), "/v");
+        // a trailing `%2e%2e` decodes to `..`, popping the prior segment — so
+        // `/v/x/%2e%2e` -> `/v` (NOT a literal `%2e%2e` left dangling).
+        assert_eq!(normalize_path("/v/x/%2e%2e"), "/v");
+        // and a denied target reached via a trailing-escape `..` stays denied.
+        assert!(!allows("/v/%2e%2e/ws/sidecar"));
+    }
+
+    // Nit 2 (hop-by-hop): the HTTP forwarder must drop hop-by-hop / connection /
+    // upgrade-control headers and inbound X-Forwarded-* before relaying.
+    #[test]
+    fn strips_hop_by_hop_and_forwarded_headers() {
+        use hyper::header::{HeaderMap, HeaderValue, CONNECTION, HOST, UPGRADE};
+        let mut headers = HeaderMap::new();
+        headers.insert(CONNECTION, HeaderValue::from_static("upgrade"));
+        headers.insert(UPGRADE, HeaderValue::from_static("websocket"));
+        headers.insert("keep-alive", HeaderValue::from_static("timeout=5"));
+        headers.insert("transfer-encoding", HeaderValue::from_static("chunked"));
+        headers.insert("x-forwarded-for", HeaderValue::from_static("1.2.3.4"));
+        headers.insert("x-forwarded-host", HeaderValue::from_static("evil.example"));
+        headers.insert("x-forwarded-proto", HeaderValue::from_static("https"));
+        // A legit end-to-end header must survive.
+        headers.insert(HOST, HeaderValue::from_static("localhost"));
+
+        strip_hop_by_hop_headers(&mut headers);
+
+        assert!(!headers.contains_key(CONNECTION), "Connection stripped");
+        assert!(!headers.contains_key(UPGRADE), "Upgrade stripped (no HTTP-path upgrade smuggling)");
+        assert!(!headers.contains_key("keep-alive"));
+        assert!(!headers.contains_key("transfer-encoding"));
+        assert!(!headers.contains_key("x-forwarded-for"));
+        assert!(!headers.contains_key("x-forwarded-host"));
+        assert!(!headers.contains_key("x-forwarded-proto"));
+        assert_eq!(headers.get(HOST).unwrap(), "localhost", "end-to-end header preserved");
     }
 
     #[test]

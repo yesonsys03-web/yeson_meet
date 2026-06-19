@@ -12,6 +12,16 @@ type ServerStatus = {
   detail: string;
 };
 
+// Mirrors the Rust `TunnelStatus` (serde camelCase). `url` is the public viewer
+// base (https://<rand>.trycloudflare.com) once the tunnel is live.
+type TunnelStatus = {
+  running: boolean;
+  url: string | null;
+  vport: number | null;
+  uptimeSecs: number | null;
+  detail: string;
+};
+
 const DEFAULT_PORT = 8000;
 
 function hasTauriRuntime(): boolean {
@@ -38,6 +48,10 @@ export default function ServerConsole() {
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<AppLogEntry[]>([]);
   const [showConfig, setShowConfig] = useState(false);
+  const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
+  // null = server stopped (no meeting possible); number = live-meeting count.
+  const [liveSessions, setLiveSessions] = useState<number | null>(null);
+  const [tunnelBusy, setTunnelBusy] = useState(false);
   const [, forceTick] = useState(0);
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -53,6 +67,18 @@ export default function ServerConsole() {
       setStatus(next);
     } catch (err) {
       setError(errorToText(err));
+    }
+    // Tunnel + live-meeting state for the "Go live (public)" control. Best-effort:
+    // a probe failure (e.g. server momentarily down) must not spam the error line.
+    try {
+      setTunnel(await invoke<TunnelStatus>("tunnel_status_cmd"));
+    } catch {
+      /* tunnel status is non-critical for the main console */
+    }
+    try {
+      setLiveSessions(await invoke<number | null>("live_session_count_cmd"));
+    } catch {
+      setLiveSessions(null);
     }
   }, []);
 
@@ -103,8 +129,45 @@ export default function ServerConsole() {
     }
   }, []);
 
+  const onGoLive = useCallback(async () => {
+    setError(null);
+    setTunnelBusy(true);
+    try {
+      const serverPort = status?.port ?? port;
+      const next = await invoke<TunnelStatus>("start_tunnel_cmd", { serverPort });
+      setTunnel(next);
+      append({ level: "info", source: "console", message: `public mode on: ${next.url ?? "(no url)"}` });
+      await refreshStatus();
+    } catch (err) {
+      const text = errorToText(err);
+      setError(text);
+      append({ level: "error", source: "console", message: text });
+    } finally {
+      setTunnelBusy(false);
+    }
+  }, [status, port, refreshStatus]);
+
+  const onStopPublic = useCallback(async () => {
+    setError(null);
+    setTunnelBusy(true);
+    try {
+      const next = await invoke<TunnelStatus>("stop_tunnel_cmd");
+      setTunnel(next);
+      append({ level: "info", source: "console", message: "public mode off" });
+      await refreshStatus();
+    } catch (err) {
+      const text = errorToText(err);
+      setError(text);
+      append({ level: "error", source: "console", message: text });
+    } finally {
+      setTunnelBusy(false);
+    }
+  }, [refreshStatus]);
+
   const running = status?.running ?? false;
   const liveStatus = useMemo<ServerStatus | null>(() => status, [status]);
+  const tunnelOn = tunnel?.running ?? false;
+  const meetingLive = (liveSessions ?? 0) > 0;
 
   return (
     <div style={styles.shell}>
@@ -150,6 +213,53 @@ export default function ServerConsole() {
           <Stat label="pid" value={liveStatus?.pid != null ? String(liveStatus.pid) : "—"} />
           <Stat label="uptime" value={formatUptime(liveStatus?.uptimeSecs ?? null)} />
         </dl>
+        {/* Public mode (P4.1b): expose the per-meeting viewer URL over a cloudflared
+            quick-tunnel. "Go live" is hidden while a meeting is active — going
+            public restarts the server, which would interrupt a live meeting. */}
+        <div style={styles.tunnelRow}>
+          <span style={{ ...styles.badge, ...(tunnelOn ? styles.badgeOn : styles.badgeOff) }}>
+            {tunnelOn ? "PUBLIC" : "LAN ONLY"}
+          </span>
+          {tunnelOn ? (
+            <button
+              style={{ ...styles.button, ...styles.stop }}
+              onClick={onStopPublic}
+              disabled={tunnelBusy}
+            >
+              Stop public
+            </button>
+          ) : (
+            <button
+              style={{ ...styles.button, ...styles.start }}
+              onClick={onGoLive}
+              disabled={tunnelBusy || !running || meetingLive}
+              title={
+                !running
+                  ? "start the server first"
+                  : meetingLive
+                    ? "end the meeting before going public (it would be interrupted)"
+                    : "publish the per-meeting viewer URL over a cloudflared tunnel"
+              }
+            >
+              Go live (public)
+            </button>
+          )}
+          {tunnelOn && tunnel?.url ? (
+            <a style={styles.tunnelUrl} href={tunnel.url} target="_blank" rel="noreferrer">
+              {tunnel.url}
+            </a>
+          ) : (
+            <span style={styles.tunnelHint}>
+              {tunnelBusy
+                ? "starting tunnel…"
+                : !running
+                  ? "server stopped — start it to enable public mode"
+                  : meetingLive
+                    ? "a meeting is live — end it before going public"
+                    : "viewer URL stays LAN-only until you go public"}
+            </span>
+          )}
+        </div>
         {error ? <p style={styles.error}>{error}</p> : null}
         {!hasTauriRuntime() ? (
           <p style={styles.warn}>Not running inside Tauri — Start/Stop and live logs are disabled in the browser preview.</p>
@@ -248,6 +358,14 @@ const styles: Record<string, React.CSSProperties> = {
   statValue: { fontSize: 15, fontWeight: 600, margin: 0, fontVariantNumeric: "tabular-nums" },
   error: { margin: "12px 0 0", color: "#ff6b6b", fontSize: 13 },
   warn: { margin: "12px 0 0", color: "#ffd166", fontSize: 12 },
+  tunnelRow: { display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" },
+  tunnelUrl: {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: 12,
+    color: "#4ade80",
+    wordBreak: "break-all",
+  },
+  tunnelHint: { fontSize: 12, color: "#6b7c8d" },
   // Config block: capped, independently-scrollable region between the fixed
   // header and the log body so it never collapses the single-scroll layout.
   configWrap: { flex: "0 0 auto", maxHeight: "55%", overflowY: "auto" },

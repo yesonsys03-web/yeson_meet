@@ -136,6 +136,19 @@ pub struct ServerStartRequest {
     provider: Option<String>,
 }
 
+impl ServerStartRequest {
+    /// Build a start request for an in-process restart on a known port (the
+    /// tunnel lifecycle restarts the server on its current port to propagate a
+    /// new `VIEWER_BASE`). `provider` is left `None` so `start_server_inner`
+    /// applies its `gemini_live` default exactly as a fresh start would.
+    pub fn for_restart(port: u16) -> Self {
+        Self {
+            port: Some(port),
+            provider: None,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerStatus {
@@ -159,6 +172,20 @@ pub fn start_server(
     app: tauri::AppHandle,
     request: ServerStartRequest,
     state: tauri::State<'_, ServerProcessState>,
+) -> Result<ServerStatus, String> {
+    start_server_inner(&app, request, &state)
+}
+
+/// The actual start logic, callable both from the `start_server` Tauri command
+/// and from the tunnel lifecycle (`tunnel.rs`), which restarts the server to
+/// propagate a freshly-captured `VIEWER_BASE`. Taking `&ServerProcessState`
+/// instead of `tauri::State` lets an in-process caller (the tunnel command,
+/// which already holds the managed state) reuse the exact proven spawn path
+/// (secrets injection, port probe, process-group spawn) with no duplication.
+pub fn start_server_inner(
+    app: &tauri::AppHandle,
+    request: ServerStartRequest,
+    state: &ServerProcessState,
 ) -> Result<ServerStatus, String> {
     let mut slot = state
         .inner
@@ -215,7 +242,7 @@ pub fn start_server(
     let server_bin = locate_bundled_server()
         .ok_or_else(|| "bundled yeson-server binary not found".to_string())?;
     emit_backend_log(
-        &app,
+        app,
         "info",
         "server",
         format!("starting yeson-server: {}", server_bin.display()),
@@ -255,8 +282,8 @@ pub fn start_server(
         .map_err(|error| format!("failed to start yeson-server: {error}"))?;
 
     let pid = child.id();
-    spawn_output_forwarder(&app, "server:stdout", "info", child.stdout.take());
-    spawn_output_forwarder(&app, "server:stderr", "warn", child.stderr.take());
+    spawn_output_forwarder(app, "server:stdout", "info", child.stdout.take());
+    spawn_output_forwarder(app, "server:stderr", "warn", child.stderr.take());
 
     let running = RunningServer {
         child,
@@ -266,7 +293,7 @@ pub fn start_server(
     let status = running_status(&running, "server started");
     *slot = Some(running);
     emit_backend_log(
-        &app,
+        app,
         "info",
         "server",
         format!("yeson-server pid={pid} bound port {port} (db: {})", db_path.display()),
@@ -371,6 +398,12 @@ fn locate_bundled_server() -> Option<PathBuf> {
 
 #[tauri::command]
 pub fn stop_server(state: tauri::State<'_, ServerProcessState>) -> Result<ServerStatus, String> {
+    stop_server_inner(&state)
+}
+
+/// Stop logic shared by the `stop_server` command and the tunnel lifecycle
+/// (`tunnel.rs` stops-then-starts the server to propagate a new `VIEWER_BASE`).
+pub fn stop_server_inner(state: &ServerProcessState) -> Result<ServerStatus, String> {
     let mut slot = state
         .inner
         .lock()
@@ -381,6 +414,18 @@ pub fn stop_server(state: tauri::State<'_, ServerProcessState>) -> Result<Server
     };
     terminate_group(&mut running.child);
     Ok(stopped_status("server stopped"))
+}
+
+/// The port the server is CURRENTLY bound to, or `None` if it is not running.
+/// The tunnel lifecycle uses this to restart the server on the same port (so the
+/// proxy/cloudflared, which target that port, keep working across the restart).
+pub fn current_port(state: &ServerProcessState) -> Option<u16> {
+    let mut slot = state.inner.lock().ok()?;
+    let running = slot.as_mut()?;
+    if matches!(running.child.try_wait(), Ok(Some(_))) {
+        return None;
+    }
+    Some(running.port)
 }
 
 #[tauri::command]

@@ -406,28 +406,213 @@ fn start_proxy_blocking(
     rt.block_on(crate::tunnel_proxy::start_proxy(server_port))
 }
 
+// === ANCHOR: TUNNEL_LIVE_SESSIONS_START ===
+/// Query the bundled server's read-only live-meeting count over loopback. This
+/// is the restart gate (BINDING must-fix #2): the lifecycle restart SIGTERMs the
+/// server's process group and hard-kills any ACTIVE meeting (in-memory AI session
+/// state), so going public MUST refuse while a meeting is live. We hit
+/// `GET /api/v1/health/live-sessions` (added in `apps/server/api/v1/health.py`),
+/// whose `status == "live"` count is the SAME authoritative DB flag the safety
+/// watchdog queries. Reuses the `hyper` client already vendored for the proxy
+/// (no new dep); a connect/parse failure is surfaced to the caller (fail-closed:
+/// the lifecycle treats an unknown count as "do not restart").
+fn live_session_count(server_port: u16) -> Result<u32, String> {
+    use std::sync::OnceLock;
+    use tokio::runtime::Runtime;
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    let rt = RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build live-session probe runtime")
+    });
+    rt.block_on(fetch_live_session_count(server_port))
+}
+
+async fn fetch_live_session_count(server_port: u16) -> Result<u32, String> {
+    use http_body_util::{BodyExt, Full};
+    use hyper::body::Bytes;
+    use hyper::{Request, StatusCode};
+    use hyper_util::rt::TokioIo;
+    use tokio::net::TcpStream;
+
+    let addr = format!("127.0.0.1:{server_port}");
+    let stream = TcpStream::connect(&addr)
+        .await
+        .map_err(|error| format!("server unreachable on {addr}: {error}"))?;
+    let io = TokioIo::new(stream);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake::<_, Full<Bytes>>(io)
+        .await
+        .map_err(|error| format!("server handshake failed: {error}"))?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/v1/health/live-sessions")
+        .header("host", addr.as_str())
+        .body(Full::new(Bytes::new()))
+        .map_err(|error| format!("failed to build live-session request: {error}"))?;
+
+    let resp = sender
+        .send_request(req)
+        .await
+        .map_err(|error| format!("live-session request failed: {error}"))?;
+    if resp.status() != StatusCode::OK {
+        return Err(format!(
+            "live-session probe returned HTTP {}",
+            resp.status().as_u16()
+        ));
+    }
+    let body = resp
+        .into_body()
+        .collect()
+        .await
+        .map_err(|error| format!("failed to read live-session body: {error}"))?
+        .to_bytes();
+    parse_live_count(&body)
+}
+
+/// Parse the `{"live": N}` body from the live-session endpoint. Tiny + pure so
+/// it is unit-testable without a server (dependency-free scan, matching the
+/// `extract_tunnel_url` approach). Fail-closed on any unexpected shape.
+fn parse_live_count(body: &[u8]) -> Result<u32, String> {
+    let text = std::str::from_utf8(body).map_err(|_| "live-session body not UTF-8".to_string())?;
+    let key = "\"live\"";
+    let after_key = text
+        .find(key)
+        .map(|i| i + key.len())
+        .ok_or_else(|| "live-session body missing \"live\" field".to_string())?;
+    let rest = &text[after_key..];
+    let colon = rest
+        .find(':')
+        .ok_or_else(|| "malformed live-session body".to_string())?;
+    let digits: String = rest[colon + 1..]
+        .chars()
+        .skip_while(|c| c.is_whitespace())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits
+        .parse::<u32>()
+        .map_err(|_| "live-session count is not a number".to_string())
+}
+// === ANCHOR: TUNNEL_LIVE_SESSIONS_END ===
+
 // === ANCHOR: TUNNEL_COMMANDS_START ===
-// Thin Tauri command wrappers. P4.1a registers these so they are callable, but
-// they do ONLY spawn/capture/teardown — no keychain `viewer_base` write and no
-// server restart (that lifecycle is P4.1b). `server_port` is supplied by the
-// caller (the running bundled server's port); wiring it from `ServerProcessState`
-// is deferred with the rest of the lifecycle.
+// P4.1b lifecycle commands. `start_tunnel_cmd` now drives the FULL public-mode
+// flow (BINDING must-fixes #1 Option A + #2 restart-gating): gate on "no live
+// meeting" → bring up the viewer-only proxy + cloudflared (P4.1a) and capture
+// the URL → persist it as the keychain `viewer_base` → restart the bundled
+// server on the SAME port so `inject_secrets` injects the new `VIEWER_BASE`
+// (`create_session` then mints tunnel viewer URLs with ZERO change to
+// sessions.py). cloudflared + the proxy are SEPARATE processes that survive the
+// restart: the proxy reconnects per-request to `127.0.0.1:<port>` and cloudflared
+// holds its own edge connection, so neither is torn down when the server rebinds.
 #[tauri::command]
 pub fn start_tunnel_cmd(
+    app: tauri::AppHandle,
     server_port: u16,
-    state: tauri::State<'_, TunnelState>,
+    tunnel_state: tauri::State<'_, TunnelState>,
+    server_state: tauri::State<'_, crate::server_process::ServerProcessState>,
 ) -> Result<TunnelStatus, String> {
-    start_tunnel(&state, server_port)
+    // 1. Gate: refuse to go public while a meeting is live (the restart below
+    //    would SIGTERM the server group and hard-kill the active meeting). This
+    //    is the command-level BACKSTOP; the UI also hides "Go live" while a
+    //    meeting is active. Fail-closed: an unreachable probe blocks the restart.
+    let live = live_session_count(server_port).map_err(|error| {
+        format!("cannot verify meeting state before going public: {error}")
+    })?;
+    if live > 0 {
+        return Err(
+            "a meeting is currently live — end the meeting before going public \
+             (the server restart needed to publish the tunnel URL would interrupt it)"
+                .to_string(),
+        );
+    }
+
+    // 2. Bring up proxy + cloudflared and capture the public URL (P4.1a).
+    let status = start_tunnel(&tunnel_state, server_port)?;
+    let Some(url) = status.url.clone() else {
+        return Ok(status);
+    };
+
+    // 3. Persist the captured URL as the keychain viewer_base so the next spawn
+    //    injects VIEWER_BASE. If this fails, tear the tunnel back down so we do
+    //    not leave a public edge whose URL the server will never mint.
+    if let Err(error) = crate::server_config::set_viewer_base(&url) {
+        let _ = stop_tunnel(&tunnel_state);
+        return Err(format!("failed to persist viewer_base: {error}"));
+    }
+
+    // 4. Restart the bundled server on the SAME port so inject_secrets picks up
+    //    the new VIEWER_BASE. The proxy/cloudflared survive (separate processes;
+    //    the server rebinds the same port). If the server was not running, skip
+    //    the restart — the operator will start it next and it will read the now-
+    //    persisted viewer_base on that fresh spawn.
+    if let Some(port) = crate::server_process::current_port(&server_state) {
+        crate::server_process::stop_server_inner(&server_state)?;
+        crate::server_process::start_server_inner(
+            &app,
+            crate::server_process::ServerStartRequest::for_restart(port),
+            &server_state,
+        )?;
+    }
+
+    Ok(status)
 }
 
 #[tauri::command]
-pub fn stop_tunnel_cmd(state: tauri::State<'_, TunnelState>) -> Result<TunnelStatus, String> {
-    stop_tunnel(&state)
+pub fn stop_tunnel_cmd(
+    app: tauri::AppHandle,
+    tunnel_state: tauri::State<'_, TunnelState>,
+    server_state: tauri::State<'_, crate::server_process::ServerProcessState>,
+) -> Result<TunnelStatus, String> {
+    // Tear down cloudflared + proxy first so the public edge is gone immediately.
+    let status = stop_tunnel(&tunnel_state)?;
+
+    // Clear viewer_base back to the LAN default and restart the server (same
+    // gate as start: only restart when no meeting is live, so stopping public
+    // mode never interrupts a meeting). If a meeting IS live, we leave the
+    // (now-stale) tunnel viewer_base in place rather than kill the meeting — the
+    // operator can stop public mode again after the meeting ends. The public
+    // edge is already down regardless, so no traffic reaches the stale host.
+    if let Some(port) = crate::server_process::current_port(&server_state) {
+        let live = live_session_count(port).unwrap_or(0);
+        if live == 0 {
+            crate::server_config::set_viewer_base("")?;
+            crate::server_process::stop_server_inner(&server_state)?;
+            crate::server_process::start_server_inner(
+                &app,
+                crate::server_process::ServerStartRequest::for_restart(port),
+                &server_state,
+            )?;
+        }
+    } else {
+        // Server not running: just clear the base so the next start is LAN-only.
+        crate::server_config::set_viewer_base("")?;
+    }
+
+    Ok(status)
 }
 
 #[tauri::command]
 pub fn tunnel_status_cmd(state: tauri::State<'_, TunnelState>) -> Result<TunnelStatus, String> {
     tunnel_status(&state)
+}
+
+/// Read-only live-meeting count for the UI's PRIMARY guard: the server console
+/// hides/disables "Go live (public)" while a meeting is active (the command-level
+/// refuse in `start_tunnel_cmd` is the backstop). Returns the count when the
+/// server is running, or `None` when it is not (no meeting can be live then).
+#[tauri::command]
+pub fn live_session_count_cmd(
+    server_state: tauri::State<'_, crate::server_process::ServerProcessState>,
+) -> Result<Option<u32>, String> {
+    match crate::server_process::current_port(&server_state) {
+        Some(port) => live_session_count(port).map(Some),
+        None => Ok(None),
+    }
 }
 // === ANCHOR: TUNNEL_COMMANDS_END ===
 
@@ -465,6 +650,22 @@ mod tests {
         assert_eq!(extract_tunnel_url("INF Starting tunnel"), None);
         assert_eq!(extract_tunnel_url("https://example.com/foo"), None);
         assert_eq!(extract_tunnel_url("https://.trycloudflare.com"), None);
+    }
+
+    #[test]
+    fn parses_live_session_count() {
+        assert_eq!(parse_live_count(b"{\"live\":0}").unwrap(), 0);
+        assert_eq!(parse_live_count(b"{\"live\": 3}").unwrap(), 3);
+        assert_eq!(parse_live_count(b"{\"live\" : 42 }").unwrap(), 42);
+        // restart-gate semantics: any positive count blocks going public.
+        assert!(parse_live_count(b"{\"live\":1}").unwrap() > 0);
+    }
+
+    #[test]
+    fn rejects_malformed_live_session_bodies() {
+        assert!(parse_live_count(b"{}").is_err(), "missing field");
+        assert!(parse_live_count(b"{\"live\":\"x\"}").is_err(), "non-numeric");
+        assert!(parse_live_count(b"not json").is_err());
     }
 
     #[test]
