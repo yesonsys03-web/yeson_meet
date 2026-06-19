@@ -18,7 +18,7 @@ on:
       - "uv.lock"
 
 permissions:
-  contents: read
+  contents: write   # publish the client installer as a release asset
 
 jobs:
   build:
@@ -123,7 +123,11 @@ jobs:
           $baseConfig | ConvertTo-Json -Depth 20 | Set-Content $baseConfigPath
           pnpm --filter @yeson-meet/desktop tauri:build
 
+      # Artifact uploads are best-effort: the 0.5GB Actions artifact-storage pool
+      # can be full, which must not fail the build — the installer is delivered
+      # via the prerelease below (release assets use a separate storage pool).
       - name: Upload sidecar executable
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: yeson-sidecar-windows
@@ -132,6 +136,7 @@ jobs:
           retention-days: 7
 
       - name: Upload desktop installer bundle
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: yeson-meet-desktop-windows
@@ -141,3 +146,21 @@ jobs:
             apps/desktop/src-tauri/target/release/bundle/**/*.msi
           if-no-files-found: error
           retention-days: 7
+
+      # Publish the CLIENT installer to a rolling prerelease (like the server
+      # console), so it can be downloaded from the repo's Releases page without
+      # touching the full Actions artifact-storage quota.
+      - name: Publish client installer to prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-windows-latest
+          name: Client app (Windows, unsigned test build)
+          prerelease: true
+          body: |
+            Unsigned Windows test build of the yeson-meet desktop CLIENT app
+            (apps/desktop), rebuilt on each run. Install via SmartScreen
+            "More info -> Run anyway" (see docs/INSTALL.md), then pair it to your
+            running server console.
+          files: |
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          fail_on_unmatched_files: true

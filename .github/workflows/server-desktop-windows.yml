@@ -18,6 +18,9 @@ name: Server console Windows installer
 on:
   workflow_dispatch:
   push:
+    # Heavy installer build: auto-run only on main; feature branches build on
+    # demand via the Actions tab (workflow_dispatch). Mirrors windows-desktop.yml.
+    branches: [main]
     paths:
       - ".github/workflows/server-desktop-windows.yml"
       - "apps/server_desktop/**"
