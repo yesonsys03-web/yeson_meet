@@ -9,6 +9,7 @@ type ConsoleNavProps = {
 
 const navItems: Array<{ view: ConsoleView; label: string; disabled?: boolean }> = [
   { view: "setup", label: "Setup Assistant" },
+  { view: "devices", label: "Device Keys" },
   { view: "settings", label: "Settings" },
   { view: "help", label: "Help Manual" },
   { view: "history", label: "History", disabled: true },

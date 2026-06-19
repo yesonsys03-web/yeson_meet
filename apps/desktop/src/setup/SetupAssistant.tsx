@@ -1,5 +1,7 @@
 // === ANCHOR: SETUPASSISTANT_START ===
 import { useEffect, useMemo, useState } from "react";
+import { createDevice } from "../console/sessionApi";
+import { loadCredentialsMeta, loadOperatorLogin, saveCredentials } from "./credentials";
 import { Field } from "./Field";
 import { MeetingQuickStartPanel } from "./MeetingQuickStartPanel";
 import { PlatformRunbookPanel } from "./PlatformRunbookPanel";
@@ -19,6 +21,17 @@ export function SetupAssistant() {
   const [copied, setCopied] = useState(false);
   const [runningChecks, setRunningChecks] = useState(false);
   const [checks, setChecks] = useState(initialSmokeChecks);
+  // === ANCHOR: SETUPASSISTANT_DEVICEKEY_START ===
+  const [mintBusy, setMintBusy] = useState(false);
+  const [hasDeviceKey, setHasDeviceKey] = useState(false);
+  const [mintError, setMintError] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadCredentialsMeta()
+      .then((meta) => setHasDeviceKey(meta.hasDeviceKey))
+      .catch(() => undefined);
+  }, []);
+  // === ANCHOR: SETUPASSISTANT_DEVICEKEY_END ===
 
   const platformConfig = PLATFORM_CONFIG[values.platform];
   const sidecarCommand = useMemo(() => buildSidecarCommand(values), [values]);
@@ -95,6 +108,34 @@ export function SetupAssistant() {
   }
   // === ANCHOR: SETUPASSISTANT_MARKCHECK_END ===
 
+  // === ANCHOR: SETUPASSISTANT_GENERATEDEVICEKEY_START ===
+  async function generateDeviceKey() {
+    if (mintBusy) return;
+    setMintBusy(true);
+    setMintError(null);
+    try {
+      const login = await loadOperatorLogin();
+      // loginOperator is already done at this point — we re-use the stored credentials
+      // to obtain a fresh admin token so we can call POST /api/v1/devices.
+      const { loginOperator } = await import("../console/sessionApi");
+      const tokens = await loginOperator(login.email, login.password);
+      const { api_key } = await createDevice("sidecar", tokens.access_token);
+      // Key flows directly into keychain — never assigned to any state or rendered.
+      await saveCredentials({
+        serverWsBase: login.serverWsBase,
+        email: login.email,
+        password: login.password, // vibelign: allow-secret — field name only, not a key value
+        deviceApiKey: api_key,    // vibelign: allow-secret — field name only, not a key value
+      });
+      setHasDeviceKey(true);
+    } catch (error) {
+      setMintError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMintBusy(false);
+    }
+  }
+  // === ANCHOR: SETUPASSISTANT_GENERATEDEVICEKEY_END ===
+
   return (
     <div style={styles.page}>
       <section style={styles.hero}>
@@ -133,6 +174,29 @@ export function SetupAssistant() {
               secret
               onChange={(value) => updateValue("deviceApiKey", value)}
             />
+            {/* === ANCHOR: SETUPASSISTANT_GENERATEDEVICEKEY_BUTTON_START === */}
+            <div style={{ marginBottom: 14 }}>
+              <button
+                type="button"
+                disabled={mintBusy}
+                onClick={() => void generateDeviceKey()}
+                style={{
+                  ...styles.primaryButton,
+                  ...(mintBusy ? { opacity: 0.5, cursor: "not-allowed" } : null),
+                }}
+              >
+                {mintBusy ? "발급 중..." : "사이드카 키 발급 (Generate sidecar key)"}
+              </button>
+              {hasDeviceKey && !mintError && (
+                <p style={{ marginTop: 8, color: "#047857", fontSize: 13 }}>
+                  키체인에 저장됨 (Device key saved)
+                </p>
+              )}
+              {mintError && (
+                <p style={{ marginTop: 8, color: "#be123c", fontSize: 13 }}>{mintError}</p>
+              )}
+            </div>
+            {/* === ANCHOR: SETUPASSISTANT_GENERATEDEVICEKEY_BUTTON_END === */}
             <Field
               label="Session ID"
               help="회의를 만들면 자동으로 채워집니다. 필요할 때만 직접 수정하세요."

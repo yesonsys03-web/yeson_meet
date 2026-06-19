@@ -2,10 +2,12 @@
 """Devices router stub. Body implemented in S1-L1 (POST /devices)."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.server.auth.deps import require_admin
@@ -48,4 +50,49 @@ async def create_device(
     await db.flush()
     await db.commit()
     return DeviceCreateOut(id=device.id, name=device.name, api_key=plaintext)
+
+
+# === ANCHOR: DEVICES_DEVICEOUT_START ===
+class DeviceOut(BaseModel):
+    id: int
+    name: str
+    is_active: bool
+    created_at: datetime
+# === ANCHOR: DEVICES_DEVICEOUT_END ===
+
+
+@router.get("", response_model=list[DeviceOut])
+# === ANCHOR: DEVICES_LIST_DEVICES_START ===
+async def list_devices(
+    _admin: Annotated[AppUser, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+# === ANCHOR: DEVICES_LIST_DEVICES_END ===
+) -> list[DeviceOut]:
+    rows = (
+        await db.execute(select(Device).order_by(Device.id))
+    ).scalars().all()
+    # Serializer omits api_key_hash by construction (never exposed via any GET).
+    return [
+        DeviceOut(
+            id=d.id, name=d.name, is_active=d.is_active, created_at=d.created_at
+        )
+        for d in rows
+    ]
+
+
+@router.post("/{device_id}/revoke", status_code=status.HTTP_204_NO_CONTENT)
+# === ANCHOR: DEVICES_REVOKE_DEVICE_START ===
+async def revoke_device(
+    device_id: int,
+    _admin: Annotated[AppUser, Depends(require_admin)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+# === ANCHOR: DEVICES_REVOKE_DEVICE_END ===
+) -> None:
+    device = await db.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Device not found")
+    # Connect-time-only revocation (PM-2 bound): takes effect at the next
+    # device_from_key / /ws/sidecar connect; live sockets are not force-closed.
+    device.is_active = False
+    await db.commit()
 # === ANCHOR: DEVICES_END ===

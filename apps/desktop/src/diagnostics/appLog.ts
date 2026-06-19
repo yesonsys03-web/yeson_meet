@@ -183,7 +183,7 @@ function errorToText(error: unknown): string {
 function redactSensitiveText(text: string): string {
   return text
     .replace(/(Bearer\s+)[A-Za-z0-9._~+\/-]+/gi, "$1<redacted>")
-    .replace(/((?:password|token|api[_-]?key|deviceApiKey)["']?\s*[:=]\s*["']?)[^"'\s,}]+/gi, "$1<redacted>");
+    .replace(/((?:password|token|api[_-]?key|deviceApiKey|(?<![A-Za-z])key)["']?\s*[:=]\s*["']?)[^"'\s,}&]+/gi, "$1<redacted>");
 }
 
 function downloadTextFile(filename: string, contents: string): void {
