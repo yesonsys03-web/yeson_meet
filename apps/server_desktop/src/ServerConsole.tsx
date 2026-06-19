@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { type AppLogEntry, append, clearAppLogs, installAppLogCapture, subscribeAppLogs } from "./appLog";
 import ServerConfigPanel from "./setup/ServerConfigPanel";
+import TunnelDegradedBanner from "./TunnelDegradedBanner";
 
 type ServerStatus = {
   running: boolean;
@@ -20,6 +21,9 @@ type TunnelStatus = {
   vport: number | null;
   uptimeSecs: number | null;
   detail: string;
+  // P4.2: public tunnel dropped on its own. `running` is false, `url` is the
+  // dead link. LAN viewing is unaffected; the degraded banner handles recovery.
+  degraded: boolean;
 };
 
 const DEFAULT_PORT = 8000;
@@ -168,6 +172,7 @@ export default function ServerConsole() {
   const liveStatus = useMemo<ServerStatus | null>(() => status, [status]);
   const tunnelOn = tunnel?.running ?? false;
   const meetingLive = (liveSessions ?? 0) > 0;
+  const tunnelDegraded = tunnel?.degraded ?? false;
 
   return (
     <div style={styles.shell}>
@@ -260,6 +265,16 @@ export default function ServerConsole() {
             </span>
           )}
         </div>
+        <TunnelDegradedBanner
+          degraded={tunnelDegraded}
+          deadUrl={tunnel?.url ?? null}
+          serverPort={status?.port ?? port}
+          running={running}
+          meetingLive={meetingLive}
+          busy={tunnelBusy}
+          onRepublish={onGoLive}
+          onFallbackLan={onStopPublic}
+        />
         {error ? <p style={styles.error}>{error}</p> : null}
         {!hasTauriRuntime() ? (
           <p style={styles.warn}>Not running inside Tauri — Start/Stop and live logs are disabled in the browser preview.</p>

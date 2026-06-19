@@ -38,6 +38,14 @@ const URL_CAPTURE_TIMEOUT: Duration = Duration::from_secs(60);
 #[derive(Default)]
 pub struct TunnelState {
     inner: Mutex<Option<RunningTunnel>>,
+    /// Sticky degraded record (P4.2): the now-dead public URL, set when a
+    /// *running* tunnel's cloudflared child exits WITHOUT an operator stop. The
+    /// 1s `tunnel_status` poll is the detector — a clean `stop_tunnel` empties
+    /// `inner` so its exit is never seen here, whereas an unexpected exit leaves
+    /// `inner` populated with a dead child. Stays set (so the console banner
+    /// persists) until the operator re-publishes (`start_tunnel`) or falls back
+    /// to LAN (`stop_tunnel`), both of which clear it.
+    degraded: Mutex<Option<String>>,
 }
 
 /// A live cloudflared child plus the captured public URL and the proxy it
@@ -224,6 +232,11 @@ pub struct TunnelStatus {
     vport: Option<u16>,
     uptime_secs: Option<u64>,
     detail: String,
+    /// P4.2: true when the public tunnel dropped on its own (cloudflared exited
+    /// without an operator stop). `running` is false and `url` carries the dead
+    /// URL so the console can explain which link stopped working. LAN viewing is
+    /// unaffected.
+    degraded: bool,
 }
 
 fn running_status(running: &RunningTunnel, detail: impl Into<String>) -> TunnelStatus {
@@ -233,6 +246,7 @@ fn running_status(running: &RunningTunnel, detail: impl Into<String>) -> TunnelS
         vport: Some(running.proxy.vport),
         uptime_secs: Some(running.started_at.elapsed().as_secs()),
         detail: detail.into(),
+        degraded: false,
     }
 }
 
@@ -243,6 +257,20 @@ fn stopped_status(detail: impl Into<String>) -> TunnelStatus {
         vport: None,
         uptime_secs: None,
         detail: detail.into(),
+        degraded: false,
+    }
+}
+
+/// Status for a tunnel that dropped on its own (P4.2). Not running, but carries
+/// the dead URL + the degraded flag so the console raises the fallback banner.
+fn degraded_status(url: String) -> TunnelStatus {
+    TunnelStatus {
+        running: false,
+        url: Some(url),
+        vport: None,
+        uptime_secs: None,
+        detail: "public tunnel dropped — LAN viewing unaffected".to_string(),
+        degraded: true,
     }
 }
 
@@ -268,6 +296,8 @@ pub fn start_tunnel(state: &TunnelState, server_port: u16) -> Result<TunnelStatu
         }
     }
     *slot = None;
+    // Re-publishing clears any prior degraded record (P4.2 recovery, AC P4.2.3).
+    clear_degraded(state);
 
     let cloudflared = locate_cloudflared().ok_or_else(|| {
         "bundled cloudflared binary not found (set YESON_CLOUDFLARED_BIN or vendor it)".to_string()
@@ -334,21 +364,45 @@ pub fn stop_tunnel(state: &TunnelState) -> Result<TunnelStatus, String> {
         .lock()
         .map_err(|_| "tunnel state lock failed".to_string())?;
     let Some(mut running) = slot.take() else {
+        // Falling back to LAN clears any degraded record so the banner drops.
+        clear_degraded(state);
         return Ok(stopped_status("tunnel is not running"));
     };
     running.proxy.stop();
     terminate_group(&mut running.child);
+    clear_degraded(state);
     Ok(stopped_status("tunnel stopped"))
 }
 
-/// Report whether the tunnel is running and its current URL.
+/// Clear the sticky P4.2 degraded record. Called by both lifecycle ends
+/// (re-publish and LAN fallback) — either way the banner should drop.
+fn clear_degraded(state: &TunnelState) {
+    if let Ok(mut deg) = state.degraded.lock() {
+        *deg = None;
+    }
+}
+
+/// Report whether the tunnel is running and its current URL. This 1s-polled
+/// path is also the P4.2 degraded DETECTOR: if a tunnel we believe is running
+/// has actually exited (cloudflared died on its own — a clean stop would have
+/// emptied `inner`), record the dead URL as degraded so the console raises the
+/// fallback banner, and keep reporting it until the operator re-publishes or
+/// falls back to LAN.
 pub fn tunnel_status(state: &TunnelState) -> Result<TunnelStatus, String> {
     let mut slot = state
         .inner
         .lock()
         .map_err(|_| "tunnel state lock failed".to_string())?;
     let Some(running) = slot.as_mut() else {
-        return Ok(stopped_status("tunnel is not running"));
+        // No live tunnel: surface a sticky degraded record if one was set.
+        let deg = state
+            .degraded
+            .lock()
+            .map_err(|_| "tunnel state lock failed".to_string())?;
+        return Ok(match deg.as_ref() {
+            Some(url) => degraded_status(url.clone()),
+            None => stopped_status("tunnel is not running"),
+        });
     };
     if running
         .child
@@ -356,9 +410,14 @@ pub fn tunnel_status(state: &TunnelState) -> Result<TunnelStatus, String> {
         .map_err(|error| error.to_string())?
         .is_some()
     {
-        let running = slot.take().unwrap();
-        running.proxy.stop();
-        return Ok(stopped_status("tunnel exited"));
+        // Unexpected exit: tear the proxy down, record the dead URL as degraded.
+        let dead = slot.take().unwrap();
+        dead.proxy.stop();
+        let url = dead.url.clone();
+        if let Ok(mut deg) = state.degraded.lock() {
+            *deg = Some(url.clone());
+        }
+        return Ok(degraded_status(url));
     }
     Ok(running_status(running, "tunnel is running"))
 }
@@ -614,6 +673,32 @@ pub fn live_session_count_cmd(
         None => Ok(None),
     }
 }
+
+/// Best-effort primary LAN IPv4 of THIS machine. Opens a UDP socket and
+/// `connect`s it to a public address — no packet is ever sent; the connect just
+/// makes the OS pick the outbound interface, so `local_addr()` reveals the LAN
+/// IP. Returns None on loopback-only / unusual networking (caller falls back to
+/// a generic hint).
+fn local_lan_ipv4() -> Option<std::net::IpAddr> {
+    use std::net::UdpSocket;
+    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:80").ok()?;
+    let ip = sock.local_addr().ok()?.ip();
+    if ip.is_loopback() || ip.is_unspecified() {
+        None
+    } else {
+        Some(ip)
+    }
+}
+
+/// LAN viewer base (`http://<lan-ip>:<port>`) for the P4.2 degraded banner's
+/// fallback URL. LAN viewers reach the bundled server (and the viewer SPA it now
+/// serves) directly on this address regardless of the public tunnel's state.
+/// Returns None when the LAN IP can't be determined.
+#[tauri::command]
+pub fn lan_viewer_base_cmd(server_port: u16) -> Option<String> {
+    local_lan_ipv4().map(|ip| format!("http://{ip}:{server_port}"))
+}
 // === ANCHOR: TUNNEL_COMMANDS_END ===
 
 // === ANCHOR: TUNNEL_TESTS_START ===
@@ -666,6 +751,29 @@ mod tests {
         assert!(parse_live_count(b"{}").is_err(), "missing field");
         assert!(parse_live_count(b"{\"live\":\"x\"}").is_err(), "non-numeric");
         assert!(parse_live_count(b"not json").is_err());
+    }
+
+    #[test]
+    fn degraded_status_is_sticky_until_cleared() {
+        let state = TunnelState::default();
+        // Clean slate: not running, not degraded.
+        let s = tunnel_status(&state).unwrap();
+        assert!(!s.running && !s.degraded);
+
+        // Simulate a detected drop (cloudflared died under us → recorded).
+        *state.degraded.lock().unwrap() = Some("https://dead.trycloudflare.com".to_string());
+        let s = tunnel_status(&state).unwrap();
+        assert!(!s.running, "a degraded tunnel is not running");
+        assert!(s.degraded, "status must report degraded");
+        assert_eq!(s.url.as_deref(), Some("https://dead.trycloudflare.com"));
+
+        // Polling again keeps reporting it (sticky, so the banner persists).
+        assert!(tunnel_status(&state).unwrap().degraded);
+
+        // Falling back to LAN (operator stop) clears it.
+        stop_tunnel(&state).unwrap();
+        let s = tunnel_status(&state).unwrap();
+        assert!(!s.degraded, "stop must clear the degraded flag");
     }
 
     #[test]

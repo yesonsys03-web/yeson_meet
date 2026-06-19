@@ -25,6 +25,7 @@ pub fn run() {
             tunnel::stop_tunnel_cmd,
             tunnel::tunnel_status_cmd,
             tunnel::live_session_count_cmd,
+            tunnel::lan_viewer_base_cmd,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
