@@ -22,6 +22,7 @@ export default function DevicePanel({ serverPort, running }: Props) {
   const [devices, setDevices] = useState<DeviceOut[]>([]);
   const [newName, setNewName] = useState("sidecar");
   const [issued, setIssued] = useState<NewDevice | null>(null);
+  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,19 +54,36 @@ export default function DevicePanel({ serverPort, running }: Props) {
     }
   }, [serverPort, email, password]);
 
+  // Copy the key to the clipboard and mark it copied (enables "닫기"). Used for
+  // both the manual Copy button (always a user gesture → reliable) and a
+  // best-effort auto-copy right after issue (post-await may be blocked by the
+  // webview with no active gesture — then `copied` stays false and the manual
+  // button + disabled-close fallback keeps the key from being lost).
+  const copyKey = useCallback(async (key: string) => {
+    try {
+      await navigator.clipboard.writeText(key);
+      setCopied(true);
+    } catch {
+      /* clipboard unavailable/blocked — operator copies manually */
+    }
+  }, []);
+
   const onIssue = useCallback(async () => {
     if (serverPort == null || token == null) return;
     setBusy(true);
     setError(null);
     try {
-      setIssued(await createDevice(serverPort, token, newName.trim() || "sidecar"));
+      const device = await createDevice(serverPort, token, newName.trim() || "sidecar");
+      setCopied(false);
+      setIssued(device);
+      void copyKey(device.api_key); // best-effort auto-copy
       await refresh();
     } catch (e) {
       setError(errText(e));
     } finally {
       setBusy(false);
     }
-  }, [serverPort, token, newName, refresh]);
+  }, [serverPort, token, newName, refresh, copyKey]);
 
   const onRevoke = useCallback(
     async (id: number) => {
@@ -134,11 +152,25 @@ export default function DevicePanel({ serverPort, running }: Props) {
       {/* One-time key display */}
       {issued ? (
         <div style={s.keyBox} role="alert">
-          <div style={{ fontWeight: 700, marginBottom: 4 }}>새 디바이스 키 (#{issued.id} · {issued.name}) — 지금 복사하세요. 다시 표시되지 않습니다.</div>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>새 디바이스 키 (#{issued.id} · {issued.name}) — 다시 표시되지 않습니다. 복사 후 닫으세요.</div>
           <code style={s.keyCode}>{issued.api_key}</code>
-          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <button style={s.primary} onClick={() => void navigator.clipboard?.writeText(issued.api_key)}>복사</button>
-            <button style={s.muted} onClick={() => setIssued(null)}>닫기</button>
+          <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+            <button style={s.primary} onClick={() => void copyKey(issued.api_key)}>
+              {copied ? "복사됨 ✓" : "복사"}
+            </button>
+            <button
+              style={{ ...s.muted, ...(copied ? {} : { opacity: 0.5, cursor: "not-allowed" }) }}
+              onClick={() => setIssued(null)}
+              disabled={!copied}
+              title={copied ? "" : "먼저 키를 복사하세요"}
+            >
+              닫기
+            </button>
+            {copied ? (
+              <span style={{ fontSize: 12, color: "#4ade80" }}>클립보드에 복사됨 — 이제 닫아도 됩니다</span>
+            ) : (
+              <span style={{ fontSize: 12, color: "#ffd27a" }}>복사하면 닫기가 활성화됩니다</span>
+            )}
           </div>
           <div style={s.warn}>⚠️ 만료 없는 베어러 키입니다 — 비밀번호처럼 다루고, 노출되면 폐기 후 재발급하세요.</div>
         </div>
