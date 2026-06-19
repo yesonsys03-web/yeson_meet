@@ -13,6 +13,13 @@ os.environ["DATABASE_URL"] = (
     "postgresql+asyncpg://yeson:6fad32ad29a12088da075219fdeb809d"
     "@127.0.0.1:5432/yeson_meet_test"
 )
+# Session-report writes (end_session) must not touch the prod default
+# /var/lib/yeson-meet/storage — point them at a writable temp dir for tests.
+import tempfile
+
+os.environ.setdefault(
+    "STORAGE_ROOT", os.path.join(tempfile.gettempdir(), "yeson-meet-test-storage")
+)
 
 # ── 2. Now safe to import server modules ─────────────────────────────────────
 import psycopg
