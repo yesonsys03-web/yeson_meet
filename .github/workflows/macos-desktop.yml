@@ -8,6 +8,11 @@ name: Client app macOS installer
 # Unsigned (ad-hoc, P9'): first launch via Privacy & Security > "Open Anyway".
 on:
   workflow_dispatch:
+  # Runs when THIS workflow file changes (registers it for dispatch + builds once);
+  # plain code pushes never trigger it, so the 10x macOS cost stays opt-in.
+  push:
+    paths:
+      - ".github/workflows/macos-desktop.yml"
 
 permissions:
   contents: write

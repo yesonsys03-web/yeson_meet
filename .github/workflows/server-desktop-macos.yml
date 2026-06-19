@@ -7,6 +7,11 @@ name: Server console macOS installer
 # via System Settings > Privacy & Security > "Open Anyway" (see docs/INSTALL.md).
 on:
   workflow_dispatch:
+  # Runs when THIS workflow file changes (registers it for dispatch + builds once);
+  # plain code pushes never trigger it, so the 10x macOS cost stays opt-in.
+  push:
+    paths:
+      - ".github/workflows/server-desktop-macos.yml"
 
 permissions:
   contents: write
