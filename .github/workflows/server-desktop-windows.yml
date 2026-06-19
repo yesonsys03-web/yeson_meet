@@ -21,6 +21,9 @@ on:
     paths:
       - ".github/workflows/server-desktop-windows.yml"
       - "apps/server_desktop/**"
+      # The P0 teardown-spike harness does not affect the installer — exclude it
+      # so a harness-only change re-runs the spike without a full installer rebuild.
+      - "!apps/server_desktop/scripts/win-freeze-spike.ps1"
       - "apps/server/**"
       - "apps/web/**"
       - "pnpm-lock.yaml"

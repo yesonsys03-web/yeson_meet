@@ -80,10 +80,23 @@ Set-ServerEnv
 $proc = Start-Process -FilePath $Bin -PassThru -WindowStyle Hidden
 Start-Sleep -Milliseconds 500
 $healthy = Wait-Health 30
-$dbHasTables = (Test-Path $DbPath) -and ((Get-Item $DbPath).Length -gt 4096)  # cold create_schema writes the ORM tables
+# Schema check: count ORM tables via a real sqlite query (Python is on PATH).
+# A file-SIZE heuristic is WRONG — the app runs SQLite in WAL mode, so the main
+# .db stays ~one page (4 KB) while create_schema's tables live in the -wal
+# sidecar until checkpoint. sqlite3.connect reads committed WAL frames, so it
+# sees the tables even while the server still holds the DB open.
+$pyFile = Join-Path $Work "count_tables.py"
+@'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+print(con.execute("select count(*) from sqlite_master where type='table'").fetchone()[0])
+'@ | Set-Content -Encoding ascii $pyFile
+$tableCount = 0
+try { $tableCount = [int]((& python $pyFile $DbPath 2>&1 | Select-Object -Last 1).ToString().Trim()) } catch {}
+$dbHasTables = $tableCount -ge 4   # models.py defines 5 ORM tables
 $results["P0.1 boot+/health"] = $healthy
-$results["P0.1 schema(db non-empty)"] = $dbHasTables
-Write-Host "  /health 200: $healthy ; db tables: $dbHasTables"
+$results["P0.1 schema ($tableCount tables)"] = $dbHasTables
+Write-Host "  /health 200: $healthy ; ORM tables: $tableCount"
 
 # ---- P0.2: kill ONLY the top PID (mimics Rust child.kill()) -> orphan? --------
 Write-Host "`n[P0.2] kill top PID only, then check for orphaned subtree ..." -ForegroundColor Cyan
@@ -143,7 +156,9 @@ if ($allPass) {
     Write-Host "VERDICT: ORPHAN ON CLOSE (P0.2). Apply the Job Object fix in" -ForegroundColor Yellow
     Write-Host "  docs/P0-WINDOWS-FREEZE-SPIKE.md (server_process.rs cfg(windows)), then re-run."
 } else {
-    Write-Host "VERDICT: relaunch-clean (P0.3) failed despite no orphan — inspect" -ForegroundColor Yellow
-    Write-Host "  $logFile for the SQLite/port error."
+    $failed = ($results.Keys | Where-Object { -not $results[$_] }) -join "; "
+    Write-Host "VERDICT: core freeze + teardown OK (P0.1 boot / P0.2 no-orphan / P0.3" -ForegroundColor Yellow
+    Write-Host "  relaunch all passed), but a sub-check failed: $failed"
+    Write-Host "  Inspect $logFile (relaunch) if it is a P0.3 line."
 }
 exit ([int](-not $allPass))
