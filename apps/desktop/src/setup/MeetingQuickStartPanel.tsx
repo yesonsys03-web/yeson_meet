@@ -1,6 +1,7 @@
 // === ANCHOR: MEETING_QUICK_START_PANEL_START ===
 import { useEffect, useState, type CSSProperties } from "react";
 import { LiveSubtitlePreview } from "../console/LiveSubtitlePreview";
+import { ViewerQrPanel } from "../console/ViewerQrPanel";
 import { useMeetingLifecycle } from "../console/useMeetingLifecycle";
 import { EMPTY_META, hydrateServerAddressFromKeychain, loadCredentialsMeta, saveCredentials, type CredentialsMeta } from "./credentials";
 import { loadValues } from "./setupValues";
@@ -130,6 +131,9 @@ export function MeetingQuickStartPanel() {
                 <span>Viewer URL</span>
                 <strong>{lifecycle.createdSession.viewer_url}</strong>
               </div>
+              {lifecycle.createdSession.viewer_url ? (
+                <ViewerQrPanel viewerUrl={lifecycle.createdSession.viewer_url} />
+              ) : null}
               <button type="button" onClick={lifecycle.copyViewerUrl} style={styles.secondaryButton}>
                 Viewer URL 복사
               </button>
