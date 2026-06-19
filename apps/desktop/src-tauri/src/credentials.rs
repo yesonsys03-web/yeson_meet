@@ -121,6 +121,17 @@ pub fn operator_login() -> Result<OperatorLogin, String> {
     })
 }
 
+/// Pure partial-merge: overwrite ONLY `server_ws_base` on an existing blob,
+/// preserving `email`, `password`, and `device_api_key`. Returns `None` when no
+/// blob exists (the caller decides whether that is an error). Unit-tested so the
+/// preservation guarantee holds without touching the keychain.
+pub fn merge_server_ws_base(existing: Option<Credentials>, server_ws_base: String) -> Option<Credentials> {
+    existing.map(|mut creds| {
+        creds.server_ws_base = server_ws_base;
+        creds
+    })
+}
+
 /// Resolve the Device API Key for `start_sidecar`: explicit request key wins,
 /// else the stored key. Reads the keychain only when the request key is empty.
 pub fn resolve_device_key(request_key: &str) -> Result<String, String> {
@@ -149,6 +160,19 @@ pub fn credentials_meta() -> Result<CredentialsMeta, String> {
 #[tauri::command]
 pub fn load_operator_login() -> Result<OperatorLogin, String> {
     operator_login()
+}
+
+/// Update ONLY the stored `server_ws_base`, preserving the Device API Key,
+/// email, and password. JS cannot read the device key back, so an unconditional
+/// JS-side full-blob `save` would wipe it; this server-side merge lets the
+/// advanced address field write through after a key exists without that risk.
+/// Errors when no blob exists — the JS caller only invokes it when credentials
+/// are present.
+#[tauri::command]
+pub fn update_server_ws_base(server_ws_base: String) -> Result<(), String> {
+    let merged = merge_server_ws_base(load()?, server_ws_base)
+        .ok_or_else(|| "no stored credentials".to_string())?;
+    save(&merged)
 }
 
 #[cfg(test)]
@@ -199,6 +223,27 @@ mod tests {
     #[test]
     fn choose_device_key_errors_when_nothing_available() {
         assert!(choose_device_key("", None).is_err());
+    }
+
+    #[test]
+    fn merge_server_ws_base_preserves_secrets() {
+        let existing = Credentials {
+            server_ws_base: "wss://old".to_string(),
+            email: "op@yeson.local".to_string(),
+            password: "s3cret".to_string(),
+            device_api_key: "dev-key".to_string(),
+        };
+        let merged = merge_server_ws_base(Some(existing), "wss://new".to_string())
+            .expect("merge over an existing blob yields Some");
+        assert_eq!(merged.server_ws_base, "wss://new");
+        assert_eq!(merged.email, "op@yeson.local");
+        assert_eq!(merged.password, "s3cret");
+        assert_eq!(merged.device_api_key, "dev-key");
+    }
+
+    #[test]
+    fn merge_server_ws_base_none_when_no_blob() {
+        assert_eq!(merge_server_ws_base(None, "wss://new".to_string()), None);
     }
 }
 // === ANCHOR: CREDENTIALS_END ===

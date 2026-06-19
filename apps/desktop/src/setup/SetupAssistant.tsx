@@ -1,7 +1,7 @@
 // === ANCHOR: SETUPASSISTANT_START ===
 import { useEffect, useMemo, useState } from "react";
 import { createDevice } from "../console/sessionApi";
-import { loadCredentialsMeta, loadOperatorLogin, saveCredentials } from "./credentials";
+import { hydrateServerAddressFromKeychain, loadCredentialsMeta, loadOperatorLogin, saveCredentials, updateServerWsBase as updateServerWsBaseKeychain } from "./credentials";
 import { Field } from "./Field";
 import { MeetingQuickStartPanel } from "./MeetingQuickStartPanel";
 import { PlatformRunbookPanel } from "./PlatformRunbookPanel";
@@ -24,11 +24,15 @@ export function SetupAssistant() {
   // === ANCHOR: SETUPASSISTANT_DEVICEKEY_START ===
   const [mintBusy, setMintBusy] = useState(false);
   const [hasDeviceKey, setHasDeviceKey] = useState(false);
+  const [hasCredentials, setHasCredentials] = useState(false);
   const [mintError, setMintError] = useState<string | null>(null);
 
   useEffect(() => {
     loadCredentialsMeta()
-      .then((meta) => setHasDeviceKey(meta.hasDeviceKey))
+      .then((meta) => {
+        setHasDeviceKey(meta.hasDeviceKey);
+        setHasCredentials(meta.hasCredentials);
+      })
       .catch(() => undefined);
   }, []);
   // === ANCHOR: SETUPASSISTANT_DEVICEKEY_END ===
@@ -55,6 +59,25 @@ export function SetupAssistant() {
       storeValues(next);
       return next;
     });
+  }
+
+  // P2: the keychain is the authored source of serverWsBase. When the user edits the
+  // advanced manual field, write THROUGH to the keychain so the next hydrate cannot
+  // silently overwrite the manual edit. We use the partial-merge command
+  // (update_server_ws_base) which updates ONLY the address and preserves the stored
+  // Device API Key, so this is now safe UNCONDITIONALLY once credentials exist — no
+  // more !hasDeviceKey gate that dropped post-key edits. localStorage is written first
+  // (derived cache) and kept even if the keychain write is best-effort.
+  function updateServerWsBase(value: string) {
+    updateValue("serverWsBase", value);
+    if (!hasCredentials) return;
+    void (async () => {
+      try {
+        await updateServerWsBaseKeychain(value);
+      } catch {
+        // keychain write-through is best-effort; localStorage already holds the edit.
+      }
+    })();
   }
   // === ANCHOR: SETUPASSISTANT_UPDATEVALUE_END ===
 
@@ -121,12 +144,18 @@ export function SetupAssistant() {
       const tokens = await loginOperator(login.email, login.password);
       const { api_key } = await createDevice("sidecar", tokens.access_token);
       // Key flows directly into keychain — never assigned to any state or rendered.
+      // P2: a pending manual serverWsBase edit (localStorage) wins over the stale
+      // keychain address so it is promoted to the keychain on this authoritative save.
       await saveCredentials({
-        serverWsBase: login.serverWsBase,
+        serverWsBase: loadValues().serverWsBase || login.serverWsBase,
         email: login.email,
         password: login.password, // vibelign: allow-secret — field name only, not a key value
         deviceApiKey: api_key,    // vibelign: allow-secret — field name only, not a key value
       });
+      // P2: re-derive the localStorage serverWsBase cache from the keychain after the
+      // save, so apiBase() reflects the keychain address (generateDeviceKey has no
+      // refreshMeta self-heal path like registerAndStart does).
+      await hydrateServerAddressFromKeychain();
       setHasDeviceKey(true);
     } catch (error) {
       setMintError(error instanceof Error ? error.message : String(error));
@@ -163,9 +192,9 @@ export function SetupAssistant() {
             <PlatformSelector value={values.platform} onChange={updatePlatform} />
             <Field
               label="WebSocket 서버 주소"
-              help="로컬 테스트는 ws://127.0.0.1:8000, LAN HTTPS 테스트는 wss://192.168.0.38 처럼 입력합니다."
+              help="로컬 테스트는 ws://127.0.0.1:8000, LAN HTTPS 테스트는 wss://<server-ip>:8000 처럼 입력합니다."
               value={values.serverWsBase}
-              onChange={(value) => updateValue("serverWsBase", value)}
+              onChange={(value) => updateServerWsBase(value)}
             />
             <Field
               label="테스트용 오디오 키 (Device API Key)"

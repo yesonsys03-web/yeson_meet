@@ -19,6 +19,7 @@ pub fn run() {
             credentials::clear_credentials,
             credentials::credentials_meta,
             credentials::load_operator_login,
+            credentials::update_server_ws_base,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

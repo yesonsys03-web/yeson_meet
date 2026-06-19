@@ -41,7 +41,7 @@ function validateSidecarValues(values: SetupValues): void {
     throw new Error("Live Meeting에서 회의를 만든 뒤 생성된 Session ID가 필요합니다.");
   }
   if (!values.serverWsBase.trim() || values.serverWsBase.includes("<")) {
-    throw new Error("WebSocket 서버 주소를 입력하세요. 로컬 테스트는 ws://127.0.0.1:8000, LAN 테스트는 wss://192.168.0.38 입니다.");
+    throw new Error("WebSocket 서버 주소를 입력하세요. 로컬 테스트는 ws://127.0.0.1:8000, LAN 테스트는 wss://<server-ip>:8000 입니다.");
   }
 }
 

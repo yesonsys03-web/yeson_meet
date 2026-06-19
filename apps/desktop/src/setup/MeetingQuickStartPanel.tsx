@@ -2,7 +2,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { LiveSubtitlePreview } from "../console/LiveSubtitlePreview";
 import { useMeetingLifecycle } from "../console/useMeetingLifecycle";
-import { EMPTY_META, loadCredentialsMeta, saveCredentials, type CredentialsMeta } from "./credentials";
+import { EMPTY_META, hydrateServerAddressFromKeychain, loadCredentialsMeta, saveCredentials, type CredentialsMeta } from "./credentials";
 import { loadValues } from "./setupValues";
 import { styles } from "./styles";
 
@@ -35,6 +35,9 @@ export function MeetingQuickStartPanel() {
 
   async function registerAndStart() {
     await saveCredentials(form);
+    // P2: re-derive the localStorage serverWsBase cache from the keychain we just wrote,
+    // so apiBase() (login/createSession) targets the saved host on the very next call.
+    await hydrateServerAddressFromKeychain();
     await refreshMeta();
     setEditing(false);
     await lifecycle.startMeetingOneClick();

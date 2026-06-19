@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { installAppLogCapture } from "../diagnostics/appLog";
 import { loginOperator } from "./sessionApi";
-import { loadOperatorLogin } from "../setup/credentials";
+import { hydrateServerAddressFromKeychain, loadOperatorLogin } from "../setup/credentials";
 import { HelpManualPanel } from "../help/HelpManualPanel";
 import { SettingsPanel } from "../settings/SettingsPanel";
 import { SetupAssistant } from "../setup/SetupAssistant";
@@ -16,20 +16,38 @@ export function DesktopConsole() {
   const [activeView, setActiveView] = useState<ConsoleView>("setup");
   const [deviceAdminToken, setDeviceAdminToken] = useState<string | null>(null);
   const [deviceTokenError, setDeviceTokenError] = useState<string | null>(null);
+  // P2: gate first render until the keychain server address is hydrated into
+  // localStorage, so every apiBase() consumer (incl. the Devices-view login below)
+  // resolves the authoritative host before any console interaction is possible.
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     installAppLogCapture();
   }, []);
 
+  useEffect(() => {
+    void hydrateServerAddressFromKeychain().finally(() => setHydrated(true));
+  }, []);
+
   // Lazily acquire an admin token when the Devices view is opened.
   useEffect(() => {
-    if (activeView !== "devices" || deviceAdminToken) return;
+    if (!hydrated || activeView !== "devices" || deviceAdminToken) return;
     setDeviceTokenError(null);
     loadOperatorLogin()
       .then((login) => loginOperator(login.email, login.password))
       .then((tokens) => setDeviceAdminToken(tokens.access_token))
       .catch((err: unknown) => setDeviceTokenError(err instanceof Error ? err.message : String(err)));
-  }, [activeView, deviceAdminToken]);
+  }, [hydrated, activeView, deviceAdminToken]);
+
+  if (!hydrated) {
+    return (
+      <div style={consoleStyles.page}>
+        <main style={consoleStyles.content}>
+          <p style={{ color: "#94a3b8", fontSize: 13 }}>설정을 불러오는 중... (Loading...)</p>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div style={consoleStyles.page}>

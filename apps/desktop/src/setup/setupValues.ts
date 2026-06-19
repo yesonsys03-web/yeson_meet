@@ -10,10 +10,10 @@ function defaultValues(): SetupValues {
   const platform = defaultPlatform();
   return {
     platform,
-    serverWsBase: "wss://192.168.0.38",
+    serverWsBase: "",
     deviceApiKey: "",
     sessionId: "",
-    viewerUrl: "https://192.168.0.38/v/<viewer-token>",
+    viewerUrl: "",
     sidecarProjectDir: "",
   };
 }
@@ -21,6 +21,9 @@ function defaultValues(): SetupValues {
 export const DEFAULT_VALUES: SetupValues = defaultValues();
 
 // === ANCHOR: SETUPVALUES_LOADVALUES_START ===
+// P2 invariant: localStorage `serverWsBase` is a DERIVED CACHE of the keychain;
+// never author it independently. The authored writer of record is the keychain
+// via saveCredentials — hydrated here by hydrateServerAddressFromKeychain().
 export function loadValues(): SetupValues {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -40,6 +43,9 @@ export function loadValues(): SetupValues {
 // === ANCHOR: SETUPVALUES_LOADVALUES_END ===
 
 // === ANCHOR: SETUPVALUES_STOREVALUES_START ===
+// P2 invariant: localStorage `serverWsBase` = derived cache of the keychain;
+// never author independently — the authored writer of record is the keychain
+// via saveCredentials. storeValues only re-derives the cache here.
 export function storeValues(values: SetupValues): void {
   const { deviceApiKey: _deviceApiKey, ...safeValues } = values;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(safeValues));
