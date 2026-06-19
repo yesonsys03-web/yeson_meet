@@ -94,3 +94,11 @@ cp -R "${OUT_DIR}" "${DEST_DIR}"
 echo "→ ${DEST_DIR}"
 echo "  bundle size: $(du -sh "${DEST_DIR}" | cut -f1)"
 echo "  entry binary: ${DEST_DIR}/yeson-server"
+
+# P4.3: vendor the host-triple cloudflared so tauri.conf's
+# `binaries/cloudflared-*` resource glob is satisfied when `tauri build`
+# packages the app (the ~50-70MB binary is gitignored + fetched per-host, never
+# committed). Idempotent — fetch-cloudflared.sh skips the download if already
+# present. Without this the packaged app would lack the public-tunnel binary.
+echo "Vendoring cloudflared quick-tunnel binary (P4.3)…"
+bash apps/server_desktop/scripts/fetch-cloudflared.sh

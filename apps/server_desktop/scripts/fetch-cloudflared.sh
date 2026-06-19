@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Vendor the official cloudflared quick-tunnel binary for the DEV HOST triple
-# into the path tunnel.rs::locate_cloudflared() expects:
+# Vendor the official cloudflared quick-tunnel binary for the HOST triple into
+# the path tunnel.rs::locate_cloudflared() expects:
 #   apps/server_desktop/src-tauri/binaries/cloudflared-<triple>/cloudflared[.exe]
 #
-# P4.1b: this fetches ONLY the current host's triple so a real (non-stub) tunnel
-# is runnable for E2E. Full cross-OS vendoring + tauri.conf resources bundling is
-# P4.3. The downloaded binary is GITIGNORED (binaries/cloudflared-*/, mirroring
+# P4.3: vendors the current host's triple (macOS arm64/amd64, Linux amd64,
+# Windows amd64 — each platform's own build fetches its own binary; Tauri builds
+# per-OS, not cross). build-server.sh calls this idempotently before `tauri
+# build`, and tauri.conf.json's `binaries/cloudflared-*` resource glob bundles
+# the result into Contents/Resources so the PACKAGED app carries cloudflared (not
+# just dev). The binary is GITIGNORED (binaries/cloudflared-*/, mirroring
 # yeson-server-*/) — never committed (~50-70MB). The committed cloudflared-stub.sh
 # remains the offline-test fake.
+#
+# Idempotent: skips the download if the binary is already vendored (set FORCE=1
+# to re-pull the latest release).
 #
 # cloudflared is published on GitHub releases. macOS ships as a .tgz; Linux and
 # Windows ship as a raw binary. We pull the "latest" release.
@@ -44,14 +50,31 @@ case "${OS}-${ARCH}" in
         PACKED="raw"
         BIN="cloudflared"
         ;;
+    MINGW*-x86_64|MSYS*-x86_64|CYGWIN*-x86_64)
+        # Windows under Git Bash / MSYS2 / Cygwin. cloudflared ships a raw .exe;
+        # locate_cloudflared() expects the `.exe` suffix on the windows triple.
+        TRIPLE="x86_64-pc-windows-msvc"
+        ASSET="cloudflared-windows-amd64.exe"
+        PACKED="raw"
+        BIN="cloudflared.exe"
+        ;;
     *)
-        echo "ERROR: unsupported host ${OS}-${ARCH} (Windows: run the .exe variant in P4.3)" >&2
+        echo "ERROR: unsupported host ${OS}-${ARCH}" >&2
         exit 1
         ;;
 esac
 
 DEST_DIR="apps/server_desktop/src-tauri/binaries/cloudflared-${TRIPLE}"
 DEST_BIN="${DEST_DIR}/${BIN}"
+
+# Idempotent: a build that already vendored cloudflared skips the ~50-70MB pull
+# (build-server.sh calls this before every `tauri build`). FORCE=1 re-downloads.
+if [[ -x "${DEST_BIN}" && "${FORCE:-}" != "1" ]]; then
+    echo "cloudflared already vendored: ${DEST_BIN} (set FORCE=1 to re-download)"
+    echo "  version: $("${DEST_BIN}" --version 2>/dev/null | head -1 || echo '(unknown)')"
+    exit 0
+fi
+
 mkdir -p "${DEST_DIR}"
 
 TMP="$(mktemp -d)"
@@ -77,4 +100,5 @@ chmod +x "${DEST_BIN}"
 echo "→ ${DEST_BIN}"
 echo "  version: $("${DEST_BIN}" --version 2>/dev/null | head -1 || echo '(unknown)')"
 echo "  size:    $(du -sh "${DEST_BIN}" | cut -f1)"
-echo "Done. tunnel.rs::locate_cloudflared() will resolve this in dev (src-tauri/binaries)."
+echo "Done. locate_cloudflared() resolves this in dev (src-tauri/binaries) and,"
+echo "once packaged via tauri.conf resources, in Contents/Resources/binaries."
