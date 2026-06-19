@@ -1,7 +1,6 @@
 // === ANCHOR: SETUPASSISTANT_START ===
 import { useEffect, useMemo, useState } from "react";
-import { createDevice } from "../console/sessionApi";
-import { hydrateServerAddressFromKeychain, loadCredentialsMeta, loadOperatorLogin, saveCredentials, updateServerWsBase as updateServerWsBaseKeychain } from "./credentials";
+import { loadCredentialsMeta, updateServerWsBase as updateServerWsBaseKeychain } from "./credentials";
 import { Field } from "./Field";
 import { MeetingQuickStartPanel } from "./MeetingQuickStartPanel";
 import { PlatformRunbookPanel } from "./PlatformRunbookPanel";
@@ -22,17 +21,15 @@ export function SetupAssistant() {
   const [runningChecks, setRunningChecks] = useState(false);
   const [checks, setChecks] = useState(initialSmokeChecks);
   // === ANCHOR: SETUPASSISTANT_DEVICEKEY_START ===
-  const [mintBusy, setMintBusy] = useState(false);
-  const [hasDeviceKey, setHasDeviceKey] = useState(false);
+  // hasCredentials gates the keychain write-through for the advanced server-address
+  // field (updateServerWsBase). Device-key MINTING was removed from this operator
+  // client — keys are issued in the SERVER console and pasted in (QuickStart
+  // register flow / the manual field below).
   const [hasCredentials, setHasCredentials] = useState(false);
-  const [mintError, setMintError] = useState<string | null>(null);
 
   useEffect(() => {
     loadCredentialsMeta()
-      .then((meta) => {
-        setHasDeviceKey(meta.hasDeviceKey);
-        setHasCredentials(meta.hasCredentials);
-      })
+      .then((meta) => setHasCredentials(meta.hasCredentials))
       .catch(() => undefined);
   }, []);
   // === ANCHOR: SETUPASSISTANT_DEVICEKEY_END ===
@@ -131,40 +128,6 @@ export function SetupAssistant() {
   }
   // === ANCHOR: SETUPASSISTANT_MARKCHECK_END ===
 
-  // === ANCHOR: SETUPASSISTANT_GENERATEDEVICEKEY_START ===
-  async function generateDeviceKey() {
-    if (mintBusy) return;
-    setMintBusy(true);
-    setMintError(null);
-    try {
-      const login = await loadOperatorLogin();
-      // loginOperator is already done at this point — we re-use the stored credentials
-      // to obtain a fresh admin token so we can call POST /api/v1/devices.
-      const { loginOperator } = await import("../console/sessionApi");
-      const tokens = await loginOperator(login.email, login.password);
-      const { api_key } = await createDevice("sidecar", tokens.access_token);
-      // Key flows directly into keychain — never assigned to any state or rendered.
-      // P2: a pending manual serverWsBase edit (localStorage) wins over the stale
-      // keychain address so it is promoted to the keychain on this authoritative save.
-      await saveCredentials({
-        serverWsBase: loadValues().serverWsBase || login.serverWsBase,
-        email: login.email,
-        password: login.password, // vibelign: allow-secret — field name only, not a key value
-        deviceApiKey: api_key,    // vibelign: allow-secret — field name only, not a key value
-      });
-      // P2: re-derive the localStorage serverWsBase cache from the keychain after the
-      // save, so apiBase() reflects the keychain address (generateDeviceKey has no
-      // refreshMeta self-heal path like registerAndStart does).
-      await hydrateServerAddressFromKeychain();
-      setHasDeviceKey(true);
-    } catch (error) {
-      setMintError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setMintBusy(false);
-    }
-  }
-  // === ANCHOR: SETUPASSISTANT_GENERATEDEVICEKEY_END ===
-
   return (
     <div style={styles.page}>
       <section style={styles.hero}>
@@ -198,34 +161,11 @@ export function SetupAssistant() {
             />
             <Field
               label="테스트용 오디오 키 (Device API Key)"
-              help="sidecar가 서버에 접속할 때 필요한 회의실 PC용 키입니다. 보안을 위해 저장하지 않으므로 Sidecar 시작 직전에 붙여넣어야 합니다."
+              help="서버 콘솔의 Devices에서 발급한 키를 붙여넣으세요(키 발급은 서버에서만 합니다). sidecar가 서버 접속에 사용합니다. 이 필드 값은 저장하지 않으므로 Sidecar 시작 직전에 붙여넣어야 합니다."
               value={values.deviceApiKey}
               secret
               onChange={(value) => updateValue("deviceApiKey", value)}
             />
-            {/* === ANCHOR: SETUPASSISTANT_GENERATEDEVICEKEY_BUTTON_START === */}
-            <div style={{ marginBottom: 14 }}>
-              <button
-                type="button"
-                disabled={mintBusy}
-                onClick={() => void generateDeviceKey()}
-                style={{
-                  ...styles.primaryButton,
-                  ...(mintBusy ? { opacity: 0.5, cursor: "not-allowed" } : null),
-                }}
-              >
-                {mintBusy ? "발급 중..." : "사이드카 키 발급 (Generate sidecar key)"}
-              </button>
-              {hasDeviceKey && !mintError && (
-                <p style={{ marginTop: 8, color: "#047857", fontSize: 13 }}>
-                  키체인에 저장됨 (Device key saved)
-                </p>
-              )}
-              {mintError && (
-                <p style={{ marginTop: 8, color: "#be123c", fontSize: 13 }}>{mintError}</p>
-              )}
-            </div>
-            {/* === ANCHOR: SETUPASSISTANT_GENERATEDEVICEKEY_BUTTON_END === */}
             <Field
               label="Session ID"
               help="회의를 만들면 자동으로 채워집니다. 필요할 때만 직접 수정하세요."

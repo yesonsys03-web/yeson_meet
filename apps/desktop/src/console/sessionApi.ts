@@ -101,38 +101,10 @@ export async function fetchOperatorBackfill(
   return parseJsonResponse<{ utterances: UtteranceTranscribed[]; session_status: string }>(response, "Fetch subtitles");
 }
 
-// === ANCHOR: SESSION_API_DEVICES_START ===
-export type DeviceOut = {
-  id: number;
-  name: string;
-  is_active: boolean;
-  created_at: string;
-};
-
-export async function createDevice(name: string, adminToken: string): Promise<{ id: number; name: string; api_key: string }> {
-  const response = await timedFetch("Create device", `${apiBase()}/api/v1/devices`, {
-    method: "POST",
-    headers: authHeaders(adminToken),
-    body: JSON.stringify({ name }),
-  });
-  return parseJsonResponse<{ id: number; name: string; api_key: string }>(response, "Create device");
-}
-
-export async function fetchDevices(adminToken: string): Promise<DeviceOut[]> {
-  const response = await timedFetch("Fetch devices", `${apiBase()}/api/v1/devices`, {
-    headers: authHeaders(adminToken),
-  });
-  return parseJsonResponse<DeviceOut[]>(response, "Fetch devices");
-}
-
-export async function revokeDevice(id: number, adminToken: string): Promise<void> {
-  const response = await timedFetch("Revoke device", `${apiBase()}/api/v1/devices/${encodeURIComponent(id)}/revoke`, {
-    method: "POST",
-    headers: authHeaders(adminToken),
-  });
-  if (!response.ok) throw new Error(`Revoke device failed: HTTP ${response.status}`);
-}
-// === ANCHOR: SESSION_API_DEVICES_END ===
+// Device-key mint/list/revoke moved to the SERVER console (apps/server_desktop):
+// issuing/revoking device keys is an admin control-plane action and no longer
+// lives in this operator client. The client only RECEIVES a device key (pasted
+// in the QuickStart register flow / manual field) and stores it in the keychain.
 
 function safeApiPath(url: string): string {
   try {
