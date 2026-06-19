@@ -97,15 +97,24 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="yeson-meet", version="0.1.0", lifespan=lifespan)
 
+# Bundled-webview origins are always trusted (the packaged client/server consoles
+# run from these custom-protocol origins). The localhost dev-server origins
+# (vite) are trusted ONLY in dev — the Tauri shell injects `YESON_DEV=1` for a
+# debug build (server_process.rs) — so a shipped production server never trusts a
+# dev origin (security review finding #1).
+_PROD_ORIGINS = [
+    "http://tauri.localhost",  # Tauri bundled webview origin (Windows)
+    "tauri://localhost",  # Tauri bundled webview origin (macOS/Linux)
+    "https://tauri.localhost",  # Tauri bundled webview origin (https custom-protocol variant)
+]
+_DEV_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5274",  # server-console dev webview (apps/server_desktop)
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://tauri.localhost",  # Tauri bundled webview origin (Windows)
-        "tauri://localhost",  # Tauri bundled webview origin (macOS/Linux)
-        "https://tauri.localhost",  # Tauri bundled webview origin (https custom-protocol variant)
-    ],
+    allow_origins=_PROD_ORIGINS + (_DEV_ORIGINS if os.getenv("YESON_DEV") == "1" else []),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

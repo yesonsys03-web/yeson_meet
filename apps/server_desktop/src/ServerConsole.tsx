@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { type AppLogEntry, append, clearAppLogs, installAppLogCapture, subscribeAppLogs } from "./appLog";
 import ServerConfigPanel from "./setup/ServerConfigPanel";
 import TunnelDegradedBanner from "./TunnelDegradedBanner";
+import DevicePanel from "./DevicePanel";
 
 type ServerStatus = {
   running: boolean;
@@ -52,6 +53,7 @@ export default function ServerConsole() {
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<AppLogEntry[]>([]);
   const [showConfig, setShowConfig] = useState(false);
+  const [showDevices, setShowDevices] = useState(false);
   const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
   // null = server stopped (no meeting possible); number = live-meeting count.
   const [liveSessions, setLiveSessions] = useState<number | null>(null);
@@ -211,6 +213,9 @@ export default function ServerConsole() {
           <button style={styles.button} onClick={() => setShowConfig((v) => !v)}>
             {showConfig ? "Hide config" : "Config"}
           </button>
+          <button style={styles.button} onClick={() => setShowDevices((v) => !v)}>
+            {showDevices ? "Hide devices" : "Devices"}
+          </button>
         </div>
         <dl style={styles.statusGrid}>
           <Stat label="status" value={running ? "running" : "stopped"} />
@@ -283,6 +288,11 @@ export default function ServerConsole() {
       {showConfig ? (
         <div style={styles.configWrap}>
           <ServerConfigPanel />
+        </div>
+      ) : null}
+      {showDevices ? (
+        <div style={styles.configWrap}>
+          <DevicePanel serverPort={status?.port ?? null} running={running} />
         </div>
       ) : null}
       <main style={styles.logBody}>

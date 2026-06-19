@@ -273,6 +273,14 @@ pub fn start_server_inner(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Dev only: a debug Tauri shell (pnpm tauri:dev) tells the bundled server to
+    // trust the vite dev-server CORS origins (apps/server main.py). A packaged
+    // release build never sets this, so prod never trusts a dev origin (security
+    // review finding #1). The frozen server binary is identical either way; only
+    // this spawn-time env differs.
+    if cfg!(debug_assertions) {
+        command.env("YESON_DEV", "1");
+    }
     inject_secrets(&mut command)?;
     set_process_group(&mut command);
     set_no_window(&mut command);
