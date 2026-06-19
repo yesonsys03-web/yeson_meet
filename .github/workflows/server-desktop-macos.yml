@@ -1,0 +1,76 @@
+name: Server console macOS installer
+
+# Builds the macOS .dmg for the server console (apps/server_desktop) and
+# publishes it as a prerelease asset. Manual-only (workflow_dispatch): macOS
+# runners bill at 10x, so this never auto-runs on push — trigger from the
+# Actions tab when a macOS build is wanted. Unsigned (ad-hoc, P9'): first launch
+# via System Settings > Privacy & Security > "Open Anyway" (see docs/INSTALL.md).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build + publish server console macOS installer
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Freeze the FastAPI server (PyInstaller --onedir, aarch64) + vendor
+      # cloudflared, satisfying the tauri.conf bundle.resources globs.
+      - name: Build + stage frozen server (+ cloudflared)
+        run: bash apps/server_desktop/scripts/build-server.sh
+
+      # macOS bundles only (the shared config also lists nsis/msi).
+      - name: Build server console installer (app + dmg)
+        working-directory: apps/server_desktop
+        run: pnpm tauri build --bundles app dmg
+
+      - name: List built installers
+        run: find apps/server_desktop/src-tauri/target/release/bundle -name '*.dmg' -exec ls -lh {} \;
+
+      - name: Publish installer to prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: server-desktop-macos-latest
+          name: Server console (macOS, unsigned ad-hoc test build)
+          prerelease: true
+          body: |
+            Unsigned (ad-hoc) macOS test build of the yeson-meet server console
+            (apps/server_desktop), rebuilt on each run. First launch: System
+            Settings > Privacy & Security > "Open Anyway" (see docs/INSTALL.md).
+          files: |
+            apps/server_desktop/src-tauri/target/release/bundle/dmg/*.dmg
+          fail_on_unmatched_files: true

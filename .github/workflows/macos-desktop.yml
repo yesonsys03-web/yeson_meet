@@ -1,0 +1,79 @@
+name: Client app macOS installer
+
+# Builds the macOS .dmg for the desktop CLIENT (apps/desktop) and publishes it
+# as a prerelease asset. Manual-only (workflow_dispatch): macOS runners bill at
+# 10x, so this never auto-runs on push. On macOS, Tauri auto-merges
+# tauri.macos.conf.json, whose beforeBuildCommand builds the Swift native helper
+# + the PyInstaller sidecar + the frontend, then bundles them via externalBin.
+# Unsigned (ad-hoc, P9'): first launch via Privacy & Security > "Open Anyway".
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build + publish client macOS installer
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Sidecar build (build:sidecar-mac, run inside tauri's beforeBuildCommand)
+      # uses `uv run --project apps/client_sidecar pyinstaller` — sync deps first.
+      - name: Sync Python deps
+        run: uv sync --all-packages --frozen
+
+      # tauri build auto-merges tauri.macos.conf.json → its beforeBuildCommand
+      # builds the Swift helper + sidecar + frontend, then bundles. macOS targets
+      # only (the shared config also lists nsis/msi).
+      - name: Build client installer (app + dmg)
+        working-directory: apps/desktop
+        run: pnpm tauri build --bundles app dmg
+
+      - name: List built installers
+        run: find apps/desktop/src-tauri/target/release/bundle -name '*.dmg' -exec ls -lh {} \;
+
+      - name: Publish installer to prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-macos-latest
+          name: Client app (macOS, unsigned ad-hoc test build)
+          prerelease: true
+          body: |
+            Unsigned (ad-hoc) macOS test build of the yeson-meet desktop CLIENT
+            app (apps/desktop), rebuilt on each run. First launch: System
+            Settings > Privacy & Security > "Open Anyway" (see docs/INSTALL.md).
+          files: |
+            apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
+          fail_on_unmatched_files: true
