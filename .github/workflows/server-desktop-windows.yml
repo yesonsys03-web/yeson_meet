@@ -1,0 +1,102 @@
+name: Server console Windows installer
+
+# Builds the DISTRIBUTABLE Windows installer (.msi + NSIS .exe) for the server
+# console app (apps/server_desktop), so it can be downloaded and installed on a
+# real Windows machine and tested end-to-end the same way it was on macOS
+# (run console -> Start -> client connects -> live subtitles).
+#
+# This is unsigned (P9'): SmartScreen "More info -> Run anyway" — see docs/INSTALL.md.
+#
+# It also implicitly exercises the P0.1 freeze on Windows: it runs build-server.ps1
+# (PyInstaller --onedir of the FastAPI server). If that freeze fails, this build
+# fails — which is itself the P0 signal (-> P0.4 uv-launcher contingency).
+#
+# Delivery: the installer is published as a **prerelease asset**, NOT an Actions
+# artifact, because Actions artifact STORAGE can be full (the 0.5GB included pool)
+# while a multi-hundred-MB frozen-server installer needs room; release assets live
+# in a separate, effectively-unlimited pool. Download it from the repo's Releases.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/server-desktop-windows.yml"
+      - "apps/server_desktop/**"
+      - "apps/server/**"
+      - "apps/web/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+
+permissions:
+  contents: write   # publish the installer as a release asset
+
+jobs:
+  build:
+    name: Build + publish server console Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Freeze the FastAPI server (PyInstaller --onedir) + vendor cloudflared, so
+      # the tauri.conf bundle.resources globs (binaries/yeson-server-*,
+      # binaries/cloudflared-*) are satisfied. This is also the P0.1 freeze gate.
+      - name: Build + stage frozen server (+ cloudflared)
+        shell: pwsh
+        run: pwsh -File apps/server_desktop/scripts/build-server.ps1
+
+      # Full Tauri build, Windows installers only (the config also lists the
+      # macOS app/dmg targets; --bundles overrides to the Windows-valid set).
+      - name: Build server console installer (nsis + msi)
+        shell: pwsh
+        working-directory: apps/server_desktop
+        run: pnpm tauri build --bundles nsis msi
+
+      - name: List built installers
+        shell: pwsh
+        run: Get-ChildItem -Recurse apps/server_desktop/src-tauri/target/release/bundle -Include *.exe,*.msi | Select-Object FullName, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
+
+      # Publish to a rolling prerelease (overwritten each run) — avoids the full
+      # Actions artifact-storage quota. Download from repo -> Releases.
+      - name: Publish installer to prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: server-desktop-windows-latest
+          name: Server console (Windows, unsigned test build)
+          prerelease: true
+          body: |
+            Unsigned Windows test build of the yeson-meet server console
+            (apps/server_desktop), rebuilt on each run from the latest commit.
+            Install via SmartScreen "More info -> Run anyway" (see docs/INSTALL.md).
+          files: |
+            apps/server_desktop/src-tauri/target/release/bundle/nsis/*.exe
+            apps/server_desktop/src-tauri/target/release/bundle/msi/*.msi
+          fail_on_unmatched_files: true
