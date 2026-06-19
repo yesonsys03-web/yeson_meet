@@ -33,6 +33,18 @@ uv venv --clear --python "${PY_VERSION}" "${BUILD_VENV}"
 VIRTUAL_ENV="${BUILD_VENV}" uv pip install --python "${BUILD_VENV}/bin/python" \
     ./apps/server "pyinstaller>=6.21"
 
+# Build the viewer SPA (apps/web) so the frozen server serves it under the same
+# :8000 origin as /api + /ws (replacing the old Docker-path Caddy). Staged into
+# the bundle via PyInstaller --add-data below; main._web_dist_dir() reads it
+# back from sys._MEIPASS/web_dist at runtime.
+echo "Building viewer SPA (apps/web → dist)…"
+pnpm -C apps/web install --frozen-lockfile
+pnpm -C apps/web build
+[[ -f apps/web/dist/index.html ]] || {
+    echo "ERROR: apps/web build produced no dist/index.html" >&2
+    exit 1
+}
+
 echo "Building yeson-server (PyInstaller --onedir, Gemini-only)…"
 # --paths . puts the repo root on PyInstaller's analysis path so the entry's
 # absolute `apps.server.*` / `apps.server_desktop.*` imports resolve.
@@ -50,6 +62,7 @@ echo "Building yeson-server (PyInstaller --onedir, Gemini-only)…"
     --collect-all google.genai \
     --collect-submodules google.api_core \
     --hidden-import aiosqlite \
+    --add-data "apps/web/dist:web_dist" \
     --distpath "${DIST}" \
     --workpath "${WORK}" \
     --specpath "${WORK}" \

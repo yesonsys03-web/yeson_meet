@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager, suppress
 import logging
+import os
+import sys
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from apps.server.api.v1.auth import router as auth_router
 from apps.server.api.v1.devices import router as devices_router
@@ -117,6 +121,69 @@ app.include_router(operator_alerts_router, prefix="/api/v1")
 app.include_router(ws_operator_router)
 app.include_router(ws_sidecar_router)
 app.include_router(ws_viewer_router)
+
+
+# === ANCHOR: MAIN_VIEWER_SPA_START ===
+def _web_dist_dir() -> Path | None:
+    """Resolve the bundled viewer SPA dist dir.
+
+    Frozen (PyInstaller): ``--add-data "apps/web/dist:web_dist"`` unpacks to
+    ``sys._MEIPASS/web_dist`` (mirror ``server_entry.py``'s ``sys.frozen`` path
+    resolution — NOT ``__file__``-relative-to-exe). Dev: ``apps/web/dist`` under
+    the repo root (built by ``pnpm -C apps/web build``). ``YESON_WEB_DIST`` can
+    override either. Returns ``None`` when no dist is present so dev ``/api``,
+    ``/ws`` flows and the pytest suite stay unaffected (the mount is skipped).
+    """
+    override = os.environ.get("YESON_WEB_DIST")
+    if override:
+        candidate = Path(override)
+        return candidate if (candidate / "index.html").is_file() else None
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(getattr(sys, "_MEIPASS", "")) / "web_dist")
+    # Dev fallback: repo-root apps/web/dist (this file is apps/server/main.py).
+    candidates.append(Path(__file__).resolve().parents[2] / "apps" / "web" / "dist")
+    for candidate in candidates:
+        if (candidate / "index.html").is_file():
+            return candidate
+    return None
+
+
+def _mount_viewer_spa() -> None:
+    """Serve the viewer SPA + its ``/v/{token}`` route from this same origin.
+
+    Mounted AFTER every ``/api`` + ``/ws`` router so it never shadows them: a
+    catch-all that 404s any ``/api``/``/ws`` miss (instead of returning the SPA)
+    and otherwise serves a real static file, falling back to ``index.html`` for
+    client-side routes (``/v/<token>``, ``/``). Replaces Caddy's old role.
+    """
+    dist = _web_dist_dir()
+    if dist is None:
+        logger.warning(
+            "Viewer SPA not served: no web dist found (dev /api,/ws unaffected)"
+        )
+        return
+
+    dist = dist.resolve()
+    index = dist / "index.html"
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_viewer_spa(full_path: str):
+        if full_path.startswith(("api/", "ws/")) or full_path in {"api", "ws"}:
+            raise HTTPException(status_code=404)
+        candidate = (dist / full_path).resolve()
+        # Serve a real bundled asset (e.g. assets/index-*.js) when it exists and
+        # is safely inside the dist dir; otherwise fall back to the SPA shell so
+        # client-side routes (/v/<token>, /) resolve.
+        if full_path and dist in candidate.parents and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(index)
+
+    logger.info("Viewer SPA mounted", extra={"web_dist": str(dist)})
+
+
+_mount_viewer_spa()
+# === ANCHOR: MAIN_VIEWER_SPA_END ===
 
 
 # === ANCHOR: MAIN_RUN_START ===

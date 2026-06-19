@@ -2,6 +2,8 @@
 mod diagnostics;
 mod server_config;
 mod server_process;
+mod tunnel;
+mod tunnel_proxy;
 
 use tauri::Manager;
 
@@ -9,6 +11,7 @@ use tauri::Manager;
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(server_process::ServerProcessState::default())
+        .manage(tunnel::TunnelState::default())
         .invoke_handler(tauri::generate_handler![
             diagnostics::save_app_log,
             server_process::start_server,
@@ -18,6 +21,9 @@ pub fn run() {
             server_config::save_server_config,
             server_config::server_config_meta,
             server_config::clear_server_config,
+            tunnel::start_tunnel_cmd,
+            tunnel::stop_tunnel_cmd,
+            tunnel::tunnel_status_cmd,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -28,6 +34,9 @@ pub fn run() {
     // file locked).
     app.run(|app_handle, event| {
         if let tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit = event {
+            // Reap the cloudflared group BEFORE the server so the public edge is
+            // torn down first (no orphan cloudflared keeping the tunnel alive).
+            tunnel::shutdown(&app_handle.state::<tunnel::TunnelState>());
             server_process::shutdown(&app_handle.state::<server_process::ServerProcessState>());
         }
     });

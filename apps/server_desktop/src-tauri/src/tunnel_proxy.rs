@@ -1,0 +1,495 @@
+// === ANCHOR: TUNNEL_PROXY_START ===
+//! Viewer-only path-allowlist reverse proxy (P4.1a — the SECURITY BOUNDARY).
+//!
+//! cloudflared points NOT at the bundled server `:8000` directly, but at THIS
+//! thin local proxy on `:vport`. The proxy forwards ONLY the viewer surface to
+//! `127.0.0.1:<server_port>` and 404s EVERYTHING else, so the durable device
+//! key (`/ws/sidecar?key=`), the operator WS, and the operator/auth/devices REST
+//! never become reachable over the public tunnel. (USER DECISION = Option A.)
+//!
+//! The allowlist is **deny-by-default** and **bypass-resistant**: the request
+//! path is fully normalized (percent-decoded to a fixed point, lower-cased,
+//! duplicate slashes collapsed, `.`/`..` segments resolved with no escape) BEFORE
+//! matching, so `/api/v1/../v1/devices`, `%2e%2e`, `/API/V1/...`, `//ws/sidecar`,
+//! trailing-dot, and `/v/../ws/sidecar` smuggling all collapse to their true
+//! target and are rejected.
+use std::convert::Infallible;
+use std::sync::Arc;
+
+use http_body_util::{BodyExt, Full};
+use hyper::body::{Bytes, Incoming};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::upgrade::Upgraded;
+use hyper::{Request, Response, StatusCode};
+use hyper_util::rt::TokioIo;
+use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpListener, TcpStream};
+
+/// The decision the allowlist returns for a normalized request path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathDecision {
+    /// Forward to the bundled server (viewer surface).
+    Allow,
+    /// 404 — not part of the viewer surface (deny-by-default).
+    Deny,
+}
+
+// === ANCHOR: TUNNEL_PROXY_NORMALIZE_START ===
+/// Normalize a raw request path into a canonical, bypass-resistant form for the
+/// allowlist match. Steps (in order):
+///   1. Drop the query string and fragment (decision is on the path only).
+///   2. Percent-decode to a fixed point (defeats `%2e%2e`, double-encoding like
+///      `%252e`, and `%2f` slash-smuggling).
+///   3. Lower-case (defeats `/API/V1`, `/WS/Sidecar` case games — the viewer
+///      route prefixes we match are all lower-case).
+///   4. Split on `/`, collapse duplicate slashes (`//` -> `/`), and resolve `.`
+///      / `..` segments. A `..` that would pop above root is simply dropped
+///      (cannot escape), so `/v/../ws/sidecar` canonicalizes to `/ws/sidecar`
+///      and is then denied.
+///
+/// Returns a path that always begins with `/`.
+pub fn normalize_path(raw: &str) -> String {
+    // 1. strip query (?) and fragment (#).
+    let path = raw
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("");
+
+    // 2. percent-decode to a fixed point.
+    let mut decoded = percent_decode(path);
+    for _ in 0..8 {
+        let again = percent_decode(&decoded);
+        if again == decoded {
+            break;
+        }
+        decoded = again;
+    }
+
+    // 3. lower-case for case-insensitive prefix matching.
+    let lowered = decoded.to_ascii_lowercase();
+
+    // 4. collapse slashes + resolve . / .. (treat backslashes as separators too,
+    //    so a Windows-style `\` cannot smuggle a segment past the split).
+    let mut segments: Vec<&str> = Vec::new();
+    for seg in lowered.split(['/', '\\']) {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            other => segments.push(other),
+        }
+    }
+    format!("/{}", segments.join("/"))
+}
+
+/// Minimal percent-decoder: turns `%XX` into its byte, lossily as UTF-8. Invalid
+/// escapes are passed through literally. (We only need this for path
+/// canonicalization, not general URL parsing — kept dependency-free.)
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = hex_val(bytes[i + 1]);
+            let lo = hex_val(bytes[i + 2]);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+// === ANCHOR: TUNNEL_PROXY_NORMALIZE_END ===
+
+// === ANCHOR: TUNNEL_PROXY_DECIDE_START ===
+/// The pure allowlist decision over a *normalized* path. Deny-by-default: only
+/// the viewer surface is allowed through. This is the single security gate and
+/// is exhaustively unit-tested (including the bypass attempts).
+///
+/// ALLOW (viewer surface):
+///   - `/`                      -> SPA shell
+///   - `/v` and `/v/<...>`      -> viewer client route
+///   - `/index.html`            -> SPA shell file
+///   - `/favicon...`            -> top-level favicon(s)
+///   - `/assets/<...>`          -> built SPA JS/CSS (apps/web/dist/assets/*)
+///   - `/api/v1/viewer/<...>`   -> viewer REST (list_viewer_utterances)
+///   - `/ws/viewer`             -> viewer WebSocket
+///
+/// Everything else (incl. `/ws/sidecar`, `/ws/operator`, `/api/v1/auth/*`,
+/// `/api/v1/devices*`, `/api/v1/sessions*`, `/api/v1/operator/*`,
+/// `/api/v1/audio_stats*`) -> DENY.
+pub fn decide(normalized_path: &str) -> PathDecision {
+    let p = normalized_path;
+
+    // Exact viewer surfaces.
+    if p == "/" || p == "/index.html" || p == "/v" || p == "/ws/viewer" {
+        return PathDecision::Allow;
+    }
+    // Viewer client route and its sub-paths.
+    if p.starts_with("/v/") {
+        return PathDecision::Allow;
+    }
+    // Built SPA static assets.
+    if p.starts_with("/assets/") {
+        return PathDecision::Allow;
+    }
+    // Top-level favicon(s): /favicon.ico, /favicon.svg, /favicon-32x32.png, ...
+    if p.starts_with("/favicon") {
+        return PathDecision::Allow;
+    }
+    // Viewer REST only — NOT the rest of /api/v1/*.
+    if p.starts_with("/api/v1/viewer/") {
+        return PathDecision::Allow;
+    }
+
+    PathDecision::Deny
+}
+
+/// Convenience: normalize THEN decide. The proxy uses this; tests exercise both
+/// `normalize_path`+`decide` and this combined entrypoint with raw paths.
+pub fn viewer_allows(raw_path: &str) -> PathDecision {
+    decide(&normalize_path(raw_path))
+}
+// === ANCHOR: TUNNEL_PROXY_DECIDE_END ===
+
+// === ANCHOR: TUNNEL_PROXY_SERVER_START ===
+/// A running viewer-only proxy: the local port cloudflared should target, plus a
+/// shutdown signal so the tunnel manager can tear it down with the tunnel.
+pub struct ProxyHandle {
+    pub vport: u16,
+    shutdown: tokio::sync::watch::Sender<bool>,
+}
+
+impl ProxyHandle {
+    /// Signal the accept loop to stop. In-flight connections drain on their own.
+    pub fn stop(&self) {
+        let _ = self.shutdown.send(true);
+    }
+}
+
+/// Bind the viewer-only proxy on an ephemeral loopback port and forward the
+/// allowlisted viewer surface to `server_port`. Returns the chosen `vport`.
+/// Spawns the accept loop on the provided tokio handle.
+pub async fn start_proxy(server_port: u16) -> std::io::Result<ProxyHandle> {
+    // Bind loopback:0 so the OS hands us a free ephemeral port distinct from the
+    // server's. cloudflared connects over loopback only; the public edge is the
+    // tunnel, never this port directly.
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+    let vport = listener.local_addr()?.port();
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    let upstream = Arc::new(format!("127.0.0.1:{server_port}"));
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        break;
+                    }
+                }
+                accepted = listener.accept() => {
+                    let Ok((stream, _peer)) = accepted else { continue };
+                    let upstream = upstream.clone();
+                    tokio::spawn(async move {
+                        let io = TokioIo::new(stream);
+                        let service = service_fn(move |req| {
+                            let upstream = upstream.clone();
+                            async move { proxy_request(req, upstream).await }
+                        });
+                        // `with_upgrades` so the `/ws/viewer` 101 handshake can be
+                        // hijacked and relayed as a raw bidirectional tunnel.
+                        let _ = http1::Builder::new()
+                            .serve_connection(io, service)
+                            .with_upgrades()
+                            .await;
+                    });
+                }
+            }
+        }
+    });
+
+    Ok(ProxyHandle { vport, shutdown: shutdown_tx })
+}
+
+/// Build a 404 response (deny-by-default + any upstream failure surface).
+fn not_found() -> Response<Full<Bytes>> {
+    let mut resp = Response::new(Full::new(Bytes::from_static(b"404 Not Found")));
+    *resp.status_mut() = StatusCode::NOT_FOUND;
+    resp
+}
+
+fn bad_gateway() -> Response<Full<Bytes>> {
+    let mut resp = Response::new(Full::new(Bytes::from_static(b"502 Bad Gateway")));
+    *resp.status_mut() = StatusCode::BAD_GATEWAY;
+    resp
+}
+
+/// Per-request handler: run the allowlist on the *normalized* path, then either
+/// 404 or forward to the bundled server (WS upgrade or plain HTTP).
+async fn proxy_request(
+    req: Request<Incoming>,
+    upstream: Arc<String>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let raw_path = req.uri().path().to_string();
+    if viewer_allows(&raw_path) == PathDecision::Deny {
+        return Ok(not_found());
+    }
+
+    // WebSocket upgrade (only `/ws/viewer` is allowed to reach here) needs a raw
+    // byte tunnel after the 101, so it is handled distinctly from plain HTTP.
+    if is_upgrade(&req) {
+        return Ok(proxy_upgrade(req, upstream).await);
+    }
+
+    match forward_http(req, upstream).await {
+        Ok(resp) => Ok(resp),
+        Err(_) => Ok(bad_gateway()),
+    }
+}
+
+/// True when the request asks for a protocol upgrade (WebSocket).
+fn is_upgrade(req: &Request<Incoming>) -> bool {
+    req.headers()
+        .get(hyper::header::CONNECTION)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_ascii_lowercase().contains("upgrade"))
+        .unwrap_or(false)
+        && req.headers().contains_key(hyper::header::UPGRADE)
+}
+
+/// Forward a plain (non-upgrade) HTTP request to the bundled server and return
+/// its response with the body fully buffered.
+async fn forward_http(
+    req: Request<Incoming>,
+    upstream: Arc<String>,
+) -> Result<Response<Full<Bytes>>, Box<dyn std::error::Error + Send + Sync>> {
+    let (parts, body) = req.into_parts();
+    let body_bytes = body.collect().await?.to_bytes();
+
+    let stream = TcpStream::connect(upstream.as_str()).await?;
+    let io = TokioIo::new(stream);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    let mut out_req = Request::from_parts(parts, Full::new(body_bytes));
+    // Forward the original path+query (allowlist already cleared the path; the
+    // server re-validates tokens etc.). The URI carries it through unchanged.
+    let _ = out_req.headers_mut(); // (kept explicit for clarity / future tweaks)
+
+    let resp = sender.send_request(out_req).await?;
+    let (parts, body) = resp.into_parts();
+    let bytes = body.collect().await?.to_bytes();
+    Ok(Response::from_parts(parts, Full::new(bytes)))
+}
+
+/// Proxy a WebSocket upgrade: open a parallel upgrade to the upstream, relay the
+/// 101 + headers back to the client, then splice the two upgraded byte streams
+/// bidirectionally until either side closes.
+async fn proxy_upgrade(
+    req: Request<Incoming>,
+    upstream: Arc<String>,
+) -> Response<Full<Bytes>> {
+    // Clone the head pieces so we can rebuild the handshake request for the
+    // upstream while keeping the original `req` to register the client-side
+    // on-upgrade future. A WS handshake carries no body, so we send an empty one
+    // upstream.
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let headers = req.headers().clone();
+    let version = req.version();
+
+    let stream = match TcpStream::connect(upstream.as_str()).await {
+        Ok(s) => s,
+        Err(_) => return bad_gateway(),
+    };
+    let io = TokioIo::new(stream);
+    let (mut sender, conn) = match hyper::client::conn::http1::handshake(io).await {
+        Ok(pair) => pair,
+        Err(_) => return bad_gateway(),
+    };
+    // The upstream connection must keep running so its upgrade can complete.
+    let upstream_conn = tokio::spawn(async move {
+        let _ = conn.with_upgrades().await;
+    });
+
+    let mut upstream_req = Request::new(Full::new(Bytes::new()));
+    *upstream_req.method_mut() = method;
+    *upstream_req.uri_mut() = uri;
+    *upstream_req.headers_mut() = headers;
+    *upstream_req.version_mut() = version;
+    let upstream_resp = match sender.send_request(upstream_req).await {
+        Ok(r) => r,
+        Err(_) => {
+            upstream_conn.abort();
+            return bad_gateway();
+        }
+    };
+
+    if upstream_resp.status() != StatusCode::SWITCHING_PROTOCOLS {
+        // Upstream refused the upgrade (e.g. bad token -> non-101). Relay its
+        // status/body straight back.
+        let (rparts, rbody) = upstream_resp.into_parts();
+        let bytes = rbody.collect().await.map(|b| b.to_bytes()).unwrap_or_default();
+        upstream_conn.abort();
+        return Response::from_parts(rparts, Full::new(bytes));
+    }
+
+    // Build the 101 to hand back to the client, preserving the upgrade headers
+    // the browser needs (Sec-WebSocket-Accept, Upgrade, Connection, ...).
+    let mut client_resp: Response<Full<Bytes>> = Response::new(Full::new(Bytes::new()));
+    *client_resp.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
+    *client_resp.headers_mut() = upstream_resp.headers().clone();
+
+    // Register both on-upgrade futures, then splice the two upgraded streams.
+    let upstream_upgrade = hyper::upgrade::on(upstream_resp);
+    let client_upgrade = hyper::upgrade::on(req);
+    tokio::spawn(async move {
+        let client_upgraded = match client_upgrade.await {
+            Ok(u) => u,
+            Err(_) => {
+                upstream_conn.abort();
+                return;
+            }
+        };
+        let server_upgraded = match upstream_upgrade.await {
+            Ok(u) => u,
+            Err(_) => {
+                upstream_conn.abort();
+                return;
+            }
+        };
+        relay_bidirectional(client_upgraded, server_upgraded).await;
+        upstream_conn.abort();
+    });
+
+    client_resp
+}
+
+/// Copy bytes both ways between the client and upstream upgraded sockets until
+/// either half closes.
+async fn relay_bidirectional(client: Upgraded, server: Upgraded) {
+    let mut client = TokioIo::new(client);
+    let mut server = TokioIo::new(server);
+    let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
+    let _ = client.shutdown().await;
+    let _ = server.shutdown().await;
+}
+// === ANCHOR: TUNNEL_PROXY_SERVER_END ===
+
+// === ANCHOR: TUNNEL_PROXY_TESTS_START ===
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn allows(raw: &str) -> bool {
+        viewer_allows(raw) == PathDecision::Allow
+    }
+
+    // --- ALLOW: the viewer surface ---
+    #[test]
+    fn allows_viewer_surface() {
+        assert!(allows("/"), "SPA shell");
+        assert!(allows("/index.html"), "SPA shell file");
+        assert!(allows("/v/abc"), "viewer client route");
+        assert!(allows("/v/some-long-token-XYZ"), "viewer token route");
+        assert!(allows("/assets/index-CXOkeCk3.js"), "built JS asset");
+        assert!(allows("/assets/index-Bn5esT6U.css"), "built CSS asset");
+        assert!(allows("/favicon.ico"), "favicon");
+        assert!(allows("/api/v1/viewer/utterances"), "viewer REST");
+        assert!(allows("/api/v1/viewer/utterances?token=x&since=1"), "viewer REST w/ query");
+        assert!(allows("/ws/viewer"), "viewer websocket");
+        assert!(allows("/ws/viewer?token=abc"), "viewer websocket w/ token");
+    }
+
+    // --- DENY: the operator / sidecar / auth surface (deny-by-default) ---
+    #[test]
+    fn denies_non_viewer_surface() {
+        assert!(!allows("/ws/sidecar"), "durable device-key socket MUST be denied");
+        assert!(!allows("/ws/sidecar?key=SECRET"), "device key never over tunnel");
+        assert!(!allows("/ws/operator"), "operator socket denied");
+        assert!(!allows("/api/v1/devices"), "devices REST denied");
+        assert!(!allows("/api/v1/auth/login"), "auth login denied");
+        assert!(!allows("/api/v1/sessions"), "operator sessions denied");
+        assert!(!allows("/api/v1/operator/anything"), "operator REST denied");
+        assert!(!allows("/api/v1/audio_stats"), "audio_stats denied");
+        assert!(!allows("/api/v1/health"), "health denied (not viewer)");
+        assert!(!allows("/api/v1/viewer"), "/api/v1/viewer (no trailing) denied");
+        assert!(!allows("/api/v1/viewerX/utterances"), "prefix-confusion denied");
+    }
+
+    // --- DENY: bypass / smuggling attempts ---
+    #[test]
+    fn defeats_dotdot_traversal() {
+        // `/api/v1/../devices` canonicalizes to `/api/devices` -> deny.
+        assert!(!allows("/api/v1/../devices"));
+        // `/api/v1/viewer/../../devices` -> `/api/devices` -> deny.
+        assert!(!allows("/api/v1/viewer/../../devices"));
+        // `/v/../ws/sidecar` -> `/ws/sidecar` -> deny.
+        assert!(!allows("/v/../ws/sidecar"));
+        assert!(!allows("/assets/../ws/sidecar"));
+    }
+
+    #[test]
+    fn defeats_percent_encoding() {
+        // `%2e%2e` == `..` ; `/api/v1/%2e%2e/devices` -> `/api/devices` -> deny.
+        assert!(!allows("/api/v1/%2e%2e/devices"));
+        // double-encoded `%252e%252e` -> `%2e%2e` -> `..`
+        assert!(!allows("/api/v1/%252e%252e/devices"));
+        // `/%2e%2e/ws/sidecar` -> `/ws/sidecar` -> deny.
+        assert!(!allows("/%2e%2e/ws/sidecar"));
+        // encoded slash `%2f` joining a denied path.
+        assert!(!allows("/ws%2fsidecar"));
+    }
+
+    #[test]
+    fn defeats_case_games() {
+        assert!(!allows("/WS/SIDECAR"));
+        assert!(!allows("/API/V1/DEVICES"));
+        assert!(!allows("/Ws/Sidecar"));
+        // `/V/../ws/sidecar` (upper V) -> `/ws/sidecar` -> deny.
+        assert!(!allows("/V/../ws/sidecar"));
+        // case must NOT break a legit allow either.
+        assert!(allows("/V/abc"), "viewer route is case-insensitive on prefix");
+    }
+
+    #[test]
+    fn defeats_slash_games() {
+        assert!(!allows("//ws/sidecar"), "leading double slash");
+        assert!(!allows("/ws//sidecar"), "embedded double slash");
+        assert!(!allows("/./ws/sidecar"), "dot segment");
+        assert!(!allows("/ws/sidecar/"), "trailing slash variant");
+        assert!(!allows("/ws/sidecar."), "trailing dot (distinct path) denied");
+        // backslash separator smuggling
+        assert!(!allows("/ws\\sidecar"));
+    }
+
+    #[test]
+    fn normalize_examples() {
+        assert_eq!(normalize_path("/api/v1/../devices"), "/api/devices");
+        assert_eq!(normalize_path("//ws/sidecar"), "/ws/sidecar");
+        assert_eq!(normalize_path("/V/../ws/sidecar"), "/ws/sidecar");
+        assert_eq!(normalize_path("/api/v1/%2e%2e/devices"), "/api/devices");
+        assert_eq!(normalize_path("/api/v1/viewer/utterances?token=x"), "/api/v1/viewer/utterances");
+        assert_eq!(normalize_path("/"), "/");
+    }
+}
+// === ANCHOR: TUNNEL_PROXY_TESTS_END ===
+// === ANCHOR: TUNNEL_PROXY_END ===
