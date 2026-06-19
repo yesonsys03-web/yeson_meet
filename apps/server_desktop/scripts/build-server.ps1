@@ -12,6 +12,12 @@
 # available to uv, pnpm + Node (for the apps/web build), Visual C++ runtime.
 #
 # Usage (from anywhere):  pwsh apps/server_desktop/scripts/build-server.ps1
+#   -SkipCloudflared : freeze the server only, skip vendoring cloudflared (used
+#                      by the P0 spike CI, which exercises the freeze + teardown
+#                      and does not need the tunnel binary).
+param(
+    [switch]$SkipCloudflared
+)
 $ErrorActionPreference = "Stop"
 
 # repo root = scripts\..\..\.. (apps/server_desktop/scripts -> repo root)
@@ -79,6 +85,11 @@ Write-Host "  entry binary: $DestDir/yeson-server.exe"
 
 # P4.3: vendor the Windows cloudflared so the tauri.conf binaries/cloudflared-*
 # resource glob is satisfied at `tauri build`. Idempotent (skips if present).
+# The P0 spike CI passes -SkipCloudflared (it tests the freeze, not the tunnel).
+if ($SkipCloudflared) {
+    Write-Host "Skipping cloudflared vendoring (-SkipCloudflared)."
+    return
+}
 $CfDir = "apps/server_desktop/src-tauri/binaries/cloudflared-$Triple"
 $CfBin = Join-Path $CfDir "cloudflared.exe"
 if (Test-Path $CfBin) {

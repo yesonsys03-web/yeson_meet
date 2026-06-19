@@ -1,0 +1,80 @@
+name: P0 Windows freeze spike
+
+# Runs the P0 measure-first spike on a real Windows runner so the freeze +
+# teardown unknown can be retired WITHOUT a local Windows machine. The job
+# passes iff every P0 AC passes (win-freeze-spike.ps1 exits non-zero on any
+# FAIL). Trigger manually from the Actions tab (workflow_dispatch) on any
+# branch; it also runs when the spike scripts themselves change.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/p0-windows-freeze-spike.yml"
+      - "apps/server_desktop/scripts/build-server.ps1"
+      - "apps/server_desktop/scripts/win-freeze-spike.ps1"
+      - "apps/server_desktop/sidecar/**"
+      - "apps/server/**"
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    name: Freeze + teardown spike (P0.1/P0.2/P0.3)
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Freeze the server (PyInstaller --onedir). cloudflared is irrelevant to the
+      # P0 freeze/teardown question, so skip it.
+      - name: Build frozen yeson-server (Windows)
+        shell: pwsh
+        run: pwsh -File apps/server_desktop/scripts/build-server.ps1 -SkipCloudflared
+
+      # Measure P0.1 (boot+/health+schema), P0.2 (no orphan after child.kill()),
+      # P0.3 (relaunch-clean). Non-zero exit on any FAIL fails the job.
+      - name: Run freeze + teardown spike
+        shell: pwsh
+        run: pwsh -File apps/server_desktop/scripts/win-freeze-spike.ps1 -WorkDir "${{ runner.temp }}/yeson-p0-spike"
+
+      # Best-effort: the P0.1/P0.2/P0.3 PASS/FAIL verdict prints to the job log
+      # (always viewable in the Actions run), so the downloadable log artifact is
+      # only a convenience. Actions STORAGE (artifacts) can be full while minutes
+      # remain — never let a storage-quota upload failure flip a passing spike to
+      # red. continue-on-error keeps the job result == the spike result.
+      - name: Upload spike logs (best-effort)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-spike-logs
+          path: ${{ runner.temp }}/yeson-p0-spike/*.log*
+          if-no-files-found: ignore
+          retention-days: 1

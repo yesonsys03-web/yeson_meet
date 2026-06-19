@@ -19,7 +19,10 @@
 # Usage:  pwsh apps/server_desktop/scripts/win-freeze-spike.ps1 [-Port 8000]
 param(
     [int]$Port = 8000,
-    [string]$Triple = "x86_64-pc-windows-msvc"
+    [string]$Triple = "x86_64-pc-windows-msvc",
+    # Isolated workspace for the spike's temp DB/storage/logs. CI passes
+    # $RUNNER_TEMP so the log-upload step finds the files deterministically.
+    [string]$WorkDir = (Join-Path $env:TEMP "yeson-p0-spike")
 )
 $ErrorActionPreference = "Stop"
 
@@ -30,7 +33,7 @@ if (-not (Test-Path $Bin)) {
 }
 
 # Isolated spike workspace.
-$Work    = Join-Path $env:TEMP "yeson-p0-spike"
+$Work    = $WorkDir
 if (Test-Path $Work) { Remove-Item -Recurse -Force $Work }
 New-Item -ItemType Directory -Force -Path $Work | Out-Null
 $DbPath  = Join-Path $Work "yeson-meet.db"
