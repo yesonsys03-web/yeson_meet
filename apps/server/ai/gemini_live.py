@@ -592,6 +592,11 @@ async def _stream_session(
     first_partial_translation = False
     first_utterance_yielded = False
     speech_observed = False
+    # When a partial (is_final=False) was already shown this turn, the finalized
+    # Korean must overwrite that partial in place at its existing current_seq as a
+    # single is_final=True utterance — NOT re-split into new seqs, which would make
+    # already-read sentences reappear as new bottom rows. Reset at turn end.
+    partial_shown_this_turn = False
     # In-flight partial translation state. fire-and-forget so the receive loop
     # is not blocked by gemini-2.5-flash-lite latency (previously caused a
     # positive-feedback loop after cycle backlog where every input_text update
@@ -621,7 +626,7 @@ async def _stream_session(
 
     def _publish_partial_chunk(chunk_text: str) -> TranslatedUtterance | None:
         nonlocal first_partial_translation, first_utterance_yielded
-        nonlocal last_partial_text_en, partial_text_ko
+        nonlocal last_partial_text_en, partial_text_ko, partial_shown_this_turn
         if partial_was_incremental and chunk_text:
             translated = partial_prev_ko_anchor + chunk_text
         else:
@@ -661,6 +666,7 @@ async def _stream_session(
                     ) if connected_at is not None else None,
                 },
             )
+        partial_shown_this_turn = True
         return TranslatedUtterance(
             seq=current_seq,
             text_en=partial_input_snapshot,
@@ -1085,26 +1091,44 @@ async def _stream_session(
                             },
                         )
                     if extracted.turn_complete:
-                        # Split the final Korean into per-sentence subtitles so a
-                        # 5–7 sentence dump arrives as several readable lines
-                        # instead of one wall the operator can't keep up with.
-                        sentences = _split_into_sentences(text_ko) or [text_ko]
-                        for i, sentence in enumerate(sentences):
-                            if i > 0:
-                                seq += 1
-                                current_seq = seq
-                                ended_at = datetime.now(timezone.utc)
+                        if partial_shown_this_turn:
+                            # A partial was already shown this turn at current_seq.
+                            # Overwrite it in place with the finalized Korean as a
+                            # single is_final=True utterance — do NOT re-split into
+                            # new seqs, which would make already-read sentences
+                            # reappear as new bottom rows.
                             last_publish_at = time.monotonic()
                             yield TranslatedUtterance(
                                 seq=current_seq,
-                                text_en=text_en if i == 0 else "",
-                                text_ko=sentence,
+                                text_en=text_en,
+                                text_ko=text_ko,
                                 started_at=started_at,
                                 ended_at=ended_at,
                                 is_final=True,
                                 provider_segment=provider_segment,
                             )
+                        else:
+                            # Split the final Korean into per-sentence subtitles so a
+                            # 5–7 sentence dump arrives as several readable lines
+                            # instead of one wall the operator can't keep up with.
+                            sentences = _split_into_sentences(text_ko) or [text_ko]
+                            for i, sentence in enumerate(sentences):
+                                if i > 0:
+                                    seq += 1
+                                    current_seq = seq
+                                    ended_at = datetime.now(timezone.utc)
+                                last_publish_at = time.monotonic()
+                                yield TranslatedUtterance(
+                                    seq=current_seq,
+                                    text_en=text_en if i == 0 else "",
+                                    text_ko=sentence,
+                                    started_at=started_at,
+                                    ended_at=ended_at,
+                                    is_final=True,
+                                    provider_segment=provider_segment,
+                                )
                     else:
+                        partial_shown_this_turn = True
                         last_publish_at = time.monotonic()
                         yield TranslatedUtterance(
                             seq=current_seq,
@@ -1136,22 +1160,39 @@ async def _stream_session(
                                     ) if connected_at is not None else None,
                                 },
                             )
-                        sentences = _split_into_sentences(final_text_ko) or [final_text_ko]
-                        for i, sentence in enumerate(sentences):
-                            if i > 0:
-                                seq += 1
-                                current_seq = seq
-                                ended_at = datetime.now(timezone.utc)
+                        if partial_shown_this_turn:
+                            # A partial was already shown this turn at current_seq.
+                            # Overwrite it in place with the finalized Korean as a
+                            # single is_final=True utterance — do NOT re-split into
+                            # new seqs (already-read sentences would reappear as new
+                            # bottom rows).
                             last_publish_at = time.monotonic()
                             yield TranslatedUtterance(
                                 seq=current_seq,
-                                text_en=text_en if i == 0 else "",
-                                text_ko=sentence,
+                                text_en=text_en,
+                                text_ko=final_text_ko,
                                 started_at=started_at,
                                 ended_at=ended_at,
                                 is_final=True,
                                 provider_segment=provider_segment,
                             )
+                        else:
+                            sentences = _split_into_sentences(final_text_ko) or [final_text_ko]
+                            for i, sentence in enumerate(sentences):
+                                if i > 0:
+                                    seq += 1
+                                    current_seq = seq
+                                    ended_at = datetime.now(timezone.utc)
+                                last_publish_at = time.monotonic()
+                                yield TranslatedUtterance(
+                                    seq=current_seq,
+                                    text_en=text_en if i == 0 else "",
+                                    text_ko=sentence,
+                                    started_at=started_at,
+                                    ended_at=ended_at,
+                                    is_final=True,
+                                    provider_segment=provider_segment,
+                                )
                     if partial_task is not None and not partial_task.done():
                         partial_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -1171,6 +1212,7 @@ async def _stream_session(
                     text_ko = ""
                     last_partial_text_en = ""
                     partial_text_ko = ""
+                    partial_shown_this_turn = False
                     started_at = ended_at
             if not receive_next.done():
                 receive_next.cancel()

@@ -1642,4 +1642,109 @@ async def test_stream_session_watchdog_breaks_when_no_transcription(monkeypatch)
 
     # watchdog에 의해 깔끔하게 break돼 utterance 없이 종료.
     assert utterances == []
+
+
+async def test_stream_session_does_not_resplit_final_when_partial_shown(monkeypatch) -> None:
+    """Regression: when a partial (is_final=False) was already shown this turn,
+    a multi-sentence turn_complete final must overwrite that partial IN PLACE as
+    a single is_final=True utterance at the partial's seq — NOT be re-split into
+    new seqs. Re-splitting made already-read sentences reappear as new bottom
+    rows in the operator console."""
+    monkeypatch.setenv("GEMINI_FAST_PARTIAL_TRANSLATION_ENABLED", "1")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_CHARS", "10")
+    monkeypatch.setenv("GEMINI_PARTIAL_MIN_WORDS", "3")
+
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(text="Please check the layout."),
+                    output_transcription=None,
+                    model_turn=None,
+                    turn_complete=False,
+                )
+            )
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=None,
+                    output_transcription=SimpleNamespace(
+                        text="첫 번째 문장입니다. 두 번째 문장입니다. 세 번째 문장입니다."
+                    ),
+                    model_turn=None,
+                    turn_complete=True,
+                )
+            )
+
+    text_client = FakeTextClient()
+    utterances = [
+        item
+        async for item in _stream_session(
+            FakeSession(),
+            FakeTypes,
+            _empty_audio(),
+            text_client,
+        )
+    ]
+
+    finals = [u for u in utterances if u.is_final]
+    # Exactly ONE final, carrying the full multi-sentence Korean, at the
+    # partial's seq (1) — no new seqs minted for sentences 2..k.
+    assert len(finals) == 1
+    assert finals[0].seq == 1
+    assert finals[0].text_ko == "첫 번째 문장입니다. 두 번째 문장입니다. 세 번째 문장입니다."
+    # Every utterance this turn stays on seq 1 (partial revisions + the final).
+    assert {u.seq for u in utterances} == {1}
+    # The partial(s) shown before the final are still is_final=False.
+    assert any(not u.is_final for u in utterances)
+
+
+async def test_stream_session_still_splits_multi_sentence_final_without_partial() -> None:
+    """Counterpart guard: when NO partial was shown this turn, the per-sentence
+    split MUST still happen (one is_final=True per sentence, seq bumped per
+    sentence). This is the unchanged behaviour for partial-free turns."""
+    class FakeTypes:
+        class Blob:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+    class FakeSession:
+        async def send_realtime_input(self, **_kwargs: object) -> None:
+            return None
+
+        async def receive(self):
+            yield SimpleNamespace(
+                server_content=SimpleNamespace(
+                    input_transcription=SimpleNamespace(
+                        text="The speaker is talking for a long time."
+                    ),
+                    output_transcription=SimpleNamespace(
+                        text="첫 번째 문장입니다. 두 번째 문장입니다. 세 번째 문장입니다."
+                    ),
+                    model_turn=None,
+                    turn_complete=True,
+                )
+            )
+
+    # No text_client → fast-partial path never runs → no partial shown.
+    utterances = [
+        item async for item in _stream_session(FakeSession(), FakeTypes, _empty_audio())
+    ]
+
+    assert [u.text_ko for u in utterances] == [
+        "첫 번째 문장입니다.",
+        "두 번째 문장입니다.",
+        "세 번째 문장입니다.",
+    ]
+    assert [u.seq for u in utterances] == [1, 2, 3]
+    assert all(u.is_final for u in utterances)
 # === ANCHOR: TEST_GEMINI_LIVE_END ===
