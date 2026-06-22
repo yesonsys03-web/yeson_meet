@@ -2,71 +2,49 @@
 import { useEffect, useRef, useState } from "react";
 import type { UtteranceTranscribed } from "./types";
 
-// 사용자가 자막을 읽을 최소 시간을 보장하기 위한 표시 페이서.
-// stream.latest가 너무 빨리 다음 seq로 갱신되면 이전 자막이 화면에서
-// 사라지기 전에 읽을 시간이 부족하다. 이 훅은 현재 표시 중인 자막을
-// 최소 표시 시간까지 유지하고, 그 사이 도착하는 새 seq는 큐에 보관해
-// 순차 노출한다.
-const BASE_DISPLAY_MS = 1500;
-const PER_CHAR_MS = 80;
-const MAX_DISPLAY_MS = 8000;
-const QUEUE_MAX = 5;
-
-function computeDisplayMs(utterance: UtteranceTranscribed): number {
-  const text = utterance.text_ko || utterance.text_en || "";
-  return Math.min(BASE_DISPLAY_MS + text.length * PER_CHAR_MS, MAX_DISPLAY_MS);
-}
+// 표시 페이서 — 지연(latency)을 묶으면서 읽기 시간을 지킨다.
+// 규칙:
+//  1) 다음 자막이 없으면 현재 자막은 계속 떠 있다 → 한가할 땐 읽을 시간 무제한.
+//  2) 새 자막이 와도 현재 자막이 최소 표시시간(MIN_READ_MS)을 못 채웠으면
+//     그때만 잠깐 대기시킨다. 대기 중 더 새 자막이 오면 중간 것은 버리고
+//     항상 "가장 최신"만 보관 → 연속 발화로 밀려도 지연은 최대 MIN_READ_MS
+//     한 박자로 상한이 걸린다(이전: 큐 5개 × 최대 8초로 무한정 누적).
+//  3) 같은 seq의 갱신(partial→final)은 제자리에서 텍스트만 교체.
+const MIN_READ_MS = 2200;
 
 type Slot = {
   utterance: UtteranceTranscribed;
   shownAtMs: number;
-  displayMs: number;
 };
 
 export function usePacedSubtitle(latest: UtteranceTranscribed | null): UtteranceTranscribed | null {
   const [slot, setSlot] = useState<Slot | null>(null);
-  const queueRef = useRef<UtteranceTranscribed[]>([]);
+  // 대기 중인 "가장 최신" 자막 1개만 보관(중간 자막은 버려 지연을 묶는다).
+  const pendingRef = useRef<UtteranceTranscribed | null>(null);
 
   useEffect(() => {
     if (!latest) {
       setSlot(null);
-      queueRef.current = [];
+      pendingRef.current = null;
       return;
     }
     setSlot((current) => {
       if (!current) {
-        return {
-          utterance: latest,
-          shownAtMs: performance.now(),
-          displayMs: computeDisplayMs(latest),
-        };
+        pendingRef.current = null;
+        return { utterance: latest, shownAtMs: performance.now() };
       }
       if (current.utterance.seq === latest.seq) {
-        const newDisplayMs = computeDisplayMs(latest);
-        return {
-          utterance: latest,
-          shownAtMs: current.shownAtMs,
-          displayMs: Math.max(current.displayMs, newDisplayMs),
-        };
+        // 같은 발화의 갱신(partial→final): 제자리 교체, 표시 시작 시각 유지.
+        return { utterance: latest, shownAtMs: current.shownAtMs };
       }
       const elapsed = performance.now() - current.shownAtMs;
-      if (elapsed >= current.displayMs) {
-        return {
-          utterance: latest,
-          shownAtMs: performance.now(),
-          displayMs: computeDisplayMs(latest),
-        };
+      if (elapsed >= MIN_READ_MS) {
+        // 현재 자막을 충분히 읽을 시간이 지났으면 새 자막 즉시 표시(지연 0).
+        pendingRef.current = null;
+        return { utterance: latest, shownAtMs: performance.now() };
       }
-      const queue = queueRef.current;
-      const existing = queue.findIndex((item) => item.seq === latest.seq);
-      if (existing >= 0) {
-        queue[existing] = latest;
-      } else {
-        queue.push(latest);
-      }
-      while (queue.length > QUEUE_MAX) {
-        queue.shift();
-      }
+      // 아직 못 읽었으면 잠깐 대기 — 항상 최신만 보관(중간 자막은 버림).
+      pendingRef.current = latest;
       return current;
     });
   }, [latest]);
@@ -74,15 +52,12 @@ export function usePacedSubtitle(latest: UtteranceTranscribed | null): Utterance
   useEffect(() => {
     if (!slot) return;
     const elapsed = performance.now() - slot.shownAtMs;
-    const remaining = Math.max(0, slot.displayMs - elapsed);
+    const remaining = Math.max(0, MIN_READ_MS - elapsed);
     const timer = window.setTimeout(() => {
-      const next = queueRef.current.shift();
-      if (next) {
-        setSlot({
-          utterance: next,
-          shownAtMs: performance.now(),
-          displayMs: computeDisplayMs(next),
-        });
+      const next = pendingRef.current;
+      if (next && next.seq !== slot.utterance.seq) {
+        pendingRef.current = null;
+        setSlot({ utterance: next, shownAtMs: performance.now() });
       }
     }, remaining);
     return () => window.clearTimeout(timer);
