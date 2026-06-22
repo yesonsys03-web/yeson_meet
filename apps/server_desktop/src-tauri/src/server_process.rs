@@ -268,6 +268,11 @@ pub fn start_server_inner(
         .env("GEMINI_PARTIAL_MIN_CHARS", "12")
         .env("GEMINI_PARTIAL_MIN_WORDS", "2")
         .env("GEMINI_PARTIAL_MIN_DELTA_CHARS", "6")
+        // AUDIO output is the only modality that connects on the current SDK/model
+        // (TEXT fails with 1011) and it enables input-audio transcription, the
+        // subtitle source. Code already defaults to AUDIO; pin it so a future SDK
+        // default change can't silently break subtitles.
+        .env("GEMINI_RESPONSE_MODALITY", "AUDIO")
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUTF8", "1")
         .stdin(Stdio::null())
