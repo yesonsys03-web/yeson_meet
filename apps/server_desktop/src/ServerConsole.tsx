@@ -285,14 +285,10 @@ export default function ServerConsole() {
           <p style={styles.warn}>Not running inside Tauri — Start/Stop and live logs are disabled in the browser preview.</p>
         ) : null}
       </header>
-      {showConfig ? (
-        <div style={styles.configWrap}>
-          <ServerConfigPanel />
-        </div>
-      ) : null}
-      {showDevices ? (
-        <div style={styles.configWrap}>
-          <DevicePanel serverPort={status?.port ?? null} running={running} />
+      {showConfig || showDevices ? (
+        <div style={styles.panelsWrap}>
+          {showConfig ? <ServerConfigPanel /> : null}
+          {showDevices ? <DevicePanel serverPort={status?.port ?? null} running={running} /> : null}
         </div>
       ) : null}
       <main style={styles.logBody}>
@@ -391,11 +387,15 @@ const styles: Record<string, React.CSSProperties> = {
     wordBreak: "break-all",
   },
   tunnelHint: { fontSize: 12, color: "#6b7c8d" },
-  // Config block: capped, independently-scrollable region between the fixed
-  // header and the log body so it never collapses the single-scroll layout.
-  configWrap: { flex: "0 0 auto", maxHeight: "55%", overflowY: "auto" },
+  // Config + devices share ONE capped, independently-scrollable region between
+  // the fixed header and the log body. Merging them (vs. two separate 55% blocks)
+  // bounds their COMBINED height to 55% so two open panels can never overflow a
+  // short window and push the log body out of reach (the portrait-rotation bug).
+  // flex-shrink:1 + minHeight:0 lets it yield space; its own overflowY scrolls.
+  panelsWrap: { flex: "0 1 auto", maxHeight: "55%", overflowY: "auto", minHeight: 0 },
   logBody: {
     flex: "1 1 auto",
+    minHeight: 0,
     overflowY: "auto",
     padding: "12px 20px",
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
