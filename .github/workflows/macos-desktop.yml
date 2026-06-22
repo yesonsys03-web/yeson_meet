@@ -72,8 +72,8 @@ jobs:
       - name: Publish installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: desktop-macos-latest
-          name: Client app (macOS, unsigned ad-hoc test build)
+          tag_name: v0.9
+          name: yeson-meet v0.9
           prerelease: true
           body: |
             Unsigned (ad-hoc) macOS test build of the yeson-meet desktop CLIENT

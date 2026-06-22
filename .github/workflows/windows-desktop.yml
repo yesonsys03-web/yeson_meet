@@ -153,8 +153,8 @@ jobs:
       - name: Publish client installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: desktop-windows-latest
-          name: Client app (Windows, unsigned test build)
+          tag_name: v0.9
+          name: yeson-meet v0.9
           prerelease: true
           body: |
             Unsigned Windows test build of the yeson-meet desktop CLIENT app
