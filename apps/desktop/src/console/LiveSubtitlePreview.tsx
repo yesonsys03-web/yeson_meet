@@ -27,9 +27,9 @@ export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = fal
     ...consoleStyles.subtitlePanel,
     ...(fullscreen.isFullscreen ? consoleStyles.subtitlePanelFullscreen : null),
   };
-  // Paced display — 자막이 너무 빨리 다음 seq로 갱신되면 사용자가 못 읽기 때문에
-  // 길이에 비례하는 최소 표시 시간을 보장한다. 진행 중인 다음 seq는 큐에 보관.
-  const latest = usePacedSubtitle(stream.latest);
+  // Paced display — 들어온 모든 발화(seq)를 순서대로, 글자수 비례 읽기시간만큼
+  // 보여준다(누락 0). 밀리면 표시시간을 압축해 따라잡되 건너뛰지 않는다.
+  const latest = usePacedSubtitle(stream.utterances);
   const previous = previousSubtitle(stream.utterances, latest?.seq ?? null);
   const subtitleText = latest?.text_ko || latest?.text_en || "";
   const previousSubtitleText = previous?.text_ko || previous?.text_en || "";
