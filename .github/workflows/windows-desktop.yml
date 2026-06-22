@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - server_add
     paths:
       - ".github/workflows/windows-desktop.yml"
       - "apps/client_sidecar/**"

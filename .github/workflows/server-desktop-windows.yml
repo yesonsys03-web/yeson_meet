@@ -20,7 +20,7 @@ on:
   push:
     # Heavy installer build: auto-run only on main; feature branches build on
     # demand via the Actions tab (workflow_dispatch). Mirrors windows-desktop.yml.
-    branches: [main]
+    branches: [main, server_add]
     paths:
       - ".github/workflows/server-desktop-windows.yml"
       - "apps/server_desktop/**"
