@@ -10,6 +10,7 @@
     "build:sidecar-mac": "../client_sidecar/scripts/build-sidecar.sh",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "tauri:build:signed": "APPLE_SIGNING_IDENTITY=\"Yeson Meet Self Signed\" tauri build",
     "test": "vitest run",
     "test:watch": "vitest"
   },
