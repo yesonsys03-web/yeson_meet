@@ -42,8 +42,11 @@ yeson-meet는 **앱 2개**로 나뉩니다(자가호스팅, SaaS 아님):
 
 3. **시스템 설정**(System Settings) → **개인정보 보호 및 보안**(Privacy & Security)을 엽니다.
 4. 아래로 스크롤하면 *"'앱이름'이(가) 차단되었습니다"* 메시지와 **"그래도 열기"**(Open Anyway) 버튼이 보입니다 → 클릭.
-5. 다시 뜨는 확인 창에서 **"열기"**(Open) → Touch ID/암호로 확인.
-6. 이후부터는 일반 앱처럼 더블클릭으로 열립니다.
+5. 다시 확인 창이 뜨면 가운데 **"Open Anyway"** 를 누릅니다 → Touch ID/암호로 인증. (여기서도 **"Move to Trash" 금지**, "Done"은 닫기일 뿐 앱이 안 열림.)
+
+   ![macOS 최종 확인 — 가운데 Open Anyway를 누르면 앱이 실행됨](install-img/macos-open-confirm.png)
+
+6. 이후부터는 일반 앱처럼 더블클릭으로 열립니다(앱당 1회 절차).
 
 > 📸 _스크린샷 자리_: `docs/install-img/macos-open-anyway.png` (4번 단계의 Privacy & Security 패널 — **실제 macOS에서 캡처 필요**)
 
@@ -129,7 +132,8 @@ macOS 미서명 경로가 비기술 사용자에게 **가장 거칩니다**(설�
 
 > **스크린샷 현황:**
 > - ✅ macOS 첫 실행 경고(`macos-not-verified.png`) — 캡처 완료(Intel Mac, macOS Sequoia).
-> - ⬜ macOS "그래도 열기" 패널(`macos-open-anyway.png`) — 시스템 설정 → 개인정보 보호 및 보안 화면, 실 캡처 필요.
+> - ✅ macOS 최종 확인창(`macos-open-confirm.png`) — 캡처 완료(Open Anyway 버튼).
+> - ⬜ macOS "그래도 열기" 패널(`macos-open-anyway.png`) — 시스템 설정 → 개인정보 보호 및 보안 화면(선택, 흐름 보강용).
 > - ⬜ Windows SmartScreen "실행"(`windows-smartscreen-runanyway.png`) — 실 캡처 필요.
 >
-> 단계 텍스트는 정확하며, 남은 두 캡처를 채우면 가이드가 완성됩니다.
+> macOS 통과 흐름은 두 캡처로 충분히 보이며, 남은 Windows SmartScreen 캡처를 채우면 가이드가 완성됩니다.
