@@ -14,6 +14,7 @@ pub fn run() {
         .manage(tunnel::TunnelState::default())
         .invoke_handler(tauri::generate_handler![
             diagnostics::save_app_log,
+            diagnostics::open_log_dir,
             server_process::start_server,
             server_process::stop_server,
             server_process::server_status,
