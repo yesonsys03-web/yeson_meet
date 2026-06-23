@@ -95,8 +95,10 @@ A toolbar above the log lines:
 - **Search**: case-insensitive substring match over `source` + `message`.
 - **Wrap toggle**: switches `whiteSpace` between `pre-wrap` (wrap) and `pre`
   (single-line, horizontal scroll); default wrap on (current behavior).
-- **Auto-scroll**: keep scrolling to newest; pause auto-scroll when the user has
-  scrolled up from the bottom, resume when they return to bottom.
+- **Auto-scroll**: keep scrolling to newest. **DEFERRED (2026-06-23, user decision):**
+  the "pause auto-scroll when the user scrolls up, resume at bottom" refinement was
+  intentionally not implemented in the first pass — the existing always-scroll-to-newest
+  behavior ships as-is. Revisit if scroll-up reading proves inconvenient in practice.
 - Filtering is view-only (does not drop entries from the store); the unfiltered
   store is still what gets exported/persisted.
 - Buttons: `Clear` (existing `clearAppLogs`), `Export` (snapshot to file),
