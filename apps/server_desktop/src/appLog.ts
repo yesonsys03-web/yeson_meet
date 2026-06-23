@@ -3,6 +3,7 @@
 // as the client app (apps/desktop/src/diagnostics/appLog.ts). The Rust
 // `server_process` forwarder emits `{ level, source, message }` per line of the
 // server's stdout/stderr; this collects them for the log viewer (AC3.2).
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 export type AppLogLevel = "debug" | "info" | "warn" | "error";
@@ -75,6 +76,57 @@ function snapshot(): AppLogEntry[] {
 function notify(): void {
   const snap = snapshot();
   subscribers.forEach((subscriber) => subscriber(snap));
+}
+
+export function filterLogEntries(
+  entries: AppLogEntry[],
+  level: AppLogLevel | "all",
+  query: string,
+): AppLogEntry[] {
+  const q = query.trim().toLowerCase();
+  return entries.filter((entry) => {
+    if (level !== "all" && entry.level !== level) return false;
+    if (q && !`${entry.source} ${entry.message}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+export function formatAppLogEntry(entry: AppLogEntry): string {
+  return `[${entry.ts}] ${entry.level.toUpperCase()} source=${entry.source} message=${entry.message}`;
+}
+
+export function formatAppLogSnapshot(snapshot: AppLogEntry[]): string {
+  return [
+    "yeson server console log",
+    `exported_at=${new Date().toISOString()}`,
+    `entries=${snapshot.length}`,
+    "",
+    ...snapshot.map(formatAppLogEntry),
+    "",
+  ].join("\n");
+}
+
+export async function saveAppLogSnapshot(snapshot: AppLogEntry[]): Promise<string> {
+  const contents = formatAppLogSnapshot(snapshot);
+  if (hasTauriRuntime()) {
+    const result = await invoke<{ path: string }>("save_app_log", { contents });
+    return result.path;
+  }
+  const filename = `yeson-server-log-${Date.now()}.txt`;
+  downloadTextFile(filename, contents);
+  return `download:${filename}`;
+}
+
+function downloadTextFile(filename: string, contents: string): void {
+  const blob = new Blob([contents], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function hasTauriRuntime(): boolean {
