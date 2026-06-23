@@ -137,6 +137,8 @@ function errorToText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// Mirrors the authoritative redaction in apps/server_desktop/src-tauri/src/server_process.rs `redact`.
+// The Rust side redacts every backend line before it reaches the UI; this is a defense-in-depth net.
 function redact(text: string): string {
   return text
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+/gi, "$1<redacted>")

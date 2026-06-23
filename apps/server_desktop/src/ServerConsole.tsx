@@ -185,6 +185,7 @@ export default function ServerConsole() {
   }, [logs]);
 
   const onOpenLogDir = useCallback(async () => {
+    setSaveMsg(null);
     try {
       await invoke("open_log_dir");
     } catch (err) {
@@ -349,10 +350,14 @@ export default function ServerConsole() {
               <button style={styles.button} onClick={onSaveLogs}>Export</button>
               <button style={styles.button} onClick={onOpenLogDir}>Open folder</button>
             </div>
-            {saveMsg ? <p style={styles.warn}>{saveMsg}</p> : null}
+            {saveMsg ? <p style={saveMsg.startsWith("saved:") ? styles.success : styles.warn}>{saveMsg}</p> : null}
             <div style={styles.logBody}>
               {visibleLogs.length === 0 ? (
-                <p style={styles.empty}>No matching log output.</p>
+                <p style={styles.empty}>
+                  {logs.length === 0
+                    ? "No log output yet. Start the server to stream its logs here."
+                    : "No matching log output."}
+                </p>
               ) : (
                 visibleLogs.map((entry) => (
                   <div key={entry.id} style={{ ...styles.logLine, color: levelColor(entry.level), whiteSpace: logWrap ? "pre-wrap" : "pre" }}>
@@ -470,6 +475,7 @@ const styles: Record<string, React.CSSProperties> = {
   statValue: { fontSize: 15, fontWeight: 600, margin: 0, fontVariantNumeric: "tabular-nums" },
   error: { margin: "12px 0 0", color: "#ff6b6b", fontSize: 13 },
   warn: { margin: "12px 0 0", color: "#ffd166", fontSize: 12 },
+  success: { margin: "8px 20px 0", color: "#4ade80", fontSize: 12 },
   tunnelRow: { display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" },
   tunnelUrl: {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
