@@ -33,9 +33,15 @@ yeson-meet는 **앱 2개**로 나뉩니다(자가호스팅, SaaS 아님):
 
 ### 1.2 첫 실행 (Gatekeeper 통과)
 1. **응용 프로그램**에서 앱을 더블클릭.
-2. *"개발자를 확인할 수 없기 때문에 열 수 없습니다"* 경고가 뜨면 **취소**(Cancel)를 누릅니다. ← 여기서 "휴지통으로 이동"을 누르지 마세요.
+2. 아래와 같은 경고 창이 뜹니다. macOS 버전에 따라 문구·버튼이 다릅니다:
+   - **최신 macOS(Sequoia 15 이상)**: *"'yeson-meet.app' Not Opened — Apple could not verify ... is free of malware"* → **"Done"** 을 누릅니다.
+   - **이전 macOS**: *"개발자를 확인할 수 없기 때문에 열 수 없습니다"* → **"취소(Cancel)"** 를 누릅니다.
+   - ⚠️ **어느 경우든 "Move to Trash(휴지통으로 이동)"는 절대 누르지 마세요** — 앱이 삭제됩니다.
+
+   ![macOS 첫 실행 경고 — Done을 누르고 Move to Trash는 누르지 않기](install-img/macos-not-verified.png)
+
 3. **시스템 설정**(System Settings) → **개인정보 보호 및 보안**(Privacy & Security)을 엽니다.
-4. 아래로 스크롤하면 *"'앱이름'이(가) 확인되지 않은 개발자의 것이기 때문에 차단되었습니다"* 메시지와 **"그래도 열기"**(Open Anyway) 버튼이 보입니다 → 클릭.
+4. 아래로 스크롤하면 *"'앱이름'이(가) 차단되었습니다"* 메시지와 **"그래도 열기"**(Open Anyway) 버튼이 보입니다 → 클릭.
 5. 다시 뜨는 확인 창에서 **"열기"**(Open) → Touch ID/암호로 확인.
 6. 이후부터는 일반 앱처럼 더블클릭으로 열립니다.
 
@@ -121,4 +127,9 @@ sudo apt install ./yeson-server-console_*.deb
 
 macOS 미서명 경로가 비기술 사용자에게 **가장 거칩니다**(설정 → "그래도 열기"가 직관적이지 않고, 일부 환경에서 "손상" 경고가 남을 수 있음). 이 가이드가 마찰을 줄이지만 없애지는 못합니다 — **규모가 커지면 Apple 공증이 유일한 진짜 해결책**입니다(P9를 미래 업그레이드로 보존).
 
-> **스크린샷 TODO:** `docs/install-img/` 아래 각 OS 다이얼로그를 실제 캡처로 채우면 가이드가 완성됩니다. 현재는 단계 텍스트가 정확하며, 캡처 자리만 표시되어 있습니다.
+> **스크린샷 현황:**
+> - ✅ macOS 첫 실행 경고(`macos-not-verified.png`) — 캡처 완료(Intel Mac, macOS Sequoia).
+> - ⬜ macOS "그래도 열기" 패널(`macos-open-anyway.png`) — 시스템 설정 → 개인정보 보호 및 보안 화면, 실 캡처 필요.
+> - ⬜ Windows SmartScreen "실행"(`windows-smartscreen-runanyway.png`) — 실 캡처 필요.
+>
+> 단계 텍스트는 정확하며, 남은 두 캡처를 채우면 가이드가 완성됩니다.
