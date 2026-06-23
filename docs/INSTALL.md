@@ -71,7 +71,7 @@ xattr -dr com.apple.quarantine "/Applications/yeson-server-console.app"
 3. **"추가 정보"**(More info)를 클릭 → 하단에 **"실행"**(Run anyway) 버튼이 나타납니다 → 클릭.
 4. 설치 마법사를 따라 완료.
 
-> 📸 _스크린샷 자리_: `docs/install-img/windows-smartscreen-runanyway.png` (3번 단계 — **실제 Windows에서 캡처 필요**)
+![Windows SmartScreen — "추가 정보" 클릭 후 나타나는 "실행" 버튼](install-img/windows-smartscreen-runanyway.png)
 
 > SmartScreen 경고는 다운로드 평판이 쌓이지 않은 미서명 설치 관리자에서 정상입니다. "추가 정보 → 실행"이 세 OS 중 가장 간단한 통과 절차입니다.
 
@@ -133,7 +133,7 @@ macOS 미서명 경로가 비기술 사용자에게 **가장 거칩니다**(설�
 > **스크린샷 현황:**
 > - ✅ macOS 첫 실행 경고(`macos-not-verified.png`) — 캡처 완료(Intel Mac, macOS Sequoia).
 > - ✅ macOS 최종 확인창(`macos-open-confirm.png`) — 캡처 완료(Open Anyway 버튼).
+> - ✅ Windows SmartScreen "실행"(`windows-smartscreen-runanyway.png`) — 캡처 완료.
 > - ⬜ macOS "그래도 열기" 패널(`macos-open-anyway.png`) — 시스템 설정 → 개인정보 보호 및 보안 화면(선택, 흐름 보강용).
-> - ⬜ Windows SmartScreen "실행"(`windows-smartscreen-runanyway.png`) — 실 캡처 필요.
 >
-> macOS 통과 흐름은 두 캡처로 충분히 보이며, 남은 Windows SmartScreen 캡처를 채우면 가이드가 완성됩니다.
+> mac/Windows 통과 흐름 모두 실 캡처로 채워짐. 가이드 본문 완성(선택 항목 1장만 남음).
