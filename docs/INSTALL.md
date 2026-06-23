@@ -65,6 +65,8 @@ xattr -dr com.apple.quarantine "/Applications/yeson-server-console.app"
 
 배포물: `.msi` 또는 NSIS `.exe` 설치 관리자(미서명).
 
+> 💡 **`.msi`를 권장합니다.** `.msi`는 Windows Installer(msiexec)가 처리해 **SmartScreen 경고 없이** 설치됩니다(미서명이어도). `.exe`(NSIS)는 아래 2.1처럼 SmartScreen "실행"을 한 번 거쳐야 합니다. 두 앱 모두 `.msi`가 가장 매끄러운 경로예요.
+
 ### 2.1 설치
 1. 설치 관리자를 더블클릭.
 2. **Microsoft Defender SmartScreen**이 *"Windows에서 PC를 보호했습니다"*(Windows protected your PC) 창을 띄웁니다.
