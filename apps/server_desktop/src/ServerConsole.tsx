@@ -1,7 +1,7 @@
 // === ANCHOR: SERVER_CONSOLE_START ===
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { type AppLogEntry, append, clearAppLogs, installAppLogCapture, subscribeAppLogs } from "./appLog";
+import { type AppLogEntry, append, clearAppLogs, filterLogEntries, installAppLogCapture, saveAppLogSnapshot, subscribeAppLogs } from "./appLog";
 import ServerConfigPanel from "./setup/ServerConfigPanel";
 import TunnelDegradedBanner from "./TunnelDegradedBanner";
 import DevicePanel from "./DevicePanel";
@@ -52,8 +52,12 @@ export default function ServerConsole() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<AppLogEntry[]>([]);
-  const [showConfig, setShowConfig] = useState(false);
-  const [showDevices, setShowDevices] = useState(false);
+  type View = "logs" | "config" | "devices";
+  const [activeView, setActiveView] = useState<View>("logs");
+  const [logLevel, setLogLevel] = useState<AppLogEntry["level"] | "all">("all");
+  const [logQuery, setLogQuery] = useState("");
+  const [logWrap, setLogWrap] = useState(true);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
   // null = server stopped (no meeting possible); number = live-meeting count.
   const [liveSessions, setLiveSessions] = useState<number | null>(null);
@@ -170,141 +174,205 @@ export default function ServerConsole() {
     }
   }, [refreshStatus]);
 
+  const onSaveLogs = useCallback(async () => {
+    setSaveMsg(null);
+    try {
+      const path = await saveAppLogSnapshot(logs);
+      setSaveMsg(`saved: ${path}`);
+    } catch (err) {
+      setSaveMsg(`save failed: ${errorToText(err)}`);
+    }
+  }, [logs]);
+
+  const onOpenLogDir = useCallback(async () => {
+    try {
+      await invoke("open_log_dir");
+    } catch (err) {
+      setSaveMsg(`open failed: ${errorToText(err)}`);
+    }
+  }, []);
+
   const running = status?.running ?? false;
   const liveStatus = useMemo<ServerStatus | null>(() => status, [status]);
   const tunnelOn = tunnel?.running ?? false;
   const meetingLive = (liveSessions ?? 0) > 0;
   const tunnelDegraded = tunnel?.degraded ?? false;
 
+  const navItems: Array<{ view: View; label: string }> = [
+    { view: "logs", label: "Logs" },
+    { view: "config", label: "Config" },
+    { view: "devices", label: "Devices" },
+  ];
+
+  const visibleLogs = filterLogEntries(logs, logLevel, logQuery);
+
   return (
     <div style={styles.shell}>
-      <header style={styles.header}>
-        <div style={styles.headerRow}>
-          <h1 style={styles.title}>yeson server console</h1>
-          <span style={{ ...styles.badge, ...(running ? styles.badgeOn : styles.badgeOff) }}>
-            {running ? "RUNNING" : "STOPPED"}
-          </span>
-        </div>
-        <div style={styles.controls}>
-          <label style={styles.portLabel}>
-            port
-            <input
-              type="number"
-              min={1}
-              max={65535}
-              value={port}
-              disabled={running || busy}
-              onChange={(e) => setPort(Number(e.target.value) || DEFAULT_PORT)}
-              style={styles.portInput}
-            />
-          </label>
-          {running ? (
-            <button style={{ ...styles.button, ...styles.stop }} onClick={onStop} disabled={busy}>
-              Stop
-            </button>
-          ) : (
-            <button style={{ ...styles.button, ...styles.start }} onClick={onStart} disabled={busy}>
-              Start
-            </button>
-          )}
-          <button style={styles.button} onClick={() => clearAppLogs()}>
-            Clear logs
-          </button>
-          <button style={styles.button} onClick={() => setShowConfig((v) => !v)}>
-            {showConfig ? "Hide config" : "Config"}
-          </button>
-          <button style={styles.button} onClick={() => setShowDevices((v) => !v)}>
-            {showDevices ? "Hide devices" : "Devices"}
-          </button>
-        </div>
-        <dl style={styles.statusGrid}>
-          <Stat label="status" value={running ? "running" : "stopped"} />
-          <Stat label="bound port" value={liveStatus?.port != null ? String(liveStatus.port) : "—"} />
-          <Stat label="pid" value={liveStatus?.pid != null ? String(liveStatus.pid) : "—"} />
-          <Stat label="uptime" value={formatUptime(liveStatus?.uptimeSecs ?? null)} />
-        </dl>
-        {/* Public mode (P4.1b): expose the per-meeting viewer URL over a cloudflared
-            quick-tunnel. "Go live" is hidden while a meeting is active — going
-            public restarts the server, which would interrupt a live meeting. */}
-        <div style={styles.tunnelRow}>
-          <span style={{ ...styles.badge, ...(tunnelOn ? styles.badgeOn : styles.badgeOff) }}>
-            {tunnelOn ? "PUBLIC" : "LAN ONLY"}
-          </span>
-          {tunnelOn ? (
+      <aside style={styles.sidebar}>
+        <p style={styles.brand}>yeson server console</p>
+        <span style={{ ...styles.badge, ...(running ? styles.badgeOn : styles.badgeOff) }}>
+          {running ? "RUNNING" : "STOPPED"}
+        </span>
+        <nav style={styles.nav} aria-label="Server console sections">
+          {navItems.map((item) => (
             <button
-              style={{ ...styles.button, ...styles.stop }}
-              onClick={onStopPublic}
-              disabled={tunnelBusy}
+              key={item.view}
+              type="button"
+              onClick={() => setActiveView(item.view)}
+              style={{ ...styles.navButton, ...(activeView === item.view ? styles.navButtonActive : null) }}
             >
-              Stop public
+              {item.label}
             </button>
-          ) : (
-            <button
-              style={{ ...styles.button, ...styles.start }}
-              onClick={onGoLive}
-              disabled={tunnelBusy || !running || meetingLive}
-              title={
-                !running
-                  ? "start the server first"
-                  : meetingLive
-                    ? "end the meeting before going public (it would be interrupted)"
-                    : "publish the per-meeting viewer URL over a cloudflared tunnel"
-              }
-            >
-              Go live (public)
-            </button>
-          )}
-          {tunnelOn && tunnel?.url ? (
-            <a style={styles.tunnelUrl} href={tunnel.url} target="_blank" rel="noreferrer">
-              {tunnel.url}
-            </a>
-          ) : (
-            <span style={styles.tunnelHint}>
-              {tunnelBusy
-                ? "starting tunnel…"
-                : !running
-                  ? "server stopped — start it to enable public mode"
-                  : meetingLive
-                    ? "a meeting is live — end it before going public"
-                    : "viewer URL stays LAN-only until you go public"}
+          ))}
+        </nav>
+      </aside>
+      <div style={styles.column}>
+        <header style={styles.header}>
+          <div style={styles.headerRow}>
+            <h1 style={styles.title}>yeson server console</h1>
+            <span style={{ ...styles.badge, ...(running ? styles.badgeOn : styles.badgeOff) }}>
+              {running ? "RUNNING" : "STOPPED"}
             </span>
-          )}
-        </div>
-        <TunnelDegradedBanner
-          degraded={tunnelDegraded}
-          deadUrl={tunnel?.url ?? null}
-          serverPort={status?.port ?? port}
-          running={running}
-          meetingLive={meetingLive}
-          busy={tunnelBusy}
-          onRepublish={onGoLive}
-          onFallbackLan={onStopPublic}
-        />
-        {error ? <p style={styles.error}>{error}</p> : null}
-        {!hasTauriRuntime() ? (
-          <p style={styles.warn}>Not running inside Tauri — Start/Stop and live logs are disabled in the browser preview.</p>
-        ) : null}
-      </header>
-      {showConfig || showDevices ? (
-        <div style={styles.panelsWrap}>
-          {showConfig ? <ServerConfigPanel /> : null}
-          {showDevices ? <DevicePanel serverPort={status?.port ?? null} running={running} /> : null}
-        </div>
-      ) : null}
-      <main style={styles.logBody}>
-        {logs.length === 0 ? (
-          <p style={styles.empty}>No log output yet. Start the server to stream its logs here.</p>
-        ) : (
-          logs.map((entry) => (
-            <div key={entry.id} style={{ ...styles.logLine, color: levelColor(entry.level) }}>
-              <span style={styles.logTs}>{entry.ts.slice(11, 19)}</span>
-              <span style={styles.logSource}>{entry.source}</span>
-              <span>{entry.message}</span>
+          </div>
+          <div style={styles.controls}>
+            <label style={styles.portLabel}>
+              port
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={port}
+                disabled={running || busy}
+                onChange={(e) => setPort(Number(e.target.value) || DEFAULT_PORT)}
+                style={styles.portInput}
+              />
+            </label>
+            {running ? (
+              <button style={{ ...styles.button, ...styles.stop }} onClick={onStop} disabled={busy}>
+                Stop
+              </button>
+            ) : (
+              <button style={{ ...styles.button, ...styles.start }} onClick={onStart} disabled={busy}>
+                Start
+              </button>
+            )}
+          </div>
+          <dl style={styles.statusGrid}>
+            <Stat label="status" value={running ? "running" : "stopped"} />
+            <Stat label="bound port" value={liveStatus?.port != null ? String(liveStatus.port) : "—"} />
+            <Stat label="pid" value={liveStatus?.pid != null ? String(liveStatus.pid) : "—"} />
+            <Stat label="uptime" value={formatUptime(liveStatus?.uptimeSecs ?? null)} />
+          </dl>
+          {/* Public mode (P4.1b): expose the per-meeting viewer URL over a cloudflared
+              quick-tunnel. "Go live" is hidden while a meeting is active — going
+              public restarts the server, which would interrupt a live meeting. */}
+          <div style={styles.tunnelRow}>
+            <span style={{ ...styles.badge, ...(tunnelOn ? styles.badgeOn : styles.badgeOff) }}>
+              {tunnelOn ? "PUBLIC" : "LAN ONLY"}
+            </span>
+            {tunnelOn ? (
+              <button
+                style={{ ...styles.button, ...styles.stop }}
+                onClick={onStopPublic}
+                disabled={tunnelBusy}
+              >
+                Stop public
+              </button>
+            ) : (
+              <button
+                style={{ ...styles.button, ...styles.start }}
+                onClick={onGoLive}
+                disabled={tunnelBusy || !running || meetingLive}
+                title={
+                  !running
+                    ? "start the server first"
+                    : meetingLive
+                      ? "end the meeting before going public (it would be interrupted)"
+                      : "publish the per-meeting viewer URL over a cloudflared tunnel"
+                }
+              >
+                Go live (public)
+              </button>
+            )}
+            {tunnelOn && tunnel?.url ? (
+              <a style={styles.tunnelUrl} href={tunnel.url} target="_blank" rel="noreferrer">
+                {tunnel.url}
+              </a>
+            ) : (
+              <span style={styles.tunnelHint}>
+                {tunnelBusy
+                  ? "starting tunnel…"
+                  : !running
+                    ? "server stopped — start it to enable public mode"
+                    : meetingLive
+                      ? "a meeting is live — end it before going public"
+                      : "viewer URL stays LAN-only until you go public"}
+              </span>
+            )}
+          </div>
+          <TunnelDegradedBanner
+            degraded={tunnelDegraded}
+            deadUrl={tunnel?.url ?? null}
+            serverPort={status?.port ?? port}
+            running={running}
+            meetingLive={meetingLive}
+            busy={tunnelBusy}
+            onRepublish={onGoLive}
+            onFallbackLan={onStopPublic}
+          />
+          {error ? <p style={styles.error}>{error}</p> : null}
+          {!hasTauriRuntime() ? (
+            <p style={styles.warn}>Not running inside Tauri — Start/Stop and live logs are disabled in the browser preview.</p>
+          ) : null}
+        </header>
+        <main style={styles.content}>
+          <section hidden={activeView !== "logs"} style={activeView === "logs" ? styles.viewFill : undefined}>
+            <div style={styles.logToolbar}>
+              <select value={logLevel} onChange={(e) => setLogLevel(e.target.value as typeof logLevel)} style={styles.select}>
+                <option value="all">All</option>
+                <option value="info">Info</option>
+                <option value="warn">Warn</option>
+                <option value="error">Error</option>
+                <option value="debug">Debug</option>
+              </select>
+              <input
+                value={logQuery}
+                onChange={(e) => setLogQuery(e.target.value)}
+                placeholder="search…"
+                style={styles.search}
+              />
+              <label style={styles.wrapLabel}>
+                <input type="checkbox" checked={logWrap} onChange={(e) => setLogWrap(e.target.checked)} /> wrap
+              </label>
+              <span style={styles.toolbarSpacer} />
+              <button style={styles.button} onClick={() => clearAppLogs()}>Clear</button>
+              <button style={styles.button} onClick={onSaveLogs}>Export</button>
+              <button style={styles.button} onClick={onOpenLogDir}>Open folder</button>
             </div>
-          ))
-        )}
-        <div ref={logEndRef} />
-      </main>
+            {saveMsg ? <p style={styles.warn}>{saveMsg}</p> : null}
+            <div style={styles.logBody}>
+              {visibleLogs.length === 0 ? (
+                <p style={styles.empty}>No matching log output.</p>
+              ) : (
+                visibleLogs.map((entry) => (
+                  <div key={entry.id} style={{ ...styles.logLine, color: levelColor(entry.level), whiteSpace: logWrap ? "pre-wrap" : "pre" }}>
+                    <span style={styles.logTs}>{entry.ts.slice(11, 19)}</span>
+                    <span style={styles.logSource}>{entry.source}</span>
+                    <span>{entry.message}</span>
+                  </div>
+                ))
+              )}
+              <div ref={logEndRef} />
+            </div>
+          </section>
+          <section hidden={activeView !== "config"} style={activeView === "config" ? styles.viewScroll : undefined}>
+            <ServerConfigPanel />
+          </section>
+          <section hidden={activeView !== "devices"} style={activeView === "devices" ? styles.viewScroll : undefined}>
+            <DevicePanel serverPort={status?.port ?? null} running={running} />
+          </section>
+        </main>
+      </div>
     </div>
   );
 }
@@ -332,15 +400,38 @@ function levelColor(level: AppLogEntry["level"]): string {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  // Fixed-height column: header never scrolls, log body owns the only scroll.
+  // Row layout: fixed sidebar + right-hand column (header + content area).
   shell: {
     height: "100%",
     display: "flex",
-    flexDirection: "column",
+    flexDirection: "row",
     background: "#0e141b",
     color: "#d4dde6",
     fontFamily: "system-ui, -apple-system, sans-serif",
   },
+  sidebar: {
+    flex: "0 0 180px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    padding: "16px 12px",
+    borderRight: "1px solid #1d2733",
+    background: "#0b1117",
+  },
+  brand: { fontSize: 13, fontWeight: 700, margin: 0, color: "#8ea0b2" },
+  nav: { display: "flex", flexDirection: "column", gap: 4, marginTop: 8 },
+  navButton: {
+    textAlign: "left",
+    padding: "8px 10px",
+    borderRadius: 6,
+    border: "1px solid transparent",
+    background: "transparent",
+    color: "#b6c2cf",
+    cursor: "pointer",
+    fontSize: 13,
+  },
+  navButtonActive: { background: "#1b2530", borderColor: "#25323f", color: "#fff", fontWeight: 600 },
+  column: { flex: "1 1 auto", display: "flex", flexDirection: "column", minWidth: 0 },
   header: {
     flex: "0 0 auto",
     padding: "16px 20px",
@@ -387,12 +478,14 @@ const styles: Record<string, React.CSSProperties> = {
     wordBreak: "break-all",
   },
   tunnelHint: { fontSize: 12, color: "#6b7c8d" },
-  // Config + devices share ONE capped, independently-scrollable region between
-  // the fixed header and the log body. Merging them (vs. two separate 55% blocks)
-  // bounds their COMBINED height to 55% so two open panels can never overflow a
-  // short window and push the log body out of reach (the portrait-rotation bug).
-  // flex-shrink:1 + minHeight:0 lets it yield space; its own overflowY scrolls.
-  panelsWrap: { flex: "0 1 auto", maxHeight: "55%", overflowY: "auto", minHeight: 0 },
+  content: { flex: "1 1 auto", minHeight: 0, display: "flex", flexDirection: "column" },
+  viewFill: { flex: "1 1 auto", minHeight: 0, display: "flex", flexDirection: "column" },
+  viewScroll: { flex: "1 1 auto", minHeight: 0, overflowY: "auto", padding: "12px 20px" },
+  logToolbar: { display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", borderBottom: "1px solid #1d2733" },
+  select: { padding: "5px 8px", background: "#0b1117", border: "1px solid #25323f", borderRadius: 6, color: "#d4dde6", fontSize: 12 },
+  search: { flex: "0 1 240px", padding: "5px 8px", background: "#0b1117", border: "1px solid #25323f", borderRadius: 6, color: "#d4dde6", fontSize: 12 },
+  wrapLabel: { display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "#8ea0b2" },
+  toolbarSpacer: { flex: "1 1 auto" },
   logBody: {
     flex: "1 1 auto",
     minHeight: 0,

@@ -29,7 +29,7 @@ describe("filterLogEntries", () => {
   it("filters by level", () => {
     const out = filterLogEntries(entries, "warn", "");
     expect(out).toHaveLength(1);
-    expect(out[0].id).toBe(2);
+    expect(out[0]!.id).toBe(2);
   });
 
   it("filters by case-insensitive substring over source+message", () => {
