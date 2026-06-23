@@ -12,24 +12,32 @@ import type { UtteranceTranscribed } from "./types";
 //    말하기 속도보다 빠르므로 보통 한두 개 차이로 수렴한다.)
 //  · 같은 seq의 partial→final 갱신은 화면에서 제자리 텍스트 교체.
 //  · 최초 진입 시에는 백필(과거 자막)을 되감지 않고 최신 seq부터 시작한다.
-const MIN_FLOOR_MS = 1200;
+export const MIN_FLOOR_MS = 1200;
 const BASE_READ_MS = 1400;
 const PER_CHAR_MS = 70;
 const MAX_READ_MS = 5500;
 const CATCHUP_STEP_MS = 350; // 대기 1개 늘 때마다 표시시간을 이만큼 깎아 따라잡음
+// 백로그가 쌓이면 읽기시간 바닥을 MIN_FLOOR_MS에서 이 값까지 낮춰 큐를 빠르게
+// 배출한다. Gemini가 ~10초 묶음으로 자막을 쏟아낼 때 1.2초 바닥으로는 못 따라잡아
+// 화면이 수 초 뒤처졌다(7초→12초 회귀의 원인). 밀릴 때만 짧게 떠 다음 묶음 전에
+// 최신까지 따라잡으므로 지연을 파이프라인 수준으로 되돌린다 — 누락은 여전히 0.
+export const CATCHUP_FLOOR_MS = 450;
 
 function textOf(utterance: UtteranceTranscribed): string {
   return utterance.text_ko || utterance.text_en || "";
 }
 
-function displayMsFor(utterance: UtteranceTranscribed | null, backlog: number): number {
+export function displayMsFor(utterance: UtteranceTranscribed | null, backlog: number): number {
   if (!utterance) return MIN_FLOOR_MS;
   const read = Math.min(
     Math.max(BASE_READ_MS + textOf(utterance).length * PER_CHAR_MS, MIN_FLOOR_MS),
     MAX_READ_MS,
   );
-  const compressed = read - Math.max(0, backlog - 1) * CATCHUP_STEP_MS;
-  return Math.max(MIN_FLOOR_MS, Math.min(read, compressed));
+  const over = Math.max(0, backlog - 1);
+  const compressed = read - over * CATCHUP_STEP_MS;
+  // 따라잡는 동안에는 읽기 바닥도 함께 낮춘다(MIN_FLOOR→CATCHUP_FLOOR).
+  const floor = Math.max(CATCHUP_FLOOR_MS, MIN_FLOOR_MS - over * CATCHUP_STEP_MS);
+  return Math.max(floor, Math.min(read, compressed));
 }
 
 function nextSeqAbove(utterances: UtteranceTranscribed[], seq: number): number | null {
