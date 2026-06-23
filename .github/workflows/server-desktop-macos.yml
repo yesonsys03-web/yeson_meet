@@ -18,15 +18,9 @@ permissions:
 
 jobs:
   build:
-    name: Build + publish server console macOS installer (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
+    name: Build + publish server console macOS installer
+    runs-on: macos-latest
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: macos-latest, arch: aarch64 }
-          - { runner: macos-13, arch: x86_64 }
 
     steps:
       - name: Checkout
