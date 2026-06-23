@@ -6,15 +6,16 @@
 //! copy: the env injected, the binary located, and the teardown grace rationale
 //! all differ for a server (SQLite WAL checkpoint) rather than the client's audio
 //! capture sidecar (ScreenCaptureKit).
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader, Read, Write as _},
     net::TcpListener,
     path::PathBuf,
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Emitter, Manager};
 
@@ -237,6 +238,9 @@ pub fn start_server_inner(
     let storage_root = app_data_dir.join("storage");
     std::fs::create_dir_all(&storage_root)
         .map_err(|error| format!("failed to create storage dir: {error}"))?;
+    let log_dir = app_data_dir.join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    prune_old_logs(&log_dir, std::time::Duration::from_secs(7 * 86_400));
     let database_url = format!("sqlite+aiosqlite:///{}", db_path.display());
 
     let server_bin = locate_bundled_server()
@@ -642,18 +646,117 @@ fn contains_log_token(message: &str, token: &str) -> bool {
     message.split_whitespace().any(|part| part == token)
 }
 
+/// Mask Bearer tokens and `key=value` secrets before a log line is emitted to
+/// the UI or written to disk. Ports apps/server_desktop/src/appLog.ts `redact`.
+fn redact(text: &str) -> String {
+    static BEARER: OnceLock<Regex> = OnceLock::new();
+    static KV: OnceLock<Regex> = OnceLock::new();
+    let bearer =
+        BEARER.get_or_init(|| Regex::new(r"(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+").unwrap());
+    let kv = KV.get_or_init(|| {
+        Regex::new(
+            r#"(?i)((?:password|token|api[_-]?key|secret)["']?\s*[:=]\s*["']?)[^"'\s,}]+"#,
+        )
+        .unwrap()
+    });
+    let masked = bearer.replace_all(text, "$1<redacted>").into_owned();
+    kv.replace_all(&masked, "$1<redacted>").into_owned()
+}
+
+/// Civil date (UTC) from a Unix epoch seconds value — Howard Hinnant's
+/// days-from-civil inverse. Avoids pulling chrono just for a filename stamp.
+fn ymd_from_epoch_secs(secs: i64) -> (i64, u32, u32) {
+    let days = secs.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    (y + if m <= 2 { 1 } else { 0 }, m, d)
+}
+
+fn log_date_string(secs: i64) -> String {
+    let (y, m, d) = ymd_from_epoch_secs(secs);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn log_timestamp_string(secs: i64) -> String {
+    let (y, m, d) = ymd_from_epoch_secs(secs);
+    let tod = secs.rem_euclid(86_400);
+    let (hh, mm, ss) = (tod / 3_600, (tod % 3_600) / 60, tod % 60);
+    format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{ss:02}")
+}
+
+/// Delete dated log files whose mtime is older than `max_age`. Best-effort.
+fn prune_old_logs(log_dir: &std::path::Path, max_age: std::time::Duration) {
+    let now = SystemTime::now();
+    let Ok(entries) = std::fs::read_dir(log_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        if now
+            .duration_since(modified)
+            .map(|age| age > max_age)
+            .unwrap_or(false)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Append one redacted line to <app_data_dir>/logs/server-YYYY-MM-DD.log.
+/// Best-effort: any failure is swallowed so logging never blocks the forwarder.
+fn append_log_file(app: &tauri::AppHandle, level: &str, source: &str, message: &str) {
+    let Ok(app_data_dir) = app.path().app_data_dir() else {
+        return;
+    };
+    let log_dir = app_data_dir.join("logs");
+    if std::fs::create_dir_all(&log_dir).is_err() {
+        return;
+    }
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let path = log_dir.join(format!("server-{}.log", log_date_string(secs)));
+    let line = format!(
+        "[{}] {} source={source} message={message}\n",
+        log_timestamp_string(secs),
+        level.to_uppercase()
+    );
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
 fn emit_backend_log(
     app: &tauri::AppHandle,
     level: &'static str,
     source: &'static str,
     message: impl Into<String>,
 ) {
+    let message = redact(&message.into());
+    append_log_file(app, level, source, &message);
     let _ = app.emit(
         "app-log",
         BackendLogEvent {
             level,
             source,
-            message: message.into(),
+            message,
         },
     );
 }
@@ -661,6 +764,7 @@ fn emit_backend_log(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     // AC3.4: the port-conflict probe must report an OCCUPIED port as not free
     // and a FREE port as free — this is the gate `start_server` uses to refuse a
@@ -678,6 +782,49 @@ mod tests {
             probe.local_addr().unwrap().port()
         };
         assert!(is_port_free(free_port), "released port must read as free");
+    }
+
+    #[test]
+    fn redact_masks_bearer_and_kv_secrets() {
+        assert_eq!(
+            redact("Authorization: Bearer abc.DEF-123_x"),
+            "Authorization: Bearer <redacted>"
+        );
+        assert_eq!(redact("api_key=SUPERSECRET"), "api_key=<redacted>");
+        assert_eq!(redact("password: hunter2"), "password: <redacted>");
+        assert_eq!(redact("nothing to hide here"), "nothing to hide here");
+    }
+
+    #[test]
+    fn log_date_and_timestamp_strings() {
+        assert_eq!(log_date_string(0), "1970-01-01");
+        // 1_700_000_000 = 2023-11-14 22:13:20 UTC
+        assert_eq!(log_date_string(1_700_000_000), "2023-11-14");
+        assert_eq!(log_timestamp_string(1_700_000_000), "2023-11-14 22:13:20");
+    }
+
+    #[test]
+    fn prune_old_logs_removes_only_aged_files() {
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("yeson-prune-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let fresh = dir.join("server-fresh.log");
+        let old = dir.join("server-old.log");
+        fs::write(&fresh, "x").unwrap();
+        fs::write(&old, "x").unwrap();
+
+        // Backdate `old` to 8 days ago.
+        let eight_days_ago = SystemTime::now() - Duration::from_secs(8 * 86_400);
+        let ft = filetime::FileTime::from_system_time(eight_days_ago);
+        filetime::set_file_mtime(&old, ft).unwrap();
+
+        prune_old_logs(&dir, Duration::from_secs(7 * 86_400));
+
+        assert!(fresh.exists(), "fresh log must survive");
+        assert!(!old.exists(), "8-day-old log must be pruned");
+        let _ = fs::remove_dir_all(&dir);
     }
 }
 // === ANCHOR: SERVER_PROCESS_END ===
