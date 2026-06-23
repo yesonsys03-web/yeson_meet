@@ -61,7 +61,23 @@ fn terminate_child(child: &mut Child) {
     }
     #[cfg(not(unix))]
     {
-        let _ = child.kill();
+        // Windows has no process groups: `child.kill()` is TerminateProcess on
+        // the TOP handle only. The sidecar is a PyInstaller `--onefile` tree
+        // (bootloader -> python -> native audio helper), so killing just the
+        // bootloader orphans python and the helper — they keep capturing audio
+        // and hold the server WebSocket open, which blocks a fresh start / go
+        // live. `taskkill /T` reaps the whole subtree by PID: the Windows analog
+        // of the Unix `kill -TERM -pgid` above. CREATE_NO_WINDOW keeps it from
+        // flashing a console window. Falls back to `child.kill()` if taskkill is
+        // unavailable or the tree was already partway down.
+        let pid = child.id();
+        let mut kill = Command::new("taskkill");
+        kill.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        set_no_window(&mut kill);
+        let reaped = kill.status().map(|status| status.success()).unwrap_or(false);
+        if !reaped {
+            let _ = child.kill();
+        }
     }
     let _ = child.wait();
 }
