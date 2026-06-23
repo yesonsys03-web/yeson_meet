@@ -698,6 +698,14 @@ fn prune_old_logs(log_dir: &std::path::Path, max_age: std::time::Duration) {
         return;
     };
     for entry in entries.flatten() {
+        // Only delete the rotating dated logs this function owns.
+        // User-exported snapshots (`yeson-server-log-<ms>.txt`) share the same
+        // directory; skipping non-matching names keeps them safe.
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !(name.starts_with("server-") && name.ends_with(".log")) {
+            continue;
+        }
         let Ok(meta) = entry.metadata() else {
             continue;
         };
@@ -792,6 +800,8 @@ mod tests {
         );
         assert_eq!(redact("api_key=SUPERSECRET"), "api_key=<redacted>");
         assert_eq!(redact("password: hunter2"), "password: <redacted>");
+        assert_eq!(redact("token=xyz123"), "token=<redacted>");
+        assert_eq!(redact("secret=abc987"), "secret=<redacted>");
         assert_eq!(redact("nothing to hide here"), "nothing to hide here");
     }
 
