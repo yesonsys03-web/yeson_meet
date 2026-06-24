@@ -128,3 +128,120 @@ async def test_download_session_report_rejects_live_session(
     )
 
     assert response.status_code == 409
+
+
+async def _end_session_and_write_summary(
+    client: AsyncClient,
+    admin_token: str,
+    db_session: AsyncSession,
+    session_id: UUID,
+    storage_root: Path,
+) -> None:
+    meeting = (
+        await db_session.execute(select(Session).where(Session.external_id == session_id))
+    ).scalar_one()
+    meeting.status = "ended"
+    meeting.ended_at = datetime.now(timezone.utc)
+    await db_session.commit()
+
+    # Write the standalone summary.md the routes read from.
+    from apps.server.domain.reports import summary_path
+
+    s_path = summary_path(storage_root, str(session_id), "md")
+    s_path.parent.mkdir(parents=True, exist_ok=True)
+    s_path.write_text("# 요약 — Lifecycle Test\n\n핵심 요약 본문입니다.\n", encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_download_summary_html_renders_when_summary_present(
+    client: AsyncClient,
+    admin_token: str,
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    session_id, _viewer_token = await _create_session(client, admin_token)
+    await _end_session_and_write_summary(client, admin_token, db_session, session_id, tmp_path)
+
+    response = await client.get(
+        f"/api/v1/sessions/{session_id}/report.summary.html",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert "<!DOCTYPE html>" in response.text
+    # The md H1 header must be stripped from the body before rendering.
+    assert "핵심 요약 본문입니다." in response.text
+    assert "# 요약" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_download_summary_docx_renders_when_summary_present(
+    client: AsyncClient,
+    admin_token: str,
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    session_id, _viewer_token = await _create_session(client, admin_token)
+    await _end_session_and_write_summary(client, admin_token, db_session, session_id, tmp_path)
+
+    response = await client.get(
+        f"/api/v1/sessions/{session_id}/report.summary.docx",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+
+
+@pytest.mark.asyncio
+async def test_download_summary_html_404_when_summary_missing(
+    client: AsyncClient,
+    admin_token: str,
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    session_id, _viewer_token = await _create_session(client, admin_token)
+    meeting = (
+        await db_session.execute(select(Session).where(Session.external_id == session_id))
+    ).scalar_one()
+    meeting.status = "ended"
+    meeting.ended_at = datetime.now(timezone.utc)
+    await db_session.commit()
+
+    response = await client.get(
+        f"/api/v1/sessions/{session_id}/report.summary.html",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 404, response.text
+
+
+@pytest.mark.asyncio
+async def test_download_summary_pdf_503_when_soffice_absent(
+    client: AsyncClient,
+    admin_token: str,
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    session_id, _viewer_token = await _create_session(client, admin_token)
+    await _end_session_and_write_summary(client, admin_token, db_session, session_id, tmp_path)
+
+    from unittest.mock import patch
+
+    with patch("apps.server.domain.report_pdf.find_soffice", return_value=None):
+        response = await client.get(
+            f"/api/v1/sessions/{session_id}/report.summary.pdf",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+    assert response.status_code == 503, response.text

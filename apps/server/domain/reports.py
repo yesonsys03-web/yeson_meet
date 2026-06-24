@@ -64,7 +64,6 @@ def build_session_report(
         )
         lines.extend(
             [
-                f"- 총 발화 수: {len(utterances)}",
                 f"- 참여 화자: {', '.join(speakers) if speakers else '없음'}",
                 f"- 시간 범위: {duration_note}",
             ]
@@ -114,9 +113,13 @@ def report_path(storage_root: str | Path, session_id: str, fmt: str = "md") -> P
 
 
 # === ANCHOR: REPORTS_SUMMARY_PATH_START ===
-def summary_path(storage_root: str | Path, session_id: str) -> Path:
-    """Return the canonical path for the standalone summary file (summary.md)."""
-    return Path(storage_root) / session_id / "summary.md"
+def summary_path(storage_root: str | Path, session_id: str, fmt: str = "md") -> Path:
+    """Return the canonical path for the standalone summary file.
+
+    *fmt* selects the file extension (default ``"md"`` for backward compat),
+    yielding sibling files ``summary.md``/``summary.html``/``summary.docx``/``summary.pdf``.
+    """
+    return Path(storage_root) / session_id / f"summary.{fmt}"
 # === ANCHOR: REPORTS_SUMMARY_PATH_END ===
 
 
@@ -157,8 +160,8 @@ def write_session_exports(
     """
     import logging
 
-    from apps.server.domain.report_docx import build_session_report_docx
-    from apps.server.domain.report_html import build_session_report_html
+    from apps.server.domain.report_docx import build_session_report_docx, build_summary_docx
+    from apps.server.domain.report_html import build_session_report_html, build_summary_html
     from apps.server.domain.report_pdf import convert_docx_to_pdf
 
     logger = logging.getLogger(__name__)
@@ -214,18 +217,60 @@ def write_session_exports(
         logger.warning("write_session_exports: pdf failed: %s", exc)
         results["pdf"] = None
 
-    # summary.md — standalone summary file (best-effort, only when summary present)
+    # summary.{md,html,docx,pdf} — standalone summary files (best-effort, each
+    # format attempted independently; only when a summary is present).
     if summary:
+        # summary.md
         try:
-            s_path = summary_path(storage_root, session_id)
+            s_path = summary_path(storage_root, session_id, "md")
             header = f"# 요약 — {meeting.title}\n\n"
             s_path.write_text(header + summary + "\n", encoding="utf-8")
             results["summary"] = s_path
         except Exception as exc:  # noqa: BLE001
             logger.warning("write_session_exports: summary.md failed: %s", exc)
             results["summary"] = None
+
+        # summary.html
+        try:
+            sh_path = summary_path(storage_root, session_id, "html")
+            sh_path.write_text(build_summary_html(meeting, summary), encoding="utf-8")
+            results["summary_html"] = sh_path
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("write_session_exports: summary.html failed: %s", exc)
+            results["summary_html"] = None
+
+        # summary.docx
+        summary_docx_bytes: bytes | None = None
+        try:
+            sd_path = summary_path(storage_root, session_id, "docx")
+            summary_docx_bytes = build_summary_docx(meeting, summary)
+            sd_path.write_bytes(summary_docx_bytes)
+            results["summary_docx"] = sd_path
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("write_session_exports: summary.docx failed: %s", exc)
+            results["summary_docx"] = None
+            summary_docx_bytes = None
+
+        # summary.pdf (requires soffice; skip silently if unavailable)
+        try:
+            if summary_docx_bytes is not None:
+                summary_pdf_bytes = convert_docx_to_pdf(summary_docx_bytes)
+                if summary_pdf_bytes is not None:
+                    sp_path = summary_path(storage_root, session_id, "pdf")
+                    sp_path.write_bytes(summary_pdf_bytes)
+                    results["summary_pdf"] = sp_path
+                else:
+                    results["summary_pdf"] = None
+            else:
+                results["summary_pdf"] = None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("write_session_exports: summary.pdf failed: %s", exc)
+            results["summary_pdf"] = None
     else:
         results["summary"] = None
+        results["summary_html"] = None
+        results["summary_docx"] = None
+        results["summary_pdf"] = None
 
     return results
 # === ANCHOR: REPORTS_WRITE_EXPORTS_END ===

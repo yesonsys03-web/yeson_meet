@@ -19,8 +19,8 @@ from apps.server.auth.deps import require_operator
 from apps.server.db.models import AppUser, Session, SessionToken, Utterance
 from apps.server.db.session import get_session
 from apps.server.domain.events import SessionEnded, serialize
-from apps.server.domain.report_docx import build_session_report_docx
-from apps.server.domain.report_html import build_session_report_html
+from apps.server.domain.report_docx import build_session_report_docx, build_summary_docx
+from apps.server.domain.report_html import build_session_report_html, build_summary_html
 from apps.server.domain.report_pdf import convert_docx_to_pdf
 from apps.server.domain.reports import (
     regenerate_report_with_summary,
@@ -325,5 +325,81 @@ async def download_session_report_summary(
         content=path.read_text(encoding="utf-8"),
         media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=\"summary.md\""},
+    )
+
+
+# === ANCHOR: SESSIONS__READ_SUMMARY_TEXT_START ===
+def _read_summary_text_or_404(session_id: str) -> str:
+    """Read the stored summary.md and return the raw summary body (no md header).
+
+    Raises 404 if no summary has been generated yet.  The stored file prepends a
+    ``# 요약 — {title}`` markdown H1; it is stripped so HTML/DOCX/PDF builders
+    receive only the summary body.
+    """
+    path = summary_path(_storage_root(), session_id, "md")
+    if not path.exists():
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail="요약이 아직 생성되지 않았습니다. 회의 종료 후 잠시 후 다시 시도하세요.",
+        )
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    if lines and lines[0].startswith("# 요약"):
+        # Drop the H1 header and one following blank line if present.
+        lines = lines[1:]
+        if lines and not lines[0].strip():
+            lines = lines[1:]
+    return "\n".join(lines).strip()
+# === ANCHOR: SESSIONS__READ_SUMMARY_TEXT_END ===
+
+
+@router.get("/{external_id}/report.summary.html")
+async def download_session_report_summary_html(
+    external_id: UUID,
+    _user: Annotated[AppUser, Depends(require_operator)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    meeting = await _get_operator_session_or_404(db, external_id)
+    summary = _read_summary_text_or_404(str(meeting.external_id))
+    return Response(
+        content=build_summary_html(meeting, summary),
+        media_type="text/html; charset=utf-8",
+    )
+
+
+@router.get("/{external_id}/report.summary.docx")
+async def download_session_report_summary_docx(
+    external_id: UUID,
+    _user: Annotated[AppUser, Depends(require_operator)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    meeting = await _get_operator_session_or_404(db, external_id)
+    summary = _read_summary_text_or_404(str(meeting.external_id))
+    return Response(
+        content=build_summary_docx(meeting, summary),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": "attachment; filename=\"summary.docx\""},
+    )
+
+
+@router.get("/{external_id}/report.summary.pdf")
+async def download_session_report_summary_pdf(
+    external_id: UUID,
+    _user: Annotated[AppUser, Depends(require_operator)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    meeting = await _get_operator_session_or_404(db, external_id)
+    summary = _read_summary_text_or_404(str(meeting.external_id))
+    docx_bytes = build_summary_docx(meeting, summary)
+    pdf_bytes = await asyncio.to_thread(convert_docx_to_pdf, docx_bytes)
+    if pdf_bytes is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="PDF 변환 불가 — 서버에 LibreOffice(soffice)가 설치되어 있지 않습니다.",
+        )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=\"summary.pdf\""},
     )
 # === ANCHOR: SESSIONS_END ===

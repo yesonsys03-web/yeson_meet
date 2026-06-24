@@ -73,7 +73,6 @@ def build_session_report_docx(
         )
         meta_lines.extend(
             [
-                f"총 발화 수: {len(utterances)}",
                 f"참여 화자: {', '.join(speakers) if speakers else '없음'}",
                 f"시간 범위: {duration}",
             ]
@@ -145,4 +144,29 @@ def build_session_report_docx(
     doc.save(buf)
     return buf.getvalue()
 # === ANCHOR: REPORT_DOCX_BUILD_END ===
+
+
+# === ANCHOR: REPORT_DOCX_SUMMARY_BUILD_START ===
+def build_summary_docx(meeting: Session, summary: str) -> bytes:
+    """Build a minimal Word (.docx) document for a standalone summary.
+
+    Reuses the Korean-font handling pattern. Contains a title Heading and the
+    summary body (each non-blank line as a paragraph).
+    """
+    doc = Document()
+
+    title_para = doc.add_heading(f"요약 — {meeting.title or '(제목 없음)'}", level=1)
+    for run in title_para.runs:
+        _set_run_font(run, _KO_FONT)
+
+    for line in summary.splitlines():
+        if line.strip():
+            p_sum = doc.add_paragraph(line.strip())
+            for run in p_sum.runs:
+                _set_run_font(run, _KO_FONT)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+# === ANCHOR: REPORT_DOCX_SUMMARY_BUILD_END ===
 # === ANCHOR: REPORT_DOCX_END ===

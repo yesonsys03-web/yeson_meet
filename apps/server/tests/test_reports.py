@@ -143,8 +143,8 @@ def test_summary_stats_header_present() -> None:
         _make_utterance(seq=2, speaker="Bob", started_at=t2, ended_at=t2),
     ]
     result = build_session_report(meeting, utterances)
-    # Total utterance count should appear somewhere in the header block
-    assert "2" in result  # 2 utterances
+    # "총 발화 수" line was removed per user request — it must not appear.
+    assert "총 발화 수" not in result
     # Both speaker names should appear in a stats section before the utterances block
     stats_section = result.split("## Utterances")[0] if "## Utterances" in result else result
     assert "Alice" in stats_section

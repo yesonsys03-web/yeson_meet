@@ -283,4 +283,39 @@ def test_find_summary_cli_returns_none_when_neither_found() -> None:
         result = find_summary_cli()
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Standalone summary builders (multi-format summary export)
+# ---------------------------------------------------------------------------
+
+def test_build_summary_html_contains_title_and_body() -> None:
+    from apps.server.domain.report_html import build_summary_html
+
+    result = build_summary_html(_meeting(), "요약 본문 한 줄")
+
+    assert "<!DOCTYPE html>" in result
+    assert "요약 — Test Meeting" in result
+    assert "요약 본문 한 줄" in result
+
+
+def test_build_summary_html_escapes_body() -> None:
+    from apps.server.domain.report_html import build_summary_html
+
+    result = build_summary_html(_meeting(), "<script>x</script>")
+    assert "<script>x</script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+def test_build_summary_docx_contains_title_and_body() -> None:
+    import io
+    from docx import Document
+    from apps.server.domain.report_docx import build_summary_docx
+
+    raw = build_summary_docx(_meeting(), "DOCX 요약 본문")
+    doc = Document(io.BytesIO(raw))
+    all_text = "\n".join(p.text for p in doc.paragraphs)
+
+    assert "요약 — Test Meeting" in all_text
+    assert "DOCX 요약 본문" in all_text
 # === ANCHOR: TEST_REPORT_SUMMARY_END ===

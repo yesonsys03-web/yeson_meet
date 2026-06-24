@@ -136,7 +136,6 @@ def build_session_report_html(
             f"{_hms(utterances[0].started_at)} – {_hms(utterances[-1].ended_at)}"
         )
         parts.append('<dl class="stats">')
-        parts.append(f"<dt>총 발화 수</dt><dd>{len(utterances)}</dd>")
         parts.append(
             f"<dt>참여 화자</dt><dd>{html.escape(', '.join(speakers)) if speakers else '없음'}</dd>"
         )
@@ -180,4 +179,41 @@ def build_session_report_html(
     parts.extend(["</body>", "</html>"])
     return "\n".join(parts)
 # === ANCHOR: REPORT_HTML_BUILD_END ===
+
+
+# === ANCHOR: REPORT_HTML_SUMMARY_BUILD_START ===
+def build_summary_html(
+    meeting: Session,
+    summary: str,
+    theme: str = _DEFAULT_THEME,
+) -> str:
+    """Build a minimal self-contained HTML document for a standalone summary.
+
+    Reuses the report theme CSS and HTML-escaping. Contains only the meeting
+    title and the summary body (each non-blank line as a paragraph).
+    """
+    css = _THEMES.get(theme, _CSS_MINIMAL)
+    title_escaped = html.escape(f"요약 — {meeting.title}")
+
+    parts: list[str] = [
+        "<!DOCTYPE html>",
+        '<html lang="ko">',
+        "<head>",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        f"<title>{title_escaped}</title>",
+        f"<style>{css}</style>",
+        "</head>",
+        "<body>",
+        f"<h1>{title_escaped}</h1>",
+        '<section class="summary">',
+    ]
+    for line in summary.splitlines():
+        escaped = html.escape(line)
+        if escaped.strip():
+            parts.append(f"<p>{escaped}</p>")
+    parts.append("</section>")
+    parts.extend(["</body>", "</html>"])
+    return "\n".join(parts)
+# === ANCHOR: REPORT_HTML_SUMMARY_BUILD_END ===
 # === ANCHOR: REPORT_HTML_END ===

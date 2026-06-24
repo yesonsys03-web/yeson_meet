@@ -213,4 +213,42 @@ def test_write_session_exports_no_summary_still_produces_reports(tmp_path: "Path
     # No summary section when summary=None
     assert "## 요약" not in md_content
     assert "Test Meeting" in md_content
+
+
+# ---------------------------------------------------------------------------
+# Multi-format summary export: summary.{md,html,docx} written, pdf skipped
+# ---------------------------------------------------------------------------
+
+def test_write_session_exports_writes_summary_md_html_docx(tmp_path: Path) -> None:
+    meeting = _make_meeting()
+    utterances = [_make_utterance()]
+
+    with patch("apps.server.domain.report_pdf.find_soffice", return_value=None):
+        result = write_session_exports(tmp_path, meeting, utterances, summary="요약 텍스트")
+
+    assert result["summary"] is not None and result["summary"].exists()
+    assert result["summary_html"] is not None and result["summary_html"].exists()
+    assert result["summary_docx"] is not None and result["summary_docx"].exists()
+    assert result["summary_pdf"] is None  # soffice absent → None
+
+    assert result["summary"].name == "summary.md"
+    assert result["summary_html"].name == "summary.html"
+    assert result["summary_docx"].name == "summary.docx"
+
+    html_content = result["summary_html"].read_text(encoding="utf-8")
+    assert "<!DOCTYPE html>" in html_content
+    assert "요약 텍스트" in html_content
+
+
+def test_write_session_exports_no_summary_files_when_summary_none(tmp_path: Path) -> None:
+    meeting = _make_meeting()
+    utterances = [_make_utterance()]
+
+    with patch("apps.server.domain.report_pdf.find_soffice", return_value=None):
+        result = write_session_exports(tmp_path, meeting, utterances, summary=None)
+
+    assert result["summary"] is None
+    assert result["summary_html"] is None
+    assert result["summary_docx"] is None
+    assert result["summary_pdf"] is None
 # === ANCHOR: TEST_REPORT_EXPORTS_END ===
