@@ -24,7 +24,7 @@ vi.mock("../diagnostics/appLog", () => ({
 
 // Mock Tauri plugins — must be registered before importing reportExport.
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  save: vi.fn(),
+  open: vi.fn(),
 }));
 vi.mock("@tauri-apps/plugin-fs", () => ({
   writeFile: vi.fn(),
@@ -183,10 +183,10 @@ describe("exportReports (Tauri runtime)", () => {
   });
 
   it("calls writeFile for each successfully fetched format", async () => {
-    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { open } = await import("@tauri-apps/plugin-dialog");
     const { writeFile } = await import("@tauri-apps/plugin-fs");
 
-    (save as ReturnType<typeof vi.fn>).mockResolvedValue("/tmp/exports/report.md");
+    (open as ReturnType<typeof vi.fn>).mockResolvedValue("/tmp/exports");
     (writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
@@ -203,10 +203,10 @@ describe("exportReports (Tauri runtime)", () => {
   });
 
   it("skips formats that return non-OK HTTP status", async () => {
-    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { open } = await import("@tauri-apps/plugin-dialog");
     const { writeFile } = await import("@tauri-apps/plugin-fs");
 
-    (save as ReturnType<typeof vi.fn>).mockResolvedValue("/tmp/exports/report.md");
+    (open as ReturnType<typeof vi.fn>).mockResolvedValue("/tmp/exports");
     (writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
       if ((url as string).endsWith(".pdf")) {
@@ -224,11 +224,11 @@ describe("exportReports (Tauri runtime)", () => {
   });
 
   it("calls openPath when openFolder is true and files were saved", async () => {
-    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { open } = await import("@tauri-apps/plugin-dialog");
     const { writeFile } = await import("@tauri-apps/plugin-fs");
     const { openPath } = await import("@tauri-apps/plugin-opener");
 
-    (save as ReturnType<typeof vi.fn>).mockResolvedValue("/tmp/exports/report.md");
+    (open as ReturnType<typeof vi.fn>).mockResolvedValue("/tmp/exports");
     (writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (openPath as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -243,11 +243,11 @@ describe("exportReports (Tauri runtime)", () => {
   });
 
   it("does not call openPath when openFolder is false", async () => {
-    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { open } = await import("@tauri-apps/plugin-dialog");
     const { writeFile } = await import("@tauri-apps/plugin-fs");
     const { openPath } = await import("@tauri-apps/plugin-opener");
 
-    (save as ReturnType<typeof vi.fn>).mockResolvedValue("/tmp/exports/report.md");
+    (open as ReturnType<typeof vi.fn>).mockResolvedValue("/tmp/exports");
     (writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
@@ -261,8 +261,8 @@ describe("exportReports (Tauri runtime)", () => {
   });
 
   it("returns { saved: [], skipped: [], dir: null } when user cancels dialog", async () => {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    (save as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    (open as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     const result = await exportReports("sess-1", "tok", ["md"]);
     expect(result.saved).toHaveLength(0);
@@ -270,7 +270,7 @@ describe("exportReports (Tauri runtime)", () => {
   });
 
   it("uses defaultDir option to skip dialog", async () => {
-    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { open } = await import("@tauri-apps/plugin-dialog");
     const { writeFile } = await import("@tauri-apps/plugin-fs");
 
     (writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -282,7 +282,7 @@ describe("exportReports (Tauri runtime)", () => {
 
     const result = await exportReports("sess-1", "tok", ["md"], { defaultDir: "/preset/dir", openFolder: false });
 
-    expect(save).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
     expect(result.dir).toBe("/preset/dir");
     expect(result.saved).toContain("report.md");
   });

@@ -58,27 +58,24 @@ export async function exportReports(
   }
 
   // Tauri path: lazy-import plugins to avoid module-load failures in browser.
-  const [{ save }, { writeFile }, { openPath }] = await Promise.all([
+  const [{ open }, { writeFile }, { openPath }] = await Promise.all([
     import("@tauri-apps/plugin-dialog"),
     import("@tauri-apps/plugin-fs"),
     import("@tauri-apps/plugin-opener"),
   ]);
 
-  // Pick save directory via dialog.
+  // Pick a destination FOLDER (not a save-file dialog). A save-file dialog only
+  // grants fs scope to the single chosen file, so writing sibling formats
+  // (report.html/.docx/.pdf) into the same folder was blocked — only report.md
+  // survived. A directory picker lets every format land in the chosen folder.
   let dir: string | null = opts.defaultDir ?? null;
   if (!dir) {
-    // save() with directory option to pick a folder; fall back to Documents.
-    const picked = await save({
-      title: "보고서 저장 폴더 선택",
-      defaultPath: `report.md`,
-      filters: [{ name: "Markdown", extensions: ["md"] }],
-    });
-    if (!picked) {
+    const picked = await open({ directory: true, title: "보고서 저장 폴더 선택" });
+    if (!picked || typeof picked !== "string") {
       // User cancelled.
       return { saved, skipped, dir: null };
     }
-    // Extract directory from the chosen path (strip filename).
-    dir = picked.replace(/[\\/][^\\/]+$/, "") || picked;
+    dir = picked;
   }
 
   for (const fmt of formats) {

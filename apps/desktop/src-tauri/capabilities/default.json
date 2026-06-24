@@ -8,9 +8,10 @@
     "core:webview:allow-create-webview-window",
     "core:window:allow-close",
     "core:window:allow-set-focus",
+    "dialog:allow-open",
     "dialog:allow-save",
-    "fs:allow-write-file",
-    "fs:allow-create",
-    "opener:allow-open-path"
+    "opener:allow-open-path",
+    { "identifier": "fs:allow-write-file", "allow": [{ "path": "$HOME/**" }] },
+    { "identifier": "fs:allow-create", "allow": [{ "path": "$HOME/**" }] }
   ]
 }
