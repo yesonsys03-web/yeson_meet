@@ -139,7 +139,9 @@ export async function exportSummary(
     return { saved: true, path: "summary.md" };
   }
 
-  const [{ save }, { writeTextFile }] = await Promise.all([
+  // Use writeFile (not writeTextFile) so the existing fs:allow-write-file scope
+  // applies — writeTextFile needs a separate fs:allow-write-text-file permission.
+  const [{ save }, { writeFile }] = await Promise.all([
     import("@tauri-apps/plugin-dialog"),
     import("@tauri-apps/plugin-fs"),
   ]);
@@ -154,7 +156,7 @@ export async function exportSummary(
   }
 
   try {
-    await writeTextFile(filePath, text);
+    await writeFile(filePath, new TextEncoder().encode(text));
     return { saved: true, path: filePath };
   } catch (err) {
     return { saved: false, reason: err instanceof Error ? err.message : String(err) };
