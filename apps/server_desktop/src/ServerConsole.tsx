@@ -63,7 +63,7 @@ export default function ServerConsole() {
   const [liveSessions, setLiveSessions] = useState<number | null>(null);
   const [tunnelBusy, setTunnelBusy] = useState(false);
   const [, forceTick] = useState(0);
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const logBodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     installAppLogCapture();
@@ -102,9 +102,14 @@ export default function ServerConsole() {
     return () => window.clearInterval(id);
   }, [refreshStatus]);
 
-  // Auto-scroll the log body to the newest line.
+  // Stick to the newest line only when the user is already near the bottom.
+  // If they've scrolled up to read older output, leave their position alone so
+  // a busy log stream doesn't keep yanking them back down.
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ block: "end" });
+    const el = logBodyRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [logs]);
 
   const onStart = useCallback(async () => {
@@ -351,7 +356,7 @@ export default function ServerConsole() {
               <button style={styles.button} onClick={onOpenLogDir}>Open folder</button>
             </div>
             {saveMsg ? <p style={saveMsg.startsWith("saved:") ? styles.success : styles.warn}>{saveMsg}</p> : null}
-            <div style={styles.logBody}>
+            <div ref={logBodyRef} className="log-scroll" style={styles.logBody}>
               {visibleLogs.length === 0 ? (
                 <p style={styles.empty}>
                   {logs.length === 0
@@ -367,7 +372,6 @@ export default function ServerConsole() {
                   </div>
                 ))
               )}
-              <div ref={logEndRef} />
             </div>
           </section>
           <section hidden={activeView !== "config"} style={activeView === "config" ? styles.viewScroll : undefined}>
@@ -394,116 +398,142 @@ function Stat({ label, value }: { label: string; value: string }) {
 function levelColor(level: AppLogEntry["level"]): string {
   switch (level) {
     case "error":
-      return "#ff6b6b";
+      return "var(--ys-danger-text)";
     case "warn":
-      return "#ffd166";
+      return "var(--ys-warning-text)";
     case "debug":
-      return "#7f8c9b";
+      return "var(--ys-text-muted)";
     default:
-      return "#d4dde6";
+      return "var(--ys-text-body)";
   }
 }
 
+// Styled with the shared @yeson-meet/ui tokens (var(--ys-*)) so this console
+// reads as the same product as the Operator app. Layout/dimensions are kept
+// deliberately compact (this is a control plane); only the brand language —
+// colors, surfaces, radii, typography — is unified.
 const styles: Record<string, React.CSSProperties> = {
   // Row layout: fixed sidebar + right-hand column (header + content area).
   shell: {
     height: "100%",
     display: "flex",
     flexDirection: "row",
-    background: "#0e141b",
-    color: "#d4dde6",
-    fontFamily: "system-ui, -apple-system, sans-serif",
+    background: "var(--ys-bg-app)",
+    color: "var(--ys-text-body)",
+    fontFamily: "var(--ys-font-ui)",
   },
   sidebar: {
-    flex: "0 0 180px",
+    flex: "0 0 auto",
+    width: "var(--ys-sidebar-width)",
+    boxSizing: "border-box",
     display: "flex",
     flexDirection: "column",
     gap: 10,
-    padding: "16px 12px",
-    borderRight: "1px solid #1d2733",
-    background: "#0b1117",
+    padding: 22,
+    borderRight: "1px solid var(--ys-border-subtle)",
+    background: "var(--ys-bg-sidebar)",
   },
-  brand: { fontSize: 13, fontWeight: 700, margin: 0, color: "#8ea0b2" },
+  brand: {
+    fontSize: 13,
+    fontWeight: "var(--ys-weight-black)" as React.CSSProperties["fontWeight"],
+    margin: 0,
+    color: "var(--ys-accent)",
+    letterSpacing: ".08em",
+    textTransform: "uppercase",
+  },
   nav: { display: "flex", flexDirection: "column", gap: 4, marginTop: 8 },
   navButton: {
     textAlign: "left",
-    padding: "8px 10px",
-    borderRadius: 6,
+    padding: "12px 14px",
+    borderRadius: "var(--ys-radius-control)",
     border: "1px solid transparent",
     background: "transparent",
-    color: "#b6c2cf",
+    color: "var(--ys-text-label)",
     cursor: "pointer",
     fontSize: 13,
+    fontWeight: "var(--ys-weight-bold)" as React.CSSProperties["fontWeight"],
   },
-  navButtonActive: { background: "#1b2530", borderColor: "#25323f", color: "#fff", fontWeight: 600 },
-  column: { flex: "1 1 auto", display: "flex", flexDirection: "column", minWidth: 0 },
+  navButtonActive: {
+    background: "var(--ys-accent-soft)",
+    borderColor: "var(--ys-accent-strong)",
+    color: "var(--ys-on-accent)",
+    fontWeight: "var(--ys-weight-black)" as React.CSSProperties["fontWeight"],
+  },
+  column: {
+    flex: "1 1 auto",
+    display: "flex",
+    flexDirection: "column",
+    minWidth: 0,
+    background: "var(--ys-bg-app-gradient)",
+  },
   header: {
     flex: "0 0 auto",
     padding: "16px 20px",
-    borderBottom: "1px solid #1d2733",
-    background: "#11181f",
+    borderBottom: "1px solid var(--ys-border-subtle)",
+    background: "transparent",
   },
   headerRow: { display: "flex", alignItems: "center", gap: 12 },
-  title: { fontSize: 18, margin: 0, fontWeight: 600 },
-  badge: { fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, letterSpacing: 0.5 },
-  badgeOn: { background: "#13351f", color: "#4ade80" },
-  badgeOff: { background: "#2a1414", color: "#f87171" },
+  title: { fontSize: 18, margin: 0, fontWeight: "var(--ys-weight-bold)" as React.CSSProperties["fontWeight"], color: "var(--ys-text-strong)" },
+  badge: { fontSize: 11, fontWeight: "var(--ys-weight-black)" as React.CSSProperties["fontWeight"], padding: "3px 9px", borderRadius: "var(--ys-radius-pill)", letterSpacing: 0.5, border: "1px solid transparent" },
+  badgeOn: { background: "var(--ys-success-bg)", color: "var(--ys-success-text)", borderColor: "var(--ys-success-border)" },
+  badgeOff: { background: "var(--ys-danger-bg)", color: "var(--ys-danger-text)", borderColor: "var(--ys-danger-border)" },
   controls: { display: "flex", alignItems: "center", gap: 10, marginTop: 14 },
-  portLabel: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#8ea0b2" },
+  portLabel: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--ys-text-muted)" },
   portInput: {
     width: 84,
-    padding: "5px 8px",
-    background: "#0b1117",
-    border: "1px solid #25323f",
-    borderRadius: 6,
-    color: "#d4dde6",
+    padding: "7px 10px",
+    background: "var(--ys-bg-app)",
+    border: "1px solid var(--ys-border-strong)",
+    borderRadius: "var(--ys-radius-control)",
+    color: "var(--ys-text-body)",
   },
   button: {
-    padding: "7px 16px",
-    borderRadius: 6,
-    border: "1px solid #25323f",
-    background: "#1b2530",
-    color: "#d4dde6",
+    padding: "8px 16px",
+    borderRadius: "var(--ys-radius-control)",
+    border: "1px solid var(--ys-border-strong)",
+    background: "transparent",
+    color: "var(--ys-text-label)",
     cursor: "pointer",
     fontSize: 13,
+    fontWeight: "var(--ys-weight-bold)" as React.CSSProperties["fontWeight"],
   },
-  start: { background: "#15803d", borderColor: "#15803d", color: "#fff", fontWeight: 600 },
-  stop: { background: "#b91c1c", borderColor: "#b91c1c", color: "#fff", fontWeight: 600 },
+  start: { background: "var(--ys-accent-strong)", borderColor: "var(--ys-accent-strong)", color: "var(--ys-on-accent)", fontWeight: "var(--ys-weight-black)" as React.CSSProperties["fontWeight"] },
+  stop: { background: "var(--ys-danger)", borderColor: "var(--ys-danger)", color: "#fff", fontWeight: "var(--ys-weight-black)" as React.CSSProperties["fontWeight"] },
   statusGrid: { display: "grid", gridTemplateColumns: "repeat(4, max-content)", gap: 24, margin: "16px 0 0" },
   stat: { display: "flex", flexDirection: "column", gap: 2 },
-  statLabel: { fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "#6b7c8d", margin: 0 },
-  statValue: { fontSize: 15, fontWeight: 600, margin: 0, fontVariantNumeric: "tabular-nums" },
-  error: { margin: "12px 0 0", color: "#ff6b6b", fontSize: 13 },
-  warn: { margin: "12px 0 0", color: "#ffd166", fontSize: 12 },
-  success: { margin: "8px 20px 0", color: "#4ade80", fontSize: 12 },
+  statLabel: { fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ys-text-faint)", margin: 0 },
+  statValue: { fontSize: 15, fontWeight: "var(--ys-weight-bold)" as React.CSSProperties["fontWeight"], margin: 0, fontVariantNumeric: "tabular-nums", color: "var(--ys-text-strong)" },
+  error: { margin: "12px 0 0", color: "var(--ys-danger-text)", fontSize: 13 },
+  warn: { margin: "12px 0 0", color: "var(--ys-warning-text)", fontSize: 12 },
+  success: { margin: "8px 20px 0", color: "var(--ys-success-text)", fontSize: 12 },
   tunnelRow: { display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" },
   tunnelUrl: {
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontFamily: "var(--ys-font-mono)",
     fontSize: 12,
-    color: "#4ade80",
+    color: "var(--ys-success)",
     wordBreak: "break-all",
   },
-  tunnelHint: { fontSize: 12, color: "#6b7c8d" },
+  tunnelHint: { fontSize: 12, color: "var(--ys-text-faint)" },
   content: { flex: "1 1 auto", minHeight: 0, display: "flex", flexDirection: "column" },
   viewFill: { flex: "1 1 auto", minHeight: 0, display: "flex", flexDirection: "column" },
   viewScroll: { flex: "1 1 auto", minHeight: 0, overflowY: "auto", padding: "12px 20px" },
-  logToolbar: { display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", borderBottom: "1px solid #1d2733" },
-  select: { padding: "5px 8px", background: "#0b1117", border: "1px solid #25323f", borderRadius: 6, color: "#d4dde6", fontSize: 12 },
-  search: { flex: "0 1 240px", padding: "5px 8px", background: "#0b1117", border: "1px solid #25323f", borderRadius: 6, color: "#d4dde6", fontSize: 12 },
-  wrapLabel: { display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "#8ea0b2" },
+  logToolbar: { display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", borderBottom: "1px solid var(--ys-border-subtle)" },
+  select: { padding: "6px 9px", background: "var(--ys-bg-app)", border: "1px solid var(--ys-border-strong)", borderRadius: "var(--ys-radius-md)", color: "var(--ys-text-body)", fontSize: "var(--ys-font-control)" },
+  search: { flex: "0 1 240px", padding: "6px 9px", background: "var(--ys-bg-app)", border: "1px solid var(--ys-border-strong)", borderRadius: "var(--ys-radius-md)", color: "var(--ys-text-body)", fontSize: "var(--ys-font-control)" },
+  wrapLabel: { display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "var(--ys-text-muted)" },
   toolbarSpacer: { flex: "1 1 auto" },
   logBody: {
     flex: "1 1 auto",
     minHeight: 0,
     overflowY: "auto",
     padding: "12px 20px",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: 12,
+    fontFamily: "var(--ys-font-mono)",
+    fontSize: "var(--ys-font-log)",
     lineHeight: 1.55,
   },
-  empty: { color: "#5a6b7c" },
+  empty: { color: "var(--ys-text-faint)" },
   logLine: { display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word" },
-  logTs: { color: "#5a6b7c", flex: "0 0 auto" },
-  logSource: { color: "#7f8c9b", flex: "0 0 auto", minWidth: 92 },
+  logTs: { color: "var(--ys-text-faint)", flex: "0 0 auto" },
+  logSource: { color: "var(--ys-text-muted)", flex: "0 0 auto", minWidth: 92 },
 };
 // === ANCHOR: SERVER_CONSOLE_END ===

@@ -112,33 +112,33 @@ const bannerStyle: CSSProperties = {
   gap: 12,
   padding: "10px 14px",
   margin: "12px 0 0",
-  borderRadius: 8,
-  border: "1px solid #d98a00",
-  background: "#3a2c08",
-  color: "#ffd27a",
+  borderRadius: "var(--ys-radius-md)",
+  border: "1px solid var(--ys-warning-border)",
+  background: "var(--ys-warning-bg)",
+  color: "var(--ys-warning-text)",
   fontSize: 13,
 };
 
 const textCol: CSSProperties = { display: "flex", flexDirection: "column", gap: 4 };
 const actionsCol: CSSProperties = { display: "flex", gap: 8, flexShrink: 0, alignItems: "center" };
 const mono: CSSProperties = {
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  fontFamily: "var(--ys-font-mono)",
   fontSize: 12,
   wordBreak: "break-all",
 };
 const baseAction: CSSProperties = {
   padding: "6px 12px",
-  borderRadius: 6,
-  border: "1px solid #25323f",
+  borderRadius: "var(--ys-radius-control)",
+  border: "1px solid var(--ys-border-strong)",
   cursor: "pointer",
   fontSize: 12,
 };
 const primaryAction: CSSProperties = {
   ...baseAction,
-  background: "#15803d",
-  borderColor: "#15803d",
-  color: "#fff",
-  fontWeight: 600,
+  background: "var(--ys-accent-strong)",
+  borderColor: "var(--ys-accent-strong)",
+  color: "var(--ys-on-accent)",
+  fontWeight: 700,
 };
-const mutedAction: CSSProperties = { ...baseAction, background: "#1b2530", color: "#d4dde6" };
+const mutedAction: CSSProperties = { ...baseAction, background: "transparent", color: "var(--ys-text-label)" };
 // === ANCHOR: TUNNEL_DEGRADED_BANNER_END ===

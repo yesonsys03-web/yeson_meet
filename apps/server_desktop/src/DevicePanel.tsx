@@ -167,9 +167,9 @@ export default function DevicePanel({ serverPort, running }: Props) {
               닫기
             </button>
             {copied ? (
-              <span style={{ fontSize: 12, color: "#4ade80" }}>클립보드에 복사됨 — 이제 닫아도 됩니다</span>
+              <span style={{ fontSize: 12, color: "var(--ys-success-text)" }}>클립보드에 복사됨 — 이제 닫아도 됩니다</span>
             ) : (
-              <span style={{ fontSize: 12, color: "#ffd27a" }}>복사하면 닫기가 활성화됩니다</span>
+              <span style={{ fontSize: 12, color: "var(--ys-warning-text)" }}>복사하면 닫기가 활성화됩니다</span>
             )}
           </div>
           <div style={s.warn}>⚠️ 만료 없는 베어러 키입니다 — 비밀번호처럼 다루고, 노출되면 폐기 후 재발급하세요.</div>
@@ -195,12 +195,12 @@ export default function DevicePanel({ serverPort, running }: Props) {
       {/* Inactive (revoked) — read-only history, no revoke action */}
       {inactive.length > 0 ? (
         <>
-          <div style={{ ...s.listLabel, color: "#6b7c8d" }}>비활성(폐기됨) {inactive.length}개</div>
+          <div style={{ ...s.listLabel, color: "var(--ys-text-faint)" }}>비활성(폐기됨) {inactive.length}개</div>
           {inactive.map((d) => (
             <div key={d.id} style={{ ...s.deviceRow, opacity: 0.55 }}>
               <span style={s.deviceName}>#{d.id} · {d.name}</span>
               <span style={s.deviceMeta}>{new Date(d.created_at).toLocaleString()}</span>
-              <span style={{ fontSize: 12, color: "#6b7c8d" }}>폐기됨</span>
+              <span style={{ fontSize: 12, color: "var(--ys-text-faint)" }}>폐기됨</span>
             </div>
           ))}
         </>
@@ -212,20 +212,20 @@ export default function DevicePanel({ serverPort, running }: Props) {
 const s: Record<string, CSSProperties> = {
   wrap: { padding: "14px 20px", display: "flex", flexDirection: "column", gap: 10 },
   headRow: { display: "flex", alignItems: "center", justifyContent: "space-between" },
-  title: { fontSize: 15, fontWeight: 600, margin: 0 },
-  hint: { fontSize: 13, color: "#6b7c8d", margin: 0 },
+  title: { fontSize: 15, fontWeight: 600, margin: 0, color: "var(--ys-text-strong)" },
+  hint: { fontSize: 13, color: "var(--ys-text-faint)", margin: 0 },
   row: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
-  input: { padding: "6px 10px", background: "#0b1117", border: "1px solid #25323f", borderRadius: 6, color: "#d4dde6", fontSize: 13 },
-  primary: { padding: "6px 14px", borderRadius: 6, border: "1px solid #15803d", background: "#15803d", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 },
-  muted: { padding: "6px 12px", borderRadius: 6, border: "1px solid #25323f", background: "#1b2530", color: "#d4dde6", cursor: "pointer", fontSize: 13 },
-  danger: { padding: "5px 12px", borderRadius: 6, border: "1px solid #b91c1c", background: "#b91c1c", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 12 },
-  keyBox: { padding: "10px 14px", borderRadius: 8, border: "1px solid #d98a00", background: "#3a2c08", color: "#ffd27a", fontSize: 13 },
-  keyCode: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 13, wordBreak: "break-all", color: "#fff" },
+  input: { padding: "6px 10px", background: "var(--ys-bg-app)", border: "1px solid var(--ys-border-strong)", borderRadius: "var(--ys-radius-control)", color: "var(--ys-text-body)", fontSize: 13 },
+  primary: { padding: "6px 14px", borderRadius: "var(--ys-radius-control)", border: "1px solid var(--ys-accent-strong)", background: "var(--ys-accent-strong)", color: "var(--ys-on-accent)", fontWeight: 600, cursor: "pointer", fontSize: 13 },
+  muted: { padding: "6px 12px", borderRadius: "var(--ys-radius-control)", border: "1px solid var(--ys-border-strong)", background: "transparent", color: "var(--ys-text-label)", cursor: "pointer", fontSize: 13 },
+  danger: { padding: "5px 12px", borderRadius: "var(--ys-radius-control)", border: "1px solid var(--ys-danger)", background: "var(--ys-danger)", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 12 },
+  keyBox: { padding: "10px 14px", borderRadius: "var(--ys-radius-md)", border: "1px solid var(--ys-warning-border)", background: "var(--ys-warning-bg)", color: "var(--ys-warning-text)", fontSize: 13 },
+  keyCode: { fontFamily: "var(--ys-font-mono)", fontSize: 13, wordBreak: "break-all", color: "var(--ys-text-strong)" },
   warn: { fontSize: 12, marginTop: 6, opacity: 0.9 },
-  error: { color: "#ff6b6b", fontSize: 13, margin: "4px 0 0" },
-  listLabel: { fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: "#8ea0b2", marginTop: 6 },
-  deviceRow: { display: "flex", alignItems: "center", gap: 12, padding: "6px 0", borderBottom: "1px solid #1d2733" },
+  error: { color: "var(--ys-danger-text)", fontSize: 13, margin: "4px 0 0" },
+  listLabel: { fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ys-text-muted)", marginTop: 6 },
+  deviceRow: { display: "flex", alignItems: "center", gap: 12, padding: "6px 0", borderBottom: "1px solid var(--ys-border-subtle)" },
   deviceName: { fontSize: 13, fontWeight: 600, minWidth: 160 },
-  deviceMeta: { fontSize: 12, color: "#6b7c8d", flex: "1 1 auto" },
+  deviceMeta: { fontSize: 12, color: "var(--ys-text-faint)", flex: "1 1 auto" },
 };
 // === ANCHOR: DEVICE_PANEL_END ===

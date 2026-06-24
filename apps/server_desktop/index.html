@@ -10,6 +10,18 @@
          body owns the only scroll region (no double-scroll bug). */
       html, body, #root { height: 100%; margin: 0; }
       body { overflow: hidden; }
+      /* Always-visible, styled scrollbar for the log pane. Works on both
+         Windows (WebView2 / Chromium) and macOS (WKWebView), where overlay
+         scrollbars would otherwise auto-hide and feel like "no scrollbar".
+         scrollbar-gutter keeps the bar present so the layout never shifts. */
+      .log-scroll { scrollbar-gutter: stable; }
+      .log-scroll::-webkit-scrollbar { width: 12px; height: 12px; }
+      .log-scroll::-webkit-scrollbar-track { background: var(--ys-bg-app, #020617); }
+      .log-scroll::-webkit-scrollbar-thumb {
+        background: var(--ys-border-strong, #2c3a48); border-radius: var(--ys-radius-sm, 6px);
+        border: 3px solid var(--ys-bg-app, #020617);
+      }
+      .log-scroll::-webkit-scrollbar-thumb:hover { background: var(--ys-text-faint, #3a4c5d); }
     </style>
   </head>
   <body>

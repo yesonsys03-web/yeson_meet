@@ -34,6 +34,70 @@
   --ys-radius-sm: 6px;
   --ys-radius-md: 10px;
   --ys-radius-lg: 16px;
+  --ys-radius-control: 14px;  /* nav button / input */
+  --ys-radius-card: 24px;
+  --ys-radius-pill: 999px;
+
+  /* ── App-shell / chrome tokens ──────────────────────────────────────
+     Extracted from the Operator console (apps/desktop) so the Server
+     console (apps/server_desktop) reads as the same product. Additive
+     only — the subtitle/viewer tokens above are unchanged. (2026-06-24) */
+
+  /* Layout */
+  --ys-sidebar-width: 260px;            /* operator + server console nav rail */
+
+  /* Surfaces */
+  --ys-bg-app: #020617;                 /* deep page base */
+  --ys-bg-app-gradient:
+    radial-gradient(circle at 15% 0%, rgba(56,189,248,.16), transparent 28%),
+    linear-gradient(135deg, #020617, #0f172a 54%, #111827);
+  --ys-bg-sidebar: linear-gradient(180deg, #0f172a, #020617);
+  --ys-surface-card: rgba(15,23,42,.78);
+  --ys-surface-muted: rgba(15,23,42,.72);
+  --ys-shadow-card: 0 24px 80px rgba(0,0,0,.28);
+
+  /* Borders */
+  --ys-border-subtle: rgba(148,163,184,.18);
+  --ys-border: rgba(148,163,184,.2);
+  --ys-border-strong: rgba(148,163,184,.34);
+
+  /* Accent ramp (primary action / active nav) */
+  --ys-accent-strong: #7dd3fc;          /* primary button bg, active nav border */
+  --ys-accent-soft: #bae6fd;            /* active nav bg */
+  --ys-on-accent: #082f49;              /* text on accent surfaces */
+
+  /* Text ramp */
+  --ys-text-strong: #f8fafc;            /* titles */
+  --ys-text-body: #e2e8f0;
+  --ys-text-label: #cbd5e1;
+  --ys-text-faint: #64748b;
+
+  /* Semantic status (text / bg / border triplets for chips & banners) */
+  --ys-success: #4ade80;
+  --ys-success-text: #bbf7d0;
+  --ys-success-bg: rgba(22,101,52,.34);
+  --ys-success-border: rgba(74,222,128,.28);
+  --ys-warning: #fbbf24;
+  --ys-warning-text: #fde68a;
+  --ys-warning-bg: rgba(146,64,14,.28);
+  --ys-warning-border: rgba(251,191,36,.3);
+  --ys-danger-text: #fecdd3;
+  --ys-danger-bg: rgba(159,18,57,.24);
+  --ys-danger-border: rgba(251,113,133,.28);
+  --ys-info-text: #dbeafe;
+  --ys-info-bg: rgba(30,64,175,.22);
+  --ys-info-border: rgba(96,165,250,.26);
+
+  /* Chrome typography. UI stack matches the Operator console; the mono +
+     control/log sizes power dense admin surfaces. NOTE: the 12px log size
+     is a deliberate, documented exception to §4 "min 14px" — that rule
+     governs viewer/subtitle readability, not an operator log table. */
+  --ys-font-ui: Aptos, 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --ys-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ys-font-control: 13px;              /* toolbar / labels */
+  --ys-font-log: 12px;                  /* dense log lines (admin-only exception) */
+  --ys-weight-bold: 800;
+  --ys-weight-black: 900;
 }
 
 /* 회의실 모드 (XXL 강제 + 사이드 폴딩) */

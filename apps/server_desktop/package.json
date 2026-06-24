@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
+    "@yeson-meet/ui": "workspace:*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

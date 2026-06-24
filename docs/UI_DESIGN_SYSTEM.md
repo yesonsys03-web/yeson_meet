@@ -1,7 +1,7 @@
 # UI_DESIGN_SYSTEM — yeson-meet
 
 > 최종 갱신: 2026-05-15
-> 대상: `apps/desktop`(Operator 콘솔), `apps/web`(Viewer), `packages/ui`(공통 컴포넌트)
+> 대상: `apps/desktop`(Operator 콘솔), `apps/server_desktop`(Server 콘솔), `apps/web`(Viewer), `packages/ui`(공통 컴포넌트)
 > **목적**: MVP-α 이후 회의 기록 검색·용어집·통계·키워드/액션 토글·모바일 native·사내 SDK 위젯 등 **확장 기능이 추가될 때 자막 메인 흐름을 깨지 않고 슬롯·토큰·composite·store slice를 추가만으로 끝나는 구조 보장**.
 
 ---
@@ -196,6 +196,7 @@ type MeetingStore = {
 ## 4. 접근성 / 가독성 강제 사항
 
 - 모든 텍스트 **최소 14px**. 12px 사용 자체 금지 (lint 룰 검토).
+  - **문서화된 예외 (2026-06-24)**: 운영자 *관제 도구*의 밀집 표면 — Server 콘솔 로그 테이블(`--ys-font-log: 12px`)·툴바 컨트롤(`--ys-font-control: 13px`) — 은 14px 하한에서 제외한다. 이 규칙은 *시청자/자막 가독성*을 위한 것이고, 한 화면에 많은 줄을 빠르게 훑어야 하는 admin 로그에는 밀도가 가독성보다 우선한다. 자막/뷰어 표면에는 예외 없음.
 - 자막은 항상 **Bold 700+**.
 - 대비비 **WCAG AAA (7:1) 이상** — 색 토큰 정의 시점에 검증.
 - 한 줄 글자 수 캡: 운영자 콘솔 ≤ 28자, 폰 ≤ 18자.
@@ -220,6 +221,18 @@ type MeetingStore = {
 - 토큰 이름 변경: 전체 grep + 코드/디자인 동시 변경 (semver minor).
 - 슬롯 추가: 매우 신중. 5슬롯으로 안 풀리는 케이스가 나오면 먼저 ARCH 회의 (semver major).
 - composite 시그니처 변경: 호출자 모두 업데이트 (semver minor).
+
+---
+
+## 7. 앱-셸 / 크롬 토큰 & 소비 현황 (2026-06-24)
+
+Slice 1에서 자막/뷰어 토큰만 정의됐고 **어떤 앱도 `packages/ui`를 소비하지 않아**, 나중에 추가된 Server 콘솔(`apps/server_desktop`)이 디자인 시스템 밖에서 자라 "다른 툴"처럼 보였다. 이를 해소하려고 토큰을 **추가만**(기존 자막 토큰 불변)으로 확장하고 두 Tauri 앱을 토큰에 연결했다.
+
+- **신규 토큰 그룹** (`packages/ui/src/tokens.css`): 표면(`--ys-bg-app`, `--ys-bg-app-gradient`, `--ys-bg-sidebar`, `--ys-surface-card/-muted`, `--ys-shadow-card`), 보더(`--ys-border-subtle/-/-strong`), accent 램프(`--ys-accent-strong/-soft`, `--ys-on-accent`), 텍스트 램프(`--ys-text-strong/-body/-label/-faint`), 시맨틱 triplet(success/warning/danger/info × text/bg/border), 크롬 타이포(`--ys-font-ui/-mono/-control/-log`, `--ys-weight-bold/-black`), radius(`--ys-radius-control/-card/-pill`). 값은 Operator 콘솔(`consoleStyles.ts`)에서 1:1 추출 → **클라가 곧 정본**.
+- **소비 연결**: 두 앱이 `@yeson-meet/ui`(workspace:*) 의존성을 갖고 각 `main.tsx`에서 `import "@yeson-meet/ui/tokens.css"`.
+- **Server 콘솔**: 크롬(shell/sidebar/header/buttons/badges/cards) 전부 토큰화. primary 액션 = accent cyan(클라와 통일), 상태칩 = success/danger triplet, 터널 배너 = warning triplet. 로그 테이블은 의도적으로 밀도 유지(§4 예외).
+- **Operator 콘솔(클라)**: *공유 크롬* 키만 토큰 참조로 전환(값 동일 → 시각 변화 0). 자막/QR 등 제품 고유 표면은 범위 외(후속).
+- **변경 정책**: §6과 동일 — 크롬 토큰 추가는 자유, 이름 변경은 전체 grep + minor.
 
 ---
 
