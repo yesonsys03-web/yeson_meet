@@ -145,9 +145,25 @@ export function MeetingQuickStartPanel() {
                 <strong>{lifecycle.endedSession.report_path}</strong>
               </div>
               <button type="button" onClick={lifecycle.downloadReport} disabled={lifecycle.busy} style={styles.secondaryButton}>
-                {lifecycle.busy ? "불러오는 중..." : "회의록(Markdown) 불러오기"}
+                {lifecycle.busy ? "불러오는 중..." : "보고서 미리보기 불러오기"}
               </button>
-              {lifecycle.reportText ? <pre style={reportTextStyle}>{lifecycle.reportText}</pre> : null}
+              {lifecycle.reportHtml ? (
+                <iframe sandbox="" srcDoc={lifecycle.reportHtml} title="보고서 미리보기" style={reportPreviewStyle} />
+              ) : lifecycle.reportText ? (
+                <pre style={reportTextStyle}>{lifecycle.reportText}</pre>
+              ) : null}
+              <button type="button" onClick={lifecycle.exportReport} disabled={lifecycle.busy} style={styles.secondaryButton}>
+                보고서 익스포트 (MD / HTML / DOCX / PDF)
+              </button>
+              <label style={autoOpenLabelStyle}>
+                <input
+                  type="checkbox"
+                  checked={lifecycle.autoOpenExport}
+                  onChange={(e) => lifecycle.setAutoOpenExport(e.target.checked)}
+                  style={{ accentColor: "#38bdf8" }}
+                />
+                익스포트 후 폴더 자동 열기
+              </label>
             </>
           ) : (
             <p style={styles.quickStartEmpty}>회의를 시작하면 Session ID와 Viewer URL이 여기에 표시됩니다.</p>
@@ -168,6 +184,25 @@ const reportTextStyle: CSSProperties = {
   background: "rgba(255,255,255,0.08)",
   padding: 10,
   borderRadius: 8,
+};
+
+const reportPreviewStyle: CSSProperties = {
+  marginTop: 10,
+  width: "100%",
+  height: 320,
+  border: "1px solid rgba(255,255,255,0.12)",
+  borderRadius: 8,
+  background: "#fff",
+};
+
+const autoOpenLabelStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  marginTop: 8,
+  fontSize: 13,
+  color: "#94a3b8",
+  cursor: "pointer",
 };
 
 function QuickField({
