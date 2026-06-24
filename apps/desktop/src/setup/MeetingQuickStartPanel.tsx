@@ -155,6 +155,9 @@ export function MeetingQuickStartPanel() {
               <button type="button" onClick={lifecycle.exportReport} disabled={lifecycle.busy} style={styles.secondaryButton}>
                 보고서 익스포트 (MD / HTML / DOCX / PDF)
               </button>
+              <button type="button" onClick={lifecycle.exportSummaryReport} disabled={lifecycle.busy} style={styles.secondaryButton}>
+                요약본 저장
+              </button>
               <label style={autoOpenLabelStyle}>
                 <input
                   type="checkbox"

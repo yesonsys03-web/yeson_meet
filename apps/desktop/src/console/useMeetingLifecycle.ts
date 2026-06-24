@@ -5,7 +5,7 @@ import { loadOperatorLogin } from "../setup/credentials";
 import { startSidecar, stopSidecar } from "../setup/sidecarRunner";
 import { createSession, endSession, fetchSessionReport, fetchSessionReportHtml, loginOperator, sessionRequestBody } from "./sessionApi";
 import { runOneClickStart } from "./oneClickStart";
-import { exportReports } from "./reportExport";
+import { exportReports, exportSummary } from "./reportExport";
 import type { CreatedSession, EndedSession, MeetingDraft } from "./types";
 
 const initialDraft: MeetingDraft = {
@@ -153,6 +153,18 @@ export function useMeetingLifecycle() {
     });
   }
 
+  async function exportSummaryReport() {
+    await runAction(async () => {
+      const sessionId = createdSession?.session_id ?? endedSession?.session_id;
+      if (!sessionId) throw new Error("먼저 회의를 시작하세요.");
+      const result = await exportSummary(sessionId, draft.operatorToken);
+      if (!result.saved) {
+        throw new Error(result.reason);
+      }
+      setStatusText(`요약본 저장 완료: ${result.path}`);
+    });
+  }
+
   async function copyViewerUrl() {
     if (!createdSession) return;
     await navigator.clipboard.writeText(createdSession.viewer_url);
@@ -174,6 +186,7 @@ export function useMeetingLifecycle() {
     copyViewerUrl,
     downloadReport,
     exportReport,
+    exportSummaryReport,
     finishMeeting,
     login,
     setAutoOpenExport,

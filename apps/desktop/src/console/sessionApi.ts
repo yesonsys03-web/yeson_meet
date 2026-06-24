@@ -123,6 +123,27 @@ export async function fetchSessionReportBytes(
   }
 }
 
+export async function fetchSessionSummary(
+  sessionId: string,
+  operatorToken: string,
+): Promise<{ ok: boolean; text?: string; status: number }> {
+  const url = `${apiBase()}/api/v1/sessions/${encodeURIComponent(sessionId)}/report.summary`;
+  try {
+    const response = await timedFetch("Download summary", url, {
+      headers: { Authorization: `Bearer ${operatorToken}` },
+    });
+    if (!response.ok) {
+      return { ok: false, status: response.status };
+    }
+    return { ok: true, text: await response.text(), status: response.status };
+  } catch (error) {
+    appLogger.error("network", "Download summary fetch error", {
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    return { ok: false, status: 0 };
+  }
+}
+
 export async function fetchOperatorBackfill(
   sessionId: string,
   operatorToken: string,

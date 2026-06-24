@@ -1,6 +1,6 @@
 // === ANCHOR: REPORT_EXPORT_START ===
 import type { ReportFormat } from "./sessionApi";
-import { fetchSessionReportBytes } from "./sessionApi";
+import { fetchSessionReportBytes, fetchSessionSummary } from "./sessionApi";
 
 type TauriGlobal = typeof globalThis & { __TAURI_INTERNALS__?: unknown };
 
@@ -103,5 +103,61 @@ export async function exportReports(
   }
 
   return { saved, skipped, dir };
+}
+
+export type SummaryExportResult =
+  | { saved: true; path: string }
+  | { saved: false; reason: string };
+
+/**
+ * Fetch the standalone summary.md from the server and save it via a Tauri
+ * save-file dialog. Returns a result describing success or the reason for
+ * failure (including "not yet available" when the server returns 404).
+ *
+ * Gracefully degrades when Tauri runtime is unavailable (browser dev).
+ */
+export async function exportSummary(
+  sessionId: string,
+  operatorToken: string,
+): Promise<SummaryExportResult> {
+  const result = await fetchSessionSummary(sessionId, operatorToken);
+  if (!result.ok) {
+    if (result.status === 404) {
+      return { saved: false, reason: "요약이 아직 생성되지 않았습니다 (잠시 후 다시 시도하세요)." };
+    }
+    return { saved: false, reason: `서버 오류: HTTP ${result.status || "네트워크 오류"}` };
+  }
+  const text = result.text ?? "";
+
+  if (!hasTauriRuntime()) {
+    // Browser dev fallback: trigger browser download.
+    const blob = new Blob([text], { type: "text/markdown" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "summary.md";
+    a.click();
+    return { saved: true, path: "summary.md" };
+  }
+
+  const [{ save }, { writeTextFile }] = await Promise.all([
+    import("@tauri-apps/plugin-dialog"),
+    import("@tauri-apps/plugin-fs"),
+  ]);
+
+  const filePath = await save({
+    defaultPath: "summary.md",
+    title: "요약본 저장",
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+  if (!filePath || typeof filePath !== "string") {
+    return { saved: false, reason: "취소됨" };
+  }
+
+  try {
+    await writeTextFile(filePath, text);
+    return { saved: true, path: filePath };
+  } catch (err) {
+    return { saved: false, reason: err instanceof Error ? err.message : String(err) };
+  }
 }
 // === ANCHOR: REPORT_EXPORT_END ===
