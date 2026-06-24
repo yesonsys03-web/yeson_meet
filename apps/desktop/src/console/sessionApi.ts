@@ -97,6 +97,32 @@ export async function fetchSessionReportHtml(sessionId: string, operatorToken: s
   return response.text();
 }
 
+export type ReportFormat = "md" | "html" | "docx" | "pdf";
+
+export async function fetchSessionReportBytes(
+  sessionId: string,
+  operatorToken: string,
+  fmt: ReportFormat,
+): Promise<{ ok: boolean; data?: Uint8Array; status: number }> {
+  const suffix = fmt === "md" ? "report" : `report.${fmt}`;
+  const url = `${apiBase()}/api/v1/sessions/${encodeURIComponent(sessionId)}/${suffix}`;
+  try {
+    const response = await timedFetch(`Download report (${fmt})`, url, {
+      headers: { Authorization: `Bearer ${operatorToken}` },
+    });
+    if (!response.ok) {
+      return { ok: false, status: response.status };
+    }
+    const buffer = await response.arrayBuffer();
+    return { ok: true, data: new Uint8Array(buffer), status: response.status };
+  } catch (error) {
+    appLogger.error("network", `Download report (${fmt}) fetch error`, {
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    return { ok: false, status: 0 };
+  }
+}
+
 export async function fetchOperatorBackfill(
   sessionId: string,
   operatorToken: string,

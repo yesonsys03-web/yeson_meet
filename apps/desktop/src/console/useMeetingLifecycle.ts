@@ -5,6 +5,7 @@ import { loadOperatorLogin } from "../setup/credentials";
 import { startSidecar, stopSidecar } from "../setup/sidecarRunner";
 import { createSession, endSession, fetchSessionReport, fetchSessionReportHtml, loginOperator, sessionRequestBody } from "./sessionApi";
 import { runOneClickStart } from "./oneClickStart";
+import { exportReports } from "./reportExport";
 import type { CreatedSession, EndedSession, MeetingDraft } from "./types";
 
 const initialDraft: MeetingDraft = {
@@ -26,6 +27,7 @@ export function useMeetingLifecycle() {
   const [handoffText, setHandoffText] = useState("Setup Assistant는 아직 새 회의값을 받지 않았습니다.");
   const [errorText, setErrorText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [autoOpenExport, setAutoOpenExport] = useState(true);
   const sessionPayload = useMemo(() => sessionRequestBody(draft), [draft]);
   const contractPreview = useMemo(() => buildContractPreview(sessionPayload), [sessionPayload]);
 
@@ -134,6 +136,23 @@ export function useMeetingLifecycle() {
     });
   }
 
+  async function exportReport() {
+    await runAction(async () => {
+      const sessionId = createdSession?.session_id ?? endedSession?.session_id;
+      if (!sessionId) throw new Error("먼저 회의를 시작하세요.");
+      const result = await exportReports(sessionId, draft.operatorToken, undefined, {
+        openFolder: autoOpenExport,
+      });
+      if (result.saved.length === 0 && result.skipped.length > 0) {
+        const reasons = result.skipped.map((s) => `${s.fmt}: ${s.reason}`).join(", ");
+        throw new Error(`보고서 저장 실패: ${reasons}`);
+      }
+      const skippedNote =
+        result.skipped.length > 0 ? ` (스킵: ${result.skipped.map((s) => s.fmt).join(", ")})` : "";
+      setStatusText(`보고서 저장 완료: ${result.saved.join(", ")}${skippedNote}`);
+    });
+  }
+
   async function copyViewerUrl() {
     if (!createdSession) return;
     await navigator.clipboard.writeText(createdSession.viewer_url);
@@ -141,6 +160,7 @@ export function useMeetingLifecycle() {
   }
 
   return {
+    autoOpenExport,
     busy,
     contractPreview,
     createdSession,
@@ -153,8 +173,10 @@ export function useMeetingLifecycle() {
     statusText,
     copyViewerUrl,
     downloadReport,
+    exportReport,
     finishMeeting,
     login,
+    setAutoOpenExport,
     startMeeting,
     startMeetingOneClick,
     updateDraft,

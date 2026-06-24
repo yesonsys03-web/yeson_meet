@@ -56,8 +56,12 @@ export function MeetingLifecyclePanel() {
             errorText={lifecycle.errorText}
             handoffText={lifecycle.handoffText}
             statusText={lifecycle.statusText}
+            autoOpenExport={lifecycle.autoOpenExport}
+            busy={lifecycle.busy}
             copyViewerUrl={lifecycle.copyViewerUrl}
             downloadReport={lifecycle.downloadReport}
+            exportReport={lifecycle.exportReport}
+            setAutoOpenExport={lifecycle.setAutoOpenExport}
           />
           <LiveSubtitlePreview
             operatorToken={lifecycle.draft.operatorToken}
