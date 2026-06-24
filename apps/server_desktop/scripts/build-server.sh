@@ -62,6 +62,9 @@ echo "Building yeson-server (PyInstaller --onedir, Gemini-only)…"
     --collect-all google.genai \
     --collect-submodules google.api_core \
     --hidden-import aiosqlite \
+    --collect-all docx \
+    --hidden-import lxml._elementpath \
+    --collect-submodules lxml \
     --add-data "$(pwd)/apps/web/dist:web_dist" \
     --distpath "${DIST}" \
     --workpath "${WORK}" \

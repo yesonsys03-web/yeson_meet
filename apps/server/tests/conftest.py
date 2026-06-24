@@ -20,6 +20,11 @@ import tempfile
 os.environ.setdefault(
     "STORAGE_ROOT", os.path.join(tempfile.gettempdir(), "yeson-meet-test-storage")
 )
+# end_session generates a report which (when enabled) shells out to a local
+# claude/codex CLI for the LLM summary. Tests must never make real LLM calls,
+# so default the feature OFF; a test that exercises summaries can monkeypatch
+# YESON_REPORT_SUMMARY back on (with generate_summary itself mocked).
+os.environ.setdefault("YESON_REPORT_SUMMARY", "0")
 
 # ── 2. Now safe to import server modules ─────────────────────────────────────
 import psycopg
