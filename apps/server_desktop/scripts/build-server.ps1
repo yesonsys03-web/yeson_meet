@@ -61,6 +61,9 @@ $WebDist = (Resolve-Path "apps/web/dist").Path
     --collect-all google.genai `
     --collect-submodules google.api_core `
     --hidden-import aiosqlite `
+    --collect-all docx `
+    --hidden-import lxml._elementpath `
+    --collect-submodules lxml `
     --add-data "$WebDist;web_dist" `
     --distpath $Dist `
     --workpath $Work `

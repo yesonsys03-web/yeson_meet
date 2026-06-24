@@ -17,8 +17,11 @@ logger = logging.getLogger(__name__)
 
 # Well-known soffice install locations outside of PATH.
 _FALLBACK_PATHS: list[str] = [
-    "/Applications/LibreOffice.app/Contents/MacOS/soffice",  # macOS
-    r"C:\Program Files\LibreOffice\program\soffice.exe",     # Windows
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice",        # macOS
+    r"C:\Program Files\LibreOffice\program\soffice.exe",           # Windows (64-bit)
+    r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",     # Windows (32-bit)
+    "/usr/bin/soffice",                                            # Linux
+    "/snap/bin/libreoffice",                                       # Linux (snap)
 ]
 
 
