@@ -86,7 +86,7 @@ Write-Host "-> $DestDir"
 Write-Host "  bundle size: ${SizeMB} MB"
 Write-Host "  entry binary: $DestDir/yeson-server.exe"
 
-# S7: frozen-bundle report smoke test — fails the build if the freeze cannot
+# S7: frozen-bundle report smoke test - fails the build if the freeze cannot
 # produce a report (catches python-docx/lxml missing from the bundle). Runs
 # before the (optionally skipped) cloudflared step so it always executes. Invoked
 # as a child process so its exit code is captured without ending this script.

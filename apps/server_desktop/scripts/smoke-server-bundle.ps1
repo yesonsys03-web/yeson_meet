@@ -1,4 +1,4 @@
-# Frozen-bundle report smoke test (S7) — Windows.
+# Frozen-bundle report smoke test (S7) - Windows.
 #
 # Runs the staged PyInstaller server binary in YESON_REPORT_SELFTEST mode, which
 # exercises every report builder (md/html/docx + summary, plus pdf when
@@ -12,7 +12,7 @@ Set-Location (Join-Path $PSScriptRoot "..\..\..")
 
 $Bin = Get-ChildItem -Path "apps\server_desktop\src-tauri\binaries\yeson-server-*\yeson-server.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $Bin) {
-    Write-Error "smoke: staged server binary not found — run build-server.ps1 first"
+    Write-Error "smoke: staged server binary not found - run build-server.ps1 first"
     exit 1
 }
 
