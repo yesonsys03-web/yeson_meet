@@ -60,8 +60,32 @@ if not server_logger.handlers:
 logger = logging.getLogger(__name__)
 
 
+class _HealthAccessLogFilter(logging.Filter):
+    """Drop uvicorn access-log lines for the high-frequency health endpoint.
+
+    The server console polls ``/api/v1/health/*`` once per second to keep its
+    uptime/PID display live. On a 24/7 server, logging every one of those
+    requests would dominate the on-disk logs (~75% of all lines) and grow them
+    by tens of MB/day. Real requests still log normally; only health polls are
+    dropped. Cross-platform (pure stdlib).
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
+        args = record.args
+        # uvicorn.access record args: (client, method, path, http_version, status)
+        if isinstance(args, tuple) and len(args) >= 3:
+            if str(args[2]).startswith("/api/v1/health/"):
+                return False
+        return True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Quiet the per-second health-poll access logs so a 24/7 server's logs stay
+    # small. Installed here (not at import) so it survives uvicorn's own logging
+    # setup, which runs before the lifespan startup.
+    logging.getLogger("uvicorn.access").addFilter(_HealthAccessLogFilter())
+
     # Alembic upgrade is run via deploy script or compose entrypoint; do not run here
     # to keep dev/prod start identical. Health endpoint stays cheap.
     gemini_health = gemini_config_health()

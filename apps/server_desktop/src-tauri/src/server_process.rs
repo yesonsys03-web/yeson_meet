@@ -722,6 +722,10 @@ fn prune_old_logs(log_dir: &std::path::Path, max_age: std::time::Duration) {
     }
 }
 
+/// Last time (unix secs) the dated logs were pruned, so a 24/7 server self-cleans
+/// without a restart. `prune_old_logs` is otherwise only called once at spawn.
+static LAST_PRUNE_UNIX_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Append one redacted line to <app_data_dir>/logs/server-YYYY-MM-DD.log.
 /// Best-effort: any failure is swallowed so logging never blocks the forwarder.
 fn append_log_file(app: &tauri::AppHandle, level: &str, source: &str, message: &str) {
@@ -748,6 +752,20 @@ fn append_log_file(app: &tauri::AppHandle, level: &str, source: &str, message: &
         .open(&path)
     {
         let _ = file.write_all(line.as_bytes());
+    }
+
+    // Periodic prune: at most once per 24h, so a 24/7 server that is never
+    // restarted still trims aged daily logs to the 7-day window. Cheap atomic
+    // guard, no extra thread; cross-platform (prune_old_logs uses std::fs).
+    use std::sync::atomic::Ordering;
+    let now_secs = secs.max(0) as u64;
+    let last = LAST_PRUNE_UNIX_SECS.load(Ordering::Relaxed);
+    if now_secs.saturating_sub(last) >= 86_400
+        && LAST_PRUNE_UNIX_SECS
+            .compare_exchange(last, now_secs, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+    {
+        prune_old_logs(&log_dir, std::time::Duration::from_secs(7 * 86_400));
     }
 }
 
