@@ -89,6 +89,14 @@ export async function fetchSessionReport(sessionId: string, operatorToken: strin
   return response.text();
 }
 
+export async function fetchSessionReportHtml(sessionId: string, operatorToken: string): Promise<string> {
+  const response = await timedFetch("Download report HTML", `${apiBase()}/api/v1/sessions/${encodeURIComponent(sessionId)}/report.html`, {
+    headers: { Authorization: `Bearer ${operatorToken}` },
+  });
+  if (!response.ok) throw new Error(`Download report HTML failed: HTTP ${response.status}`);
+  return response.text();
+}
+
 export async function fetchOperatorBackfill(
   sessionId: string,
   operatorToken: string,

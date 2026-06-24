@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { loadValues, storeValues } from "../setup/setupValues";
 import { loadOperatorLogin } from "../setup/credentials";
 import { startSidecar, stopSidecar } from "../setup/sidecarRunner";
-import { createSession, endSession, fetchSessionReport, loginOperator, sessionRequestBody } from "./sessionApi";
+import { createSession, endSession, fetchSessionReport, fetchSessionReportHtml, loginOperator, sessionRequestBody } from "./sessionApi";
 import { runOneClickStart } from "./oneClickStart";
 import type { CreatedSession, EndedSession, MeetingDraft } from "./types";
 
@@ -21,6 +21,7 @@ export function useMeetingLifecycle() {
   const [createdSession, setCreatedSession] = useState<CreatedSession | null>(null);
   const [endedSession, setEndedSession] = useState<EndedSession | null>(null);
   const [reportText, setReportText] = useState("");
+  const [reportHtml, setReportHtml] = useState("");
   const [statusText, setStatusText] = useState("회의를 시작하면 viewer URL이 여기에 표시됩니다.");
   const [handoffText, setHandoffText] = useState("Setup Assistant는 아직 새 회의값을 받지 않았습니다.");
   const [errorText, setErrorText] = useState("");
@@ -63,6 +64,7 @@ export function useMeetingLifecycle() {
       setCreatedSession(session);
       setEndedSession(null);
       setReportText("");
+      setReportHtml("");
       storeSessionHandoff(session);
       setStatusText(`회의 생성 완료: ${session.session_id}`);
     });
@@ -82,6 +84,7 @@ export function useMeetingLifecycle() {
       setCreatedSession(result.session);
       setEndedSession(null);
       setReportText("");
+      setReportHtml("");
       updateDraft("operatorToken", result.operatorToken);
       updateDraft("title", result.title);
       storeSessionHandoff(result.session);
@@ -121,6 +124,12 @@ export function useMeetingLifecycle() {
       const sessionId = createdSession?.session_id ?? endedSession?.session_id;
       if (!sessionId) throw new Error("먼저 회의를 시작하세요.");
       setReportText(await fetchSessionReport(sessionId, draft.operatorToken));
+      // HTML preview: best-effort — failure does not block md display.
+      try {
+        setReportHtml(await fetchSessionReportHtml(sessionId, draft.operatorToken));
+      } catch {
+        // ignore — md is already shown
+      }
       setStatusText("Markdown 리포트를 불러왔습니다.");
     });
   }
@@ -139,6 +148,7 @@ export function useMeetingLifecycle() {
     endedSession,
     errorText,
     handoffText,
+    reportHtml,
     reportText,
     statusText,
     copyViewerUrl,

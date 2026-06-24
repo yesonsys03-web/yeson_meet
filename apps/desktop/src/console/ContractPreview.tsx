@@ -4,9 +4,10 @@ import { consoleStyles } from "./consoleStyles";
 type ContractPreviewProps = {
   contractPreview: string;
   reportText: string;
+  reportHtml?: string;
 };
 
-export function ContractPreview({ contractPreview, reportText }: ContractPreviewProps) {
+export function ContractPreview({ contractPreview, reportText, reportHtml }: ContractPreviewProps) {
   return (
     <aside style={consoleStyles.card}>
       <h2 style={{ marginTop: 0 }}>Server contract</h2>
@@ -16,7 +17,16 @@ export function ContractPreview({ contractPreview, reportText }: ContractPreview
         <li>Run sidecar with the session ID from the setup assistant.</li>
         <li>End session and download generated Markdown report.</li>
       </ol>
-      {reportText ? <pre style={{ ...consoleStyles.code, marginTop: 14 }}>{reportText}</pre> : null}
+      {reportHtml ? (
+        <iframe
+          sandbox=""
+          srcDoc={reportHtml}
+          style={{ width: "100%", minHeight: 320, border: "1px solid #ddd", marginTop: 14, borderRadius: 4 }}
+          title="Report preview"
+        />
+      ) : reportText ? (
+        <pre style={{ ...consoleStyles.code, marginTop: 14 }}>{reportText}</pre>
+      ) : null}
     </aside>
   );
 }

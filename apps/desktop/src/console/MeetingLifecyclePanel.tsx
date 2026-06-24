@@ -65,7 +65,7 @@ export function MeetingLifecyclePanel() {
           />
         </div>
 
-        <ContractPreview contractPreview={lifecycle.contractPreview} reportText={lifecycle.reportText} />
+        <ContractPreview contractPreview={lifecycle.contractPreview} reportText={lifecycle.reportText} reportHtml={lifecycle.reportHtml} />
       </div>
     </section>
   );
