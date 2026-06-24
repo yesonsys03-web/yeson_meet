@@ -33,8 +33,8 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openPath: vi.fn(),
 }));
 
-import { fetchSessionReportBytes } from "./sessionApi";
-import { exportReports } from "./reportExport";
+import { fetchSessionReportBytes, fetchSessionSummaryBytes } from "./sessionApi";
+import { exportReports, exportSummary } from "./reportExport";
 
 // --- fetchSessionReportBytes unit tests ---
 
@@ -285,6 +285,141 @@ describe("exportReports (Tauri runtime)", () => {
     expect(open).not.toHaveBeenCalled();
     expect(result.dir).toBe("/preset/dir");
     expect(result.saved).toContain("report.md");
+  });
+});
+
+// --- fetchSessionSummaryBytes unit tests ---
+
+describe("fetchSessionSummaryBytes", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    globalThis.fetch = vi.fn();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("uses /report.summary for md format", async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new ArrayBuffer(4),
+    });
+
+    await fetchSessionSummaryBytes("sess-1", "tok", "md");
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(url).toMatch(/\/sess-1\/report\.summary$/);
+  });
+
+  it("uses /report.summary.html for html format", async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new ArrayBuffer(8),
+    });
+
+    await fetchSessionSummaryBytes("sess-1", "tok", "html");
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(url).toMatch(/\/sess-1\/report\.summary\.html$/);
+  });
+
+  it("uses /report.summary.docx for docx format", async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new ArrayBuffer(8),
+    });
+
+    await fetchSessionSummaryBytes("sess-1", "tok", "docx");
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(url).toMatch(/\/sess-1\/report\.summary\.docx$/);
+  });
+
+  it("returns ok:false with status on 404 (summary not yet generated)", async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 404,
+      arrayBuffer: async () => new ArrayBuffer(0),
+    });
+
+    const result = await fetchSessionSummaryBytes("sess-1", "tok", "md");
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(404);
+  });
+});
+
+// --- exportSummary unit tests (Tauri runtime mocked) ---
+
+describe("exportSummary (Tauri runtime)", () => {
+  const originalFetch = globalThis.fetch;
+
+  type TauriGlobal = typeof globalThis & { __TAURI_INTERNALS__?: unknown };
+
+  beforeEach(() => {
+    (globalThis as TauriGlobal).__TAURI_INTERNALS__ = {};
+    globalThis.fetch = vi.fn();
+  });
+
+  afterEach(() => {
+    delete (globalThis as TauriGlobal).__TAURI_INTERNALS__;
+    globalThis.fetch = originalFetch;
+    vi.clearAllMocks();
+  });
+
+  it("writes summary.{fmt} for each selected format", async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { writeFile } = await import("@tauri-apps/plugin-fs");
+
+    (open as ReturnType<typeof vi.fn>).mockResolvedValue("/tmp/exports");
+    (writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new ArrayBuffer(4),
+    });
+
+    const result = await exportSummary("sess-1", "tok", ["md", "html"], { openFolder: false });
+
+    expect(writeFile).toHaveBeenCalledTimes(2);
+    expect(result.saved).toContain("summary.md");
+    expect(result.saved).toContain("summary.html");
+    expect(result.skipped).toHaveLength(0);
+  });
+
+  it("skips 404 formats with '요약 아직 생성 안 됨'", async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { writeFile } = await import("@tauri-apps/plugin-fs");
+
+    (open as ReturnType<typeof vi.fn>).mockResolvedValue("/tmp/exports");
+    (writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if ((url as string).endsWith(".docx")) {
+        return Promise.resolve({ ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) });
+      }
+      return Promise.resolve({ ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(4) });
+    });
+
+    const result = await exportSummary("sess-1", "tok", ["md", "docx"], { openFolder: false });
+
+    expect(result.saved).toContain("summary.md");
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]!.fmt).toBe("docx");
+    expect(result.skipped[0]!.reason).toContain("요약 아직 생성 안 됨");
+  });
+
+  it("returns { saved: [], dir: null } when user cancels dialog", async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    (open as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    const result = await exportSummary("sess-1", "tok", ["md"]);
+    expect(result.saved).toHaveLength(0);
+    expect(result.dir).toBeNull();
   });
 });
 // === ANCHOR: REPORT_EXPORT_TEST_END ===

@@ -3,9 +3,9 @@ import { useMemo, useState } from "react";
 import { loadValues, storeValues } from "../setup/setupValues";
 import { loadOperatorLogin } from "../setup/credentials";
 import { startSidecar, stopSidecar } from "../setup/sidecarRunner";
-import { createSession, endSession, fetchSessionReport, fetchSessionReportHtml, loginOperator, sessionRequestBody } from "./sessionApi";
+import { createSession, endSession, fetchSessionReport, fetchSessionReportHtml, loginOperator, sessionRequestBody, type ReportFormat } from "./sessionApi";
 import { runOneClickStart } from "./oneClickStart";
-import { exportReports, exportSummary } from "./reportExport";
+import { DEFAULT_EXPORT_FORMATS, exportReports, exportSummary } from "./reportExport";
 import type { CreatedSession, EndedSession, MeetingDraft } from "./types";
 
 const initialDraft: MeetingDraft = {
@@ -28,11 +28,26 @@ export function useMeetingLifecycle() {
   const [errorText, setErrorText] = useState("");
   const [busy, setBusy] = useState(false);
   const [autoOpenExport, setAutoOpenExport] = useState(true);
+  const [meetingStartedAt, setMeetingStartedAt] = useState<Date | null>(null);
+  const [selectedFormats, setSelectedFormats] = useState<Record<ReportFormat, boolean>>(() =>
+    DEFAULT_EXPORT_FORMATS.reduce(
+      (acc, fmt) => ({ ...acc, [fmt]: true }),
+      {} as Record<ReportFormat, boolean>,
+    ),
+  );
   const sessionPayload = useMemo(() => sessionRequestBody(draft), [draft]);
   const contractPreview = useMemo(() => buildContractPreview(sessionPayload), [sessionPayload]);
 
   function updateDraft<K extends keyof MeetingDraft>(key: K, value: MeetingDraft[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
+  }
+
+  function toggleFormat(fmt: ReportFormat) {
+    setSelectedFormats((current) => ({ ...current, [fmt]: !current[fmt] }));
+  }
+
+  function pickedFormats(): ReportFormat[] {
+    return DEFAULT_EXPORT_FORMATS.filter((fmt) => selectedFormats[fmt]);
   }
 
   async function runAction(action: () => Promise<void>) {
@@ -65,6 +80,7 @@ export function useMeetingLifecycle() {
       const session = await createSession(draft);
       setCreatedSession(session);
       setEndedSession(null);
+      setMeetingStartedAt(new Date());
       setReportText("");
       setReportHtml("");
       storeSessionHandoff(session);
@@ -85,6 +101,7 @@ export function useMeetingLifecycle() {
       });
       setCreatedSession(result.session);
       setEndedSession(null);
+      setMeetingStartedAt(new Date());
       setReportText("");
       setReportHtml("");
       updateDraft("operatorToken", result.operatorToken);
@@ -140,7 +157,9 @@ export function useMeetingLifecycle() {
     await runAction(async () => {
       const sessionId = createdSession?.session_id ?? endedSession?.session_id;
       if (!sessionId) throw new Error("먼저 회의를 시작하세요.");
-      const result = await exportReports(sessionId, draft.operatorToken, undefined, {
+      const fmts = pickedFormats();
+      if (fmts.length === 0) throw new Error("포맷을 1개 이상 선택하세요.");
+      const result = await exportReports(sessionId, draft.operatorToken, fmts, {
         openFolder: autoOpenExport,
       });
       if (result.saved.length === 0 && result.skipped.length > 0) {
@@ -157,11 +176,18 @@ export function useMeetingLifecycle() {
     await runAction(async () => {
       const sessionId = createdSession?.session_id ?? endedSession?.session_id;
       if (!sessionId) throw new Error("먼저 회의를 시작하세요.");
-      const result = await exportSummary(sessionId, draft.operatorToken);
-      if (!result.saved) {
-        throw new Error(result.reason);
+      const fmts = pickedFormats();
+      if (fmts.length === 0) throw new Error("포맷을 1개 이상 선택하세요.");
+      const result = await exportSummary(sessionId, draft.operatorToken, fmts, {
+        openFolder: autoOpenExport,
+      });
+      if (result.saved.length === 0 && result.skipped.length > 0) {
+        const reasons = result.skipped.map((s) => `${s.fmt}: ${s.reason}`).join(", ");
+        throw new Error(`요약본 저장 실패: ${reasons}`);
       }
-      setStatusText(`요약본 저장 완료: ${result.path}`);
+      const skippedNote =
+        result.skipped.length > 0 ? ` (스킵: ${result.skipped.map((s) => s.fmt).join(", ")})` : "";
+      setStatusText(`요약본 저장 완료: ${result.saved.join(", ")}${skippedNote}`);
     });
   }
 
@@ -180,8 +206,10 @@ export function useMeetingLifecycle() {
     endedSession,
     errorText,
     handoffText,
+    meetingStartedAt,
     reportHtml,
     reportText,
+    selectedFormats,
     statusText,
     copyViewerUrl,
     downloadReport,
@@ -192,6 +220,7 @@ export function useMeetingLifecycle() {
     setAutoOpenExport,
     startMeeting,
     startMeetingOneClick,
+    toggleFormat,
     updateDraft,
   };
 

@@ -2,6 +2,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { LiveSubtitlePreview } from "../console/LiveSubtitlePreview";
 import { ViewerQrPanel } from "../console/ViewerQrPanel";
+import type { ReportFormat } from "../console/sessionApi";
 import { useMeetingLifecycle } from "../console/useMeetingLifecycle";
 import { EMPTY_META, hydrateServerAddressFromKeychain, loadCredentialsMeta, saveCredentials, type CredentialsMeta } from "./credentials";
 import { loadValues } from "./setupValues";
@@ -62,6 +63,11 @@ export function MeetingQuickStartPanel() {
       </div>
 
       <div style={styles.quickStartSubtitleDock}>
+        <div style={meetingTimesStyle}>
+          <span>시작 {formatLocalTime(lifecycle.meetingStartedAt)}</span>
+          <span style={meetingTimesDotStyle}>·</span>
+          <span>종료 {endTimeLabel(lifecycle.endedSession?.ended_at, activeSessionId)}</span>
+        </div>
         <LiveSubtitlePreview operatorToken={lifecycle.draft.operatorToken} sessionId={activeSessionId} />
       </div>
 
@@ -152,8 +158,24 @@ export function MeetingQuickStartPanel() {
               ) : lifecycle.reportText ? (
                 <pre style={reportTextStyle}>{lifecycle.reportText}</pre>
               ) : null}
+              <div style={formatChecklistStyle}>
+                <span style={formatChecklistLabelStyle}>저장 포맷</span>
+                <div style={formatChecklistRowStyle}>
+                  {EXPORT_FORMAT_OPTIONS.map((fmt) => (
+                    <label key={fmt} style={autoOpenLabelStyle}>
+                      <input
+                        type="checkbox"
+                        checked={lifecycle.selectedFormats[fmt]}
+                        onChange={() => lifecycle.toggleFormat(fmt)}
+                        style={{ accentColor: "#38bdf8" }}
+                      />
+                      {fmt.toUpperCase()}
+                    </label>
+                  ))}
+                </div>
+              </div>
               <button type="button" onClick={lifecycle.exportReport} disabled={lifecycle.busy} style={styles.secondaryButton}>
-                보고서 익스포트 (MD / HTML / DOCX / PDF)
+                보고서 익스포트
               </button>
               <button type="button" onClick={lifecycle.exportSummaryReport} disabled={lifecycle.busy} style={styles.secondaryButton}>
                 요약본 저장
@@ -207,6 +229,51 @@ const autoOpenLabelStyle: CSSProperties = {
   color: "#94a3b8",
   cursor: "pointer",
 };
+
+const EXPORT_FORMAT_OPTIONS: ReportFormat[] = ["md", "html", "docx", "pdf"];
+
+const formatChecklistStyle: CSSProperties = {
+  marginTop: 10,
+};
+
+const formatChecklistLabelStyle: CSSProperties = {
+  display: "block",
+  fontSize: 12,
+  color: "#94a3b8",
+  marginBottom: 4,
+};
+
+const formatChecklistRowStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 16,
+};
+
+const meetingTimesStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  marginBottom: 8,
+  fontSize: 12,
+  color: "#94a3b8",
+};
+
+const meetingTimesDotStyle: CSSProperties = {
+  opacity: 0.5,
+};
+
+function formatLocalTime(value: Date | string | null | undefined): string {
+  if (!value) return "-";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleTimeString("ko-KR");
+}
+
+function endTimeLabel(endedAt: string | null | undefined, activeSessionId: string | null): string {
+  if (endedAt) return formatLocalTime(endedAt);
+  if (activeSessionId) return "진행중";
+  return "-";
+}
 
 function QuickField({
   label,
