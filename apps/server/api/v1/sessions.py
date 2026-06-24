@@ -24,6 +24,7 @@ from apps.server.domain.report_pdf import convert_docx_to_pdf
 from apps.server.domain.reports import (
     regenerate_report_with_summary,
     report_path,
+    summary_path,
     write_session_exports,
     write_session_report,
 )
@@ -297,5 +298,30 @@ async def download_session_report_pdf(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=\"report.pdf\""},
+    )
+
+
+@router.get("/{external_id}/report.summary")
+async def download_session_report_summary(
+    external_id: UUID,
+    _user: Annotated[AppUser, Depends(require_operator)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    """Return the standalone summary.md file if available.
+
+    The summary is generated asynchronously after session end.
+    Returns 404 with a descriptive message if not yet available.
+    """
+    meeting = await _get_operator_session_or_404(db, external_id)
+    path = summary_path(_storage_root(), str(meeting.external_id))
+    if not path.exists():
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail="요약이 아직 생성되지 않았습니다. 회의 종료 후 잠시 후 다시 시도하세요.",
+        )
+    return Response(
+        content=path.read_text(encoding="utf-8"),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=\"summary.md\""},
     )
 # === ANCHOR: SESSIONS_END ===

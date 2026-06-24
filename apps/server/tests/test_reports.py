@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from apps.server.domain.reports import build_session_report
+from apps.server.domain.reports import _hms, build_session_report
 
 
 # ---------------------------------------------------------------------------
@@ -149,4 +149,16 @@ def test_summary_stats_header_present() -> None:
     stats_section = result.split("## Utterances")[0] if "## Utterances" in result else result
     assert "Alice" in stats_section
     assert "Bob" in stats_section
+
+
+# ---------------------------------------------------------------------------
+# (vii) _hms converts tz-aware UTC datetime to server local timezone
+# ---------------------------------------------------------------------------
+
+def test_hms_converts_utc_to_local_timezone() -> None:
+    """_hms() on a tz-aware UTC datetime must match astimezone() output."""
+    from datetime import datetime, timezone
+    dt_utc = datetime(2026, 6, 24, 5, 8, 0, tzinfo=timezone.utc)
+    expected = dt_utc.astimezone().strftime("%H:%M:%S")
+    assert _hms(dt_utc) == expected
 # === ANCHOR: TEST_REPORTS_END ===

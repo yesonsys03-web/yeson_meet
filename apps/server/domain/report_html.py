@@ -117,8 +117,8 @@ def build_session_report_html(
     ]
 
     # --- meta line ---
-    started = meeting.started_at.isoformat() if meeting.started_at else "N/A"
-    ended = meeting.ended_at.isoformat() if meeting.ended_at else "N/A"
+    started = meeting.started_at.astimezone().isoformat() if meeting.started_at else "N/A"
+    ended = meeting.ended_at.astimezone().isoformat() if meeting.ended_at else "N/A"
     meta_parts = [
         f"Session: {html.escape(str(meeting.external_id))}",
         f"Status: {html.escape(str(meeting.status))}",

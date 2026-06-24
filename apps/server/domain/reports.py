@@ -16,8 +16,12 @@ def _speaker_label(speaker: str | None) -> str:
 
 
 def _hms(dt: object) -> str:
-    """Format a datetime as HH:MM:SS (date omitted)."""
-    return dt.strftime("%H:%M:%S")  # type: ignore[union-attr]
+    """Format a datetime as HH:MM:SS in the server's local timezone (date omitted).
+
+    tz-aware datetimes are converted to local time via astimezone().
+    naive datetimes are treated as local time by Python's astimezone() call.
+    """
+    return dt.astimezone().strftime("%H:%M:%S")  # type: ignore[union-attr]
 # === ANCHOR: REPORTS_FORMAT_END ===
 
 
@@ -37,8 +41,8 @@ def build_session_report(
         "",
         f"- Session ID: `{meeting.external_id}`",
         f"- Status: {meeting.status}",
-        f"- Started: {meeting.started_at.isoformat()}",
-        f"- Ended: {meeting.ended_at.isoformat() if meeting.ended_at else 'N/A'}",
+        f"- Started: {meeting.started_at.astimezone().isoformat()}",
+        f"- Ended: {meeting.ended_at.astimezone().isoformat() if meeting.ended_at else 'N/A'}",
     ]
     if meeting.client_label:
         lines.append(f"- Client: {meeting.client_label}")
@@ -98,6 +102,13 @@ def report_path(storage_root: str | Path, session_id: str, fmt: str = "md") -> P
     """
     return Path(storage_root) / session_id / f"report.{fmt}"
 # === ANCHOR: REPORTS_REPORT_PATH_END ===
+
+
+# === ANCHOR: REPORTS_SUMMARY_PATH_START ===
+def summary_path(storage_root: str | Path, session_id: str) -> Path:
+    """Return the canonical path for the standalone summary file (summary.md)."""
+    return Path(storage_root) / session_id / "summary.md"
+# === ANCHOR: REPORTS_SUMMARY_PATH_END ===
 
 
 # === ANCHOR: REPORTS_WRITE_SESSION_REPORT_START ===
@@ -193,6 +204,19 @@ def write_session_exports(
     except Exception as exc:  # noqa: BLE001
         logger.warning("write_session_exports: pdf failed: %s", exc)
         results["pdf"] = None
+
+    # summary.md — standalone summary file (best-effort, only when summary present)
+    if summary:
+        try:
+            s_path = summary_path(storage_root, session_id)
+            header = f"# 요약 — {meeting.title}\n\n"
+            s_path.write_text(header + summary + "\n", encoding="utf-8")
+            results["summary"] = s_path
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("write_session_exports: summary.md failed: %s", exc)
+            results["summary"] = None
+    else:
+        results["summary"] = None
 
     return results
 # === ANCHOR: REPORTS_WRITE_EXPORTS_END ===
