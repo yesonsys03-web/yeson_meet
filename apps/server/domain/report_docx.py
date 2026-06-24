@@ -10,7 +10,7 @@ from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 
 from apps.server.db.models import Session, Utterance
-from apps.server.domain.reports import _hms, _speaker_label
+from apps.server.domain.reports import _hms, _speaker_label, _to_local
 
 # Korean fonts to attempt; Word will fall back gracefully if not installed.
 _KO_FONT = "맑은 고딕"
@@ -55,8 +55,8 @@ def build_session_report_docx(
         _set_run_font(run, _KO_FONT)
 
     # --- Summary statistics ---
-    started = meeting.started_at.astimezone().isoformat() if meeting.started_at else "N/A"
-    ended = meeting.ended_at.astimezone().isoformat() if meeting.ended_at else "N/A"
+    started = _to_local(meeting.started_at).isoformat() if meeting.started_at else "N/A"
+    ended = _to_local(meeting.ended_at).isoformat() if meeting.ended_at else "N/A"
     meta_lines = [
         f"Session: {meeting.external_id}",
         f"Status: {meeting.status}",

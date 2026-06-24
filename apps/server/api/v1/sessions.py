@@ -2,6 +2,7 @@
 """Sessions router stub. Body implemented in S1-L1 (POST /sessions)."""
 from __future__ import annotations
 
+import asyncio
 import os
 import secrets
 from datetime import datetime, timezone
@@ -25,7 +26,6 @@ from apps.server.domain.reports import (
     regenerate_report_with_summary,
     report_path,
     summary_path,
-    write_session_exports,
     write_session_report,
 )
 from apps.server.ws.bus import bus
@@ -192,12 +192,14 @@ async def end_session(
     snap_meeting = _snap_meeting(meeting)
     snap_utts = _snap_utterances(utterances)
 
-    # Fast path: emit md/html/docx immediately without LLM summary
+    # Report files (md/html/docx/pdf + summary) are emitted off the request path
+    # by the background task below — ending stays fast and never blocks on the
+    # LibreOffice PDF conversion or the LLM summary. GET /report* regenerates
+    # on demand, so the path is valid even before the background write finishes.
     storage_root = _storage_root()
-    exports = write_session_exports(storage_root, snap_meeting, snap_utts, summary=None)
-    path = exports.get("md") or report_path(storage_root, str(meeting.external_id), "md")
+    path = report_path(storage_root, str(meeting.external_id), "md")
 
-    # Background: generate summary and re-emit enriched reports (best-effort)
+    # Background: emit all report formats (with LLM summary when available).
     background_tasks.add_task(
         regenerate_report_with_summary, storage_root, snap_meeting, snap_utts
     )
@@ -288,7 +290,7 @@ async def download_session_report_pdf(
         raise HTTPException(status.HTTP_409_CONFLICT, "Session has not ended")
     utterances = await _session_utterances(db, meeting.id)
     docx_bytes = build_session_report_docx(meeting, utterances)
-    pdf_bytes = convert_docx_to_pdf(docx_bytes)
+    pdf_bytes = await asyncio.to_thread(convert_docx_to_pdf, docx_bytes)
     if pdf_bytes is None:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,

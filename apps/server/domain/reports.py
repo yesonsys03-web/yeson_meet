@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from itertools import groupby
 from pathlib import Path
 
@@ -15,13 +16,21 @@ def _speaker_label(speaker: str | None) -> str:
     return speaker if speaker else "발화자 미상"
 
 
-def _hms(dt: object) -> str:
-    """Format a datetime as HH:MM:SS in the server's local timezone (date omitted).
+def _to_local(dt: datetime) -> datetime:
+    """Convert a stored timestamp to the server's local timezone.
 
-    tz-aware datetimes are converted to local time via astimezone().
-    naive datetimes are treated as local time by Python's astimezone() call.
+    Stored values are UTC but may be *naive* (no tzinfo) depending on the DB
+    driver. Calling ``astimezone()`` on a naive datetime would wrongly assume it
+    is already local. So treat naive values as UTC first, then convert.
     """
-    return dt.astimezone().strftime("%H:%M:%S")  # type: ignore[union-attr]
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone()
+
+
+def _hms(dt: datetime) -> str:
+    """Format a datetime as HH:MM:SS in the server's local timezone (date omitted)."""
+    return _to_local(dt).strftime("%H:%M:%S")
 # === ANCHOR: REPORTS_FORMAT_END ===
 
 
@@ -41,8 +50,8 @@ def build_session_report(
         "",
         f"- Session ID: `{meeting.external_id}`",
         f"- Status: {meeting.status}",
-        f"- Started: {meeting.started_at.astimezone().isoformat()}",
-        f"- Ended: {meeting.ended_at.astimezone().isoformat() if meeting.ended_at else 'N/A'}",
+        f"- Started: {_to_local(meeting.started_at).isoformat()}",
+        f"- Ended: {_to_local(meeting.ended_at).isoformat() if meeting.ended_at else 'N/A'}",
     ]
     if meeting.client_label:
         lines.append(f"- Client: {meeting.client_label}")
@@ -255,13 +264,18 @@ async def regenerate_report_with_summary(
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("regenerate_report_with_summary: generate_summary raised %s", exc)
-        return None
+        summary = None
 
-    if summary:
-        try:
-            write_session_exports(storage_root, meeting, utterances, summary=summary)  # type: ignore[arg-type]
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("regenerate_report_with_summary: re-emit failed: %s", exc)
+    # Always emit the report files here (in a thread — write_session_exports runs
+    # blocking work like the LibreOffice PDF conversion). end_session no longer
+    # writes them synchronously, so this is the single emission point: with the
+    # summary if one was produced, without it otherwise.
+    try:
+        await asyncio.to_thread(
+            write_session_exports, storage_root, meeting, utterances, summary  # type: ignore[arg-type]
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("regenerate_report_with_summary: emit failed: %s", exc)
 
     return summary
 # === ANCHOR: REPORTS_REGENERATE_WITH_SUMMARY_END ===
