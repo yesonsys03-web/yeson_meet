@@ -86,6 +86,13 @@ Write-Host "-> $DestDir"
 Write-Host "  bundle size: ${SizeMB} MB"
 Write-Host "  entry binary: $DestDir/yeson-server.exe"
 
+# S7: frozen-bundle report smoke test — fails the build if the freeze cannot
+# produce a report (catches python-docx/lxml missing from the bundle). Runs
+# before the (optionally skipped) cloudflared step so it always executes. Invoked
+# as a child process so its exit code is captured without ending this script.
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "smoke-server-bundle.ps1")
+if ($LASTEXITCODE -ne 0) { throw "frozen-bundle report smoke test failed" }
+
 # P4.3: vendor the Windows cloudflared so the tauri.conf binaries/cloudflared-*
 # resource glob is satisfied at `tauri build`. Idempotent (skips if present).
 # The P0 spike CI passes -SkipCloudflared (it tests the freeze, not the tunnel).

@@ -98,6 +98,10 @@ echo "→ ${DEST_DIR}"
 echo "  bundle size: $(du -sh "${DEST_DIR}" | cut -f1)"
 echo "  entry binary: ${DEST_DIR}/yeson-server"
 
+# S7: frozen-bundle report smoke test — fails the build if the freeze cannot
+# produce a report (catches python-docx/lxml missing from the bundle).
+bash apps/server_desktop/scripts/smoke-server-bundle.sh
+
 # P4.3: vendor the host-triple cloudflared so tauri.conf's
 # `binaries/cloudflared-*` resource glob is satisfied when `tauri build`
 # packages the app (the ~50-70MB binary is gitignored + fetched per-host, never

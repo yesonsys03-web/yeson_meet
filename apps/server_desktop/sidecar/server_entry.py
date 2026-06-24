@@ -87,6 +87,81 @@ def _bootstrap_admin_mode() -> int:
     return 0
 
 
+def _report_selftest_mode() -> int:
+    """Frozen-bundle smoke test (S7): run every report builder on dummy data.
+
+    Triggered by ``YESON_REPORT_SELFTEST=1``. Instead of starting uvicorn this
+    imports and runs the md/html/docx (and summary html/docx) builders, plus the
+    LibreOffice PDF conversion when soffice is present. It exists to catch deps
+    that pass in the dev venv but are missing from the PyInstaller bundle
+    (python-docx / lxml are the usual suspects). Prints machine-readable markers
+    and returns non-zero on any failure. Needs no DB, network, or auth.
+    """
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    base = datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
+    meeting = SimpleNamespace(
+        title="Selftest 회의",
+        external_id="selftest",
+        status="ended",
+        started_at=base,
+        ended_at=base,
+        client_label="SELFTEST",
+    )
+    utts = [
+        SimpleNamespace(
+            seq=1, speaker="A", text_en="Hello", text_ko="안녕하세요",
+            started_at=base, ended_at=base,
+        )
+    ]
+    summary = "요약 본문 한 줄."
+    failures: list[str] = []
+
+    def _check(name: str, fn) -> None:
+        try:
+            out = fn()
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"{name}: {type(exc).__name__}: {exc}")
+            print(f"SELFTEST {name}=FAIL", file=sys.stderr)
+            return
+        ok = len(out) > 0 if isinstance(out, (str, bytes, bytearray)) else bool(out)
+        print(f"SELFTEST {name}={'ok' if ok else 'EMPTY'}")
+        if not ok:
+            failures.append(f"{name}: empty output")
+
+    from apps.server.domain.report_docx import build_session_report_docx, build_summary_docx
+    from apps.server.domain.report_html import build_session_report_html, build_summary_html
+    from apps.server.domain.report_pdf import convert_docx_to_pdf, find_soffice
+    from apps.server.domain.reports import build_session_report
+
+    _check("md", lambda: build_session_report(meeting, utts, summary=summary))
+    _check("html", lambda: build_session_report_html(meeting, utts, summary=summary))
+    _check("docx", lambda: build_session_report_docx(meeting, utts, summary=summary))
+    _check("summary_html", lambda: build_summary_html(meeting, summary))
+    _check("summary_docx", lambda: build_summary_docx(meeting, summary))
+
+    # PDF needs LibreOffice (external, not bundled) — verify only when present.
+    if find_soffice():
+        def _pdf() -> bytes:
+            pdf = convert_docx_to_pdf(build_session_report_docx(meeting, utts))
+            if not (pdf and pdf[:5] == b"%PDF-"):
+                raise RuntimeError("soffice returned no/invalid PDF")
+            return pdf
+
+        _check("pdf", _pdf)
+    else:
+        print("SELFTEST pdf=skip (soffice not installed)")
+
+    if failures:
+        for f in failures:
+            print(f"SELFTEST_FAIL {f}", file=sys.stderr)
+        print("SELFTEST_RESULT=FAIL", file=sys.stderr)
+        return 1
+    print("SELFTEST_RESULT=PASS")
+    return 0
+
+
 def main() -> int:
     # Step 1+2: resolve and pin DATABASE_URL BEFORE importing the app, because
     # apps.server.db.session binds the engine from this env var at import time.
@@ -95,6 +170,10 @@ def main() -> int:
     # One-shot bootstrap mode: seed the first operator and exit (no uvicorn).
     if os.environ.get("YESON_BOOTSTRAP_ADMIN") == "1":
         return _bootstrap_admin_mode()
+
+    # Frozen-bundle report smoke test (S7): exercise builders and exit (no uvicorn).
+    if os.environ.get("YESON_REPORT_SELFTEST") == "1":
+        return _report_selftest_mode()
 
     # Step 3: ensure the schema exists on a cold file (idempotent create_all).
     from apps.server.db.seed import create_schema
