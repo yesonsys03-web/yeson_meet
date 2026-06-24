@@ -16,9 +16,11 @@ type LiveSubtitlePreviewProps = {
   operatorToken: string;
   sessionId: string | null;
   windowMode?: boolean;
+  meetingStartLabel?: string;
+  meetingEndLabel?: string;
 };
 
-export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = false }: LiveSubtitlePreviewProps) {
+export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = false, meetingStartLabel, meetingEndLabel }: LiveSubtitlePreviewProps) {
   const stream = useLiveSubtitleStream(sessionId, operatorToken);
   const captureStatus = useCaptureStatus();
   const captureLevel = useCaptureLevel();
@@ -67,6 +69,8 @@ export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = fal
           status={stream.ended ? "ended" : stream.connected ? "live" : "connecting"}
           captureStatus={captureStatus}
           level={captureLevel}
+          meetingStartLabel={meetingStartLabel}
+          meetingEndLabel={meetingEndLabel}
         />
       ) : null}
       {stream.providerError ? (
@@ -172,18 +176,27 @@ function SubtitleHeader({
   status,
   captureStatus = null,
   level = null,
+  meetingStartLabel,
+  meetingEndLabel,
 }: {
   isFullscreen: boolean;
   onToggleFullscreen: () => Promise<void>;
   status: "idle" | "connecting" | "live" | "ended";
   captureStatus?: CaptureState | null;
   level?: number | null;
+  meetingStartLabel?: string;
+  meetingEndLabel?: string;
 }) {
   return (
     <div style={consoleStyles.subtitleHeader}>
       <div style={consoleStyles.subtitleHeadingGroup}>
         <strong>Live subtitles</strong>
         <span style={consoleStyles.subtitleShortcutHint}>F 자막 전용 전체화면 · Esc/F 종료</span>
+        {meetingStartLabel && meetingStartLabel !== "-" ? (
+          <span style={consoleStyles.subtitleMeetingTimes}>
+            시작 {meetingStartLabel} · 종료 {meetingEndLabel ?? "-"}
+          </span>
+        ) : null}
       </div>
       <div style={consoleStyles.subtitleHeaderActions}>
         {captureStatus ? <CaptureStatusChip state={captureStatus} /> : null}

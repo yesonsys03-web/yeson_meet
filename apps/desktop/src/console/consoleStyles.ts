@@ -292,6 +292,11 @@ export const consoleStyles: Record<string, CSSProperties> = {
     fontSize: 12,
     fontWeight: 700,
   },
+  subtitleMeetingTimes: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: 600,
+  },
   subtitleFullscreenButton: {
     padding: "6px 10px",
     borderRadius: 999,

@@ -63,12 +63,12 @@ export function MeetingQuickStartPanel() {
       </div>
 
       <div style={styles.quickStartSubtitleDock}>
-        <div style={meetingTimesStyle}>
-          <span>시작 {formatLocalTime(lifecycle.meetingStartedAt)}</span>
-          <span style={meetingTimesDotStyle}>·</span>
-          <span>종료 {endTimeLabel(lifecycle.endedSession?.ended_at, activeSessionId)}</span>
-        </div>
-        <LiveSubtitlePreview operatorToken={lifecycle.draft.operatorToken} sessionId={activeSessionId} />
+        <LiveSubtitlePreview
+          operatorToken={lifecycle.draft.operatorToken}
+          sessionId={activeSessionId}
+          meetingStartLabel={lifecycle.meetingStartedAt ? formatLocalTime(lifecycle.meetingStartedAt) : undefined}
+          meetingEndLabel={endTimeLabel(lifecycle.endedSession?.ended_at, activeSessionId)}
+        />
       </div>
 
       <div style={styles.quickStartGrid}>
@@ -249,24 +249,16 @@ const formatChecklistRowStyle: CSSProperties = {
   gap: 16,
 };
 
-const meetingTimesStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  marginBottom: 8,
-  fontSize: 12,
-  color: "#94a3b8",
-};
-
-const meetingTimesDotStyle: CSSProperties = {
-  opacity: 0.5,
-};
-
 function formatLocalTime(value: Date | string | null | undefined): string {
   if (!value) return "-";
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleTimeString("ko-KR");
+  return date.toLocaleTimeString("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
 }
 
 function endTimeLabel(endedAt: string | null | undefined, activeSessionId: string | null): string {
