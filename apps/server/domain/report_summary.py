@@ -32,26 +32,45 @@ _MAX_TRANSCRIPT_CHARS = 8000
 
 
 # === ANCHOR: REPORT_SUMMARY_FIND_CLI_START ===
-# Registry of supported summary backends: name -> (executable, build_prefix(model)).
-# argv is always ``[*prefix, prompt]`` (the prompt is appended by
-# ``generate_summary``), so claude/codex ignore the model. To add a backend
-# (e.g. antigravity, or opencode with a deepseek model), register it here with
-# the model embedded in the prefix — e.g. ``["opencode", "run", "-m", model]`` —
-# and it becomes selectable with no other code change.
+# Registry of supported summary backends: name -> (executable, build_flags(model)).
+# The prompt is delivered on STDIN (never as an argv argument), so invocation is
+# safe for Windows .cmd shims and needs no quoting/escaping and is not bounded by
+# the command-line length limit. ``build_flags`` returns the CLI flags that put
+# the backend in non-interactive/print mode (where it reads the prompt from
+# stdin). claude/codex ignore the model; to add a backend that needs one (e.g.
+# opencode with a deepseek model), embed it in the flags — e.g.
+# ``["run", "-m", model]`` — and it becomes selectable with no other code change.
 _BACKENDS: dict[str, tuple[str, Callable[[str], list[str]]]] = {
-    "claude": ("claude", lambda _model: ["claude", "-p"]),
-    "codex": ("codex", lambda _model: ["codex", "exec"]),
+    "claude": ("claude", lambda _model: ["-p"]),
+    "codex": ("codex", lambda _model: ["exec"]),
 }
 
 # Auto-detect priority when no explicit backend is selected.
 _AUTO_ORDER: tuple[str, ...] = ("claude", "codex")
 
 
-def find_summary_cli(preferred: str | None = None, model: str = "") -> tuple[str, list[str]] | None:
-    """Resolve the configured summary backend to an available CLI.
+def _resolve_argv(exe: str, flags: list[str]) -> list[str] | None:
+    """Resolve ``exe`` to a runnable argv (flags only, no prompt), or None.
 
-    Returns a ``(name, argv_prefix)`` pair ready for use with
-    ``subprocess.run([*argv_prefix, prompt], ...)``, or ``None`` if no usable
+    Uses the absolute path from ``shutil.which`` (which honours PATHEXT on
+    Windows, e.g. ``claude`` → ``…\\claude.cmd``). Windows ``.cmd``/``.bat``
+    shims (npm-global claude.cmd/codex.cmd) cannot be launched by
+    ``CreateProcess`` directly, so they are run through ``cmd.exe``; the prompt
+    travels on stdin, so no cmd metacharacter escaping is required.
+    """
+    path = shutil.which(exe)
+    if path is None:
+        return None
+    if os.name == "nt" and path.lower().endswith((".cmd", ".bat")):
+        return ["cmd", "/c", path, *flags]
+    return [path, *flags]
+
+
+def find_summary_cli(preferred: str | None = None, model: str = "") -> tuple[str, list[str]] | None:
+    """Resolve the configured summary backend to a runnable command.
+
+    Returns a ``(name, argv)`` pair where ``argv`` runs the CLI in print mode
+    (flags only — the prompt is supplied on stdin), or ``None`` if no usable
     backend is found.
 
     ``preferred`` is the operator's selection:
@@ -63,20 +82,20 @@ def find_summary_cli(preferred: str | None = None, model: str = "") -> tuple[str
     """
     pref = (preferred or "auto").strip().lower()
     if pref in ("", "auto"):
-        for name in _AUTO_ORDER:
-            exe, build_prefix = _BACKENDS[name]
-            if shutil.which(exe):
-                return (name, build_prefix(model))
-        return None
-    entry = _BACKENDS.get(pref)
-    if entry is None:
+        candidates: list[str] = list(_AUTO_ORDER)
+    elif pref in _BACKENDS:
+        candidates = [pref]
+    else:
         logger.warning("find_summary_cli: unknown summary backend %r — skipping", pref)
         return None
-    exe, build_prefix = entry
-    if not shutil.which(exe):
-        logger.warning("find_summary_cli: backend '%s' not found on PATH — skipping", exe)
-        return None
-    return (pref, build_prefix(model))
+    for name in candidates:
+        exe, build_flags = _BACKENDS[name]
+        argv = _resolve_argv(exe, build_flags(model))
+        if argv is not None:
+            return (name, argv)
+    if pref not in ("", "auto"):
+        logger.warning("find_summary_cli: backend '%s' not found on PATH — skipping", pref)
+    return None
 # === ANCHOR: REPORT_SUMMARY_FIND_CLI_END ===
 
 
@@ -158,7 +177,8 @@ def generate_summary(
     # --- Execute ---
     try:
         result = subprocess.run(
-            [*cli_args, prompt],
+            cli_args,
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=timeout,

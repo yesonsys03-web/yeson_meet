@@ -259,7 +259,9 @@ def test_find_summary_cli_prefers_claude_over_codex() -> None:
     assert result is not None
     name, args = result
     assert name == "claude"
-    assert args == ["claude", "-p"]
+    # argv is the resolved absolute path (so Windows .cmd shims run correctly);
+    # the prompt is delivered on stdin, not appended here.
+    assert args == ["/usr/local/bin/claude", "-p"]
 
 
 def test_find_summary_cli_falls_back_to_codex() -> None:
@@ -272,7 +274,7 @@ def test_find_summary_cli_falls_back_to_codex() -> None:
     assert result is not None
     name, args = result
     assert name == "codex"
-    assert args == ["codex", "exec"]
+    assert args == ["/usr/local/bin/codex", "exec"]
 
 
 def test_find_summary_cli_returns_none_when_neither_found() -> None:
