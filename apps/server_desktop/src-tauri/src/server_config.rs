@@ -49,6 +49,11 @@ pub struct ServerConfig {
     pub yeson_ai_provider: String,
     /// Public viewer base URL used to mint viewer links.
     pub viewer_base: String,
+    /// Report-summary CLI backend ("auto" | "claude" | "codex" | …). Empty/"auto"
+    /// → the server auto-detects an available CLI on PATH.
+    pub summary_backend: String,
+    /// Optional model for summary backends that take one (e.g. opencode/deepseek).
+    pub summary_model: String,
 }
 
 /// Non-secret projection returned to the UI. Carries presence booleans for the
@@ -66,6 +71,8 @@ pub struct ServerConfigMeta {
     pub google_translate_target_language: String,
     pub provider: String,
     pub viewer_base: String,
+    pub summary_backend: String,
+    pub summary_model: String,
 }
 
 /// Fields the operator can edit from the GUI. Submitting a blank string leaves a
@@ -82,6 +89,8 @@ pub struct ServerConfigInput {
     pub google_translate_target_language: String,
     pub yeson_ai_provider: String,
     pub viewer_base: String,
+    pub summary_backend: String,
+    pub summary_model: String,
 }
 
 /// Default provider when the operator hasn't picked one. Matches the server
@@ -100,6 +109,16 @@ impl ServerConfig {
         }
     }
 
+    /// Summary backend with the `auto` default applied (never empty).
+    fn summary_backend(&self) -> String {
+        let trimmed = self.summary_backend.trim();
+        if trimmed.is_empty() {
+            "auto".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    }
+
     pub fn to_meta(&self) -> ServerConfigMeta {
         ServerConfigMeta {
             has_gemini_key: !self.gemini_api_key.trim().is_empty(),
@@ -110,6 +129,8 @@ impl ServerConfig {
             google_translate_target_language: self.google_translate_target_language.clone(),
             provider: self.provider(),
             viewer_base: self.viewer_base.clone(),
+            summary_backend: self.summary_backend(),
+            summary_model: self.summary_model.clone(),
         }
     }
 
@@ -130,6 +151,8 @@ impl ServerConfig {
             input.google_translate_target_language.trim().to_string();
         self.yeson_ai_provider = input.yeson_ai_provider.trim().to_string();
         self.viewer_base = input.viewer_base.trim().to_string();
+        self.summary_backend = input.summary_backend.trim().to_string();
+        self.summary_model = input.summary_model.trim().to_string();
     }
 }
 
@@ -245,6 +268,8 @@ mod tests {
             google_translate_target_language: "ko".to_string(),
             yeson_ai_provider: "gemini_live".to_string(),
             viewer_base: "https://viewer".to_string(),
+            summary_backend: "claude".to_string(),
+            summary_model: String::new(),
         };
         let meta = config.to_meta();
         // Presence booleans are true...
@@ -255,6 +280,7 @@ mod tests {
         assert_eq!(meta.provider, "gemini_live");
         assert_eq!(meta.viewer_base, "https://viewer");
         assert_eq!(meta.google_cloud_project, "proj");
+        assert_eq!(meta.summary_backend, "claude");
         // ...but serializing the meta must NOT leak any secret value.
         let json = serde_json::to_string(&meta).unwrap();
         assert!(!json.contains("sk-secret"));
@@ -271,6 +297,8 @@ mod tests {
         assert!(!meta.has_jwt_secret);
         // Default provider is applied even on an empty config.
         assert_eq!(meta.provider, DEFAULT_PROVIDER);
+        // Summary backend defaults to auto-detect.
+        assert_eq!(meta.summary_backend, "auto");
     }
 
     #[test]

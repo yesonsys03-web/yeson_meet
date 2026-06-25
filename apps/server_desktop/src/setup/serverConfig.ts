@@ -14,6 +14,8 @@ export type ServerConfigInput = {
   googleTranslateTargetLanguage: string;
   yesonAiProvider: string;
   viewerBase: string;
+  summaryBackend: string;
+  summaryModel: string;
 };
 
 export type ServerConfigMeta = {
@@ -25,6 +27,8 @@ export type ServerConfigMeta = {
   googleTranslateTargetLanguage: string;
   provider: string;
   viewerBase: string;
+  summaryBackend: string;
+  summaryModel: string;
 };
 
 export type BootstrapAdminResult = {
@@ -43,6 +47,8 @@ export const EMPTY_META: ServerConfigMeta = {
   googleTranslateTargetLanguage: "",
   provider: DEFAULT_PROVIDER,
   viewerBase: "",
+  summaryBackend: "auto",
+  summaryModel: "",
 };
 
 type TauriWindow = Window & { __TAURI_INTERNALS__?: unknown };

@@ -356,6 +356,11 @@ fn inject_secrets(command: &mut Command) -> Result<(), String> {
             config.google_translate_target_language.trim(),
         ),
         ("VIEWER_BASE", config.viewer_base.trim()),
+        // Report-summary backend/model selection (Config panel). Empty backend →
+        // not injected → the server's generate_summary defaults to "auto" PATH
+        // detection (claude → codex).
+        ("YESON_SUMMARY_BACKEND", config.summary_backend.trim()),
+        ("YESON_SUMMARY_MODEL", config.summary_model.trim()),
         // YESON_AI_PROVIDER is set from the start request earlier (it is the
         // per-run operator choice the GUI selector forwards), so it is not
         // injected here to avoid the keychain silently overriding that choice.

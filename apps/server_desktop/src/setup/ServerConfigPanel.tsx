@@ -21,6 +21,7 @@ function presence(label: string, configured: boolean): string {
 }
 
 const PROVIDERS = ["gemini_live", "google_stt_translate"] as const;
+const SUMMARY_BACKENDS = ["auto", "claude", "codex"] as const;
 
 export default function ServerConfigPanel() {
   const [meta, setMeta] = useState<ServerConfigMeta>(EMPTY_META);
@@ -38,6 +39,8 @@ export default function ServerConfigPanel() {
   const [translateTarget, setTranslateTarget] = useState("");
   const [provider, setProvider] = useState<string>(DEFAULT_PROVIDER);
   const [viewerBase, setViewerBase] = useState("");
+  const [summaryBackend, setSummaryBackend] = useState<string>("auto");
+  const [summaryModel, setSummaryModel] = useState("");
 
   // First-run operator account form.
   const [adminEmail, setAdminEmail] = useState("");
@@ -51,6 +54,8 @@ export default function ServerConfigPanel() {
     setTranslateTarget(next.googleTranslateTargetLanguage);
     setProvider(next.provider || DEFAULT_PROVIDER);
     setViewerBase(next.viewerBase);
+    setSummaryBackend(next.summaryBackend || "auto");
+    setSummaryModel(next.summaryModel);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -78,6 +83,8 @@ export default function ServerConfigPanel() {
         googleTranslateTargetLanguage: translateTarget,
         yesonAiProvider: provider,
         viewerBase,
+        summaryBackend,
+        summaryModel,
       });
       syncMeta(next);
       // Clear the secret inputs so stored secrets are never re-shown.
@@ -92,7 +99,7 @@ export default function ServerConfigPanel() {
     } finally {
       setBusy(false);
     }
-  }, [geminiApiKey, googleCredsJson, googleProject, sttLanguage, translateTarget, provider, viewerBase, syncMeta]);
+  }, [geminiApiKey, googleCredsJson, googleProject, sttLanguage, translateTarget, provider, viewerBase, summaryBackend, summaryModel, syncMeta]);
 
   const onClear = useCallback(async () => {
     setError(null);
@@ -170,6 +177,26 @@ export default function ServerConfigPanel() {
             </option>
           ))}
         </select>
+      </Field>
+
+      <Field label="요약 백엔드 (summary backend)">
+        <select value={summaryBackend} onChange={(e) => setSummaryBackend(e.target.value)} style={styles.input}>
+          {SUMMARY_BACKENDS.map((b) => (
+            <option key={b} value={b}>
+              {b === "auto" ? "auto (claude → codex 자동 감지)" : b}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label="요약 모델 (summary model · 선택)">
+        <input
+          type="text"
+          value={summaryModel}
+          placeholder="모델을 받는 backend에서만 사용 (예: deepseek)"
+          onChange={(e) => setSummaryModel(e.target.value)}
+          style={styles.input}
+        />
       </Field>
 
       <Field label="VIEWER_BASE">
