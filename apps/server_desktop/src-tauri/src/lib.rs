@@ -1,5 +1,6 @@
 // === ANCHOR: LIB_START ===
 mod diagnostics;
+mod orphan_reaper;
 mod server_config;
 mod server_process;
 mod tunnel;
@@ -10,6 +11,18 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        // Reap leftover cloudflared / yeson-server processes from a prior app
+        // instance BEFORE the webview/commands are usable. The RunEvent::Exit
+        // handler below misses the dev Ctrl+C path (tauri:dev killed at the
+        // terminal), which orphans those children; the next launch would then
+        // hit "port 8000 already in use" / "Go Live" tunnel timeouts. This is
+        // additive — it only handles that missed path. Best-effort: it logs to
+        // stderr (the dev console where this pain shows up) and never fails
+        // launch. Single-instance assumption; see orphan_reaper for scope.
+        .setup(|_app| {
+            orphan_reaper::reap_orphans(|line| eprintln!("[orphan-reaper] {line}"));
+            Ok(())
+        })
         .manage(server_process::ServerProcessState::default())
         .manage(tunnel::TunnelState::default())
         .invoke_handler(tauri::generate_handler![

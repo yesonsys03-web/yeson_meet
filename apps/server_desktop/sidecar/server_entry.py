@@ -23,7 +23,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import sys
+import threading
+import time
 from pathlib import Path
 
 
@@ -280,6 +283,45 @@ def _search_selftest_mode() -> int:
     return 0
 
 
+def _install_parent_death_watchdog() -> None:
+    """Exit gracefully if our spawning parent dies (macOS dev orphan guard).
+
+    The Tauri console spawns this server as a child. On a clean window-close the
+    Rust RunEvent handler reaps it, but an abrupt parent exit (e.g. Ctrl+C of
+    ``tauri:dev``) leaves the server orphaned, still holding port 8000 — the next
+    start then fails with ``[Errno 48] address already in use``. macOS has no
+    ``PR_SET_PDEATHSIG``, so poll the parent pid: once we are reparented (ppid
+    changes / -> 1) the parent is gone, so SIGTERM ourselves for uvicorn's
+    graceful shutdown (releases the port + closes SQLite). Only armed when we have
+    a real parent (ppid > 1) — true for the desktop-spawned case but NOT for
+    init/systemd-managed deployments (ppid == 1), which are left untouched.
+    """
+    initial_ppid = os.getppid()
+    if initial_ppid <= 1:
+        return
+
+    def _watch() -> None:
+        while True:
+            time.sleep(2.0)
+            if os.getppid() != initial_ppid:
+                print(
+                    "PARENT_EXIT detected (ppid changed) -- shutting down server",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                try:
+                    os.kill(os.getpid(), signal.SIGTERM)
+                except Exception:  # noqa: BLE001
+                    os._exit(0)
+                # Backstop: force-exit if graceful shutdown stalls.
+                time.sleep(5.0)
+                os._exit(0)
+
+    threading.Thread(
+        target=_watch, name="parent-death-watchdog", daemon=True
+    ).start()
+
+
 def main() -> int:
     # Step 1+2: resolve and pin DATABASE_URL BEFORE importing the app, because
     # apps.server.db.session binds the engine from this env var at import time.
@@ -301,6 +343,10 @@ def main() -> int:
     from apps.server.db.seed import create_schema
 
     asyncio.run(create_schema())
+
+    # Step 3.5: arm the parent-death watchdog so a dev-mode parent exit (Ctrl+C
+    # of tauri:dev) doesn't leave this server orphaned holding the port.
+    _install_parent_death_watchdog()
 
     # Step 4: single boot path — uvicorn via apps.server.main.run() (reads
     # HOST/PORT from env, defaults 0.0.0.0:8000).

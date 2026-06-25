@@ -294,7 +294,7 @@ function DetailPane({ item, operatorToken, reportHtmlCache, onCacheHtml }: Detai
 
       {/* Summary */}
       {!loadingSummary && summary && (
-        <div style={{ padding: "12px 22px", borderBottom: "1px solid var(--ys-border-subtle)", flexShrink: 0 }}>
+        <div style={{ padding: "12px 22px", borderBottom: "1px solid var(--ys-border-subtle)", flexShrink: 0, maxHeight: "38%", overflowY: "auto" }}>
           <p style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 900, color: "var(--ys-text-label)" }}>요약</p>
           <p style={{ margin: 0, fontSize: 16, color: "var(--ys-text-body)", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
             {summary}

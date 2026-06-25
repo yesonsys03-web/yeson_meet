@@ -417,6 +417,14 @@ fn locate_bundled_server() -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+/// Absolute path of the bundled `yeson-server` entry binary the app spawns, for
+/// callers outside this module (the startup orphan reaper). Reuses
+/// `locate_bundled_server` verbatim so the reaper matches the exact same path the
+/// start path spawns from. `None` when the binary is absent.
+pub fn bundled_server_path() -> Option<PathBuf> {
+    locate_bundled_server()
+}
+
 #[tauri::command]
 pub fn stop_server(state: tauri::State<'_, ServerProcessState>) -> Result<ServerStatus, String> {
     stop_server_inner(&state)

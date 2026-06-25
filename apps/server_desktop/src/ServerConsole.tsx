@@ -209,9 +209,19 @@ export default function ServerConsole() {
     setError(null);
     setBusy(true);
     try {
+      // Symmetric with auto-go-live on Start: take the public tunnel down too so
+      // "Stop" means fully offline — no public URL left pointing at a stopped
+      // server, and the next Start mints a fresh tunnel. Best-effort: a tunnel
+      // stop failure must not block stopping the server. (The manual "stop
+      // public" button still exists to drop only the tunnel.)
+      try {
+        setTunnel(await invoke<TunnelStatus>("stop_tunnel_cmd"));
+      } catch {
+        /* tunnel may already be down; ignore */
+      }
       const next = await invoke<ServerStatus>("stop_server");
       setStatus(next);
-      append({ level: "info", source: "console", message: "stop requested" });
+      append({ level: "info", source: "console", message: "stop requested (server + public tunnel)" });
     } catch (err) {
       const text = errorToText(err);
       setError(text);
