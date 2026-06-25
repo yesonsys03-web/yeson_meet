@@ -719,18 +719,41 @@ async def download_session_report_pdf(
     )
 
 
+# === ANCHOR: SESSIONS__ENSURE_SUMMARY_START ===
+async def _ensure_summary_md(db: AsyncSession, meeting: Session) -> None:
+    """Generate the summary on demand if it has not been produced yet.
+
+    The summary is normally written by a background task after session end, but
+    (a) an operator may request it before that task finishes (race) and (b) a
+    server has no summary until a backend CLI is configured/available. Generating
+    here, on first request, covers both: when a backend is available it writes
+    ``summary.md`` now; when none is available it is a no-op and the caller still
+    404s with a clear message. Best-effort — ``regenerate_report_with_summary``
+    swallows its own errors, so this never raises.
+    """
+    path = summary_path(_storage_root(), str(meeting.external_id), "md")
+    if path.exists():
+        return
+    utterances = await _session_utterances(db, meeting.id)
+    await regenerate_report_with_summary(_storage_root(), meeting, utterances)
+# === ANCHOR: SESSIONS__ENSURE_SUMMARY_END ===
+
+
 @router.get("/{external_id}/report.summary")
 async def download_session_report_summary(
     external_id: UUID,
     _user: Annotated[AppUser, Depends(require_operator)],
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
-    """Return the standalone summary.md file if available.
+    """Return the standalone summary.md file, generating it on demand if needed.
 
-    The summary is generated asynchronously after session end.
-    Returns 404 with a descriptive message if not yet available.
+    Generation normally runs as a background task after session end; if it has
+    not produced the file yet (race) — or no backend was available until one was
+    configured — we generate it here on first request. Returns 404 only when no
+    summary backend produced output.
     """
     meeting = await _get_operator_session_or_404(db, external_id)
+    await _ensure_summary_md(db, meeting)
     path = summary_path(_storage_root(), str(meeting.external_id))
     if not path.exists():
         raise HTTPException(
@@ -776,6 +799,7 @@ async def download_session_report_summary_html(
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
     meeting = await _get_operator_session_or_404(db, external_id)
+    await _ensure_summary_md(db, meeting)
     summary = _read_summary_text_or_404(str(meeting.external_id))
     return Response(
         content=build_summary_html(meeting, summary),
@@ -790,6 +814,7 @@ async def download_session_report_summary_docx(
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
     meeting = await _get_operator_session_or_404(db, external_id)
+    await _ensure_summary_md(db, meeting)
     summary = _read_summary_text_or_404(str(meeting.external_id))
     return Response(
         content=build_summary_docx(meeting, summary),
@@ -805,6 +830,7 @@ async def download_session_report_summary_pdf(
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
     meeting = await _get_operator_session_or_404(db, external_id)
+    await _ensure_summary_md(db, meeting)
     summary = _read_summary_text_or_404(str(meeting.external_id))
     docx_bytes = build_summary_docx(meeting, summary)
     pdf_bytes = await asyncio.to_thread(convert_docx_to_pdf, docx_bytes)
