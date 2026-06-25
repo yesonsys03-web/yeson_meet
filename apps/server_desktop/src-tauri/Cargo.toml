@@ -35,6 +35,13 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
 regex = "1"
+# Native folder picker for the backup panel (S2). Matches the codebase's
+# plugin-free convention (custom command + `invoke`, like `open_log_dir`) rather
+# than pulling tauri-plugin-dialog + capabilities. `xdg-portal` (not the default
+# gtk3 backend) avoids a second GTK init alongside Tauri's webkit2gtk on Linux;
+# mac/Windows use their native dialogs. `tokio` enables the async API so the
+# modal runs off the command's await without blocking the UI thread.
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 
 [dev-dependencies]
 ureq = "2"

@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from apps.server.api.v1.auth import router as auth_router
+from apps.server.api.v1.backup import router as backup_router
 from apps.server.api.v1.devices import router as devices_router
 from apps.server.api.v1.health import router as health_router
 from apps.server.api.v1.operator_alerts import router as operator_alerts_router
@@ -146,6 +147,7 @@ app.add_middleware(
 
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(backup_router, prefix="/api/v1")
 app.include_router(devices_router, prefix="/api/v1")
 app.include_router(sessions_router, prefix="/api/v1")
 app.include_router(utterances_router, prefix="/api/v1")

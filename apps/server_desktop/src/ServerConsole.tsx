@@ -6,6 +6,7 @@ import { type AppLogEntry, append, clearAppLogs, filterLogEntries, installAppLog
 import ServerConfigPanel from "./setup/ServerConfigPanel";
 import TunnelDegradedBanner from "./TunnelDegradedBanner";
 import DevicePanel from "./DevicePanel";
+import BackupPanel from "./BackupPanel";
 
 type ServerStatus = {
   running: boolean;
@@ -112,7 +113,7 @@ export default function ServerConsole() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<AppLogEntry[]>([]);
-  type View = "logs" | "config" | "devices";
+  type View = "logs" | "config" | "devices" | "backup";
   const [activeView, setActiveView] = useState<View>("logs");
   const [logLevel, setLogLevel] = useState<AppLogEntry["level"] | "all">("all");
   const [logQuery, setLogQuery] = useState("");
@@ -323,6 +324,7 @@ export default function ServerConsole() {
     { view: "logs", label: "Logs" },
     { view: "config", label: "Config" },
     { view: "devices", label: "Devices" },
+    { view: "backup", label: "Backup" },
   ];
 
   const visibleLogs = filterLogEntries(logs, logLevel, logQuery);
@@ -507,6 +509,9 @@ export default function ServerConsole() {
           </section>
           <section hidden={activeView !== "devices"} style={activeView === "devices" ? styles.viewScroll : undefined}>
             <DevicePanel serverPort={status?.port ?? null} running={running} />
+          </section>
+          <section hidden={activeView !== "backup"} style={activeView === "backup" ? styles.viewScroll : undefined}>
+            <BackupPanel serverPort={status?.port ?? null} running={running} />
           </section>
         </main>
       </div>

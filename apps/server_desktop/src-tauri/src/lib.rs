@@ -1,4 +1,5 @@
 // === ANCHOR: LIB_START ===
+mod backup_dialog;
 mod diagnostics;
 mod orphan_reaper;
 mod server_config;
@@ -28,6 +29,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             diagnostics::save_app_log,
             diagnostics::open_log_dir,
+            backup_dialog::pick_backup_dir,
             server_process::start_server,
             server_process::stop_server,
             server_process::server_status,
