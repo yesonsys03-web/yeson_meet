@@ -89,6 +89,18 @@ class SessionEndOut(BaseModel):
     status: str
     ended_at: datetime
     report_path: str
+
+    @field_serializer("ended_at")
+    def _serialize_utc(self, value: datetime) -> str:
+        """Emit UTC-aware ISO so the client localizes correctly.
+
+        Stored timestamps are NAIVE UTC; without a tz suffix the client's
+        ``new Date(iso)`` reads them as LOCAL and shows the meeting end off by
+        the UTC offset. Mirrors ``SessionListItem._serialize_utc``.
+        """
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat()
 # === ANCHOR: SESSIONS_SESSIONENDOUT_END ===
 
 

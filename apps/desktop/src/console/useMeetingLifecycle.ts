@@ -132,7 +132,9 @@ export function useMeetingLifecycle() {
       }
       // Clear the active session so the one-click button reverts to "회의 시작".
       setCreatedSession(null);
-      setStatusText(`회의 종료 완료: ${ended.ended_at}`);
+      // ended_at is UTC-aware ISO (server serializer); localize it so the time
+      // matches the operator's wall clock instead of showing raw UTC.
+      setStatusText(`회의 종료 완료: ${new Date(ended.ended_at).toLocaleString("ko-KR")}`);
     });
   }
 
