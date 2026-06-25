@@ -95,8 +95,8 @@ jobs:
       - name: Publish installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.6
-          name: yeson-meet v0.9.6
+          tag_name: v0.9.7
+          name: yeson-meet v0.9.7
           prerelease: true
           body: |
             Unsigned Windows test build of the yeson-meet server console
