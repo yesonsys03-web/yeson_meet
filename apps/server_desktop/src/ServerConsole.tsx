@@ -29,8 +29,58 @@ type TunnelStatus = {
 
 const DEFAULT_PORT = 8000;
 
+// Persist the "auto go live on start" preference. Default ON: a missing key
+// reads as true so the first run already auto-publishes (the toggle lets an
+// operator opt out, e.g. on LAN-only setups).
+const AUTO_GOLIVE_KEY = "yeson-server-auto-golive";
+
+function loadAutoGoLive(): boolean {
+  try {
+    return window.localStorage.getItem(AUTO_GOLIVE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function storeAutoGoLive(value: boolean): void {
+  try {
+    window.localStorage.setItem(AUTO_GOLIVE_KEY, value ? "true" : "false");
+  } catch {
+    /* localStorage may be unavailable; the in-memory toggle still works */
+  }
+}
+
 function hasTauriRuntime(): boolean {
   return typeof window !== "undefined" && Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+// Auto-publish readiness gate. The server process binds the port (status =
+// "running") ~1s BEFORE uvicorn actually accepts HTTP, so an immediate auto Go
+// Live hits "connection refused" and aborts. Poll the SAME server-HTTP probe the
+// Go Live gate uses — `live_session_count_cmd` does a real TCP+HTTP round-trip to
+// 127.0.0.1:<port> (it REJECTS while uvicorn isn't accepting, RESOLVES once it
+// is) — until it resolves without throwing. Returns true when HTTP is ready,
+// false if it never came up within the budget (caller leaves the server on LAN).
+const READINESS_POLL_INTERVAL_MS = 450;
+const READINESS_TIMEOUT_MS = 12_000;
+
+async function waitForServerHttpReady(): Promise<boolean> {
+  const deadline = Date.now() + READINESS_TIMEOUT_MS;
+  for (;;) {
+    try {
+      // Resolving (even to null) means the command ran end-to-end; when the
+      // server is running it implies the HTTP probe round-tripped successfully.
+      await invoke<number | null>("live_session_count_cmd");
+      return true;
+    } catch {
+      if (Date.now() >= deadline) return false;
+      await sleep(READINESS_POLL_INTERVAL_MS);
+    }
+  }
 }
 
 function errorToText(error: unknown): string {
@@ -62,8 +112,12 @@ export default function ServerConsole() {
   // null = server stopped (no meeting possible); number = live-meeting count.
   const [liveSessions, setLiveSessions] = useState<number | null>(null);
   const [tunnelBusy, setTunnelBusy] = useState(false);
+  const [autoGoLive, setAutoGoLive] = useState<boolean>(loadAutoGoLive);
   const [, forceTick] = useState(0);
   const logBodyRef = useRef<HTMLDivElement>(null);
+  // Latest onGoLive, so onStart can trigger auto-publish without a forward
+  // reference (onGoLive is declared below) or recreating onStart on its deps.
+  const goLiveRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
     installAppLogCapture();
@@ -119,6 +173,24 @@ export default function ServerConsole() {
       const next = await invoke<ServerStatus>("start_server", { request: { port, provider: null } });
       setStatus(next);
       append({ level: "info", source: "console", message: `start requested on port ${port}` });
+      // Auto go live: once the server's HTTP is actually ready, optionally
+      // publish the tunnel. BEST-EFFORT — onGoLive swallows its own errors (logs
+      // + error line + degraded banner), so a tunnel failure never fails the
+      // server start; the server stays up on LAN. The process binds the port
+      // ~1s before uvicorn accepts HTTP, so we WAIT for a real HTTP round-trip
+      // (waitForServerHttpReady) before publishing — otherwise the gate probe
+      // hits "connection refused" and aborts. Readiness wait is auto-path only;
+      // manual Go Live is user-initiated and untouched.
+      if (autoGoLive && next.running) {
+        append({ level: "info", source: "console", message: "auto go live: waiting for server to be ready…" });
+        const ready = await waitForServerHttpReady();
+        if (ready) {
+          append({ level: "info", source: "console", message: "auto go live: publishing tunnel…" });
+          await goLiveRef.current();
+        } else {
+          append({ level: "warn", source: "console", message: "auto go live skipped: server not ready — running on LAN (use Go live to publish)" });
+        }
+      }
     } catch (err) {
       const text = errorToText(err);
       setError(text);
@@ -126,7 +198,12 @@ export default function ServerConsole() {
     } finally {
       setBusy(false);
     }
-  }, [port]);
+  }, [port, autoGoLive]);
+
+  const onToggleAutoGoLive = useCallback((value: boolean) => {
+    setAutoGoLive(value);
+    storeAutoGoLive(value);
+  }, []);
 
   const onStop = useCallback(async () => {
     setError(null);
@@ -161,6 +238,12 @@ export default function ServerConsole() {
       setTunnelBusy(false);
     }
   }, [status, port, refreshStatus]);
+
+  // Keep the ref pointed at the current onGoLive so onStart's auto-publish always
+  // calls the latest closure (with up-to-date status/port) without re-creating it.
+  useEffect(() => {
+    goLiveRef.current = onGoLive;
+  }, [onGoLive]);
 
   const onStopPublic = useCallback(async () => {
     setError(null);
@@ -262,6 +345,18 @@ export default function ServerConsole() {
                 Start
               </button>
             )}
+            <label
+              style={styles.autoGoLiveLabel}
+              title="서버 시작 시 자동으로 공개(터널)합니다. 실패해도 LAN은 유지됩니다."
+            >
+              <input
+                type="checkbox"
+                checked={autoGoLive}
+                disabled={busy}
+                onChange={(e) => onToggleAutoGoLive(e.target.checked)}
+              />
+              시작 시 자동 공개
+            </label>
           </div>
           <dl style={styles.statusGrid}>
             <Stat label="status" value={running ? "running" : "stopped"} />
@@ -479,6 +574,7 @@ const styles: Record<string, React.CSSProperties> = {
   badgeOff: { background: "var(--ys-danger-bg)", color: "var(--ys-danger-text)", borderColor: "var(--ys-danger-border)" },
   controls: { display: "flex", alignItems: "center", gap: 10, marginTop: 14 },
   portLabel: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--ys-text-muted)" },
+  autoGoLiveLabel: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--ys-text-muted)", cursor: "pointer" },
   portInput: {
     width: 84,
     padding: "7px 10px",

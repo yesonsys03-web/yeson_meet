@@ -110,7 +110,21 @@ fn terminate_group(child: &mut Child) {
     }
     #[cfg(not(unix))]
     {
-        let _ = child.kill();
+        // Windows has no process groups: `child.kill()` is TerminateProcess on
+        // the TOP handle only, so cloudflared's edge helper(s) would be orphaned
+        // and keep the (now-stale) tunnel alive after the console closes.
+        // `taskkill /T` reaps the whole subtree by PID — the Windows analog of
+        // the Unix `kill -TERM -pgid` above. CREATE_NO_WINDOW keeps it from
+        // flashing a console window. Falls back to `child.kill()` if taskkill is
+        // unavailable or the tree was already partway down.
+        let pid = child.id();
+        let mut kill = Command::new("taskkill");
+        kill.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        set_no_window(&mut kill);
+        let reaped = kill.status().map(|status| status.success()).unwrap_or(false);
+        if !reaped {
+            let _ = child.kill();
+        }
     }
     let _ = child.wait();
 }
@@ -313,6 +327,13 @@ pub fn start_tunnel(state: &TunnelState, server_port: u16) -> Result<TunnelStatu
     command
         .arg("tunnel")
         .arg("--no-autoupdate")
+        // Force the HTTP2 edge protocol (TCP/443) instead of the default QUIC
+        // (UDP/7844). On networks that throttle or block UDP, the QUIC dial
+        // stalls until it times out (~5s) before falling back, delaying or
+        // failing tunnel registration; http2 connects over TCP promptly and
+        // reliably, so Go Live comes up faster and more dependably.
+        .arg("--protocol")
+        .arg("http2")
         .arg("--url")
         .arg(format!("http://localhost:{vport}"))
         .stdin(Stdio::null())
@@ -559,15 +580,16 @@ fn parse_live_count(body: &[u8]) -> Result<u32, String> {
 // === ANCHOR: TUNNEL_LIVE_SESSIONS_END ===
 
 // === ANCHOR: TUNNEL_COMMANDS_START ===
-// P4.1b lifecycle commands. `start_tunnel_cmd` now drives the FULL public-mode
-// flow (BINDING must-fixes #1 Option A + #2 restart-gating): gate on "no live
-// meeting" → bring up the viewer-only proxy + cloudflared (P4.1a) and capture
-// the URL → persist it as the keychain `viewer_base` → restart the bundled
-// server on the SAME port so `inject_secrets` injects the new `VIEWER_BASE`
-// (`create_session` then mints tunnel viewer URLs with ZERO change to
-// sessions.py). cloudflared + the proxy are SEPARATE processes that survive the
-// restart: the proxy reconnects per-request to `127.0.0.1:<port>` and cloudflared
-// holds its own edge connection, so neither is torn down when the server rebinds.
+// P4.1b lifecycle commands. `start_tunnel_cmd` drives the FULL public-mode flow:
+// gate on "no live meeting" → bring up the viewer-only proxy + cloudflared
+// (P4.1a) and capture the URL → persist it as the keychain `viewer_base` (for
+// cold-start env injection) → publish it to `{STORAGE_ROOT}/viewer_base.txt` so
+// the RUNNING server mints tunnel viewer URLs immediately (the server reads that
+// file fresh per session, precedence file > env > default — no restart). The old
+// stop→start server restart is gone: the file write is light (no ~2-3s server
+// downtime / status blip). cloudflared + the proxy are SEPARATE processes; the
+// proxy reconnects per-request to `127.0.0.1:<port>` and cloudflared holds its
+// own edge connection, so the server keeps running untouched.
 #[tauri::command]
 pub fn start_tunnel_cmd(
     app: tauri::AppHandle,
@@ -575,17 +597,17 @@ pub fn start_tunnel_cmd(
     tunnel_state: tauri::State<'_, TunnelState>,
     server_state: tauri::State<'_, crate::server_process::ServerProcessState>,
 ) -> Result<TunnelStatus, String> {
-    // 1. Gate: refuse to go public while a meeting is live (the restart below
-    //    would SIGTERM the server group and hard-kill the active meeting). This
-    //    is the command-level BACKSTOP; the UI also hides "Go live" while a
-    //    meeting is active. Fail-closed: an unreachable probe blocks the restart.
+    let _ = &server_state; // retained for signature/UI parity; no restart needed now.
+    // 1. Gate: refuse to go public while a meeting is live. Kept as a deliberate
+    //    current-behavior backstop (relaxing it is a separate follow-up); the UI
+    //    also hides "Go live" while a meeting is active. Fail-closed: an
+    //    unreachable probe blocks going public.
     let live = live_session_count(server_port).map_err(|error| {
         format!("cannot verify meeting state before going public: {error}")
     })?;
     if live > 0 {
         return Err(
-            "a meeting is currently live — end the meeting before going public \
-             (the server restart needed to publish the tunnel URL would interrupt it)"
+            "a meeting is currently live — end the meeting before going public"
                 .to_string(),
         );
     }
@@ -596,26 +618,22 @@ pub fn start_tunnel_cmd(
         return Ok(status);
     };
 
-    // 3. Persist the captured URL as the keychain viewer_base so the next spawn
-    //    injects VIEWER_BASE. If this fails, tear the tunnel back down so we do
-    //    not leave a public edge whose URL the server will never mint.
+    // 3. Persist the captured URL as the keychain viewer_base so a future COLD
+    //    start injects VIEWER_BASE via inject_secrets. If this fails, tear the
+    //    tunnel back down so we do not leave a public edge whose URL is unminted.
     if let Err(error) = crate::server_config::set_viewer_base(&url) {
         let _ = stop_tunnel(&tunnel_state);
         return Err(format!("failed to persist viewer_base: {error}"));
     }
 
-    // 4. Restart the bundled server on the SAME port so inject_secrets picks up
-    //    the new VIEWER_BASE. The proxy/cloudflared survive (separate processes;
-    //    the server rebinds the same port). If the server was not running, skip
-    //    the restart — the operator will start it next and it will read the now-
-    //    persisted viewer_base on that fresh spawn.
-    if let Some(port) = crate::server_process::current_port(&server_state) {
-        crate::server_process::stop_server_inner(&server_state)?;
-        crate::server_process::start_server_inner(
-            &app,
-            crate::server_process::ServerStartRequest::for_restart(port),
-            &server_state,
-        )?;
+    // 4. Publish the URL to {STORAGE_ROOT}/viewer_base.txt so the ALREADY-RUNNING
+    //    server mints tunnel viewer URLs at the next session creation — no
+    //    restart. If the write fails, tear the tunnel back down so we do not
+    //    leave a live public edge the server will never advertise.
+    if let Err(error) = crate::server_process::write_viewer_base_file(&app, &url) {
+        let _ = crate::server_config::set_viewer_base("");
+        let _ = stop_tunnel(&tunnel_state);
+        return Err(format!("failed to publish viewer_base file: {error}"));
     }
 
     Ok(status)
@@ -627,30 +645,19 @@ pub fn stop_tunnel_cmd(
     tunnel_state: tauri::State<'_, TunnelState>,
     server_state: tauri::State<'_, crate::server_process::ServerProcessState>,
 ) -> Result<TunnelStatus, String> {
+    let _ = &server_state; // retained for signature/UI parity; no restart needed now.
     // Tear down cloudflared + proxy first so the public edge is gone immediately.
     let status = stop_tunnel(&tunnel_state)?;
 
-    // Clear viewer_base back to the LAN default and restart the server (same
-    // gate as start: only restart when no meeting is live, so stopping public
-    // mode never interrupts a meeting). If a meeting IS live, we leave the
-    // (now-stale) tunnel viewer_base in place rather than kill the meeting — the
-    // operator can stop public mode again after the meeting ends. The public
-    // edge is already down regardless, so no traffic reaches the stale host.
-    if let Some(port) = crate::server_process::current_port(&server_state) {
-        let live = live_session_count(port).unwrap_or(0);
-        if live == 0 {
-            crate::server_config::set_viewer_base("")?;
-            crate::server_process::stop_server_inner(&server_state)?;
-            crate::server_process::start_server_inner(
-                &app,
-                crate::server_process::ServerStartRequest::for_restart(port),
-                &server_state,
-            )?;
-        }
-    } else {
-        // Server not running: just clear the base so the next start is LAN-only.
-        crate::server_config::set_viewer_base("")?;
-    }
+    // Revert the viewer base to env/LAN WITHOUT a restart: delete the runtime
+    // {STORAGE_ROOT}/viewer_base.txt so the running server falls back to its env
+    // VIEWER_BASE (LAN default) at the next session, and clear the keychain copy
+    // so a future cold start is LAN-only too. Both are best-effort/idempotent —
+    // the public edge is already down, so even if revert fails no traffic reaches
+    // the stale host. Deleting the file mid-meeting only changes the base for
+    // sessions created AFTER this point; existing viewer URLs are unaffected.
+    crate::server_config::set_viewer_base("")?;
+    crate::server_process::remove_viewer_base_file(&app)?;
 
     Ok(status)
 }

@@ -84,7 +84,23 @@ fn terminate_group(child: &mut Child) {
     }
     #[cfg(not(unix))]
     {
-        let _ = child.kill();
+        // Windows has no process groups: `child.kill()` is TerminateProcess on
+        // the TOP handle only. The frozen server is a PyInstaller tree
+        // (bootloader -> python -> uvicorn worker), so killing just the
+        // bootloader orphans uvicorn — which keeps port 8000 bound and the
+        // SQLite file locked, so the next start "binds then immediately stops".
+        // `taskkill /T` reaps the whole subtree by PID — the Windows analog of
+        // the Unix `kill -TERM -pgid` above. CREATE_NO_WINDOW keeps it from
+        // flashing a console window. Falls back to `child.kill()` if taskkill is
+        // unavailable or the tree was already partway down.
+        let pid = child.id();
+        let mut kill = Command::new("taskkill");
+        kill.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        set_no_window(&mut kill);
+        let reaped = kill.status().map(|status| status.success()).unwrap_or(false);
+        if !reaped {
+            let _ = child.kill();
+        }
     }
     let _ = child.wait();
 }
@@ -137,19 +153,6 @@ pub struct ServerStartRequest {
     provider: Option<String>,
 }
 
-impl ServerStartRequest {
-    /// Build a start request for an in-process restart on a known port (the
-    /// tunnel lifecycle restarts the server on its current port to propagate a
-    /// new `VIEWER_BASE`). `provider` is left `None` so `start_server_inner`
-    /// applies its `gemini_live` default exactly as a fresh start would.
-    pub fn for_restart(port: u16) -> Self {
-        Self {
-            port: Some(port),
-            provider: None,
-        }
-    }
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerStatus {
@@ -177,12 +180,13 @@ pub fn start_server(
     start_server_inner(&app, request, &state)
 }
 
-/// The actual start logic, callable both from the `start_server` Tauri command
-/// and from the tunnel lifecycle (`tunnel.rs`), which restarts the server to
-/// propagate a freshly-captured `VIEWER_BASE`. Taking `&ServerProcessState`
-/// instead of `tauri::State` lets an in-process caller (the tunnel command,
-/// which already holds the managed state) reuse the exact proven spawn path
-/// (secrets injection, port probe, process-group spawn) with no duplication.
+/// The actual start logic behind the `start_server` Tauri command. Taking
+/// `&ServerProcessState` instead of `tauri::State` keeps it callable from an
+/// in-process caller that already holds the managed state, reusing the proven
+/// spawn path (secrets injection, port probe, process-group spawn). The tunnel
+/// "Go Live" flow no longer restarts the server — it publishes the new
+/// `VIEWER_BASE` via `{STORAGE_ROOT}/viewer_base.txt`, which the running server
+/// reads fresh per session — so this is now driven only by the command.
 pub fn start_server_inner(
     app: &tauri::AppHandle,
     request: ServerStartRequest,
@@ -418,8 +422,8 @@ pub fn stop_server(state: tauri::State<'_, ServerProcessState>) -> Result<Server
     stop_server_inner(&state)
 }
 
-/// Stop logic shared by the `stop_server` command and the tunnel lifecycle
-/// (`tunnel.rs` stops-then-starts the server to propagate a new `VIEWER_BASE`).
+/// Stop logic behind the `stop_server` command. Kept as a `&ServerProcessState`
+/// helper so an in-process caller could reuse it without `tauri::State`.
 pub fn stop_server_inner(state: &ServerProcessState) -> Result<ServerStatus, String> {
     let mut slot = state
         .inner
@@ -433,9 +437,55 @@ pub fn stop_server_inner(state: &ServerProcessState) -> Result<ServerStatus, Str
     Ok(stopped_status("server stopped"))
 }
 
+/// The server's `STORAGE_ROOT` (`<app_data_dir>/storage`) — the SAME derivation
+/// `start_server_inner` injects as the `STORAGE_ROOT` env, so the desktop and the
+/// running server agree on the path. The tunnel "Go Live" flow writes the public
+/// `viewer_base.txt` here so the server picks it up at session creation WITHOUT a
+/// restart (`apps/server/api/v1/sessions.py` reads `{STORAGE_ROOT}/viewer_base.txt`
+/// fresh per call, precedence file > env > default).
+pub fn storage_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("failed to resolve app data dir: {error}"))?;
+    Ok(app_data_dir.join("storage"))
+}
+
+/// Atomically publish `url` as the runtime viewer base by writing
+/// `{STORAGE_ROOT}/viewer_base.txt`. Write to a temp file in the SAME directory
+/// then rename, so a session-creation read never observes a half-written file
+/// (rename is atomic within a filesystem). Replaces the old server-restart step:
+/// the server reads this file fresh per session, so a new public base takes
+/// effect immediately with no restart blip.
+pub fn write_viewer_base_file(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
+    let storage_root = storage_root(app)?;
+    std::fs::create_dir_all(&storage_root)
+        .map_err(|error| format!("failed to create storage dir: {error}"))?;
+    let target = storage_root.join("viewer_base.txt");
+    let tmp = storage_root.join("viewer_base.txt.tmp");
+    std::fs::write(&tmp, url.as_bytes())
+        .map_err(|error| format!("failed to write viewer_base temp file: {error}"))?;
+    std::fs::rename(&tmp, &target).map_err(|error| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("failed to publish viewer_base file: {error}")
+    })?;
+    Ok(())
+}
+
+/// Remove `{STORAGE_ROOT}/viewer_base.txt` so the server reverts to the env/LAN
+/// viewer base on the next session. Best-effort: a missing file is success (the
+/// public base is already absent), which is what "stop public" wants.
+pub fn remove_viewer_base_file(app: &tauri::AppHandle) -> Result<(), String> {
+    let target = storage_root(app)?.join("viewer_base.txt");
+    match std::fs::remove_file(&target) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("failed to remove viewer_base file: {error}")),
+    }
+}
+
 /// The port the server is CURRENTLY bound to, or `None` if it is not running.
-/// The tunnel lifecycle uses this to restart the server on the same port (so the
-/// proxy/cloudflared, which target that port, keep working across the restart).
+/// The tunnel's `live_session_count_cmd` uses this to probe the running server.
 pub fn current_port(state: &ServerProcessState) -> Option<u16> {
     let mut slot = state.inner.lock().ok()?;
     let running = slot.as_mut()?;
