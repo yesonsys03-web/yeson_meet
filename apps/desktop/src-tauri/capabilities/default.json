@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "default capability",
-  "windows": ["main", "subtitle-fullscreen"],
+  "windows": ["main", "subtitle-fullscreen", "qr-fullscreen"],
   "permissions": [
     "core:default",
     "core:webview:allow-create-webview-window",

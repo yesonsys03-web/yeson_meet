@@ -19,7 +19,8 @@ export function useSubtitleFullscreenShortcut({ operatorToken, sessionId, window
         void closeCurrentSubtitleWindow();
         return;
       }
-      if (event.key.toLowerCase() !== "f") return;
+      // event.code is keyboard-layout-independent, so the Korean ㄹ (same physical key as f) is covered automatically without IME issues.
+      if (event.code !== "KeyF") return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.repeat || isEditableTarget(event.target)) return;
 
