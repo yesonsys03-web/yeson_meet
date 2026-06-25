@@ -3,10 +3,62 @@
 from __future__ import annotations
 
 import html
+import re
 from itertools import groupby
 
 from apps.server.db.models import Session, Utterance
 from apps.server.domain.reports import _hms, _speaker_label, _to_local
+
+
+def _summary_md_to_html(summary: str) -> str:
+    """Render the small Markdown subset LLM summaries use, as safe HTML.
+
+    HTML-escapes first (LLM output is untrusted), then converts ## headings,
+    **bold**, `code`, - / * bullet lists, and --- rules. Used by both the
+    standalone summary HTML and the summary section of the full report so they
+    render identically. No Markdown library is bundled, so this stays minimal.
+    """
+
+    def _inline(s: str) -> str:
+        s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+        s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+        return s
+
+    out: list[str] = []
+    in_list = False
+
+    def _close_list() -> None:
+        nonlocal in_list
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+
+    for raw in summary.splitlines():
+        line = html.escape(raw).strip()
+        if not line:
+            _close_list()
+            continue
+        if re.fullmatch(r"-{3,}|\*{3,}|_{3,}", line):
+            _close_list()
+            out.append("<hr>")
+            continue
+        heading = re.match(r"(#{1,6})\s+(.*)", line)
+        if heading:
+            _close_list()
+            level = len(heading.group(1))
+            out.append(f"<h{level}>{_inline(heading.group(2))}</h{level}>")
+            continue
+        item = re.match(r"[-*]\s+(.*)", line)
+        if item:
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(f"<li>{_inline(item.group(1))}</li>")
+            continue
+        _close_list()
+        out.append(f"<p>{_inline(line)}</p>")
+    _close_list()
+    return "\n".join(out)
 
 # ---------------------------------------------------------------------------
 # Vendored theme CSS
@@ -146,11 +198,7 @@ def build_session_report_html(
     if summary:
         parts.append('<section class="summary">')
         parts.append("<h2>요약</h2>")
-        # Render each line as a paragraph; blank lines produce visual spacing.
-        for line in summary.splitlines():
-            escaped = html.escape(line)
-            if escaped.strip():
-                parts.append(f"<p>{escaped}</p>")
+        parts.append(_summary_md_to_html(summary))
         parts.append("</section>")
 
     # --- utterance blocks ---
@@ -208,10 +256,7 @@ def build_summary_html(
         f"<h1>{title_escaped}</h1>",
         '<section class="summary">',
     ]
-    for line in summary.splitlines():
-        escaped = html.escape(line)
-        if escaped.strip():
-            parts.append(f"<p>{escaped}</p>")
+    parts.append(_summary_md_to_html(summary))
     parts.append("</section>")
     parts.extend(["</body>", "</html>"])
     return "\n".join(parts)

@@ -144,6 +144,27 @@ export async function fetchSessionSummary(
   }
 }
 
+export async function fetchSessionSummaryHtml(
+  sessionId: string,
+  operatorToken: string,
+): Promise<{ ok: boolean; html?: string; status: number }> {
+  const url = `${apiBase()}/api/v1/sessions/${encodeURIComponent(sessionId)}/report.summary.html`;
+  try {
+    const response = await timedFetch("Download summary HTML", url, {
+      headers: { Authorization: `Bearer ${operatorToken}` },
+    });
+    if (!response.ok) {
+      return { ok: false, status: response.status };
+    }
+    return { ok: true, html: await response.text(), status: response.status };
+  } catch (error) {
+    appLogger.error("network", "Download summary HTML fetch error", {
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    return { ok: false, status: 0 };
+  }
+}
+
 export async function fetchSessionSummaryBytes(
   sessionId: string,
   operatorToken: string,

@@ -1,7 +1,7 @@
 // === ANCHOR: KNOWLEDGE_REPOSITORY_PANEL_START ===
 import { useEffect, useState } from "react";
 import { loginOperator } from "./sessionApi";
-import { fetchSessionReportHtml, fetchSessionSummary } from "./sessionApi";
+import { fetchSessionReportHtml, fetchSessionSummaryHtml } from "./sessionApi";
 import { exportReports } from "./reportExport";
 import { useKnowledgeRepository } from "./useKnowledgeRepository";
 import { consoleStyles } from "./consoleStyles";
@@ -187,12 +187,13 @@ type DetailPaneProps = {
 
 function DetailPane({ item, operatorToken, reportHtmlCache, onCacheHtml }: DetailPaneProps) {
   const [reportHtml, setReportHtml] = useState<string | null>(reportHtmlCache.get(item.external_id) ?? null);
-  const [summary, setSummary] = useState<string | null>(null);
+  const [summaryHtml, setSummaryHtml] = useState<string | null>(null);
   const [loadingHtml, setLoadingHtml] = useState(item.report_ready && !reportHtml);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [htmlError, setHtmlError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [tab, setTab] = useState<"summary" | "report">("summary");
 
   useEffect(() => {
     let cancelled = false;
@@ -227,13 +228,13 @@ function DetailPane({ item, operatorToken, reportHtmlCache, onCacheHtml }: Detai
         });
     }
 
-    // Fetch summary (best-effort)
+    // Fetch summary HTML (styled like the report; best-effort)
     setLoadingSummary(true);
-    setSummary(null);
-    fetchSessionSummary(item.external_id, operatorToken)
+    setSummaryHtml(null);
+    fetchSessionSummaryHtml(item.external_id, operatorToken)
       .then((result) => {
         if (cancelled) return;
-        if (result.ok && result.text) setSummary(result.text);
+        if (result.ok && result.html) setSummaryHtml(result.html);
       })
       .finally(() => {
         if (!cancelled) setLoadingSummary(false);
@@ -292,36 +293,77 @@ function DetailPane({ item, operatorToken, reportHtmlCache, onCacheHtml }: Detai
         {exportMsg && <p style={consoleStyles.statusInfo}>{exportMsg}</p>}
       </div>
 
-      {/* Summary */}
-      {!loadingSummary && summary && (
-        <div style={{ padding: "12px 22px", borderBottom: "1px solid var(--ys-border-subtle)", flexShrink: 0, maxHeight: "38%", overflowY: "auto" }}>
-          <p style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 900, color: "var(--ys-text-label)" }}>요약</p>
-          <p style={{ margin: 0, fontSize: 16, color: "var(--ys-text-body)", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-            {summary}
-          </p>
-        </div>
-      )}
+      {/* Tabs: 요약 / 보고서 — each gets the full pane below */}
+      <div style={{ display: "flex", gap: 4, padding: "10px 22px 0", borderBottom: "1px solid var(--ys-border-subtle)", flexShrink: 0 }}>
+        {([["summary", "요약"], ["report", "보고서"]] as const).map(([key, label]) => {
+          const active = tab === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              aria-selected={active}
+              style={{
+                appearance: "none",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "8px 14px",
+                marginBottom: -1,
+                fontSize: 14,
+                fontWeight: 800,
+                color: active ? "var(--ys-text-strong)" : "var(--ys-text-muted)",
+                borderBottom: active ? "2px solid var(--ys-accent)" : "2px solid transparent",
+              }}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
 
-      {/* Report iframe */}
-      <div style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "0 0 0 0" }}>
-        {!item.report_ready && (
-          <p style={{ padding: 22, color: "var(--ys-text-muted)", fontSize: 13 }}>
-            보고서는 회의 종료 후 생성됩니다.
-          </p>
+      {/* Active tab content */}
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {tab === "summary" && (
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            {loadingSummary && (
+              <p style={{ padding: 22, color: "var(--ys-text-muted)", fontSize: 13 }}>요약을 불러오는 중...</p>
+            )}
+            {!loadingSummary && summaryHtml && (
+              <iframe
+                sandbox=""
+                srcDoc={summaryHtml}
+                style={{ width: "100%", height: "100%", border: "none", display: "block" }}
+                title="Summary preview"
+              />
+            )}
+            {!loadingSummary && !summaryHtml && (
+              <p style={{ padding: 22, color: "var(--ys-text-muted)", fontSize: 13 }}>요약이 없습니다.</p>
+            )}
+          </div>
         )}
-        {item.report_ready && loadingHtml && (
-          <p style={{ padding: 22, color: "var(--ys-text-muted)", fontSize: 13 }}>보고서를 불러오는 중...</p>
-        )}
-        {item.report_ready && htmlError && (
-          <p style={{ ...consoleStyles.statusError, margin: 22 }}>{htmlError}</p>
-        )}
-        {item.report_ready && !loadingHtml && !htmlError && reportHtml && (
-          <iframe
-            sandbox=""
-            srcDoc={reportHtml}
-            style={{ width: "100%", height: "100%", border: "none", display: "block" }}
-            title="Report preview"
-          />
+        {tab === "report" && (
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            {!item.report_ready && (
+              <p style={{ padding: 22, color: "var(--ys-text-muted)", fontSize: 13 }}>
+                보고서는 회의 종료 후 생성됩니다.
+              </p>
+            )}
+            {item.report_ready && loadingHtml && (
+              <p style={{ padding: 22, color: "var(--ys-text-muted)", fontSize: 13 }}>보고서를 불러오는 중...</p>
+            )}
+            {item.report_ready && htmlError && (
+              <p style={{ ...consoleStyles.statusError, margin: 22 }}>{htmlError}</p>
+            )}
+            {item.report_ready && !loadingHtml && !htmlError && reportHtml && (
+              <iframe
+                sandbox=""
+                srcDoc={reportHtml}
+                style={{ width: "100%", height: "100%", border: "none", display: "block" }}
+                title="Report preview"
+              />
+            )}
+          </div>
         )}
       </div>
     </div>

@@ -5,7 +5,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from apps.server.domain.report_html import _THEMES, build_session_report_html
+from apps.server.domain.report_html import (
+    _THEMES,
+    _summary_md_to_html,
+    build_session_report_html,
+    build_summary_html,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -148,4 +153,44 @@ def test_all_bundled_themes_render_valid_html() -> None:
         result = build_session_report_html(meeting, [utt], theme=theme_name)
         assert "<!DOCTYPE html>" in result, f"Theme {theme_name!r} did not produce valid HTML"
         assert "</html>" in result
+# ---------------------------------------------------------------------------
+# (viii) Summary Markdown is rendered to HTML (bold / heading / list / hr / code)
+# ---------------------------------------------------------------------------
+
+def test_summary_md_to_html_renders_markdown() -> None:
+    out = _summary_md_to_html(
+        "## 회의 요약\n\n- **폴링 방식** 확인\n- `routers/story.py` 수정\n\n---\n끝."
+    )
+    assert "<h2>회의 요약</h2>" in out
+    assert "<strong>폴링 방식</strong>" in out
+    assert "<code>routers/story.py</code>" in out
+    assert "<ul>" in out and "<li>" in out
+    assert "<hr>" in out
+    # raw Markdown markers must not survive
+    assert "**" not in out
+    assert "## " not in out
+
+
+def test_summary_md_escapes_html_before_rendering() -> None:
+    out = _summary_md_to_html("**<script>alert(1)</script>**")
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
+    assert "<strong>" in out  # bold still applied around the escaped content
+
+
+def test_report_summary_section_renders_markdown() -> None:
+    meeting = _make_meeting()
+    result = build_session_report_html(meeting, [], summary="## 제목\n- **굵게**")
+    assert "<h2>제목</h2>" in result
+    assert "<strong>굵게</strong>" in result
+    assert "**굵게**" not in result
+
+
+def test_standalone_summary_html_renders_markdown() -> None:
+    meeting = _make_meeting()
+    result = build_summary_html(meeting, "## 제목\n- **굵게**")
+    assert "<!DOCTYPE html>" in result
+    assert "<h2>제목</h2>" in result
+    assert "<strong>굵게</strong>" in result
+    assert "**굵게**" not in result
 # === ANCHOR: TEST_REPORT_HTML_END ===
