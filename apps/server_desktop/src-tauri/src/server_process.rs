@@ -295,6 +295,7 @@ pub fn start_server_inner(
         command.env("YESON_DEV", "1");
     }
     inject_secrets(&mut command)?;
+    augment_path_for_summary_cli(&mut command);
     set_process_group(&mut command);
     set_no_window(&mut command);
 
@@ -371,6 +372,107 @@ fn inject_secrets(command: &mut Command) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// User home directory from the environment (no extra crate). `USERPROFILE` on
+/// Windows, `HOME` elsewhere.
+fn home_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let raw = std::env::var_os("USERPROFILE");
+    #[cfg(unix)]
+    let raw = std::env::var_os("HOME");
+    raw.map(PathBuf::from)
+}
+
+/// Curated, per-OS directories where global CLIs (claude/codex) commonly land,
+/// so summary-backend detection works even when the GUI-inherited PATH omits
+/// them. Existence is checked by the caller.
+fn common_bin_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let home = home_dir();
+    #[cfg(windows)]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            // npm global shims (claude.cmd, codex.cmd) install here by default.
+            dirs.push(PathBuf::from(appdata).join("npm"));
+        }
+        if let Some(pf) = std::env::var_os("ProgramFiles") {
+            dirs.push(PathBuf::from(pf).join("nodejs"));
+        }
+        if let Some(h) = &home {
+            dirs.push(h.join(".local").join("bin"));
+            dirs.push(h.join(".cargo").join("bin"));
+            dirs.push(h.join(".bun").join("bin"));
+        }
+    }
+    #[cfg(unix)]
+    {
+        for p in ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"] {
+            dirs.push(PathBuf::from(p));
+        }
+        if let Some(h) = &home {
+            dirs.push(h.join(".local/bin"));
+            dirs.push(h.join(".npm-global/bin"));
+            dirs.push(h.join(".cargo/bin"));
+            dirs.push(h.join(".bun/bin"));
+            dirs.push(h.join(".deno/bin"));
+        }
+    }
+    dirs
+}
+
+/// The login+interactive shell's PATH (unix). Captures version-managed
+/// toolchains (nvm/homebrew) that a GUI app's minimal PATH misses. Runs the
+/// user's `$SHELL -lic 'echo "$PATH"'` with a 3s timeout; any failure yields an
+/// empty list (best-effort).
+#[cfg(unix)]
+fn login_shell_path_dirs() -> Vec<PathBuf> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let out = Command::new(&shell)
+            .args(["-lic", "echo \"$PATH\""])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+        let _ = tx.send(out);
+    });
+    let output = match rx.recv_timeout(Duration::from_secs(3)) {
+        Ok(Ok(out)) if out.status.success() => out,
+        _ => return Vec::new(),
+    };
+    let path = String::from_utf8_lossy(&output.stdout);
+    std::env::split_paths(path.trim()).map(PathBuf::from).collect()
+}
+
+/// Augment the spawned server's PATH so `shutil.which("claude"/"codex")` (the
+/// report-summary backend detection) reliably finds CLIs the user installed,
+/// even though a GUI-launched app inherits a minimal PATH that often omits the
+/// shell's interactive entries. Merges (de-duplicated, existing dirs only) the
+/// login-shell PATH (unix) and the common per-OS install dirs onto the current
+/// PATH. Best-effort: any failure leaves the inherited PATH untouched, and the
+/// CLI is still invoked by bare name so a dir now on PATH executes normally.
+fn augment_path_for_summary_cli(command: &mut Command) {
+    use std::collections::HashSet;
+
+    let mut entries: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    let mut seen: HashSet<PathBuf> = entries.iter().cloned().collect();
+
+    let mut extra: Vec<PathBuf> = Vec::new();
+    #[cfg(unix)]
+    extra.extend(login_shell_path_dirs());
+    extra.extend(common_bin_dirs());
+
+    for dir in extra {
+        if seen.insert(dir.clone()) && dir.is_dir() {
+            entries.push(dir);
+        }
+    }
+    if let Ok(joined) = std::env::join_paths(&entries) {
+        command.env("PATH", joined);
+    }
 }
 
 /// True when `port` can be bound on loopback right now (i.e. it is free).
