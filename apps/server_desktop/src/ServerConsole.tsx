@@ -1,6 +1,7 @@
 // === ANCHOR: SERVER_CONSOLE_START ===
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { type AppLogEntry, append, clearAppLogs, filterLogEntries, installAppLogCapture, saveAppLogSnapshot, subscribeAppLogs } from "./appLog";
 import ServerConfigPanel from "./setup/ServerConfigPanel";
 import TunnelDegradedBanner from "./TunnelDegradedBanner";
@@ -87,6 +88,15 @@ function errorToText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// Log timestamps are stored as UTC ISO (toISOString); display them on the
+// operator's local clock so the console time matches the wall clock. Falls back
+// to the raw HH:MM:SS slice if the value isn't a parseable date.
+function formatLogClock(ts: string): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts.slice(11, 19);
+  return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
 function formatUptime(secs: number | null): string {
   if (secs == null) return "—";
   const h = Math.floor(secs / 3600);
@@ -113,6 +123,7 @@ export default function ServerConsole() {
   const [liveSessions, setLiveSessions] = useState<number | null>(null);
   const [tunnelBusy, setTunnelBusy] = useState(false);
   const [autoGoLive, setAutoGoLive] = useState<boolean>(loadAutoGoLive);
+  const [appVersion, setAppVersion] = useState<string>("");
   const [, forceTick] = useState(0);
   const logBodyRef = useRef<HTMLDivElement>(null);
   // Latest onGoLive, so onStart can trigger auto-publish without a forward
@@ -122,6 +133,17 @@ export default function ServerConsole() {
   useEffect(() => {
     installAppLogCapture();
     return subscribeAppLogs(setLogs);
+  }, []);
+
+  // App version from the Tauri bundle (tauri.conf.json). Best-effort: in the
+  // browser preview there is no Tauri runtime, so the version line stays hidden.
+  useEffect(() => {
+    if (!hasTauriRuntime()) return;
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => {
+        /* version is a cosmetic footer; ignore failures */
+      });
   }, []);
 
   const refreshStatus = useCallback(async () => {
@@ -309,6 +331,7 @@ export default function ServerConsole() {
     <div style={styles.shell}>
       <aside style={styles.sidebar}>
         <p style={styles.brand}>yeson server console</p>
+        {appVersion ? <span style={styles.version}>v{appVersion}</span> : null}
         <span style={{ ...styles.badge, ...(running ? styles.badgeOn : styles.badgeOff) }}>
           {running ? "RUNNING" : "STOPPED"}
         </span>
@@ -471,7 +494,7 @@ export default function ServerConsole() {
               ) : (
                 visibleLogs.map((entry) => (
                   <div key={entry.id} style={{ ...styles.logLine, color: levelColor(entry.level), whiteSpace: logWrap ? "pre-wrap" : "pre" }}>
-                    <span style={styles.logTs}>{entry.ts.slice(11, 19)}</span>
+                    <span style={styles.logTs}>{formatLogClock(entry.ts)}</span>
                     <span style={styles.logSource}>{entry.source}</span>
                     <span>{entry.message}</span>
                   </div>
@@ -546,6 +569,7 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: ".08em",
     textTransform: "uppercase",
   },
+  version: { fontSize: 11, color: "var(--ys-text-faint)", fontVariantNumeric: "tabular-nums", letterSpacing: ".04em" },
   nav: { display: "flex", flexDirection: "column", gap: 4, marginTop: 8 },
   navButton: {
     textAlign: "left",
