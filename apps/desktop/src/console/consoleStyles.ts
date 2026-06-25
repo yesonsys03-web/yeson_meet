@@ -26,6 +26,13 @@ export const consoleStyles: Record<string, CSSProperties> = {
     letterSpacing: ".08em",
     textTransform: "uppercase",
   },
+  version: {
+    margin: "-12px 0 18px",
+    fontSize: 11,
+    color: "var(--ys-text-faint)",
+    fontVariantNumeric: "tabular-nums",
+    letterSpacing: ".04em",
+  },
   nav: {
     display: "grid",
     gap: 8,

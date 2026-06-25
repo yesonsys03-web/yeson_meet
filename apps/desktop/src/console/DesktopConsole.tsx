@@ -1,5 +1,6 @@
 // === ANCHOR: DESKTOP_CONSOLE_START ===
 import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { installAppLogCapture } from "../diagnostics/appLog";
 import { hydrateServerAddressFromKeychain } from "../setup/credentials";
 import { HelpManualPanel } from "../help/HelpManualPanel";
@@ -20,9 +21,20 @@ export function DesktopConsole() {
   // C5: operator JWT lifted to shared state so it survives view-switching.
   // NOT persisted to disk — a stolen laptop must not grant standing corpus access.
   const [operatorToken, setOperatorToken] = useState<string | null>(null);
+  // App version from the Tauri bundle (tauri.conf.json). Best-effort: outside the
+  // Tauri runtime (e.g. tests) getVersion rejects and the version line stays hidden.
+  const [appVersion, setAppVersion] = useState<string>("");
 
   useEffect(() => {
     installAppLogCapture();
+  }, []);
+
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => {
+        /* version is a cosmetic footer; ignore failures */
+      });
   }, []);
 
   useEffect(() => {
@@ -41,7 +53,7 @@ export function DesktopConsole() {
 
   return (
     <div style={consoleStyles.page}>
-      <ConsoleNav activeView={activeView} onChange={setActiveView} />
+      <ConsoleNav activeView={activeView} onChange={setActiveView} appVersion={appVersion} />
       <main style={consoleStyles.content}>
         <NativeCaptureBanner />
         <section
