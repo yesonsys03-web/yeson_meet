@@ -26,12 +26,29 @@ echo "Frozen-bundle report smoke test (${BIN})…"
 # 120s ceiling guards against a mis-built binary that falls through to the server.
 if out="$(YESON_REPORT_SELFTEST=1 "${BIN}" 2>&1)"; then
     echo "${out}" | grep -E "^SELFTEST" || true
-    if echo "${out}" | grep -q "SELFTEST_RESULT=PASS"; then
-        echo "✓ bundle report smoke PASS"
+    if ! echo "${out}" | grep -q "SELFTEST_RESULT=PASS"; then
+        echo "${out:-}" >&2
+        echo "✗ bundle report smoke FAILED — a report dependency is likely missing from the frozen bundle" >&2
+        exit 1
+    fi
+    echo "✓ bundle report smoke PASS"
+else
+    echo "${out:-}" >&2
+    echo "✗ bundle report smoke FAILED — a report dependency is likely missing from the frozen bundle" >&2
+    exit 1
+fi
+
+# Frozen-bundle search smoke test (S4): assert FTS5 engine present in the
+# bundled sqlite AND the search index seeds (utterance/summary row counts match).
+echo "Frozen-bundle search smoke test (${BIN})…"
+if sout="$(YESON_SEARCH_SELFTEST=1 "${BIN}" 2>&1)"; then
+    echo "${sout}" | grep -E "^SEARCH_SELFTEST" || true
+    if echo "${sout}" | grep -q "SEARCH_SELFTEST_RESULT=PASS"; then
+        echo "✓ bundle search smoke PASS"
         exit 0
     fi
 fi
 
-echo "${out:-}" >&2
-echo "✗ bundle report smoke FAILED — a report dependency is likely missing from the frozen bundle" >&2
+echo "${sout:-}" >&2
+echo "✗ bundle search smoke FAILED — FTS5 missing from the bundle or the index did not seed" >&2
 exit 1

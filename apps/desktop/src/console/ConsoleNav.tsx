@@ -11,7 +11,7 @@ const navItems: Array<{ view: ConsoleView; label: string; disabled?: boolean }> 
   { view: "setup", label: "Setup Assistant" },
   { view: "settings", label: "Settings" },
   { view: "help", label: "Help Manual" },
-  { view: "history", label: "History", disabled: true },
+  { view: "history", label: "회의 기록" },
 ];
 
 export function ConsoleNav({ activeView, onChange }: ConsoleNavProps) {

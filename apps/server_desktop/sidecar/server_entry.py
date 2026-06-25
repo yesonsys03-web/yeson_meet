@@ -162,6 +162,124 @@ def _report_selftest_mode() -> int:
     return 0
 
 
+def _search_selftest_mode() -> int:
+    """Frozen-bundle search smoke test (S4): verify FTS5 + index seeding.
+
+    Triggered by ``YESON_SEARCH_SELFTEST=1``. Instead of starting uvicorn this
+    (a) asserts the bundled SQLite has the FTS5 engine compiled in, and (b)
+    creates a cold throwaway SQLite, runs ``create_schema()`` (which creates the
+    standalone ``session_search_fts`` table on the bundle path), seeds known
+    ``is_final`` utterances + a summary, runs the index hook, and asserts the
+    seeded backfill row counts match — ``kind='utterance'`` rows against the
+    is_final utterances and ``kind='summary'`` rows separately (a present-but-
+    empty index is the more likely production failure than an absent table).
+    Prints machine-readable markers and returns non-zero on any failure. Needs
+    no network or auth. Mirrors the report selftest's dependency-guard intent.
+    """
+    import sqlite3
+    import tempfile
+    from pathlib import Path
+
+    failures: list[str] = []
+
+    # (a) FTS5 engine present in the bundled sqlite3?
+    try:
+        probe = sqlite3.connect(":memory:")
+        probe.execute("CREATE VIRTUAL TABLE _p USING fts5(x)")
+        probe.close()
+        print("SEARCH_SELFTEST fts5_engine=ok")
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"fts5_engine: {type(exc).__name__}: {exc}")
+        print("SEARCH_SELFTEST fts5_engine=FAIL", file=sys.stderr)
+
+    # (b) create_schema creates the table + seeded counts match.
+    async def _seed_and_assert() -> None:
+        from datetime import datetime, timezone
+
+        from sqlalchemy import text as _t
+        from sqlalchemy.ext.asyncio import (
+            AsyncSession,
+            async_sessionmaker,
+            create_async_engine,
+        )
+
+        import apps.server.db.search as search_mod
+        import apps.server.db.seed as seed_mod
+        import apps.server.db.session as session_mod
+        from apps.server.db.models import AppUser, Session as MSession, Utterance
+
+        tmp = Path(tempfile.mkdtemp(prefix="yeson-search-selftest-"))
+        url = f"sqlite+aiosqlite:///{tmp / 'search.db'}"
+        engine = create_async_engine(url, echo=False)
+        factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+        # Bind seed/session module globals so create_schema targets our engine.
+        seed_mod.engine = engine
+        seed_mod.AsyncSessionLocal = factory
+        session_mod.AsyncSessionLocal = factory
+
+        await seed_mod.create_schema()
+
+        n_utter = 3
+        now = datetime.now(timezone.utc)
+        async with factory() as db:
+            user = AppUser(email="s@s", name="S", password_hash="x", role="operator")
+            db.add(user)
+            await db.flush()
+            from uuid import uuid4
+
+            meeting = MSession(
+                external_id=uuid4(), owner_user_id=user.id, title="T", status="ended",
+                started_at=now, ended_at=now,
+            )
+            db.add(meeting)
+            await db.flush()
+            for i in range(n_utter):
+                db.add(
+                    Utterance(
+                        session_id=meeting.id, seq=i + 1, speaker=None,
+                        text_en=f"line {i}", text_ko=f"줄 {i}",
+                        started_at=now, ended_at=now, is_final=True,
+                    )
+                )
+            await db.commit()
+            utts = [(f"줄 {i}", f"line {i}") for i in range(n_utter)]
+            await search_mod.reindex_session_fts(db, meeting.id, utts, "요약 본문")
+            await db.commit()
+
+            u_rows = (
+                await db.execute(
+                    _t("SELECT count(*) FROM session_search_fts WHERE kind='utterance'")
+                )
+            ).scalar()
+            s_rows = (
+                await db.execute(
+                    _t("SELECT count(*) FROM session_search_fts WHERE kind='summary'")
+                )
+            ).scalar()
+
+        print(f"SEARCH_SELFTEST utterance_rows={u_rows} (expected {n_utter})")
+        print(f"SEARCH_SELFTEST summary_rows={s_rows} (expected 1)")
+        if u_rows != n_utter:
+            failures.append(f"utterance_rows {u_rows} != {n_utter}")
+        if s_rows != 1:
+            failures.append(f"summary_rows {s_rows} != 1")
+        await engine.dispose()
+
+    try:
+        asyncio.run(_seed_and_assert())
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"seed_and_assert: {type(exc).__name__}: {exc}")
+        print("SEARCH_SELFTEST seed=FAIL", file=sys.stderr)
+
+    if failures:
+        for f in failures:
+            print(f"SEARCH_SELFTEST_FAIL {f}", file=sys.stderr)
+        print("SEARCH_SELFTEST_RESULT=FAIL", file=sys.stderr)
+        return 1
+    print("SEARCH_SELFTEST_RESULT=PASS")
+    return 0
+
+
 def main() -> int:
     # Step 1+2: resolve and pin DATABASE_URL BEFORE importing the app, because
     # apps.server.db.session binds the engine from this env var at import time.
@@ -174,6 +292,10 @@ def main() -> int:
     # Frozen-bundle report smoke test (S7): exercise builders and exit (no uvicorn).
     if os.environ.get("YESON_REPORT_SELFTEST") == "1":
         return _report_selftest_mode()
+
+    # Frozen-bundle search smoke test (S4): assert FTS5 + index seeding and exit.
+    if os.environ.get("YESON_SEARCH_SELFTEST") == "1":
+        return _search_selftest_mode()
 
     # Step 3: ensure the schema exists on a cold file (idempotent create_all).
     from apps.server.db.seed import create_schema

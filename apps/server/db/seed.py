@@ -27,6 +27,7 @@ from sqlalchemy import select
 from apps.server.auth.password import hash_password
 from apps.server.db.base import Base
 from apps.server.db.models import AppUser, Device, Session, SessionToken
+from apps.server.db.search import backfill_if_empty, ensure_session_search_fts
 from apps.server.db.session import AsyncSessionLocal, engine
 
 ADMIN_EMAIL = "admin@yeson.local"
@@ -69,6 +70,16 @@ async def create_schema() -> None:
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # The knowledge-repository FTS5 search table is a SQLite virtual table
+        # that ``Base.metadata`` cannot model, so create it here on the cold
+        # bundle path (mirrors the dialect-guarded 0003 migration used on
+        # Postgres deploys). No-ops on non-SQLite / FTS5-absent engines.
+        await conn.run_sync(ensure_session_search_fts)
+        # In-place bundle upgrade: an EXISTING SQLite file gets the empty table
+        # here but no historical rows (only alembic backfills, and the bundle
+        # never runs alembic). Seed past meetings once when the table is empty;
+        # warm starts are a single cheap COUNT with no writes.
+        await conn.run_sync(backfill_if_empty)
 # === ANCHOR: SEED_CREATE_SCHEMA_END ===
 
 

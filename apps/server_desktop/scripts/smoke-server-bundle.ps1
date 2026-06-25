@@ -22,11 +22,26 @@ $out = & $Bin.FullName 2>&1
 Remove-Item Env:\YESON_REPORT_SELFTEST -ErrorAction SilentlyContinue
 
 $out | Where-Object { $_ -match "^SELFTEST" } | ForEach-Object { Write-Host $_ }
-if ($out -match "SELFTEST_RESULT=PASS") {
-    Write-Host "OK bundle report smoke PASS"
+if (-not ($out -match "SELFTEST_RESULT=PASS")) {
+    $out | ForEach-Object { Write-Error $_ }
+    Write-Error "bundle report smoke FAILED - a report dependency is likely missing from the frozen bundle"
+    exit 1
+}
+Write-Host "OK bundle report smoke PASS"
+
+# Frozen-bundle search smoke test (S4): assert FTS5 engine present in the bundled
+# sqlite AND the search index seeds (utterance/summary row counts match).
+Write-Host "Frozen-bundle search smoke test ($($Bin.FullName))..."
+$env:YESON_SEARCH_SELFTEST = "1"
+$sout = & $Bin.FullName 2>&1
+Remove-Item Env:\YESON_SEARCH_SELFTEST -ErrorAction SilentlyContinue
+
+$sout | Where-Object { $_ -match "^SEARCH_SELFTEST" } | ForEach-Object { Write-Host $_ }
+if ($sout -match "SEARCH_SELFTEST_RESULT=PASS") {
+    Write-Host "OK bundle search smoke PASS"
     exit 0
 }
 
-$out | ForEach-Object { Write-Error $_ }
-Write-Error "bundle report smoke FAILED - a report dependency is likely missing from the frozen bundle"
+$sout | ForEach-Object { Write-Error $_ }
+Write-Error "bundle search smoke FAILED - FTS5 missing from the bundle or the index did not seed"
 exit 1

@@ -6,6 +6,7 @@ import { HelpManualPanel } from "../help/HelpManualPanel";
 import { SettingsPanel } from "../settings/SettingsPanel";
 import { SetupAssistant } from "../setup/SetupAssistant";
 import { ConsoleNav } from "./ConsoleNav";
+import { KnowledgeRepositoryPanel } from "./KnowledgeRepositoryPanel";
 import { NativeCaptureBanner } from "./NativeCaptureBanner";
 import { consoleStyles } from "./consoleStyles";
 import type { ConsoleView } from "./types";
@@ -16,6 +17,9 @@ export function DesktopConsole() {
   // localStorage, so every apiBase() consumer resolves the authoritative host
   // before any console interaction is possible.
   const [hydrated, setHydrated] = useState(false);
+  // C5: operator JWT lifted to shared state so it survives view-switching.
+  // NOT persisted to disk — a stolen laptop must not grant standing corpus access.
+  const [operatorToken, setOperatorToken] = useState<string | null>(null);
 
   useEffect(() => {
     installAppLogCapture();
@@ -57,6 +61,15 @@ export function DesktopConsole() {
           style={activeView === "settings" ? consoleStyles.sectionScroll : undefined}
         >
           <SettingsPanel />
+        </section>
+        <section
+          hidden={activeView !== "history"}
+          style={activeView === "history" ? consoleStyles.sectionFill : undefined}
+        >
+          <KnowledgeRepositoryPanel
+            operatorToken={operatorToken}
+            onTokenAcquired={setOperatorToken}
+          />
         </section>
       </main>
     </div>
