@@ -167,3 +167,63 @@ async def test_revoke_unknown_device_404(
 async def test_list_and_revoke_require_admin(client: AsyncClient) -> None:
     assert (await client.get("/api/v1/devices")).status_code == 401
     assert (await client.post("/api/v1/devices/1/revoke")).status_code == 401
+
+
+# ── T-INT-SELF-ENROLL-OK (client zero-config onboarding P0) ──────────────────────
+@pytest.mark.asyncio
+async def test_self_enroll_with_operator_ok(client: AsyncClient, db_session: AsyncSession) -> None:
+    operator = AppUser(
+        email="op-enroll@test.example",
+        name="Op Enroll",
+        password_hash=hash_password("op-enroll-pw"),
+        role="operator",
+        is_active=True,
+    )
+    db_session.add(operator)
+    await db_session.commit()
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": operator.email, "password": "op-enroll-pw"},
+    )
+    assert login.status_code == 200, login.text
+    token = login.json()["access_token"]
+    resp = await client.post(
+        "/api/v1/devices/self-enroll",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "client-macpro"},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["name"] == "client-macpro"
+    assert body["api_key"]
+
+
+@pytest.mark.asyncio
+async def test_self_enroll_requires_bearer(client: AsyncClient) -> None:
+    resp = await client.post("/api/v1/devices/self-enroll", json={"name": "nope"})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_self_enroll_rejects_non_privileged(client: AsyncClient, db_session: AsyncSession) -> None:
+    viewer = AppUser(
+        email="viewer-enroll@test.example",
+        name="Viewer",
+        password_hash=hash_password("viewer-pw"),
+        role="viewer",
+        is_active=True,
+    )
+    db_session.add(viewer)
+    await db_session.commit()
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": viewer.email, "password": "viewer-pw"},
+    )
+    assert login.status_code == 200, login.text
+    token = login.json()["access_token"]
+    resp = await client.post(
+        "/api/v1/devices/self-enroll",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "nope"},
+    )
+    assert resp.status_code == 403

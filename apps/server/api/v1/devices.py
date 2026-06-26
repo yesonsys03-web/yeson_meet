@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.server.auth.deps import require_admin
+from apps.server.auth.deps import require_admin, require_operator
 from apps.server.auth.device import generate_api_key, hash_api_key
 from apps.server.db.models import AppUser, Device
 from apps.server.db.session import get_session
@@ -40,6 +40,27 @@ async def create_device(
     db: Annotated[AsyncSession, Depends(get_session)],
 # === ANCHOR: DEVICES_CREATE_DEVICE_END ===
 ) -> DeviceCreateOut:
+    plaintext = generate_api_key()
+    device = Device(
+        name=body.name,
+        api_key_hash=hash_api_key(plaintext),
+        is_active=True,
+    )
+    db.add(device)
+    await db.flush()
+    await db.commit()
+    return DeviceCreateOut(id=device.id, name=device.name, api_key=plaintext)
+
+
+@router.post("/self-enroll", response_model=DeviceCreateOut, status_code=status.HTTP_201_CREATED)
+async def self_enroll_device(
+    body: DeviceCreateIn,
+    _operator: Annotated[AppUser, Depends(require_operator)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> DeviceCreateOut:
+    # Self-enroll: an operator client provisions ITS OWN single device key.
+    # Separate from create_device (require_admin) so the client never gains
+    # device-admin (list/revoke). Issuance still happens server-side.
     plaintext = generate_api_key()
     device = Device(
         name=body.name,
