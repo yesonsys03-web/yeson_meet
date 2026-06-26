@@ -181,6 +181,12 @@ def generate_summary(
             input=prompt,
             capture_output=True,
             text=True,
+            # Force UTF-8 both ways. Without this, text mode uses the OS locale
+            # encoding — on Korean Windows that is cp949, which cannot decode the
+            # CLI's UTF-8 output (Korean + emoji), crashing subprocess's reader
+            # thread and leaving stdout=None.
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:
@@ -198,16 +204,17 @@ def generate_summary(
         )
         return None
 
-    if result.returncode != 0 or not result.stdout.strip():
+    stdout = (result.stdout or "").strip()
+    if result.returncode != 0 or not stdout:
         logger.warning(
             "generate_summary: CLI '%s' returned code=%d stdout_empty=%s stderr=%r — skipping",
             _cli_name,
             result.returncode,
-            not result.stdout.strip(),
-            result.stderr[:200] if result.stderr else "",
+            not stdout,
+            (result.stderr or "")[:200],
         )
         return None
 
-    return result.stdout.strip()
+    return stdout
 # === ANCHOR: REPORT_SUMMARY_GENERATE_END ===
 # === ANCHOR: REPORT_SUMMARY_END ===

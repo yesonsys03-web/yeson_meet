@@ -73,6 +73,46 @@ def test_generate_summary_returns_stdout_when_cli_succeeds(monkeypatch: pytest.M
     assert call_args[:2] == ["claude", "-p"]
 
 
+# (i-b) Windows cp949 regression: the CLI emits UTF-8 (Korean + emoji). subprocess
+# must decode as UTF-8, not the Windows locale default (cp949), or the reader
+# thread crashes with UnicodeDecodeError and stdout becomes None.
+def test_generate_summary_decodes_subprocess_output_as_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("YESON_REPORT_SUMMARY", raising=False)
+
+    fake_result = SimpleNamespace(returncode=0, stdout="요약 ✅", stderr="")
+
+    with (
+        patch(
+            "apps.server.domain.report_summary.find_summary_cli",
+            return_value=("claude", ["claude", "-p"]),
+        ),
+        patch("subprocess.run", return_value=fake_result) as mock_run,
+    ):
+        result = generate_summary(_meeting(), [_utt()])
+
+    assert result == "요약 ✅"
+    assert mock_run.call_args.kwargs.get("encoding") == "utf-8"
+
+
+# (i-c) If the reader thread died (Windows decode error) stdout/stderr come back
+# None — return None gracefully instead of raising AttributeError on .strip().
+def test_generate_summary_returns_none_when_stdout_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("YESON_REPORT_SUMMARY", raising=False)
+
+    fake_result = SimpleNamespace(returncode=0, stdout=None, stderr=None)
+
+    with (
+        patch(
+            "apps.server.domain.report_summary.find_summary_cli",
+            return_value=("claude", ["claude", "-p"]),
+        ),
+        patch("subprocess.run", return_value=fake_result),
+    ):
+        result = generate_summary(_meeting(), [_utt()])
+
+    assert result is None  # no AttributeError
+
+
 # ---------------------------------------------------------------------------
 # (ii) find_summary_cli returns None → generate_summary returns None, no exception
 # ---------------------------------------------------------------------------
