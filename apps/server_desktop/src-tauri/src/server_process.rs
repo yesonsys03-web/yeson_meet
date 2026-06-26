@@ -409,6 +409,18 @@ fn common_bin_dirs() -> Vec<PathBuf> {
         if let Some(pf) = std::env::var_os("ProgramFiles") {
             dirs.push(PathBuf::from(pf).join("nodejs"));
         }
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            // Native installers (NOT npm .cmd shims): the OpenAI Codex installer
+            // drops codex.exe here; the native Claude installer uses ~/.local/bin
+            // (covered below).
+            dirs.push(
+                PathBuf::from(&local)
+                    .join("Programs")
+                    .join("OpenAI")
+                    .join("Codex")
+                    .join("bin"),
+            );
+        }
         if let Some(h) = &home {
             dirs.push(h.join(".local").join("bin"));
             dirs.push(h.join(".cargo").join("bin"));
