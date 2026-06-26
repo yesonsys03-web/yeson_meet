@@ -1,10 +1,11 @@
 // === ANCHOR: MEETING_QUICK_START_PANEL_START ===
-import { useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { LiveSubtitlePreview } from "../console/LiveSubtitlePreview";
 import { ViewerQrPanel } from "../console/ViewerQrPanel";
-import type { ReportFormat } from "../console/sessionApi";
+import { loginOperator, selfEnrollDevice, type ReportFormat } from "../console/sessionApi";
 import { useMeetingLifecycle } from "../console/useMeetingLifecycle";
 import { EMPTY_META, hydrateServerAddressFromKeychain, loadCredentialsMeta, saveCredentials, type CredentialsMeta } from "./credentials";
+import { discoverServer, probeLocalServer, resolveServerWsBase } from "./serverDiscovery";
 import { loadValues } from "./setupValues";
 import { styles } from "./styles";
 
@@ -13,33 +14,57 @@ export function MeetingQuickStartPanel() {
   const [meta, setMeta] = useState<CredentialsMeta>(EMPTY_META);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(() => ({
-    serverWsBase: loadValues().serverWsBase,
     email: "admin@yeson.local",
     password: "",
-    deviceApiKey: "",
   }));
+  const [serverWsBase, setServerWsBase] = useState<string>(() => loadValues().serverWsBase);
+  const [discovering, setDiscovering] = useState(false);
   const activeSessionId = lifecycle.createdSession?.session_id ?? null;
   const registered = meta.hasCredentials && !editing;
+
+  const findServer = useCallback(async () => {
+    setDiscovering(true);
+    try {
+      const resolved = await resolveServerWsBase({
+        probeLocal: probeLocalServer,
+        discover: discoverServer,
+      });
+      if (resolved) setServerWsBase(resolved);
+    } finally {
+      setDiscovering(false);
+    }
+  }, []);
 
   useEffect(() => {
     void refreshMeta();
   }, []);
+
+  useEffect(() => {
+    if (!serverWsBase) void findServer();
+  }, [serverWsBase, findServer]);
 
   async function refreshMeta() {
     const next = await loadCredentialsMeta();
     setMeta(next);
     setForm((current) => ({
       ...current,
-      serverWsBase: next.serverWsBase || current.serverWsBase,
       email: next.email || current.email,
     }));
+    if (next.serverWsBase) setServerWsBase(next.serverWsBase);
   }
 
   async function registerAndStart() {
-    await saveCredentials(form);
+    // 1) save creds with resolved address + empty device key — self-enroll fills it
+    await saveCredentials({ serverWsBase, email: form.email, password: form.password, deviceApiKey: "" });
     // P2: re-derive the localStorage serverWsBase cache from the keychain we just wrote,
     // so apiBase() (login/createSession) targets the saved host on the very next call.
     await hydrateServerAddressFromKeychain();
+    // 2) operator login → device self-enroll → persist key to keychain
+    const { access_token: operatorToken } = await loginOperator(form.email, form.password);
+    const deviceName = `client-${navigator.platform || "device"}`;
+    const apiKey = await selfEnrollDevice(operatorToken, deviceName);
+    await saveCredentials({ serverWsBase, email: form.email, password: form.password, deviceApiKey: apiKey });
+    // 3) existing flow
     await refreshMeta();
     setEditing(false);
     await lifecycle.startMeetingOneClick();
@@ -104,10 +129,22 @@ export function MeetingQuickStartPanel() {
           ) : (
             <>
               <h3 style={styles.quickStartCardTitle}>처음 한 번만 등록</h3>
-              <QuickField label="WebSocket 서버 주소" value={form.serverWsBase} onChange={(value) => setForm((c) => ({ ...c, serverWsBase: value }))} />
+              <div style={discoveryRowStyle}>
+                <span style={styles.label}>서버 주소</span>
+                <code style={discoveryValueStyle}>{serverWsBase || "찾는 중..."}</code>
+                <button type="button" onClick={() => void findServer()} disabled={discovering}>
+                  {discovering ? "찾는 중..." : "다시 찾기"}
+                </button>
+              </div>
+              {!serverWsBase && (
+                <QuickField
+                  label="서버 주소 (직접 입력)"
+                  value={serverWsBase}
+                  onChange={(value) => setServerWsBase(value)}
+                />
+              )}
               <QuickField label="Operator email" value={form.email} type="email" onChange={(value) => setForm((c) => ({ ...c, email: value }))} />
               <QuickField label="Operator password" value={form.password} type="password" onChange={(value) => setForm((c) => ({ ...c, password: value }))} /> {/* vibelign: allow-secret — field name only, not a key value */}
-              <QuickField label="Device API Key" value={form.deviceApiKey} type="password" onChange={(value) => setForm((c) => ({ ...c, deviceApiKey: value }))} /> {/* vibelign: allow-secret — field name only, not a key value */}
               <div style={styles.quickStartActions}>
                 <button type="button" onClick={registerAndStart} disabled={lifecycle.busy} style={styles.primaryButton}>
                   기억하고 회의 시작
@@ -198,6 +235,20 @@ export function MeetingQuickStartPanel() {
     </section>
   );
 }
+
+const discoveryRowStyle: CSSProperties = {
+  display: "flex",
+  gap: 10,
+  alignItems: "center",
+  marginBottom: 10,
+};
+
+const discoveryValueStyle: CSSProperties = {
+  fontWeight: 700,
+  color: "#1e3a8a",
+  flex: 1,
+  overflowWrap: "anywhere",
+};
 
 const reportTextStyle: CSSProperties = {
   marginTop: 10,
