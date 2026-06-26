@@ -61,6 +61,15 @@ async def self_enroll_device(
     # Self-enroll: an operator client provisions ITS OWN single device key.
     # Separate from create_device (require_admin) so the client never gains
     # device-admin (list/revoke). Issuance still happens server-side.
+
+    # Dedup: deactivate any existing active rows with the same name so each
+    # named client maps to exactly one live key (no unbounded key accumulation).
+    existing = await db.execute(
+        select(Device).where(Device.name == body.name, Device.is_active.is_(True))
+    )
+    for prior in existing.scalars():
+        prior.is_active = False
+
     plaintext = generate_api_key()
     device = Device(
         name=body.name,

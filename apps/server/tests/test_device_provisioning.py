@@ -227,3 +227,86 @@ async def test_self_enroll_rejects_non_privileged(client: AsyncClient, db_sessio
         json={"name": "nope"},
     )
     assert resp.status_code == 403
+
+
+# ── T-INT-SELF-ENROLL-DEDUP (one live key per named client) ──────────────────
+@pytest.mark.asyncio
+async def test_self_enroll_dedup_deactivates_prior_same_name(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Re-enrolling with the same name must deactivate the prior active row."""
+    # Create an operator to self-enroll with.
+    operator = AppUser(
+        email="op-dedup@test.example",
+        name="Op Dedup",
+        password_hash=hash_password("op-dedup-pw"),
+        role="operator",
+        is_active=True,
+    )
+    db_session.add(operator)
+    await db_session.commit()
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": operator.email, "password": "op-dedup-pw"},
+    )
+    assert login.status_code == 200, login.text
+    token = login.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Enroll a different name first — it must remain untouched.
+    resp_b = await client.post(
+        "/api/v1/devices/self-enroll",
+        headers=headers,
+        json={"name": "client-host-b"},
+    )
+    assert resp_b.status_code == 201, resp_b.text
+    id_b = resp_b.json()["id"]
+
+    # First enrollment of client-host-a.
+    resp1 = await client.post(
+        "/api/v1/devices/self-enroll",
+        headers=headers,
+        json={"name": "client-host-a"},
+    )
+    assert resp1.status_code == 201, resp1.text
+    id_a1 = resp1.json()["id"]
+
+    # Second enrollment of client-host-a (re-enroll / key rotation).
+    resp2 = await client.post(
+        "/api/v1/devices/self-enroll",
+        headers=headers,
+        json={"name": "client-host-a"},
+    )
+    assert resp2.status_code == 201, resp2.text
+    id_a2 = resp2.json()["id"]
+
+    # Refresh the session so we see committed state.
+    db_session.expire_all()
+
+    # Fetch all Device rows with name == "client-host-a".
+    rows_a = (
+        await db_session.execute(
+            select(Device).where(Device.name == "client-host-a")
+        )
+    ).scalars().all()
+
+    assert len(rows_a) == 2, f"Expected 2 rows for client-host-a, got {len(rows_a)}"
+
+    active_a = [r for r in rows_a if r.is_active]
+    inactive_a = [r for r in rows_a if not r.is_active]
+
+    assert len(active_a) == 1, (
+        f"Expected exactly 1 active row for client-host-a, got {len(active_a)}"
+    )
+    assert len(inactive_a) == 1, (
+        f"Expected exactly 1 inactive row for client-host-a, got {len(inactive_a)}"
+    )
+    # The newer row must be the live one; the older one deactivated.
+    assert active_a[0].id == id_a2
+    assert inactive_a[0].id == id_a1
+
+    # client-host-b must still be active (unrelated name).
+    row_b = (
+        await db_session.execute(select(Device).where(Device.id == id_b))
+    ).scalar_one()
+    assert row_b.is_active is True, "client-host-b must remain active"
