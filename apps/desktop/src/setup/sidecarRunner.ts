@@ -50,18 +50,6 @@ export async function stopSidecar(): Promise<SidecarStatus> {
   return timedSidecarAction("stop_sidecar", () => invoke<SidecarStatus>("stop_sidecar"));
 }
 
-export async function loadSidecarStatus(): Promise<SidecarStatus> {
-  if (!hasTauriRuntime()) {
-    appLogger.info("sidecar", "Sidecar status requested in browser preview");
-    return {
-      running: false,
-      pid: null,
-      detail: "브라우저 미리보기에서는 sidecar 실행 버튼이 비활성화됩니다.",
-    };
-  }
-  return timedSidecarAction("sidecar_status", () => invoke<SidecarStatus>("sidecar_status"));
-}
-
 async function timedSidecarAction(action: string, run: () => Promise<SidecarStatus>): Promise<SidecarStatus> {
   const startedAt = performance.now();
   appLogger.info("sidecar", `${action} requested`);

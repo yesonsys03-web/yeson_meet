@@ -63,13 +63,4 @@ export function httpBaseFromWs(serverWsBase: string): string {
 }
 // === ANCHOR: SETUPVALUES_HTTPBASEFROMWS_END ===
 
-// === ANCHOR: SETUPVALUES_ISSECUREVIEWERURL_START ===
-export function isSecureViewerUrl(viewerUrl: string): boolean {
-  try {
-    return new URL(viewerUrl).protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-// === ANCHOR: SETUPVALUES_ISSECUREVIEWERURL_END ===
 // === ANCHOR: SETUPVALUES_END ===
