@@ -1020,4 +1020,11 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 }
+
+#[tauri::command]
+pub fn detect_lan_ip() -> Result<String, String> {
+    local_ip_address::local_ip()
+        .map(|ip| ip.to_string())
+        .map_err(|error| format!("LAN IP 감지 실패: {error}"))
+}
 // === ANCHOR: SERVER_PROCESS_END ===
