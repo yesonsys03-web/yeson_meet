@@ -22,11 +22,11 @@ export function SmokeChecklist({ checks, onRunAll, running }: SmokeChecklistProp
     <section style={styles.checklist}>
       <div style={styles.checklistHeader}>
         <div>
-          <h2 style={styles.sectionTitle}>Windows 앱 패키지 전 최소 스모크</h2>
-          <p style={styles.checklistIntro}>full E2E 대신 지금 확인할 네트워크·서버 준비 상태입니다.</p>
+          <h2 style={styles.sectionTitle}>회의 시작 전 빠른 점검</h2>
+          <p style={styles.checklistIntro}>Mac·Windows 공통으로, 서버와 Gemini가 준비됐는지 회의 전에 확인합니다.</p>
         </div>
         <button type="button" onClick={onRunAll} style={styles.smallButton} disabled={running}>
-          {running ? "확인 중..." : "3개 항목 확인"}
+          {running ? "확인 중..." : `${SMOKE_CHECK_ORDER.length}개 항목 확인`}
         </button>
       </div>
       <div style={styles.smokeList}>

@@ -15,46 +15,38 @@ export type PlatformRunbook = {
 
 export const PLATFORM_RUNBOOKS: Record<SetupPlatform, PlatformRunbook> = {
   mac: {
-    title: "Mac client 실행 순서",
-    intro: "패키지 Mac 앱은 번들된 네이티브 ScreenCaptureKit sidecar로 시스템 소리를 직접 캡처해 yeson-meet 서버로 보냅니다. BlackHole 설치는 필요 없습니다.",
+    title: "Mac에서 자막 켜는 순서",
+    intro: "Mac 앱은 BlackHole 같은 가상 오디오를 따로 깔 필요 없이, 스피커로 나오는 회의 소리를 그대로 잡아 번역 자막으로 보냅니다.",
     steps: [
       {
-        title: "화면 기록 권한 허용 (Screen Recording)",
-        detail: "시스템 설정 > 개인정보 보호 및 보안 > 화면 기록에서 yeson-meet 앱을 허용합니다. ScreenCaptureKit이 시스템 오디오를 캡처하려면 이 권한이 필요합니다.",
+        title: "화면 기록 권한 켜기",
+        detail: "시스템 설정 → 개인정보 보호 및 보안 → 화면 기록에서 yeson-meet를 켭니다. 이 권한이 있어야 회의 소리를 자막으로 바꿀 수 있어요. (앱을 새로 설치·업데이트하면 다시 켜야 할 수 있습니다.)",
       },
       {
-        title: "자막을 내보낼 소리를 기본 출력 장치로 재생",
-        detail: "캡처는 Mac 기본 출력 장치(시스템 사운드 설정)를 따라갑니다. 회의 소리가 그 장치로 나오게 두세요.",
+        title: "회의 소리를 평소 스피커로 재생",
+        detail: "자막으로 내보낼 소리가 Mac 기본 출력(스피커·이어폰)으로 나오게 두세요. 출력 장치를 바꿔도 그 장치를 따라갑니다.",
       },
       {
-        title: "Live Meeting에서 회의 만들기",
-        detail: "테스트 계정으로 로그인하고 Start meeting을 누른 뒤, Setup 탭으로 돌아와 Session ID와 Viewer URL이 채워졌는지 봅니다.",
-      },
-      {
-        title: "번들 sidecar 시작",
-        detail: "Device API Key를 붙여넣고 'Sidecar 시작' 버튼을 누르면 번들된 네이티브 sidecar가 실행됩니다. 별도 Terminal 명령은 필요 없습니다.",
+        title: "맨 위에서 '회의 시작' 누르기",
+        detail: "맨 위 빠른 시작에서 회의 시작을 누르면 자막 송출이 자동으로 켜집니다. 따로 실행할 프로그램이나 터미널 명령은 없습니다.",
       },
     ],
-    reminder: "패키지 Mac 앱은 번들된 네이티브 sidecar를 사용하므로 가상 오디오/장치 이름 설정은 필요 없습니다. Device API Key는 저장하지 않으니 sidecar 시작 직전에 다시 붙여넣으세요.",
+    reminder: "상대방 목소리(스피커로 들리는 소리)만 자막이 됩니다. 같은 방에서 마이크로 말하는 우리 쪽 목소리는 자막에 나오지 않아요.",
   },
   windows: {
-    title: "Windows client 실행 순서",
-    intro: "Windows 회의실 PC는 번들된 네이티브 WASAPI sidecar가 기본 출력 장치의 소리를 직접 캡처해 yeson-meet 서버로 보냅니다. Voicemeeter 등 가상 오디오 설치는 필요 없습니다.",
+    title: "Windows에서 자막 켜는 순서",
+    intro: "Windows 회의실 PC는 Voicemeeter 같은 가상 오디오를 따로 깔 필요 없이, 스피커로 나오는 회의 소리를 그대로 잡아 번역 자막으로 보냅니다.",
     steps: [
       {
-        title: "자막을 내보낼 소리를 기본 출력 장치로 재생",
-        detail: "캡처는 Windows 기본 출력 장치를 따라갑니다. 자막으로 내보낼 회의 소리가 그 장치로 재생되게 두세요.",
+        title: "회의 소리를 평소 스피커로 재생",
+        detail: "자막으로 내보낼 소리가 Windows 기본 출력 장치로 재생되게 두세요. 출력 장치를 바꿔도 그 장치를 따라갑니다.",
       },
       {
-        title: "Live Meeting에서 회의 만들기",
-        detail: "테스트 계정으로 로그인하고 Start meeting을 누른 뒤 Setup 탭에서 새 Session ID와 Viewer URL을 확인합니다.",
-      },
-      {
-        title: "번들 sidecar 시작",
-        detail: "Device API Key를 붙여넣고 'Sidecar 시작' 버튼을 누르거나 PowerShell 명령을 사용해 번들된 네이티브 sidecar를 실행합니다.",
+        title: "맨 위에서 '회의 시작' 누르기",
+        detail: "맨 위 빠른 시작에서 회의 시작을 누르면 자막 송출이 자동으로 켜집니다. 따로 실행할 프로그램이나 명령은 없습니다.",
       },
     ],
-    reminder: "캡처는 Windows 기본 출력 장치를 따라갑니다 — 자막을 내보낼 소리가 그 장치로 재생되게 두세요. Device API Key는 저장되지 않으니 sidecar 시작 직전에 다시 붙여넣으세요.",
+    reminder: "상대방 목소리(스피커로 들리는 소리)만 자막이 됩니다. 같은 방에서 마이크로 말하는 우리 쪽 목소리는 자막에 나오지 않아요.",
   },
 };
 // === ANCHOR: PLATFORM_RUNBOOK_END ===

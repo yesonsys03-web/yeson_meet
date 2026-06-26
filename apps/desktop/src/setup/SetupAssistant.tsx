@@ -1,23 +1,18 @@
 // === ANCHOR: SETUPASSISTANT_START ===
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { loadCredentialsMeta, updateServerWsBase as updateServerWsBaseKeychain } from "./credentials";
 import { Field } from "./Field";
 import { MeetingQuickStartPanel } from "./MeetingQuickStartPanel";
 import { PlatformRunbookPanel } from "./PlatformRunbookPanel";
-import { PlatformSelector } from "./PlatformSelector";
-import { SidecarRunnerPanel } from "./SidecarRunnerPanel";
 import { SmokeChecklist } from "./SmokeChecklist";
-import { PLATFORM_CONFIG } from "./platformConfig";
-import { buildSidecarCommand } from "./sidecarCommands";
 import { loadValues, SETUP_VALUES_UPDATED_EVENT, storeValues } from "./setupValues";
 import { initialSmokeChecks, runSmokeCheck, SMOKE_CHECK_ORDER } from "./smokeChecks";
 import { styles } from "./styles";
-import type { SetupPlatform, SetupValues, SmokeCheckKey, SmokeStatus } from "./types";
+import type { SetupValues, SmokeCheckKey, SmokeStatus } from "./types";
 
 // === ANCHOR: SETUPASSISTANT_SETUPASSISTANT_START ===
 export function SetupAssistant() {
   const [values, setValues] = useState<SetupValues>(loadValues);
-  const [copied, setCopied] = useState(false);
   const [runningChecks, setRunningChecks] = useState(false);
   const [checks, setChecks] = useState(initialSmokeChecks);
   // === ANCHOR: SETUPASSISTANT_DEVICEKEY_START ===
@@ -33,9 +28,6 @@ export function SetupAssistant() {
       .catch(() => undefined);
   }, []);
   // === ANCHOR: SETUPASSISTANT_DEVICEKEY_END ===
-
-  const platformConfig = PLATFORM_CONFIG[values.platform];
-  const sidecarCommand = useMemo(() => buildSidecarCommand(values), [values]);
 
   useEffect(() => {
     function syncStoredValues() {
@@ -77,27 +69,6 @@ export function SetupAssistant() {
     })();
   }
   // === ANCHOR: SETUPASSISTANT_UPDATEVALUE_END ===
-
-  // === ANCHOR: SETUPASSISTANT_UPDATEPLATFORM_START ===
-  function updatePlatform(platform: SetupPlatform) {
-    setValues((current) => {
-      const next = {
-        ...current,
-        platform,
-      };
-      storeValues(next);
-      return next;
-    });
-  }
-  // === ANCHOR: SETUPASSISTANT_UPDATEPLATFORM_END ===
-
-  // === ANCHOR: SETUPASSISTANT_COPYCOMMAND_START ===
-  async function copyCommand() {
-    await navigator.clipboard.writeText(sidecarCommand);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1400);
-  }
-  // === ANCHOR: SETUPASSISTANT_COPYCOMMAND_END ===
 
   // === ANCHOR: SETUPASSISTANT_RUNALLSMOKECHECKS_START ===
   async function runAllSmokeChecks() {
@@ -147,58 +118,35 @@ export function SetupAssistant() {
       <MeetingQuickStartPanel />
 
       <details style={{ marginTop: 24 }}>
-        <summary style={styles.sectionTitle}>고급 설정 (수동 실행 · 문제 해결)</summary>
+        <summary style={styles.sectionTitle}>문제 해결 (자동이 안 될 때만 열기)</summary>
 
-        <main style={styles.grid}>
-          <section style={styles.panel}>
-            <h2 style={styles.sectionTitle}>실행 환경 값</h2>
-            <PlatformSelector value={values.platform} onChange={updatePlatform} />
-            <Field
-              label="WebSocket 서버 주소"
-              help="로컬 테스트는 ws://127.0.0.1:8000, LAN HTTPS 테스트는 wss://<server-ip>:8000 처럼 입력합니다."
-              value={values.serverWsBase}
-              onChange={(value) => updateServerWsBase(value)}
-            />
-            <Field
-              label="테스트용 오디오 키 (Device API Key)"
-              help="서버 콘솔의 Devices에서 발급한 키를 붙여넣으세요(키 발급은 서버에서만 합니다). sidecar가 서버 접속에 사용합니다. 이 필드 값은 저장하지 않으므로 Sidecar 시작 직전에 붙여넣어야 합니다."
-              value={values.deviceApiKey}
-              secret
-              onChange={(value) => updateValue("deviceApiKey", value)}
-            />
-            <Field
-              label="Session ID"
-              help="회의를 만들면 자동으로 채워집니다. 필요할 때만 직접 수정하세요."
-              value={values.sessionId}
-              onChange={(value) => updateValue("sessionId", value)}
-            />
-            <Field
-              label="Viewer URL"
-              help="회의를 만들면 자동으로 채워집니다. 폰이나 노트북에서 자막을 확인할 주소입니다."
-              value={values.viewerUrl}
-              onChange={(value) => updateValue("viewerUrl", value)}
-            />
-            <Field
-              label="Sidecar project folder"
-              help="dev에서 소스로 sidecar를 실행할 때만 필요합니다. 비워두면 패키지 앱은 번들된 네이티브 sidecar를 사용합니다."
-              value={values.sidecarProjectDir}
-              onChange={(value) => updateValue("sidecarProjectDir", value)}
-            />
-          </section>
+        <section style={styles.panel}>
+          <h2 style={styles.sectionTitle}>수동 설정 값</h2>
+          <p style={styles.runbookIntro}>
+            보통은 맨 위 빠른 시작에서 자동으로 채워집니다. 자동 연결이 안 될 때만 직접 확인·수정하세요.
+          </p>
+          <Field
+            label="WebSocket 서버 주소"
+            help="자동 연결이 안 될 때만 직접 입력합니다. 예: 같은 사무실은 wss://<서버-IP>:8000, 한 PC 테스트는 ws://127.0.0.1:8000."
+            value={values.serverWsBase}
+            onChange={(value) => updateServerWsBase(value)}
+          />
+          <Field
+            label="Device API Key"
+            help="서버 콘솔의 Devices에서 발급한 키입니다(키 발급은 서버에서만 합니다). 보통은 빠른 시작 등록 때 자동으로 쓰이며, 보안상 저장하지 않습니다."
+            value={values.deviceApiKey}
+            secret
+            onChange={(value) => updateValue("deviceApiKey", value)}
+          />
+          <Field
+            label="Session ID"
+            help="회의를 만들면 자동으로 채워집니다. 자막이 엉뚱한 회의로 갈 때만 확인하세요."
+            value={values.sessionId}
+            onChange={(value) => updateValue("sessionId", value)}
+          />
+        </section>
 
-          <section style={styles.panelDark}>
-            <h2 style={styles.sectionTitleDark}>{platformConfig.commandTitle}</h2>
-            <pre style={styles.code}>{sidecarCommand}</pre>
-            <button type="button" onClick={copyCommand} style={styles.primaryButton}>
-              {copied ? "복사 완료" : platformConfig.copyLabel}
-            </button>
-            <p style={styles.commandHint}>{platformConfig.commandHint}</p>
-          </section>
-        </main>
-
-        <PlatformRunbookPanel platform={values.platform} />
-
-        <SidecarRunnerPanel values={values} />
+        <PlatformRunbookPanel />
 
         <SmokeChecklist checks={checks} onRunAll={runAllSmokeChecks} running={runningChecks} />
       </details>

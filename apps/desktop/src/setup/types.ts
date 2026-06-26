@@ -1,7 +1,7 @@
 // === ANCHOR: TYPES_START ===
 export type SmokeStatus = "idle" | "checking" | "ok" | "fail";
 
-export type SmokeCheckKey = "server" | "gemini" | "viewer";
+export type SmokeCheckKey = "server" | "gemini";
 
 export type SmokeCheck = {
   key: SmokeCheckKey;

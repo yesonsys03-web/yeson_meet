@@ -1,8 +1,8 @@
 // === ANCHOR: SMOKECHECKS_START ===
-import { httpBaseFromWs, isSecureViewerUrl } from "./setupValues";
+import { httpBaseFromWs } from "./setupValues";
 import type { SetupValues, SmokeCheck, SmokeCheckKey } from "./types";
 
-export const SMOKE_CHECK_ORDER: SmokeCheckKey[] = ["server", "gemini", "viewer"];
+export const SMOKE_CHECK_ORDER: SmokeCheckKey[] = ["server", "gemini"];
 
 // === ANCHOR: SMOKECHECKS_INITIALSMOKECHECKS_START ===
 export function initialSmokeChecks(): Record<SmokeCheckKey, SmokeCheck> {
@@ -21,13 +21,6 @@ export function initialSmokeChecks(): Record<SmokeCheckKey, SmokeCheck> {
       status: "idle",
       detail: "아직 확인하지 않았습니다.",
     },
-    viewer: {
-      key: "viewer",
-      label: "Viewer URL",
-      description: "폰/노트북에서 열 자막 주소가 응답하는지 확인합니다.",
-      status: "idle",
-      detail: "아직 확인하지 않았습니다.",
-    },
   };
 }
 // === ANCHOR: SMOKECHECKS_INITIALSMOKECHECKS_END ===
@@ -38,8 +31,7 @@ export async function runSmokeCheck(
   values: SetupValues,
 ): Promise<Pick<SmokeCheck, "status" | "detail">> {
   if (key === "server") return checkServer(values);
-  if (key === "gemini") return checkGemini(values);
-  return checkViewer(values);
+  return checkGemini(values);
 }
 // === ANCHOR: SMOKECHECKS_RUNSMOKECHECK_END ===
 
@@ -65,21 +57,4 @@ async function checkGemini(values: SetupValues): Promise<Pick<SmokeCheck, "statu
   return { status: "ok", detail: "Gemini configured" };
 }
 // === ANCHOR: SMOKECHECKS_CHECKGEMINI_END ===
-
-// === ANCHOR: SMOKECHECKS_CHECKVIEWER_START ===
-async function checkViewer(values: SetupValues): Promise<Pick<SmokeCheck, "status" | "detail">> {
-  if (!values.viewerUrl || values.viewerUrl.includes("<")) {
-    return { status: "fail", detail: "실제 viewer URL을 먼저 입력하세요." };
-  }
-  if (!isSecureViewerUrl(values.viewerUrl)) {
-    return { status: "fail", detail: "Viewer URL은 https:// 주소여야 합니다." };
-  }
-
-  const response = await fetch(values.viewerUrl).catch(() => fetch(values.viewerUrl, { mode: "no-cors" }));
-  if (response.type !== "opaque" && !response.ok) {
-    return { status: "fail", detail: `Viewer URL 실패: HTTP ${response.status}` };
-  }
-  return { status: "ok", detail: "Viewer URL 응답 OK" };
-}
-// === ANCHOR: SMOKECHECKS_CHECKVIEWER_END ===
 // === ANCHOR: SMOKECHECKS_END ===
