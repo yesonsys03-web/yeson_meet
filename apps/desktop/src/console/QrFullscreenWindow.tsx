@@ -75,8 +75,8 @@ const qrWindowStyles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
   qrFrame: {
-    width: "min(90vw, 80vh)",
-    height: "min(90vw, 80vh)",
+    width: "min(86vw, 66vh)",
+    height: "min(86vw, 66vh)",
     flexShrink: 0,
     display: "grid",
     placeItems: "center",
