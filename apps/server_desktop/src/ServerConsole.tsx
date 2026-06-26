@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { type AppLogEntry, append, clearAppLogs, filterLogEntries, installAppLogCapture, saveAppLogSnapshot, subscribeAppLogs } from "./appLog";
+import { formatServerWsAddress } from "./serverAddress";
 import ServerConfigPanel from "./setup/ServerConfigPanel";
 import TunnelDegradedBanner from "./TunnelDegradedBanner";
 import DevicePanel from "./DevicePanel";
@@ -125,6 +126,7 @@ export default function ServerConsole() {
   const [tunnelBusy, setTunnelBusy] = useState(false);
   const [autoGoLive, setAutoGoLive] = useState<boolean>(loadAutoGoLive);
   const [appVersion, setAppVersion] = useState<string>("");
+  const [lanIp, setLanIp] = useState<string | null>(null);
   const [, forceTick] = useState(0);
   const logBodyRef = useRef<HTMLDivElement>(null);
   // Latest onGoLive, so onStart can trigger auto-publish without a forward
@@ -154,6 +156,11 @@ export default function ServerConsole() {
       setStatus(next);
     } catch (err) {
       setError(errorToText(err));
+    }
+    try {
+      setLanIp(await invoke<string>("detect_lan_ip"));
+    } catch {
+      setLanIp(null);
     }
     // Tunnel + live-meeting state for the "Go live (public)" control. Best-effort:
     // a probe failure (e.g. server momentarily down) must not spam the error line.
@@ -399,6 +406,18 @@ export default function ServerConsole() {
             <Stat label="pid" value={liveStatus?.pid != null ? String(liveStatus.pid) : "—"} />
             <Stat label="uptime" value={formatUptime(liveStatus?.uptimeSecs ?? null)} />
           </dl>
+          {running && lanIp ? (
+            <div style={styles.lanAddressBanner}>
+              <span>내 서버 주소</span>
+              <code style={styles.lanAddress}>{formatServerWsAddress(lanIp, liveStatus?.port ?? port)}</code>
+              <button
+                type="button"
+                onClick={() => navigator.clipboard.writeText(formatServerWsAddress(lanIp, liveStatus?.port ?? port))}
+              >
+                복사
+              </button>
+            </div>
+          ) : null}
           {/* Public mode (P4.1b): expose the per-meeting viewer URL over a cloudflared
               quick-tunnel. "Go live" is hidden while a meeting is active — going
               public restarts the server, which would interrupt a live meeting. */}
@@ -670,5 +689,7 @@ const styles: Record<string, React.CSSProperties> = {
   logLine: { display: "flex", gap: 10, whiteSpace: "pre-wrap", wordBreak: "break-word" },
   logTs: { color: "var(--ys-text-faint)", flex: "0 0 auto" },
   logSource: { color: "var(--ys-text-muted)", flex: "0 0 auto", minWidth: 92 },
+  lanAddressBanner: { display: "flex", gap: 10, alignItems: "center", marginTop: 12, padding: "10px 14px", borderRadius: 12, background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e3a8a", fontSize: 13 },
+  lanAddress: { fontWeight: 800 },
 };
 // === ANCHOR: SERVER_CONSOLE_END ===
