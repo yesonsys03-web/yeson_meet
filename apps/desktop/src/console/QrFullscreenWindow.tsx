@@ -20,7 +20,10 @@ export function QrFullscreenWindow() {
         light: "#f8fafc",
       },
     }).then((svg) => {
-      if (active) setQrSvg(svg);
+      // The generated SVG carries a fixed width="1024" height="1024"; left as-is
+      // it ignores its frame and overflows small windows (the real clip cause).
+      // Force it to fill its (sized) container instead — viewBox keeps it square.
+      if (active) setQrSvg(svg.replace(/ width="\d+"/, ' width="100%"').replace(/ height="\d+"/, ' height="100%"'));
     });
     return () => {
       active = false;
@@ -51,48 +54,65 @@ export function QrFullscreenWindow() {
       onClick={() => void closeCurrentQrWindow()}
       title="클릭 또는 q(ㅂ)로 닫기"
     >
-      <div style={qrWindowStyles.qrFrame} dangerouslySetInnerHTML={{ __html: qrSvg }} aria-label="QR code for viewer URL" />
+      <div style={qrWindowStyles.qrFrame}>
+        <div style={qrWindowStyles.qrSvgWrap} dangerouslySetInnerHTML={{ __html: qrSvg }} aria-label="QR code for viewer URL" />
+      </div>
       <p style={qrWindowStyles.url}>{url}</p>
     </main>
   );
 }
 
 const qrWindowStyles: Record<string, React.CSSProperties> = {
+  // position:fixed + inset:0 + overflow:hidden guarantees the overlay is exactly
+  // the viewport and never scrolls/clips. The QR frame shrinks to whatever space
+  // remains after the caption (flex 0 1 auto + minHeight 0), capped so it never
+  // exceeds the viewport on any aspect ratio/DPI; the caption never shrinks.
   page: {
-    width: "100vw",
-    height: "100vh",
+    position: "fixed",
+    inset: 0,
     margin: 0,
     boxSizing: "border-box",
     display: "flex",
     flexDirection: "column",
     justifyContent: "center",
     alignItems: "center",
-    gap: 16,
-    padding: "2vh 4vw",
+    gap: "2vh",
+    padding: "3vh 3vw",
     background: "#020617",
     color: "#f8fafc",
     fontFamily: "Aptos, 'Segoe UI', sans-serif",
     cursor: "pointer",
+    overflow: "hidden",
   },
   qrFrame: {
-    width: "min(86vw, 66vh)",
-    height: "min(86vw, 66vh)",
+    // Deterministic square, capped by BOTH width and height so it can never
+    // exceed the viewport. 72vh leaves ample room for the caption + padding on
+    // any window. box-sizing:border-box keeps the padding inside the cap.
+    width: "min(90vw, 72vh)",
+    height: "min(90vw, 72vh)",
     flexShrink: 0,
-    display: "grid",
-    placeItems: "center",
-    padding: "min(3vw, 3vh)",
+    boxSizing: "border-box",
+    display: "flex",
+    padding: "min(3vmin, 22px)",
     borderRadius: 24,
     background: "#f8fafc",
     boxShadow: "0 18px 42px rgba(2,6,23,.34)",
   },
+  qrSvgWrap: {
+    width: "100%",
+    height: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   url: {
+    flex: "0 0 auto",
     margin: 0,
-    flexShrink: 0,
-    fontSize: 18,
+    fontSize: 16,
     color: "#bae6fd",
     overflowWrap: "anywhere",
     textAlign: "center",
-    maxWidth: "90vw",
+    maxWidth: "94vw",
   },
 };
 // === ANCHOR: QR_FULLSCREEN_WINDOW_END ===
