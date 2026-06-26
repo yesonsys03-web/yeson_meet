@@ -1,6 +1,7 @@
 // === ANCHOR: LIB_START ===
 mod credentials;
 mod diagnostics;
+mod discovery;
 mod sidecar;
 
 use tauri::Manager;
@@ -23,6 +24,7 @@ pub fn run() {
             credentials::credentials_meta,
             credentials::load_operator_login,
             credentials::update_server_ws_base,
+            discovery::discover_server,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
