@@ -3,11 +3,49 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from itertools import groupby
 from pathlib import Path
 
 from apps.server.db.models import Session, Utterance
+
+
+# === ANCHOR: REPORTS_MERGE_START ===
+@dataclass
+class MergedUtterance:
+    """A turn whose continuation rows (empty text_en, same speaker) have been merged."""
+    speaker: object
+    started_at: object
+    ended_at: object
+    text_en: str
+    text_ko: str
+
+
+def merge_continuation_utterances(rows) -> "list[MergedUtterance]":
+    """Merge sentence-split continuation rows (empty text_en, same speaker) into
+    the previous row's Korean, so each turn renders as [one English original] +
+    [full Korean translation]."""
+    merged: list[MergedUtterance] = []
+    for r in rows:
+        en = (r.text_en or "").strip()
+        ko = (r.text_ko or "").strip()
+        if merged and not en and merged[-1].speaker == r.speaker:
+            prev = merged[-1]
+            prev.text_ko = (prev.text_ko + " " + ko).strip() if ko else prev.text_ko
+            prev.ended_at = r.ended_at
+        else:
+            merged.append(
+                MergedUtterance(
+                    speaker=r.speaker,
+                    started_at=r.started_at,
+                    ended_at=r.ended_at,
+                    text_en=(r.text_en or ""),
+                    text_ko=ko,
+                )
+            )
+    return merged
+# === ANCHOR: REPORTS_MERGE_END ===
 
 
 # === ANCHOR: REPORTS_FORMAT_START ===
@@ -78,8 +116,10 @@ def build_session_report(
     if not utterances:
         lines.append("_No utterances recorded._")
     else:
-        # Group consecutive utterances by speaker (None treated as distinct key)
-        for speaker_key, group in groupby(utterances, key=lambda r: r.speaker):
+        # Group consecutive utterances by speaker (None treated as distinct key).
+        # Merge continuation rows (empty text_en, same speaker) first so each
+        # turn renders as one English line + full merged Korean.
+        for speaker_key, group in groupby(merge_continuation_utterances(utterances), key=lambda r: r.speaker):
             group_rows = list(group)
             label = _speaker_label(speaker_key)
             first = group_rows[0]

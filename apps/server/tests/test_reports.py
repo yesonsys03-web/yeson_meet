@@ -7,7 +7,29 @@ from types import SimpleNamespace
 
 import pytest
 
-from apps.server.domain.reports import _hms, build_session_report
+from apps.server.domain.reports import _hms, build_session_report, merge_continuation_utterances
+
+# ---------------------------------------------------------------------------
+# Helpers shared with merge tests
+# ---------------------------------------------------------------------------
+
+def _utt_ns(
+    seq: int,
+    speaker: str | None,
+    text_en: str,
+    text_ko: str,
+    started_at: datetime | None = None,
+    ended_at: datetime | None = None,
+) -> SimpleNamespace:
+    base = datetime(2026, 6, 24, 9, 5, 0, tzinfo=timezone.utc)
+    return SimpleNamespace(
+        seq=seq,
+        speaker=speaker,
+        text_en=text_en,
+        text_ko=text_ko,
+        started_at=started_at or base,
+        ended_at=ended_at or base,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -161,4 +183,71 @@ def test_hms_converts_utc_to_local_timezone() -> None:
     dt_utc = datetime(2026, 6, 24, 5, 8, 0, tzinfo=timezone.utc)
     expected = dt_utc.astimezone().strftime("%H:%M:%S")
     assert _hms(dt_utc) == expected
+
+
+# ---------------------------------------------------------------------------
+# FIX 2: merge_continuation_utterances unit tests
+# ---------------------------------------------------------------------------
+
+def test_merge_continuation_unit_basic():
+    """Continuation rows (empty en, same speaker) merge into the previous turn."""
+    rows = [
+        _utt_ns(1, "A", "Hello there.", "안녕하세요."),
+        _utt_ns(2, "A", "", "잘 지내요."),
+        _utt_ns(3, "A", "", "반갑습니다."),
+    ]
+    result = merge_continuation_utterances(rows)
+    assert len(result) == 1
+    assert result[0].text_en == "Hello there."
+    assert result[0].text_ko == "안녕하세요. 잘 지내요. 반갑습니다."
+    assert result[0].speaker == "A"
+
+
+def test_merge_continuation_unit_speaker_change_no_merge():
+    """A speaker change must NOT merge rows even when text_en is empty."""
+    rows = [
+        _utt_ns(1, "A", "Hello.", "안녕."),
+        _utt_ns(2, "B", "", "잘 지내요."),
+    ]
+    result = merge_continuation_utterances(rows)
+    assert len(result) == 2
+    assert result[0].speaker == "A"
+    assert result[1].speaker == "B"
+    assert result[1].text_ko == "잘 지내요."
+
+
+def test_merge_continuation_unit_own_en_starts_new_turn():
+    """A row that has its own text_en must always start a new turn."""
+    rows = [
+        _utt_ns(1, "A", "First.", "첫째."),
+        _utt_ns(2, "A", "Second.", "둘째."),
+    ]
+    result = merge_continuation_utterances(rows)
+    assert len(result) == 2
+    assert result[0].text_en == "First."
+    assert result[1].text_en == "Second."
+
+
+# ---------------------------------------------------------------------------
+# FIX 2: build_session_report body uses merged rows
+# ---------------------------------------------------------------------------
+
+def test_build_session_report_merges_continuation_rows():
+    """Report body must merge continuation rows into one EN + merged KO turn."""
+    meeting = _make_meeting()
+    utterances = [
+        _utt_ns(1, "A", "Hello there.", "안녕하세요."),
+        _utt_ns(2, "A", "", "잘 지내요."),
+        _utt_ns(3, "A", "", "반갑습니다."),
+    ]
+    result = build_session_report(meeting, utterances)
+    # Merged Korean must appear in one combined line.
+    assert "안녕하세요. 잘 지내요. 반갑습니다." in result
+    # English must appear once.
+    assert "Hello there." in result
+    # No empty-English lines for seq2/seq3 should exist as separate KO entries.
+    ko_lines = [l for l in result.splitlines() if l.startswith("- KO:")]
+    assert len(ko_lines) == 1, f"Expected 1 KO line, got {len(ko_lines)}: {ko_lines}"
+    en_lines = [l for l in result.splitlines() if l.startswith("- EN:") and l.strip() != "- EN:"]
+    assert len(en_lines) == 1, f"Expected 1 non-empty EN line, got {en_lines}"
 # === ANCHOR: TEST_REPORTS_END ===

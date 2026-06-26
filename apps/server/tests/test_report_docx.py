@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import pytest
 from docx import Document
 
-from apps.server.domain.report_docx import build_session_report_docx
+from apps.server.domain.report_docx import build_session_report_docx, build_summary_docx
 
 
 # ---------------------------------------------------------------------------
@@ -130,3 +130,75 @@ def test_empty_utterances_no_crash():
     assert "테스트 회의" in text
     # Should not crash and should produce valid bytes
     assert len(b) > 100
+
+
+# ---------------------------------------------------------------------------
+# FIX 1: Summary markdown rendered in DOCX (not raw text)
+# ---------------------------------------------------------------------------
+
+_SUMMARY_MD = (
+    "## 회의 요약\n"
+    "\n"
+    "**중요** 내용\n"
+    "\n"
+    "## 액션 아이템\n"
+    "- 첫째\n"
+    "- 둘째"
+)
+
+
+def test_summary_md_no_raw_markers_in_build_summary_docx():
+    """build_summary_docx must not emit literal ## or ** in paragraph text."""
+    b = build_summary_docx(_meeting(), _SUMMARY_MD)
+    doc = Document(io.BytesIO(b))
+    text = _all_text(doc)
+    assert "##" not in text, f"Raw ## found in docx text: {text!r}"
+    assert "**" not in text, f"Raw ** found in docx text: {text!r}"
+
+
+def test_summary_md_heading_in_build_summary_docx():
+    """build_summary_docx must produce a heading paragraph for ## 회의 요약."""
+    b = build_summary_docx(_meeting(), _SUMMARY_MD)
+    doc = Document(io.BytesIO(b))
+    headings = [p for p in doc.paragraphs if p.style.name.startswith("Heading")]
+    heading_texts = [p.text for p in headings]
+    assert any("회의 요약" in t for t in heading_texts), (
+        f"Expected heading containing '회의 요약', got: {heading_texts}"
+    )
+
+
+def test_summary_md_list_bullet_in_build_summary_docx():
+    """build_summary_docx must produce a List Bullet paragraph for '- 첫째'."""
+    b = build_summary_docx(_meeting(), _SUMMARY_MD)
+    doc = Document(io.BytesIO(b))
+    bullet_paras = [p for p in doc.paragraphs if "List Bullet" in p.style.name]
+    bullet_texts = [p.text for p in bullet_paras]
+    assert any("첫째" in t for t in bullet_texts), (
+        f"Expected bullet paragraph with '첫째', got: {bullet_texts}"
+    )
+
+
+def test_summary_md_bold_run_in_build_summary_docx():
+    """build_summary_docx must produce a bold run for '중요' (from **중요**)."""
+    b = build_summary_docx(_meeting(), _SUMMARY_MD)
+    doc = Document(io.BytesIO(b))
+    bold_run_texts = [
+        run.text
+        for p in doc.paragraphs
+        for run in p.runs
+        if run.bold
+    ]
+    assert any("중요" in t for t in bold_run_texts), (
+        f"Expected bold run containing '중요', got bold runs: {bold_run_texts}"
+    )
+
+
+def test_summary_md_no_raw_markers_in_report_docx():
+    """build_session_report_docx summary section must not emit raw ## or **."""
+    b = build_session_report_docx(_meeting(), [], summary=_SUMMARY_MD)
+    doc = Document(io.BytesIO(b))
+    # Exclude the title heading which may contain '##' if summary is in wrong place;
+    # collect all paragraph text and check no literal markers.
+    text = _all_text(doc)
+    assert "##" not in text, f"Raw ## found: {text!r}"
+    assert "**" not in text, f"Raw ** found: {text!r}"

@@ -7,7 +7,7 @@ import re
 from itertools import groupby
 
 from apps.server.db.models import Session, Utterance
-from apps.server.domain.reports import _hms, _speaker_label, _to_local
+from apps.server.domain.reports import _hms, _speaker_label, _to_local, merge_continuation_utterances
 
 
 def _summary_md_to_html(summary: str) -> str:
@@ -205,7 +205,7 @@ def build_session_report_html(
     if not utterances:
         parts.append("<p><em>No utterances recorded.</em></p>")
     else:
-        for speaker_key, group in groupby(utterances, key=lambda r: r.speaker):
+        for speaker_key, group in groupby(merge_continuation_utterances(utterances), key=lambda r: r.speaker):
             group_rows = list(group)
             label = _speaker_label(speaker_key)
             first = group_rows[0]
