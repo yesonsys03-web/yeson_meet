@@ -1,4 +1,5 @@
 // === ANCHOR: MEETING_QUICK_START_PANEL_START ===
+import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { LiveSubtitlePreview } from "../console/LiveSubtitlePreview";
 import { ViewerQrPanel } from "../console/ViewerQrPanel";
@@ -68,7 +69,12 @@ export function MeetingQuickStartPanel() {
       // Point apiBase() at the chosen server via the localStorage cache only (no secret, no keychain write yet).
       storeValues({ ...loadValues(), serverWsBase });
       const { access_token: operatorToken } = await loginOperator(form.email, form.password);
-      const deviceName = `client-${navigator.platform || "device"}`;
+      let deviceName: string;
+      try {
+        deviceName = await invoke<string>("device_label");
+      } catch {
+        deviceName = `client-${navigator.platform || "device"}`;
+      }
       const apiKey = await selfEnrollDevice(operatorToken, deviceName);
       await saveCredentials({ serverWsBase, email: form.email, password: form.password, deviceApiKey: apiKey });
       await hydrateServerAddressFromKeychain();

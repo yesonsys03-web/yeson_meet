@@ -3,6 +3,18 @@ use std::time::Duration;
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use serde::Serialize;
 
+/// Returns a stable, hostname-based device label for self-enroll dedup.
+/// Falls back to `client-device` if the hostname cannot be obtained.
+#[tauri::command]
+pub fn device_label() -> String {
+    let host = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .filter(|h| !h.trim().is_empty())
+        .unwrap_or_else(|| "device".to_string());
+    format!("client-{host}")
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscoveredServer {
