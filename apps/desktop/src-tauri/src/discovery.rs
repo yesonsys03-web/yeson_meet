@@ -15,9 +15,13 @@ pub struct DiscoveredServer {
 #[tauri::command]
 pub fn discover_server() -> Result<Option<DiscoveredServer>, String> {
     let daemon = ServiceDaemon::new().map_err(|e| format!("mDNS 시작 실패: {e}"))?;
-    let receiver = daemon
-        .browse("_yeson-meet._tcp.local.")
-        .map_err(|e| format!("mDNS 브라우즈 실패: {e}"))?;
+    let receiver = match daemon.browse("_yeson-meet._tcp.local.") {
+        Ok(receiver) => receiver,
+        Err(error) => {
+            let _ = daemon.shutdown();
+            return Err(format!("mDNS 브라우즈 실패: {error}"));
+        }
+    };
 
     let deadline = Duration::from_secs(3);
     let found = loop {
