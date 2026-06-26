@@ -6,7 +6,7 @@ import { loginOperator, selfEnrollDevice, type ReportFormat } from "../console/s
 import { useMeetingLifecycle } from "../console/useMeetingLifecycle";
 import { EMPTY_META, hydrateServerAddressFromKeychain, loadCredentialsMeta, saveCredentials, type CredentialsMeta } from "./credentials";
 import { discoverServer, probeLocalServer, resolveServerWsBase } from "./serverDiscovery";
-import { loadValues } from "./setupValues";
+import { loadValues, storeValues } from "./setupValues";
 import { styles } from "./styles";
 
 export function MeetingQuickStartPanel() {
@@ -19,6 +19,9 @@ export function MeetingQuickStartPanel() {
   }));
   const [serverWsBase, setServerWsBase] = useState<string>(() => loadValues().serverWsBase);
   const [discovering, setDiscovering] = useState(false);
+  const [manualEntry, setManualEntry] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [error, setError] = useState("");
   const activeSessionId = lifecycle.createdSession?.session_id ?? null;
   const registered = meta.hasCredentials && !editing;
 
@@ -29,7 +32,12 @@ export function MeetingQuickStartPanel() {
         probeLocal: probeLocalServer,
         discover: discoverServer,
       });
-      if (resolved) setServerWsBase(resolved);
+      if (resolved) {
+        setServerWsBase(resolved);
+        setManualEntry(false);
+      } else {
+        setManualEntry(true);
+      }
     } finally {
       setDiscovering(false);
     }
@@ -54,20 +62,24 @@ export function MeetingQuickStartPanel() {
   }
 
   async function registerAndStart() {
-    // 1) save creds with resolved address + empty device key — self-enroll fills it
-    await saveCredentials({ serverWsBase, email: form.email, password: form.password, deviceApiKey: "" });
-    // P2: re-derive the localStorage serverWsBase cache from the keychain we just wrote,
-    // so apiBase() (login/createSession) targets the saved host on the very next call.
-    await hydrateServerAddressFromKeychain();
-    // 2) operator login → device self-enroll → persist key to keychain
-    const { access_token: operatorToken } = await loginOperator(form.email, form.password);
-    const deviceName = `client-${navigator.platform || "device"}`;
-    const apiKey = await selfEnrollDevice(operatorToken, deviceName);
-    await saveCredentials({ serverWsBase, email: form.email, password: form.password, deviceApiKey: apiKey });
-    // 3) existing flow
-    await refreshMeta();
-    setEditing(false);
-    await lifecycle.startMeetingOneClick();
+    setRegistering(true);
+    setError("");
+    try {
+      // Point apiBase() at the chosen server via the localStorage cache only (no secret, no keychain write yet).
+      storeValues({ ...loadValues(), serverWsBase });
+      const { access_token: operatorToken } = await loginOperator(form.email, form.password);
+      const deviceName = `client-${navigator.platform || "device"}`;
+      const apiKey = await selfEnrollDevice(operatorToken, deviceName);
+      await saveCredentials({ serverWsBase, email: form.email, password: form.password, deviceApiKey: apiKey });
+      await hydrateServerAddressFromKeychain();
+      await refreshMeta();
+      setEditing(false);
+      await lifecycle.startMeetingOneClick();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRegistering(false);
+    }
   }
 
   return (
@@ -136,7 +148,7 @@ export function MeetingQuickStartPanel() {
                   {discovering ? "찾는 중..." : "다시 찾기"}
                 </button>
               </div>
-              {!serverWsBase && (
+              {manualEntry && (
                 <QuickField
                   label="서버 주소 (직접 입력)"
                   value={serverWsBase}
@@ -146,8 +158,8 @@ export function MeetingQuickStartPanel() {
               <QuickField label="Operator email" value={form.email} type="email" onChange={(value) => setForm((c) => ({ ...c, email: value }))} />
               <QuickField label="Operator password" value={form.password} type="password" onChange={(value) => setForm((c) => ({ ...c, password: value }))} /> {/* vibelign: allow-secret — field name only, not a key value */}
               <div style={styles.quickStartActions}>
-                <button type="button" onClick={registerAndStart} disabled={lifecycle.busy} style={styles.primaryButton}>
-                  기억하고 회의 시작
+                <button type="button" onClick={registerAndStart} disabled={registering || lifecycle.busy} style={styles.primaryButton}>
+                  {registering ? "등록 중..." : "기억하고 회의 시작"}
                 </button>
                 {meta.hasCredentials ? (
                   <button type="button" onClick={() => setEditing(false)} disabled={lifecycle.busy} style={styles.secondaryLightButton}>
@@ -155,6 +167,7 @@ export function MeetingQuickStartPanel() {
                   </button>
                 ) : null}
               </div>
+              {error && <p style={{ color: "#f87171", fontSize: 12, marginTop: 6 }}>{error}</p>}
             </>
           )}
           <div style={lifecycle.errorText ? styles.quickStartError : styles.quickStartStatus}>
