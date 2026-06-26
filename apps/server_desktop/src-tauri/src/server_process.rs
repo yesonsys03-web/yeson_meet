@@ -6,6 +6,7 @@
 //! copy: the env injected, the binary located, and the teardown grace rationale
 //! all differ for a server (SQLite WAL checkpoint) rather than the client's audio
 //! capture sidecar (ScreenCaptureKit).
+use mdns_sd::{ServiceDaemon, ServiceInfo};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -34,12 +35,16 @@ struct RunningServer {
     child: Child,
     port: u16,
     started_at: Instant,
+    mdns: Option<ServiceDaemon>,
 }
 
 impl Drop for ServerProcessState {
     fn drop(&mut self) {
         if let Ok(mut slot) = self.inner.lock() {
             if let Some(mut running) = slot.take() {
+                if let Some(mdns) = running.mdns.take() {
+                    let _ = mdns.shutdown();
+                }
                 terminate_group(&mut running.child);
             }
         }
@@ -109,6 +114,9 @@ fn terminate_group(child: &mut Child) {
 pub fn shutdown(state: &ServerProcessState) {
     if let Ok(mut slot) = state.inner.lock() {
         if let Some(mut running) = slot.take() {
+            if let Some(mdns) = running.mdns.take() {
+                let _ = mdns.shutdown();
+            }
             terminate_group(&mut running.child);
         }
     }
@@ -307,10 +315,12 @@ pub fn start_server_inner(
     spawn_output_forwarder(app, "server:stdout", "info", child.stdout.take());
     spawn_output_forwarder(app, "server:stderr", "warn", child.stderr.take());
 
+    let mdns = advertise_mdns(port);
     let running = RunningServer {
         child,
         port,
         started_at: Instant::now(),
+        mdns,
     };
     let status = running_status(&running, "server started");
     *slot = Some(running);
@@ -548,6 +558,9 @@ pub fn stop_server_inner(state: &ServerProcessState) -> Result<ServerStatus, Str
     let Some(mut running) = slot.take() else {
         return Ok(stopped_status("server is not running"));
     };
+    if let Some(mdns) = running.mdns.take() {
+        let _ = mdns.shutdown();
+    }
     terminate_group(&mut running.child);
     Ok(stopped_status("server stopped"))
 }
@@ -1019,6 +1032,25 @@ mod tests {
         assert!(!old.exists(), "8-day-old log must be pruned");
         let _ = fs::remove_dir_all(&dir);
     }
+}
+
+/// Advertise the running server on the LAN so clients can auto-discover it.
+/// Best-effort: a failure here never blocks server startup.
+fn advertise_mdns(port: u16) -> Option<ServiceDaemon> {
+    let ip = local_ip_address::local_ip().ok()?;
+    let daemon = ServiceDaemon::new().ok()?;
+    let host_name = format!("{}.local.", "yeson-meet-server");
+    let info = ServiceInfo::new(
+        "_yeson-meet._tcp.local.",
+        "yeson-meet-server",
+        &host_name,
+        ip,
+        port,
+        &[("path", "/")][..],
+    )
+    .ok()?;
+    daemon.register(info).ok()?;
+    Some(daemon)
 }
 
 #[tauri::command]
