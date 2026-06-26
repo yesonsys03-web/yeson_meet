@@ -201,6 +201,16 @@ export async function fetchOperatorBackfill(
   return parseJsonResponse<{ utterances: UtteranceTranscribed[]; session_status: string }>(response, "Fetch subtitles");
 }
 
+export async function selfEnrollDevice(operatorToken: string, name: string): Promise<string> {
+  const response = await timedFetch("Self-enroll device", `${apiBase()}/api/v1/devices/self-enroll`, {
+    method: "POST",
+    headers: authHeaders(operatorToken),
+    body: JSON.stringify({ name }),
+  });
+  const body = await parseJsonResponse<{ id: number; name: string; api_key: string }>(response, "Self-enroll device");
+  return body.api_key;
+}
+
 // Device-key mint/list/revoke moved to the SERVER console (apps/server_desktop):
 // issuing/revoking device keys is an admin control-plane action and no longer
 // lives in this operator client. The client only RECEIVES a device key (pasted
