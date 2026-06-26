@@ -250,11 +250,12 @@ function DetailPane({ item, operatorToken, reportHtmlCache, onCacheHtml }: Detai
     setExportMsg(null);
     try {
       const result = await exportReports(item.external_id, operatorToken);
-      if (result.saved.length > 0) {
-        setExportMsg(`저장됨: ${result.saved.join(", ")}`);
-      } else {
-        setExportMsg("저장된 파일이 없습니다.");
+      const parts: string[] = [];
+      if (result.saved.length > 0) parts.push(`저장됨: ${result.saved.join(", ")}`);
+      if (result.skipped.length > 0) {
+        parts.push(`실패: ${result.skipped.map((s) => `${s.fmt}(${s.reason})`).join(", ")}`);
       }
+      setExportMsg(parts.join(" / ") || "저장된 파일이 없습니다.");
     } catch (err) {
       setExportMsg(`내보내기 실패: ${err instanceof Error ? err.message : String(err)}`);
     } finally {

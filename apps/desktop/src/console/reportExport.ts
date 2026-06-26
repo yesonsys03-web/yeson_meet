@@ -16,6 +16,35 @@ export type ExportResult = {
 
 export const DEFAULT_EXPORT_FORMATS: ReportFormat[] = ["md", "html", "docx", "pdf"];
 
+type WriteFileFn = (path: string, data: Uint8Array) => Promise<void>;
+
+// `report.md` → `report-2026-06-26_14-15-30.md`
+function withTimestampSuffix(name: string): string {
+  const dot = name.lastIndexOf(".");
+  const stem = dot === -1 ? name : name.slice(0, dot);
+  const ext = dot === -1 ? "" : name.slice(dot);
+  const ts = new Date().toISOString().slice(0, 19).replace("T", "_").replace(/:/g, "-");
+  return `${stem}-${ts}${ext}`;
+}
+
+/**
+ * Write `baseName` into `dir`. If that write throws — the file already exists and
+ * is locked (e.g. still open in a viewer on Windows) or overwriting is blocked —
+ * retry once with a timestamped sibling name so a re-export never silently fails
+ * on a name collision. Returns the filename actually written; re-throws only if
+ * the retry also fails (e.g. the folder itself is not writable).
+ */
+async function writeExport(writeFile: WriteFileFn, dir: string, baseName: string, data: Uint8Array): Promise<string> {
+  try {
+    await writeFile(`${dir}/${baseName}`, data);
+    return baseName;
+  } catch {
+    const alt = withTimestampSuffix(baseName);
+    await writeFile(`${dir}/${alt}`, data);
+    return alt;
+  }
+}
+
 /**
  * Export session reports to a user-selected directory (or `defaultDir` if
  * provided) and open the folder afterwards.
@@ -85,10 +114,8 @@ export async function exportReports(
       continue;
     }
     const filename = fmt === "md" ? "report.md" : `report.${fmt}`;
-    const filePath = `${dir}/${filename}`;
     try {
-      await writeFile(filePath, result.data);
-      saved.push(filename);
+      saved.push(await writeExport(writeFile, dir, filename, result.data));
     } catch (err) {
       skipped.push({ fmt, reason: err instanceof Error ? err.message : String(err) });
     }
@@ -171,10 +198,8 @@ export async function exportSummary(
       continue;
     }
     const filename = `summary.${fmt}`;
-    const filePath = `${dir}/${filename}`;
     try {
-      await writeFile(filePath, result.data);
-      saved.push(filename);
+      saved.push(await writeExport(writeFile, dir, filename, result.data));
     } catch (err) {
       skipped.push({ fmt, reason: err instanceof Error ? err.message : String(err) });
     }

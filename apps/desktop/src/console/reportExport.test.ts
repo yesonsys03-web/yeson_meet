@@ -223,6 +223,51 @@ describe("exportReports (Tauri runtime)", () => {
     expect(result.skipped[0]!.reason).toContain("503");
   });
 
+  it("retries with a timestamped name when the base filename write fails (collision/lock)", async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { writeFile } = await import("@tauri-apps/plugin-fs");
+
+    (open as ReturnType<typeof vi.fn>).mockResolvedValue("/tmp/exports");
+    // First write (report.md) fails as if the file already exists and is locked
+    // (Windows viewer holding it); the timestamped retry succeeds.
+    (writeFile as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error("file exists / locked"))
+      .mockResolvedValue(undefined);
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new ArrayBuffer(4),
+    });
+
+    const result = await exportReports("sess-1", "tok", ["md"], { openFolder: false });
+
+    expect(writeFile).toHaveBeenCalledTimes(2); // base + timestamped retry
+    expect(result.skipped).toHaveLength(0);
+    expect(result.saved).toHaveLength(1);
+    expect(result.saved[0]).toMatch(/^report-.*\.md$/);
+    const retryPath = (writeFile as ReturnType<typeof vi.fn>).mock.calls[1]![0] as string;
+    expect(retryPath).toContain("/tmp/exports/report-");
+  });
+
+  it("skips a format when both the base and retry writes fail", async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { writeFile } = await import("@tauri-apps/plugin-fs");
+
+    (open as ReturnType<typeof vi.fn>).mockResolvedValue("/tmp/exports");
+    (writeFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("permission denied"));
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new ArrayBuffer(4),
+    });
+
+    const result = await exportReports("sess-1", "tok", ["md"], { openFolder: false });
+
+    expect(result.saved).toHaveLength(0);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]!.reason).toContain("permission denied");
+  });
+
   it("calls openPath when openFolder is true and files were saved", async () => {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const { writeFile } = await import("@tauri-apps/plugin-fs");
