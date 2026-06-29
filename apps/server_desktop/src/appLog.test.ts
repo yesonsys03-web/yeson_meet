@@ -1,3 +1,4 @@
+// === ANCHOR: APPLOG_TEST_START ===
 import { describe, it, expect } from "vitest";
 import {
   filterLogEntries,
@@ -6,6 +7,7 @@ import {
   type AppLogEntry,
 } from "./appLog";
 
+// === ANCHOR: APPLOG_TEST_ENTRY_START ===
 const entry = (over: Partial<AppLogEntry>): AppLogEntry => ({
   id: 1,
   ts: "2026-06-23T08:00:01.000Z",
@@ -14,6 +16,7 @@ const entry = (over: Partial<AppLogEntry>): AppLogEntry => ({
   message: "hello world",
   ...over,
 });
+// === ANCHOR: APPLOG_TEST_ENTRY_END ===
 
 describe("filterLogEntries", () => {
   const entries = [
@@ -57,3 +60,4 @@ describe("formatAppLogEntry / formatAppLogSnapshot", () => {
     expect(text.split("\n").filter((l) => l.startsWith("[")).length).toBe(2);
   });
 });
+// === ANCHOR: APPLOG_TEST_END ===

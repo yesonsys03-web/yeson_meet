@@ -1,11 +1,14 @@
+// === ANCHOR: CAPTURESTATUS_TEST_START ===
 import { describe, expect, it } from "vitest";
 
 import type { AppLogEntry } from "../diagnostics/appLog";
 import { latestCaptureStatus, parseCaptureStatus } from "./captureStatus";
 
+// === ANCHOR: CAPTURESTATUS_TEST_ENTRY_START ===
 function entry(id: number, message: string): AppLogEntry {
   return { id, ts: "", level: "info", source: "sidecar:stdout", message };
 }
+// === ANCHOR: CAPTURESTATUS_TEST_ENTRY_END ===
 
 describe("parseCaptureStatus", () => {
   it("extracts a known state token", () => {
@@ -38,3 +41,4 @@ describe("latestCaptureStatus", () => {
     expect(latestCaptureStatus([entry(1, "nothing here")])).toBeNull();
   });
 });
+// === ANCHOR: CAPTURESTATUS_TEST_END ===

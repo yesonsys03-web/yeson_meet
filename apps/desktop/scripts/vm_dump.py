@@ -1,3 +1,4 @@
+# === ANCHOR: VM_DUMP_START ===
 """vm_dump.py — dump Voicemeeter state for yeson-meet auto-routing design.
 
 Run on the Windows machine that has Voicemeeter Banana installed and
@@ -32,12 +33,15 @@ DLL_NAME = "VoicemeeterRemote64.dll"
 EDITIONS = {1: "Standard", 2: "Banana", 3: "Potato", 6: "Potato (x64)"}
 
 
+# === ANCHOR: VM_DUMP_LOCATE_DLL_START ===
 def locate_dll() -> str:
     with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, REGISTRY_KEY) as key:
         install_dir, _ = winreg.QueryValueEx(key, INSTALL_DIR_VALUE)
     return f"{install_dir.rstrip(chr(92))}\\{DLL_NAME}"
+# === ANCHOR: VM_DUMP_LOCATE_DLL_END ===
 
 
+# === ANCHOR: VM_DUMP_MAIN_START ===
 def main() -> None:
     dll_path = locate_dll()
     sys.stderr.write(f"[vm_dump] loading {dll_path}\n")
@@ -65,15 +69,19 @@ def main() -> None:
     version = c_long(0)
     dll.VBVMR_GetVoicemeeterVersion(byref(version))
 
+    # === ANCHOR: VM_DUMP_GET_STRING_START ===
     def get_string(param: str) -> str:
         buf = create_string_buffer(512)
         rc = dll.VBVMR_GetParameterStringA(param.encode("ascii"), buf)
         return buf.value.decode("utf-8", errors="replace") if rc == 0 else ""
+    # === ANCHOR: VM_DUMP_GET_STRING_END ===
 
+    # === ANCHOR: VM_DUMP_GET_FLOAT_START ===
     def get_float(param: str) -> float | None:
         value = c_float(0.0)
         rc = dll.VBVMR_GetParameterFloat(param.encode("ascii"), byref(value))
         return float(value.value) if rc == 0 else None
+    # === ANCHOR: VM_DUMP_GET_FLOAT_END ===
 
     lane_count = 5 if vm_type.value == 2 else (8 if vm_type.value in (3, 6) else 3)
     string_keys = [
@@ -88,6 +96,7 @@ def main() -> None:
     strip_floats = ["A1", "A2", "A3", "A4", "A5", "B1", "B2", "B3", "mute", "gain"]
     bus_floats = ["mute", "gain", "mono", "sel"]
 
+    # === ANCHOR: VM_DUMP_DUMP_LANE_START ===
     def dump_lane(prefix: str, count: int, floats: list[str]) -> list[dict]:
         out: list[dict] = []
         for i in range(count):
@@ -100,6 +109,7 @@ def main() -> None:
                     entry[key] = value
             out.append(entry)
         return out
+    # === ANCHOR: VM_DUMP_DUMP_LANE_END ===
 
     report: dict = {
         "edition": EDITIONS.get(vm_type.value, "Unknown"),
@@ -129,6 +139,7 @@ def main() -> None:
         ]
     except ImportError:
         report["windows_audio_devices"] = (
+# === ANCHOR: VM_DUMP_MAIN_END ===
             "sounddevice not installed; skip or run `pip install sounddevice`"
         )
 
@@ -139,3 +150,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+# === ANCHOR: VM_DUMP_END ===

@@ -9,7 +9,7 @@ type ConsoleNavProps = {
 };
 
 const navItems: Array<{ view: ConsoleView; label: string; disabled?: boolean }> = [
-  { view: "setup", label: "Setup Assistant" },
+  { view: "setup", label: "미팅 시작" },
   { view: "settings", label: "Settings" },
   { view: "help", label: "Help Manual" },
   { view: "history", label: "회의 기록" },

@@ -1,3 +1,4 @@
+// === ANCHOR: MEETINGTITLE_TEST_START ===
 import { describe, expect, it } from "vitest";
 
 import { formatMeetingTitle } from "./meetingTitle";
@@ -12,3 +13,4 @@ describe("formatMeetingTitle", () => {
     expect(formatMeetingTitle(new Date(2026, 11, 1, 14, 30))).toBe("2026-12-01 14:30 회의");
   });
 });
+// === ANCHOR: MEETINGTITLE_TEST_END ===

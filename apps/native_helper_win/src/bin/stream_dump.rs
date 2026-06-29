@@ -1,3 +1,4 @@
+// === ANCHOR: STREAM_DUMP_START ===
 //! yeson-win-stream-dump — single self-contained test binary.
 //!
 //! Captures audio and streams it straight to the yeson-meet server's
@@ -90,3 +91,4 @@ fn make_capture_source() -> Result<Box<dyn AudioSource>, String> {
 fn make_capture_source() -> Result<Box<dyn AudioSource>, String> {
     Err("no capture source on this OS — set YESON_PCM_FILE to replay a PCM file".to_string())
 }
+// === ANCHOR: STREAM_DUMP_END ===

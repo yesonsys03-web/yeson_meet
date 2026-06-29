@@ -154,10 +154,16 @@ jobs:
       - name: Publish client installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.10
-          name: yeson-meet v0.9.10
+          tag_name: v0.9.11
+          name: yeson-meet v0.9.11
           prerelease: true
           body: |
+            ## yeson-meet v0.9.11 — 무엇이 바뀌었나
+            - 요약·보고서 PDF 변환이 Microsoft Word가 설치돼 있으면 Word를 우선 사용하고(서식 정확도↑), 없으면 LibreOffice로 자동 폴백합니다.
+            - 앱 내 도움말(Help Manual)을 처음 쓰는 사람도 순서대로 따라 할 수 있게 새로 썼습니다.
+            - 'Setup Assistant' 탭 이름을 '미팅 시작'으로 바꿨습니다.
+
+            ### Windows 클라이언트
             Unsigned Windows test build of the yeson-meet desktop CLIENT app
             (apps/desktop), rebuilt on each run. Install with the .msi: it is
             launched by the trusted Windows Installer and strips the

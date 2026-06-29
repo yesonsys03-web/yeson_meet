@@ -1,3 +1,4 @@
+// === ANCHOR: SOURCE_START ===
 //! Swappable capture source. Yields interleaved f32 blocks at a source
 //! rate/channels — exactly what `pcm::PcmConverter::push_f32` consumes, so the
 //! WASAPI path (Windows) and the PCM-file path (any OS, for macOS dry-runs)
@@ -119,3 +120,4 @@ impl AudioSource for WasapiSource {
         }
     }
 }
+// === ANCHOR: SOURCE_END ===

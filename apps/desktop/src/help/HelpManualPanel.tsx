@@ -9,7 +9,7 @@ export function HelpManualPanel() {
         <p style={helpManualStyles.eyebrow}>help manual</p>
         <h1 style={helpManualStyles.title}>처음 보는 사람도 따라 하는 운영 도움말</h1>
         <p style={helpManualStyles.intro}>
-          서버 PC, 회의실 PC, viewer를 어떤 순서로 확인해야 하는지 짧은 카드로 정리했습니다. 새 장비나 새 절차가 생기면 helpManualContent에 섹션만 추가하면 됩니다.
+          회의 자막을 켜고, 참석자에게 보여주고, 끝나고 기록으로 남기는 방법을 순서대로 정리했어요. 위에서부터 차례대로 따라 하면 됩니다. 막히면 맨 아래 '안 될 때'를 보세요.
         </p>
       </header>
 

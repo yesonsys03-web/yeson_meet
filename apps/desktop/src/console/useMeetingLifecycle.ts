@@ -24,7 +24,7 @@ export function useMeetingLifecycle() {
   const [reportText, setReportText] = useState("");
   const [reportHtml, setReportHtml] = useState("");
   const [statusText, setStatusText] = useState("회의를 시작하면 viewer URL이 여기에 표시됩니다.");
-  const [handoffText, setHandoffText] = useState("Setup Assistant는 아직 새 회의값을 받지 않았습니다.");
+  const [handoffText, setHandoffText] = useState("미팅 시작 탭은 아직 새 회의값을 받지 않았습니다.");
   const [errorText, setErrorText] = useState("");
   const [busy, setBusy] = useState(false);
   const [autoOpenExport, setAutoOpenExport] = useState(true);
@@ -233,7 +233,7 @@ export function useMeetingLifecycle() {
       sessionId: session.session_id,
       viewerUrl: session.viewer_url,
     });
-    setHandoffText("Setup Assistant에 session ID와 viewer URL을 저장했습니다. Setup 탭에서 sidecar를 시작하세요.");
+    setHandoffText("미팅 시작 탭에 session ID와 viewer URL을 저장했습니다. 미팅 시작 탭에서 sidecar를 시작하세요.");
   }
 }
 

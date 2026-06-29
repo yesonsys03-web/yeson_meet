@@ -1,11 +1,14 @@
+// === ANCHOR: NATIVECAPTURESTATUS_TEST_START ===
 import { describe, expect, it } from "vitest";
 
 import type { AppLogEntry } from "../diagnostics/appLog";
 import { latestNativeStatus, parseNativeStatusReason } from "./nativeCaptureStatus";
 
+// === ANCHOR: NATIVECAPTURESTATUS_TEST_ENTRY_START ===
 function entry(id: number, message: string): AppLogEntry {
   return { id, ts: "", level: "info", source: "sidecar:stdout", message };
 }
+// === ANCHOR: NATIVECAPTURESTATUS_TEST_ENTRY_END ===
 
 describe("parseNativeStatusReason", () => {
   it("extracts the reason token from a NATIVE_STATUS line", () => {
@@ -37,3 +40,4 @@ describe("latestNativeStatus", () => {
     expect(latestNativeStatus([entry(1, "hello"), entry(2, "world")])).toBeNull();
   });
 });
+// === ANCHOR: NATIVECAPTURESTATUS_TEST_END ===

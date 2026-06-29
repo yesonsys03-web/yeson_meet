@@ -1,3 +1,4 @@
+// === ANCHOR: STREAM_START ===
 //! All-in-one streamer: capture source → 16k mono 640B frames → `/ws/sidecar`.
 //! Replicates the Python sidecar's `audio_ws.stream_audio` protocol exactly:
 //!   1. connect wss://host/ws/sidecar?key=&session=
@@ -232,3 +233,4 @@ pub fn run(
     eprintln!("[stream] done — {seq} chunks, reason: {reason}");
     Ok(())
 }
+// === ANCHOR: STREAM_END ===

@@ -1,3 +1,4 @@
+// === ANCHOR: CREDENTIALS_TEST_START ===
 import { describe, expect, it } from "vitest";
 
 import { EMPTY_META, loadCredentialsMeta } from "./credentials";
@@ -13,3 +14,4 @@ describe("loadCredentialsMeta", () => {
     expect(EMPTY_META.hasDeviceKey).toBe(false);
   });
 });
+// === ANCHOR: CREDENTIALS_TEST_END ===

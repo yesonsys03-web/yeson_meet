@@ -1,3 +1,4 @@
+// === ANCHOR: DEVICEPROVISIONING_TEST_START ===
 // Tests for S2+S4 device-key provisioning (client side).
 // Plan refs: T-UNIT-REDACT, T-INT-NORENDER, T-INT-DOUBLEMINT, T-OBS-NOLEAK-DIAG
 import { describe, expect, it, vi } from "vitest";
@@ -56,6 +57,7 @@ describe("T-INT-NORENDER: key flows to saveCredentials, never surfaces in state"
 
     // Replicate the handler logic from SetupAssistant.generateDeviceKey
     // without any state setter that would capture the key.
+    // === ANCHOR: DEVICEPROVISIONING_TEST_GENERATEDEVICEKEY_START ===
     async function generateDeviceKey() {
       const login = await mockLoadOperatorLogin();
       const tokens = await mockLoginOperator(login.email, login.password);
@@ -68,6 +70,7 @@ describe("T-INT-NORENDER: key flows to saveCredentials, never surfaces in state"
       });
       // key deliberately not returned — this simulates the handler discarding it
     }
+    // === ANCHOR: DEVICEPROVISIONING_TEST_GENERATEDEVICEKEY_END ===
 
     const result = await generateDeviceKey();
 
@@ -100,6 +103,7 @@ describe("T-INT-DOUBLEMINT: busy-flag prevents second createDevice call", () => 
     // Replicate the busy-flag pattern from the component handler
     let mintBusy = false;
 
+    // === ANCHOR: DEVICEPROVISIONING_TEST_GENERATEDEVICEKEY_START ===
     async function generateDeviceKey() {
       if (mintBusy) return; // busy-flag guard — matches component implementation
       mintBusy = true;
@@ -112,6 +116,7 @@ describe("T-INT-DOUBLEMINT: busy-flag prevents second createDevice call", () => 
         mintBusy = false;
       }
     }
+    // === ANCHOR: DEVICEPROVISIONING_TEST_GENERATEDEVICEKEY_END ===
 
     // Invoke twice in rapid succession (before the first await resolves the
     // busy flag is still true for the synchronous second call)
@@ -145,3 +150,4 @@ describe("T-OBS-NOLEAK-DIAG: exported diagnostics snapshot contains no plaintext
     expect(exported).toContain("<redacted>");
   });
 });
+// === ANCHOR: DEVICEPROVISIONING_TEST_END ===

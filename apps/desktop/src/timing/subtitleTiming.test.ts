@@ -1,3 +1,4 @@
+// === ANCHOR: SUBTITLETIMING_TEST_START ===
 import { describe, it, expect, beforeEach } from "vitest";
 import { SubtitleTimingRecorder } from "./subtitleTiming";
 
@@ -30,3 +31,4 @@ describe("SubtitleTimingRecorder", () => {
     expect(recorder.export()).toHaveLength(0);
   });
 });
+// === ANCHOR: SUBTITLETIMING_TEST_END ===

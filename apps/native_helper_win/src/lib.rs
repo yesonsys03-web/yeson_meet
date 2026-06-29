@@ -1,3 +1,4 @@
+// === ANCHOR: LIB_START ===
 //! Shared modules for the yeson-meet Windows audio tooling.
 //!
 //! `ipc`/`pcm` are pure (build + unit-test everywhere). `capture` is the
@@ -10,3 +11,4 @@ pub mod pcm;
 pub mod capture;
 pub mod source;
 pub mod stream;
+// === ANCHOR: LIB_END ===

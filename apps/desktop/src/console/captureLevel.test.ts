@@ -1,3 +1,4 @@
+// === ANCHOR: CAPTURELEVEL_TEST_START ===
 import { describe, expect, it } from "vitest";
 
 import { SEGMENTS, dbfsToSegments, segmentColorRole, segmentEdgeDbfs } from "./captureLevel";
@@ -42,3 +43,4 @@ describe("segmentColorRole", () => {
     for (const i of [0, 1, 2, 3]) expect(segmentColorRole(i)).toBe("green");
   });
 });
+// === ANCHOR: CAPTURELEVEL_TEST_END ===

@@ -1,3 +1,4 @@
+// === ANCHOR: MAIN_START ===
 // yeson-win-audio-helper: Windows WASAPI loopback → stdout 16k mono s16le PCM.
 // Shared modules now live in the crate lib (src/lib.rs) so the stream_dump tool
 // can reuse pcm/capture. This bin = the production stdout-PCM helper.
@@ -193,3 +194,4 @@ fn main() {
     }
     // `capture` (owns the live cpal stream) stays bound in this scope until exit.
 }
+// === ANCHOR: MAIN_END ===

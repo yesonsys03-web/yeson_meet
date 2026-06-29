@@ -1,3 +1,4 @@
+// === ANCHOR: ONECLICKSTART_TEST_START ===
 import { describe, expect, it, vi } from "vitest";
 
 import { runOneClickStart, type OneClickDeps } from "./oneClickStart";
@@ -5,6 +6,7 @@ import type { CreatedSession } from "./types";
 
 const session: CreatedSession = { session_id: "sess-1", viewer_url: "https://host/v/tok" };
 
+// === ANCHOR: ONECLICKSTART_TEST_BASEDEPS_START ===
 function baseDeps(overrides: Partial<OneClickDeps> = {}): OneClickDeps {
   return {
     loadOperatorLogin: vi.fn().mockResolvedValue({ serverWsBase: "wss://host", email: "op@x", password: "pw" }),
@@ -15,6 +17,7 @@ function baseDeps(overrides: Partial<OneClickDeps> = {}): OneClickDeps {
     ...overrides,
   };
 }
+// === ANCHOR: ONECLICKSTART_TEST_BASEDEPS_END ===
 
 describe("runOneClickStart", () => {
   it("logs in, creates the session with an auto title, then starts the sidecar", async () => {
@@ -43,3 +46,4 @@ describe("runOneClickStart", () => {
     expect(createSession).not.toHaveBeenCalled();
   });
 });
+// === ANCHOR: ONECLICKSTART_TEST_END ===

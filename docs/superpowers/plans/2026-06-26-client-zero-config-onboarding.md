@@ -16,7 +16,7 @@
 - 키체인이 자격증명 권위, localStorage는 파생 캐시. `deviceApiKey`는 TS로 새어나가지 않음(`storeValues`/`loadValues`에서 항상 strip).
 - 주소만 변경 시 `update_server_ws_base`(Rust 부분병합, 키 보존) 사용.
 - mDNS 서비스 타입: `_yeson-meet._tcp.local.` / 기본 포트 `8000`.
-- Rust 의존성 추가: `mdns-sd = "0.7"`, `local-ip-address = "0.14"`.
+- Rust 의존성 추가: `mdns-sd`, `local-ip-address`. **버전은 crates.io에 실제 존재하는 최신 호환 버전으로** 확정(빌드로 확인). 확인된 값: `local-ip-address = "0.6"`(0.14는 미존재). `mdns-sd`도 동일하게 실재 버전 사용.
 
 ---
 

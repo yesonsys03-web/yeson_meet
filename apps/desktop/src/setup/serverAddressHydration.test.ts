@@ -1,3 +1,4 @@
+// === ANCHOR: SERVERADDRESSHYDRATION_TEST_START ===
 // P2 tests — keychain-authoritative server WS address; localStorage = derived cache.
 // Runs in the default vitest `node` environment (no jsdom): we stub the minimal
 // `window` / `localStorage` surface the code touches, matching production shape.
@@ -7,11 +8,14 @@ const STORAGE_KEY = "yeson-meet-desktop-setup";
 
 type MemStore = { store: Record<string, string> };
 
+// === ANCHOR: SERVERADDRESSHYDRATION_TEST_STOREDSERVERWSBASE_START ===
 function storedServerWsBase(mem: MemStore): string {
   const raw = mem.store[STORAGE_KEY] ?? "{}";
   return (JSON.parse(raw) as { serverWsBase?: string }).serverWsBase ?? "";
 }
+// === ANCHOR: SERVERADDRESSHYDRATION_TEST_STOREDSERVERWSBASE_END ===
 
+// === ANCHOR: SERVERADDRESSHYDRATION_TEST_INSTALLDOM_START ===
 function installDom(opts: { tauri: boolean }): MemStore {
   const mem: MemStore = { store: {} };
   const localStorage = {
@@ -39,6 +43,7 @@ function installDom(opts: { tauri: boolean }): MemStore {
   );
   return mem;
 }
+// === ANCHOR: SERVERADDRESSHYDRATION_TEST_INSTALLDOM_END ===
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -185,3 +190,4 @@ describe("P2 post-device-key address edit survives hydrate", () => {
     expect(storedServerWsBase(mem)).toBe("wss://edited");
   });
 });
+// === ANCHOR: SERVERADDRESSHYDRATION_TEST_END ===
