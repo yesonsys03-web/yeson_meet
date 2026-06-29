@@ -1,9 +1,11 @@
 // === ANCHOR: SETUPASSISTANT_START ===
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { loadCredentialsMeta, updateServerWsBase as updateServerWsBaseKeychain } from "./credentials";
 import { Field } from "./Field";
 import { MeetingQuickStartPanel } from "./MeetingQuickStartPanel";
 import { PlatformRunbookPanel } from "./PlatformRunbookPanel";
+import { normalizeServerWsBase } from "./serverDiscovery";
 import { SmokeChecklist } from "./SmokeChecklist";
 import { loadValues, SETUP_VALUES_UPDATED_EVENT, storeValues } from "./setupValues";
 import { initialSmokeChecks, runSmokeCheck, SMOKE_CHECK_ORDER } from "./smokeChecks";
@@ -15,6 +17,9 @@ export function SetupAssistant() {
   const [values, setValues] = useState<SetupValues>(loadValues);
   const [runningChecks, setRunningChecks] = useState(false);
   const [checks, setChecks] = useState(initialSmokeChecks);
+  const [subnetBase, setSubnetBase] = useState("");
+  const [subnetStatus, setSubnetStatus] = useState<string | null>(null);
+  const [subnetScanning, setSubnetScanning] = useState(false);
   // === ANCHOR: SETUPASSISTANT_DEVICEKEY_START ===
   // hasCredentials gates the keychain write-through for the advanced server-address
   // field (updateServerWsBase). Device-key MINTING was removed from this operator
@@ -69,6 +74,29 @@ export function SetupAssistant() {
     })();
   }
   // === ANCHOR: SETUPASSISTANT_UPDATEVALUE_END ===
+
+  async function handleSubnetScan() {
+    const base = subnetBase.trim();
+    setSubnetScanning(true);
+    setSubnetStatus("검색 중…");
+    try {
+      const found = await invoke<string[]>("scan_subnet", { base, port: 8000 });
+      if (found.length === 0) {
+        setSubnetStatus("이 대역에서 서버를 못 찾았어요");
+      } else {
+        updateServerWsBase(normalizeServerWsBase(found[0] ?? ""));
+        setSubnetStatus(
+          found.length > 1
+            ? `찾음: ${found.join(", ")} (첫 번째 선택됨)`
+            : `찾음: ${found[0] ?? ""}`,
+        );
+      }
+    } catch {
+      setSubnetStatus("검색 중 오류가 발생했어요 (Tauri 환경이 아닐 수 있어요)");
+    } finally {
+      setSubnetScanning(false);
+    }
+  }
 
   // === ANCHOR: SETUPASSISTANT_RUNALLSMOKECHECKS_START ===
   async function runAllSmokeChecks() {
@@ -127,9 +155,10 @@ export function SetupAssistant() {
           </p>
           <Field
             label="WebSocket 서버 주소"
-            help="자동 연결이 안 될 때만 직접 입력합니다. 예: 같은 사무실은 wss://<서버-IP>:8000, 한 PC 테스트는 ws://127.0.0.1:8000."
+            help="서버 IP만 입력해도 됩니다. 예: 192.168.0.51 (자동으로 ws://…:8000 로 변환). 한 PC 테스트는 127.0.0.1."
             value={values.serverWsBase}
             onChange={(value) => updateServerWsBase(value)}
+            onBlur={() => updateServerWsBase(normalizeServerWsBase(values.serverWsBase ?? ""))}
           />
           <Field
             label="Device API Key"
@@ -144,6 +173,35 @@ export function SetupAssistant() {
             value={values.sessionId}
             onChange={(value) => updateValue("sessionId", value)}
           />
+        </section>
+
+        <section style={{ ...styles.panel, marginTop: 16 }}>
+          <h3 style={{ ...styles.sectionTitle, fontSize: 16, marginBottom: 8 }}>서버 자동 검색 (다른 대역)</h3>
+          <p style={styles.help}>
+            서버가 다른 대역에 있을 때 서버의 앞 3자리 대역을 넣고 검색하세요. 예: 192.168.0
+          </p>
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <input
+              style={{ ...styles.input, flex: 1 }}
+              placeholder="192.168.0"
+              value={subnetBase}
+              onChange={(e) => setSubnetBase(e.currentTarget.value)}
+            />
+            <button
+              style={{
+                ...styles.secondaryLightButton,
+                width: "auto",
+                marginBottom: 0,
+                padding: "13px 20px",
+                ...(subnetScanning || !subnetBase.trim() ? styles.disabledButton : {}),
+              }}
+              disabled={subnetScanning || !subnetBase.trim()}
+              onClick={handleSubnetScan}
+            >
+              검색
+            </button>
+          </div>
+          {subnetStatus && <span style={{ ...styles.help, marginTop: 8 }}>{subnetStatus}</span>}
         </section>
 
         <PlatformRunbookPanel />

@@ -7,10 +7,11 @@ type FieldProps = {
   value: string;
   secret?: boolean;
   onChange: (value: string) => void;
+  onBlur?: () => void;
 };
 
 // === ANCHOR: FIELD_FIELD_START ===
-export function Field({ label, help, value, secret = false, onChange }: FieldProps) {
+export function Field({ label, help, value, secret = false, onChange, onBlur }: FieldProps) {
   return (
     <label style={styles.field}>
       <span style={styles.label}>{label}</span>
@@ -18,6 +19,7 @@ export function Field({ label, help, value, secret = false, onChange }: FieldPro
         type={secret ? "password" : "text"}
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
+        onBlur={onBlur}
         style={styles.input}
       />
       <span style={styles.help}>{help}</span>

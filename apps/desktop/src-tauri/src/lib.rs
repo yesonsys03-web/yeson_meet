@@ -26,6 +26,7 @@ pub fn run() {
             credentials::update_server_ws_base,
             discovery::discover_server,
             discovery::device_label,
+            discovery::scan_subnet,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

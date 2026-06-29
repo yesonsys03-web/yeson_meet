@@ -31,6 +31,20 @@ export async function discoverServer(): Promise<DiscoveredServer | null> {
   }
 }
 
+/** Normalises free-form user input into a ws(s):// URL.
+ *  bare IP/host       → ws://<host>:8000
+ *  host:port          → ws://<host>:<port>
+ *  ws:// or wss://    → returned unchanged
+ *  empty / whitespace → ""
+ */
+export function normalizeServerWsBase(input: string): string {
+  const v = input.trim();
+  if (!v) return "";
+  if (/^wss?:\/\//i.test(v)) return v;          // already a ws/wss URL → leave as-is
+  const hasPort = /:\d+$/.test(v);              // host or host:port (bare IP/hostname)
+  return `ws://${v}${hasPort ? "" : ":8000"}`;
+}
+
 export async function resolveServerWsBase(deps: ResolveDeps): Promise<string | null> {
   if (await deps.probeLocal()) return LOCAL_WS_BASE;
   const found = await deps.discover();

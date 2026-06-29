@@ -1,5 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { resolveServerWsBase, wsBaseFromDiscovery } from "./serverDiscovery";
+import { normalizeServerWsBase, resolveServerWsBase, wsBaseFromDiscovery } from "./serverDiscovery";
+
+describe("normalizeServerWsBase", () => {
+  it("bare IP → ws://IP:8000", () => {
+    expect(normalizeServerWsBase("192.168.0.51")).toBe("ws://192.168.0.51:8000");
+  });
+  it("bare IP with custom port → ws://IP:port", () => {
+    expect(normalizeServerWsBase("192.168.0.51:9000")).toBe("ws://192.168.0.51:9000");
+  });
+  it("existing ws:// URL → unchanged", () => {
+    expect(normalizeServerWsBase("ws://x:8000")).toBe("ws://x:8000");
+  });
+  it("existing wss:// URL → unchanged", () => {
+    expect(normalizeServerWsBase("wss://x:8000")).toBe("wss://x:8000");
+  });
+  it("empty string → empty string", () => {
+    expect(normalizeServerWsBase("")).toBe("");
+  });
+  it("whitespace-only → empty string", () => {
+    expect(normalizeServerWsBase("   ")).toBe("");
+  });
+  it("trims surrounding whitespace from bare IP", () => {
+    expect(normalizeServerWsBase("  192.168.0.51  ")).toBe("ws://192.168.0.51:8000");
+  });
+});
 
 describe("wsBaseFromDiscovery", () => {
   it("assembles ws:// from ip and port", () => {
