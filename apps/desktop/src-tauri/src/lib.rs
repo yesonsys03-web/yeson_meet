@@ -2,6 +2,8 @@
 mod credentials;
 mod diagnostics;
 mod discovery;
+#[cfg(windows)]
+mod job;
 mod orphan_reaper;
 mod sidecar;
 

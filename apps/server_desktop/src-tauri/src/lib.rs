@@ -1,6 +1,8 @@
 // === ANCHOR: LIB_START ===
 mod backup_dialog;
 mod diagnostics;
+#[cfg(windows)]
+mod job;
 mod orphan_reaper;
 mod restore;
 mod server_config;

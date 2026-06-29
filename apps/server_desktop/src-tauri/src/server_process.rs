@@ -36,6 +36,12 @@ struct RunningServer {
     port: u16,
     started_at: Instant,
     mdns: Option<ServiceDaemon>,
+    /// Windows-only: Job Object with KILL_ON_JOB_CLOSE so the server tree is
+    /// reaped automatically when this app process dies by any means. Kept here
+    /// so its lifetime equals the running server; Drop closes the handle → OS
+    /// terminates every process in the job (bootloader → uvicorn worker).
+    #[cfg(windows)]
+    _job: Option<crate::job::KillOnCloseJob>,
 }
 
 impl Drop for ServerProcessState {
@@ -311,6 +317,14 @@ pub fn start_server_inner(
         .spawn()
         .map_err(|error| format!("failed to start yeson-server: {error}"))?;
 
+    // Windows: confine the child tree to a Job Object with KILL_ON_JOB_CLOSE so
+    // the OS kills the entire server subtree (bootloader → uvicorn worker) when
+    // this app dies by any means, including Task Manager kill or a crash that
+    // bypasses the RunEvent teardown. Best-effort: if the Job API fails we still
+    // run with the taskkill / RunEvent safety nets.
+    #[cfg(windows)]
+    let _job = crate::job::confine(&child);
+
     let pid = child.id();
     spawn_output_forwarder(app, "server:stdout", "info", child.stdout.take());
     spawn_output_forwarder(app, "server:stderr", "warn", child.stderr.take());
@@ -321,6 +335,8 @@ pub fn start_server_inner(
         port,
         started_at: Instant::now(),
         mdns,
+        #[cfg(windows)]
+        _job,
     };
     let status = running_status(&running, "server started");
     *slot = Some(running);

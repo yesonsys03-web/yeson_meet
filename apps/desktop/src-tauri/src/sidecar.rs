@@ -13,6 +13,12 @@ use tauri::Emitter;
 #[derive(Default)]
 pub struct SidecarState {
     child: Mutex<Option<Child>>,
+    /// Windows-only: Job Object with KILL_ON_JOB_CLOSE so the sidecar tree is
+    /// reaped automatically when this app process dies by any means. Stored here
+    /// so its lifetime equals the app's; Drop closes the handle, which the OS
+    /// translates into TerminateProcess for every process in the job.
+    #[cfg(windows)]
+    job: Mutex<Option<crate::job::KillOnCloseJob>>,
 }
 
 impl Drop for SidecarState {
@@ -274,6 +280,18 @@ pub fn start_sidecar(
             (child, detail)
         }
     };
+
+    // Windows: confine the child tree to a Job Object with KILL_ON_JOB_CLOSE so
+    // the OS kills the entire sidecar subtree (bootloader → python → audio
+    // helper) when this app dies by any means, including Task Manager kill or
+    // a crash that bypasses the RunEvent teardown. Best-effort: if the Job API
+    // fails we still run normally with only the taskkill / RunEvent safety nets.
+    #[cfg(windows)]
+    {
+        if let Ok(mut job_slot) = state.job.lock() {
+            *job_slot = crate::job::confine(&child);
+        }
+    }
 
     let pid = child.id();
     spawn_output_forwarder(&app, "sidecar:stdout", "info", child.stdout.take());
