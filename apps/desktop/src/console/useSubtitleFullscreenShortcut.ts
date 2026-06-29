@@ -1,6 +1,8 @@
 // === ANCHOR: USE_SUBTITLE_FULLSCREEN_SHORTCUT_START ===
 import { useEffect, useState } from "react";
 
+import { currentMonitorBounds } from "./useQrFullscreenShortcut";
+
 const SUBTITLE_WINDOW_LABEL = "subtitle-fullscreen";
 
 type ShortcutOptions = {
@@ -48,12 +50,19 @@ export function useSubtitleFullscreenShortcut({ operatorToken, sessionId, window
         return;
       }
 
+      // Cover the monitor the app window is on (NOT the primary). `maximized`
+      // alone maximizes on the primary monitor; explicit x/y/size from
+      // currentMonitorBounds pins it to the app's monitor.
+      const mon = await currentMonitorBounds();
       const subtitleWindow = new WebviewWindow(SUBTITLE_WINDOW_LABEL, {
         url: subtitleWindowUrl(sessionId, operatorToken),
         title: "yeson-meet live subtitles",
         decorations: false,
-        maximized: true,
         resizable: true,
+        x: Math.round(mon.x),
+        y: Math.round(mon.y),
+        width: Math.round(mon.width),
+        height: Math.round(mon.height),
       });
       subtitleWindow.once("tauri://created", () => {
         setWindowOpen(true);

@@ -12,13 +12,19 @@ export async function openQrWindow(viewerUrl: string) {
       return;
     }
 
-    const { width, height } = await monitorEightyPercent();
+    // Place on the monitor the app window is on (NOT the primary): size to 80%
+    // of that monitor and center within it via explicit x/y. `center: true`
+    // would center on the primary monitor instead.
+    const mon = await currentMonitorBounds();
+    const width = Math.round(0.8 * mon.width);
+    const height = Math.round(0.8 * mon.height);
     const qrWindow = new WebviewWindow(QR_WINDOW_LABEL, {
       url: qrWindowUrl(viewerUrl),
       title: "Viewer QR",
       decorations: false,
       resizable: true,
-      center: true,
+      x: Math.round(mon.x + (mon.width - width) / 2),
+      y: Math.round(mon.y + (mon.height - height) / 2),
       width,
       height,
     });
@@ -34,16 +40,21 @@ export async function openQrWindow(viewerUrl: string) {
   popup?.focus();
 }
 
-// 80% of the current monitor's LOGICAL size (physical / scaleFactor). Falls back to 1280x800 when no monitor is reported.
-async function monitorEightyPercent(): Promise<{ width: number; height: number }> {
+// Logical bounds (x, y, width, height) of the monitor the app's CURRENT window
+// sits on — `currentMonitor()` reports the window's monitor, so new windows can
+// be placed there instead of defaulting to the primary monitor. Physical values
+// are divided by the scale factor to logical pixels. Falls back to the primary
+// origin / 1280x800 when no monitor is reported.
+export async function currentMonitorBounds(): Promise<{ x: number; y: number; width: number; height: number }> {
   const { currentMonitor } = await import("@tauri-apps/api/window");
   const mon = await currentMonitor();
-  if (!mon) return { width: 1280, height: 800 };
-  const logicalWidth = mon.size.width / mon.scaleFactor;
-  const logicalHeight = mon.size.height / mon.scaleFactor;
+  if (!mon) return { x: 0, y: 0, width: 1280, height: 800 };
+  const sf = mon.scaleFactor || 1;
   return {
-    width: Math.round(0.8 * logicalWidth),
-    height: Math.round(0.8 * logicalHeight),
+    x: mon.position.x / sf,
+    y: mon.position.y / sf,
+    width: mon.size.width / sf,
+    height: mon.size.height / sf,
   };
 }
 
