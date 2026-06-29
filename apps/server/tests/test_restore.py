@@ -71,3 +71,21 @@ def test_perform_restore_swaps_db_and_clears_wal(tmp_path: Path) -> None:
     assert (storage / "new" / "report.md").is_file()
     assert not (storage / "old.txt").exists()  # storage tree replaced
     assert list(safety.glob("yeson-meet-*.db"))  # safety backup created
+
+
+def test_restore_mode_round_trips(tmp_path, monkeypatch):
+    import sqlite3
+    from apps.server_desktop.sidecar import server_entry
+    live = tmp_path / "yeson-meet.db"
+    c = sqlite3.connect(str(live)); c.execute("CREATE TABLE utterance(id INTEGER PRIMARY KEY, text_ko TEXT)"); c.commit(); c.close()
+    snap = tmp_path / "yeson-meet-20260629-1200.db"
+    c = sqlite3.connect(str(snap)); c.execute("CREATE TABLE utterance(id INTEGER PRIMARY KEY, text_ko TEXT)"); c.execute("INSERT INTO utterance(text_ko) VALUES ('x')"); c.commit(); c.close()
+    monkeypatch.setenv("YESON_SNAPSHOT_PATH", str(snap))
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{live}")
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path / "storage"))
+    monkeypatch.setenv("YESON_SAFETY_DIR", str(tmp_path / "safety"))
+    rc = server_entry._restore_mode()
+    assert rc == 0
+    c = sqlite3.connect(str(live))
+    assert c.execute("SELECT COUNT(*) FROM utterance").fetchone()[0] == 1
+    c.close()

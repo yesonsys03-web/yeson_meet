@@ -283,6 +283,68 @@ def _search_selftest_mode() -> int:
     return 0
 
 
+def _inspect_backup_mode() -> int:
+    """Read-only backup preview (YESON_INSPECT_BACKUP=1). Prints INSPECT_RESULT=json."""
+    import json
+    from pathlib import Path
+    from apps.server.domain.restore import RestoreError, inspect_backup, validate_restore
+
+    snap = os.environ.get("YESON_SNAPSHOT_PATH", "")
+    if not snap:
+        print("INSPECT_ERROR=missing YESON_SNAPSHOT_PATH", file=sys.stderr)
+        return 2
+    try:
+        info = inspect_backup(Path(snap))
+    except RestoreError as exc:
+        print(f"INSPECT_ERROR={exc}", file=sys.stderr)
+        return 1
+    v = validate_restore(info, os.environ.get("YESON_CURRENT_VERSION") or None)
+    print("INSPECT_RESULT=" + json.dumps({
+        "stamp": info.stamp, "integrity_ok": info.integrity_ok,
+        "app_version": info.app_version, "session_count": info.session_count,
+        "utterance_count": info.utterance_count, "snapshot_bytes": info.snapshot_bytes,
+        "has_storage_zip": info.storage_zip_path is not None,
+        "validation": {"ok": v.ok, "level": v.level, "reason": v.reason},
+    }, ensure_ascii=False))
+    return 0
+
+
+def _restore_mode() -> int:
+    """Swap a backup into the live DB+storage (YESON_RESTORE=1). Server must be stopped."""
+    import json
+    from datetime import datetime
+    from pathlib import Path
+    from apps.server.domain.backup import db_path_from_url
+    from apps.server.domain.restore import RestoreError, perform_restore
+
+    snap = os.environ.get("YESON_SNAPSHOT_PATH", "")
+    if not snap:
+        print("RESTORE_ERROR=missing YESON_SNAPSHOT_PATH", file=sys.stderr)
+        return 2
+    db_path = db_path_from_url(_resolve_database_url())
+    storage_root = Path(os.environ.get("STORAGE_ROOT", str(db_path.parent / "storage")))
+    zip_env = os.environ.get("YESON_STORAGE_ZIP", "")
+    safety_dir = Path(os.environ.get("YESON_SAFETY_DIR", str(db_path.parent / "pre-restore")))
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    try:
+        result = perform_restore(
+            snapshot_path=Path(snap),
+            storage_zip_path=Path(zip_env) if zip_env else None,
+            db_path=db_path, storage_root=storage_root,
+            safety_dir=safety_dir, stamp=stamp,
+        )
+    except RestoreError as exc:
+        print(f"RESTORE_ERROR={exc}", file=sys.stderr)
+        return 1
+    print("RESTORE_RESULT=" + json.dumps({
+        "integrity_ok": result.integrity_ok,
+        "restored_bytes": result.restored_bytes,
+        "storage_restored": result.storage_restored,
+        "safety_dir": str(result.safety_dir),
+    }, ensure_ascii=False))
+    return 0
+
+
 def _install_parent_death_watchdog() -> None:
     """Exit gracefully if our spawning parent dies (macOS dev orphan guard).
 
@@ -338,6 +400,14 @@ def main() -> int:
     # Frozen-bundle search smoke test (S4): assert FTS5 + index seeding and exit.
     if os.environ.get("YESON_SEARCH_SELFTEST") == "1":
         return _search_selftest_mode()
+
+    # One-shot backup inspect mode: read a snapshot's metadata and exit (no uvicorn).
+    if os.environ.get("YESON_INSPECT_BACKUP") == "1":
+        return _inspect_backup_mode()
+
+    # One-shot restore mode: swap a backup into the live DB+storage and exit (no uvicorn).
+    if os.environ.get("YESON_RESTORE") == "1":
+        return _restore_mode()
 
     # Step 3: ensure the schema exists on a cold file (idempotent create_all).
     from apps.server.db.seed import create_schema
