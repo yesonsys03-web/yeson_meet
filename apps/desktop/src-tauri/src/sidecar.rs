@@ -276,7 +276,7 @@ pub fn start_sidecar(
 /// `yeson-win-audio-helper.exe` alongside the exe, dev: `target/debug/...`).
 /// Returns None when no bundled helper is present — caller then leaves
 /// YESON_NATIVE_HELPER_BIN unset and Python's config default kicks in.
-fn locate_bundled_native_helper() -> Option<PathBuf> {
+pub(crate) fn locate_bundled_native_helper() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
 
@@ -324,7 +324,7 @@ fn add_native_helper_env(command: &mut Command, app: &tauri::AppHandle) {
 /// Locate the PyInstaller-built sidecar binary that Tauri's externalBin
 /// bundle ships alongside the main app executable. Returns None when the
 /// binary is missing — caller falls back to dev mode (uv + python).
-fn locate_bundled_sidecar() -> Option<PathBuf> {
+pub(crate) fn locate_bundled_sidecar() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
 
