@@ -238,7 +238,7 @@ async def test_download_summary_pdf_503_when_soffice_absent(
 
     from unittest.mock import patch
 
-    with patch("apps.server.domain.report_pdf.find_soffice", return_value=None):
+    with patch("apps.server.domain.report_pdf.find_pdf_engine", return_value=[]):
         response = await client.get(
             f"/api/v1/sessions/{session_id}/report.summary.pdf",
             headers={"Authorization": f"Bearer {admin_token}"},

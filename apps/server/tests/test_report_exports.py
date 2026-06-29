@@ -101,8 +101,8 @@ def test_write_session_exports_creates_md_html_docx(tmp_path: Path) -> None:
     meeting = _make_meeting()
     utterances = [_make_utterance()]
 
-    # Stub convert_docx_to_pdf → None (simulates no soffice)
-    with patch("apps.server.domain.report_pdf.find_soffice", return_value=None):
+    # Stub find_pdf_engine → [] (simulates no PDF engine available)
+    with patch("apps.server.domain.report_pdf.find_pdf_engine", return_value=[]):
         result = write_session_exports(tmp_path, meeting, utterances)
 
     assert result["md"] is not None
@@ -134,7 +134,7 @@ def test_write_session_exports_partial_failure_does_not_propagate(tmp_path: Path
 
     with (
         patch("apps.server.domain.report_html.build_session_report_html", side_effect=_boom),
-        patch("apps.server.domain.report_pdf.find_soffice", return_value=None),
+        patch("apps.server.domain.report_pdf.find_pdf_engine", return_value=[]),
     ):
         result = write_session_exports(tmp_path, meeting, utterances)
 
@@ -159,7 +159,7 @@ def test_write_session_exports_logs_warning_on_failure(tmp_path: Path, caplog: p
     with (
         caplog.at_level(logging.WARNING, logger="apps.server.domain.reports"),
         patch("apps.server.domain.report_docx.build_session_report_docx", side_effect=_boom),
-        patch("apps.server.domain.report_pdf.find_soffice", return_value=None),
+        patch("apps.server.domain.report_pdf.find_pdf_engine", return_value=[]),
     ):
         result = write_session_exports(tmp_path, meeting, utterances)
 
@@ -176,7 +176,7 @@ def test_write_session_exports_injects_summary_into_md_html_docx(tmp_path: "Path
     meeting = _make_meeting()
     utterances = [_make_utterance()]
 
-    with patch("apps.server.domain.report_pdf.find_soffice", return_value=None):
+    with patch("apps.server.domain.report_pdf.find_pdf_engine", return_value=[]):
         result = write_session_exports(tmp_path, meeting, utterances, summary="고정 요약 텍스트")
 
     assert result["md"] is not None and result["md"].exists()
@@ -202,7 +202,7 @@ def test_write_session_exports_no_summary_still_produces_reports(tmp_path: "Path
     meeting = _make_meeting()
     utterances = [_make_utterance()]
 
-    with patch("apps.server.domain.report_pdf.find_soffice", return_value=None):
+    with patch("apps.server.domain.report_pdf.find_pdf_engine", return_value=[]):
         result = write_session_exports(tmp_path, meeting, utterances, summary=None)
 
     assert result["md"] is not None and result["md"].exists()
@@ -223,7 +223,7 @@ def test_write_session_exports_writes_summary_md_html_docx(tmp_path: Path) -> No
     meeting = _make_meeting()
     utterances = [_make_utterance()]
 
-    with patch("apps.server.domain.report_pdf.find_soffice", return_value=None):
+    with patch("apps.server.domain.report_pdf.find_pdf_engine", return_value=[]):
         result = write_session_exports(tmp_path, meeting, utterances, summary="요약 텍스트")
 
     assert result["summary"] is not None and result["summary"].exists()
@@ -244,7 +244,7 @@ def test_write_session_exports_no_summary_files_when_summary_none(tmp_path: Path
     meeting = _make_meeting()
     utterances = [_make_utterance()]
 
-    with patch("apps.server.domain.report_pdf.find_soffice", return_value=None):
+    with patch("apps.server.domain.report_pdf.find_pdf_engine", return_value=[]):
         result = write_session_exports(tmp_path, meeting, utterances, summary=None)
 
     assert result["summary"] is None

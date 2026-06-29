@@ -62,7 +62,7 @@ async def test_regenerate_overwrites_files_with_summary(tmp_path: Path) -> None:
     utterances = [_make_utterance()]
 
     # Write initial files without summary (simulates the fast-path in end_session)
-    with patch("apps.server.domain.report_pdf.find_soffice", return_value=None):
+    with patch("apps.server.domain.report_pdf.find_pdf_engine", return_value=[]):
         write_session_exports(tmp_path, meeting, utterances, summary=None)
 
     md_before = (tmp_path / "async-session-001" / "report.md").read_text(encoding="utf-8")
@@ -74,7 +74,7 @@ async def test_regenerate_overwrites_files_with_summary(tmp_path: Path) -> None:
             "apps.server.domain.report_summary.generate_summary",
             return_value="비동기요약",
         ),
-        patch("apps.server.domain.report_pdf.find_soffice", return_value=None),
+        patch("apps.server.domain.report_pdf.find_pdf_engine", return_value=[]),
     ):
         result = await regenerate_report_with_summary(tmp_path, meeting, utterances)
 
@@ -103,7 +103,7 @@ async def test_regenerate_does_not_overwrite_when_summary_is_none(tmp_path: Path
     utterances = [_make_utterance()]
 
     # Write initial files without summary
-    with patch("apps.server.domain.report_pdf.find_soffice", return_value=None):
+    with patch("apps.server.domain.report_pdf.find_pdf_engine", return_value=[]):
         write_session_exports(tmp_path, meeting, utterances, summary=None)
 
     md_before = (tmp_path / "async-session-001" / "report.md").read_text(encoding="utf-8")
