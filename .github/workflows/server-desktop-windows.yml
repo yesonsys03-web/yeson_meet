@@ -95,13 +95,12 @@ jobs:
       - name: Publish installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.14
-          name: yeson-meet v0.9.14
+          tag_name: v0.9.15
+          name: yeson-meet v0.9.15
           prerelease: true
           body: |
-            ## yeson-meet v0.9.14 — 무엇이 바뀌었나
-            - Windows에서 백업 복원 중 나던 오류(PYI-16632 "Failed to execute script")를 수정했습니다.
-            - 앱을 어떻게 종료하든(정상 종료/강제 종료/크래시) 자식 프로세스(사이드카·헬퍼)가 고아로 남지 않도록 정리를 강화했습니다: Windows Job Object + 시작 시 고아 정리 + 부모-사망 감지(서버·클라이언트 양쪽).
+            ## yeson-meet v0.9.15 — 무엇이 바뀌었나
+            - Windows 한글(cp949) 환경에서 백업 **복원 미리보기**가 `INSPECT_ERROR=UnicodeEncodeError: 'cp949' codec can't encode character` 오류로 실패하던 문제를 수정했습니다. 서버가 출력 스트림을 항상 UTF-8로 강제하도록 바꿔, 복원 미리보기·복원이 OS 로케일과 무관하게 동작합니다.
 
             ### Windows 서버 콘솔
             Unsigned Windows test build of the yeson-meet server console
