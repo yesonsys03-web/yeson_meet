@@ -1,6 +1,7 @@
 // === ANCHOR: BACKUP_RESTORE_START ===
-// Helpers for the restore section of the Backup panel. Pure logic only — no
-// Tauri calls — so the module is unit-testable without a running app.
+// Helpers for the restore section of the Backup panel. `pairBackups` is pure
+// logic and unit-testable without a running app; the remaining exports
+// (listDir, inspectBackup, restoreBackup) wrap Tauri `invoke` commands.
 
 import { invoke } from "@tauri-apps/api/core";
 

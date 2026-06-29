@@ -91,6 +91,12 @@ pub fn restore_backup(
     snapshot_path: String,
     storage_zip_path: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    // Fail fast before stopping the server: if the app-data dir can't resolve we
+    // must not leave the operator with a stopped, un-restarted server.
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+
     // Capture the port the server is currently bound to BEFORE stopping it so the
     // restart brings it back on the same port. `current_port` returns None when the
     // server is not running; passing None falls back to DEFAULT_PORT (8000), which
@@ -133,7 +139,12 @@ pub fn restore_backup(
 
     match (result, started) {
         (Ok(v), Ok(_)) => Ok(v),
-        (Ok(_), Err(e)) => Err(format!("restore done but server restart failed: {e}")),
+        (Ok(v), Err(e)) => {
+            let safety = v.get("safety_dir").and_then(|s| s.as_str()).unwrap_or("the pre-restore folder");
+            Err(format!(
+                "restore completed but the server failed to restart: {e}. Your previous data was backed up to {safety} — restore that backup or restart the server manually."
+            ))
+        }
         (Err(e), _) => Err(format!("restore failed: {e}")),
     }
 }
