@@ -42,8 +42,9 @@ def inspect_backup(snapshot_path: Path) -> BackupInfo:
     snapshot_path = Path(snapshot_path)
     if not snapshot_path.is_file():
         raise RestoreError(f"snapshot not found: {snapshot_path}")
-    conn = sqlite3.connect(f"file:{snapshot_path}?mode=ro", uri=True)
+    conn = None
     try:
+        conn = sqlite3.connect(f"file:{snapshot_path}?mode=ro", uri=True)
         integrity_ok = conn.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
         if not integrity_ok:
             raise RestoreError(f"snapshot failed integrity check: {snapshot_path}")
@@ -60,7 +61,8 @@ def inspect_backup(snapshot_path: Path) -> BackupInfo:
     except sqlite3.DatabaseError as exc:
         raise RestoreError(f"not a valid SQLite snapshot: {snapshot_path} ({exc})") from exc
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
     stamp = _stamp_from_name(snapshot_path)
     manifest = snapshot_path.with_suffix(".json")
@@ -161,16 +163,23 @@ def perform_restore(
     #    never leaves a half-populated tree).
     storage_restored = False
     if storage_zip_path is not None and Path(storage_zip_path).is_file():
-        staging = Path(tempfile.mkdtemp(prefix="yeson-restore-storage-"))
+        storage_root.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix="yeson-restore-storage-", dir=storage_root.parent))
+        old = None
         try:
             with zipfile.ZipFile(storage_zip_path) as zf:
                 zf.extractall(staging)
             if storage_root.exists():
-                shutil.rmtree(storage_root)
-            shutil.move(str(staging), str(storage_root))
+                old = storage_root.with_name(storage_root.name + f".old-{stamp}")
+                os.replace(storage_root, old)        # move live tree aside (atomic, same fs)
+            os.replace(staging, storage_root)        # move new tree in (atomic, same fs)
+            if old is not None:
+                shutil.rmtree(old, ignore_errors=True)
             storage_restored = True
         finally:
-            shutil.rmtree(staging, ignore_errors=True)
+            shutil.rmtree(staging, ignore_errors=True)  # no-op once renamed
+            if old is not None and old.exists():
+                shutil.rmtree(old, ignore_errors=True)
 
     # 4. Verify the now-live DB.
     chk = sqlite3.connect(str(db_path))

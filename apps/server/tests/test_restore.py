@@ -46,8 +46,9 @@ def test_validate_warns_unknown_version(tmp_path: Path) -> None:
 
 def test_perform_restore_swaps_db_and_clears_wal(tmp_path: Path) -> None:
     live = tmp_path / "yeson-meet.db"; _db(live, rows=1)
-    # leave a stale WAL sidecar that must be removed
+    # leave stale WAL/SHM sidecars that must be removed
     (tmp_path / "yeson-meet.db-wal").write_bytes(b"stale")
+    (tmp_path / "yeson-meet.db-shm").write_bytes(b"stale")
     snap = tmp_path / "yeson-meet-20260629-1200.db"; _db(snap, rows=7)
     storage = tmp_path / "storage"; storage.mkdir()
     (storage / "old.txt").write_text("old")
@@ -61,6 +62,7 @@ def test_perform_restore_swaps_db_and_clears_wal(tmp_path: Path) -> None:
     )
     assert result.integrity_ok is True
     assert not (tmp_path / "yeson-meet.db-wal").exists()
+    assert not (tmp_path / "yeson-meet.db-shm").exists()
     c = sqlite3.connect(str(live))
     try:
         assert c.execute("SELECT COUNT(*) FROM utterance").fetchone()[0] == 7
