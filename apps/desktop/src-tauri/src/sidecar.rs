@@ -217,6 +217,12 @@ pub fn start_sidecar(
                 .env("YESON_RMS_SILENCE_GATE_ENABLED", "0")
                 .env("PYTHONIOENCODING", "utf-8")
                 .env("PYTHONUTF8", "1")
+                // App pid so the sidecar's parent-death watchdog can self-exit
+                // if this app dies abruptly (Ctrl+C / SIGKILL / crash) without the
+                // RunEvent teardown running. getppid() is unreliable for the
+                // PyInstaller onefile sidecar (its parent is the bootloader, not
+                // us), so pass our pid explicitly.
+                .env("YESON_PARENT_PID", std::process::id().to_string())
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
@@ -249,6 +255,12 @@ pub fn start_sidecar(
                 .env("YESON_RMS_SILENCE_GATE_ENABLED", "0")
                 .env("PYTHONIOENCODING", "utf-8")
                 .env("PYTHONUTF8", "1")
+                // App pid so the sidecar's parent-death watchdog can self-exit
+                // if this app dies abruptly (Ctrl+C / SIGKILL / crash) without the
+                // RunEvent teardown running. getppid() is unreliable for the
+                // PyInstaller onefile sidecar (its parent is the bootloader, not
+                // us), so pass our pid explicitly.
+                .env("YESON_PARENT_PID", std::process::id().to_string())
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());

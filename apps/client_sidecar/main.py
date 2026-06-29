@@ -7,6 +7,8 @@ import logging
 import os
 import signal
 import sys
+import threading
+import time
 from uuid import UUID
 
 from apps.client_sidecar.config.constants import SERVER_WS_BASE, SERVER_WS_PATH
@@ -119,6 +121,62 @@ async def main() -> None:
 # === ANCHOR: MAIN_MAIN_END ===
 
 
+# === ANCHOR: MAIN__INSTALL_PARENT_DEATH_WATCHDOG_START ===
+def _install_parent_death_watchdog() -> None:
+    """Self-exit if the desktop app that spawned us dies abruptly.
+
+    On a clean close the app reaps us (Rust RunEvent → process-group kill), but a
+    Ctrl+C / SIGKILL / crash skips that and orphans this sidecar — it keeps the
+    server WebSocket open, so the meeting stays "live" and the operator can't go
+    public. ``getppid()`` is unreliable here (the PyInstaller onefile bootloader,
+    not the app, is our parent), so the app passes its pid in ``YESON_PARENT_PID``
+    and we poll its liveness. Once it's gone we SIGTERM ourselves so ``main()``'s
+    handler runs the normal cleanup (source.close → native helper terminate → WS
+    close). No-op when the env var is absent/invalid (standalone dev runs).
+
+    POSIX only: the liveness probe is ``os.kill(pid, 0)`` (sends no signal). On
+    Windows ``os.kill`` would TerminateProcess the parent, so we skip it there and
+    rely on the app's ``taskkill /T`` teardown + the startup orphan reaper.
+    """
+    if sys.platform == "win32":
+        return
+    raw = os.environ.get("YESON_PARENT_PID")
+    if not raw:
+        return
+    try:
+        parent_pid = int(raw)
+    except ValueError:
+        return
+    if parent_pid <= 1:
+        return
+
+    def _watch() -> None:
+        while True:
+            time.sleep(2.0)
+            try:
+                os.kill(parent_pid, 0)  # signal 0 = liveness probe, sends nothing
+            except ProcessLookupError:
+                pass  # parent gone → self-terminate below
+            except PermissionError:
+                continue  # alive but not signalable by us → keep watching
+            else:
+                continue  # still alive
+            print(
+                "PARENT_EXIT detected (app pid gone) -- shutting down sidecar",
+                file=sys.stderr,
+                flush=True,
+            )
+            try:
+                os.kill(os.getpid(), signal.SIGTERM)
+            except Exception:  # noqa: BLE001
+                os._exit(0)
+            time.sleep(5.0)
+            os._exit(0)  # backstop if graceful shutdown stalls
+
+    threading.Thread(target=_watch, name="parent-death-watchdog", daemon=True).start()
+# === ANCHOR: MAIN__INSTALL_PARENT_DEATH_WATCHDOG_END ===
+
+
 # === ANCHOR: MAIN__INSTALL_OS_TRUST_STORE_START ===
 def _install_os_trust_store() -> None:
     """Make stdlib ssl (used by websockets) trust the OS certificate store.
@@ -145,6 +203,7 @@ def run() -> None:
         if reconfigure is not None:
             reconfigure(encoding="utf-8", errors="backslashreplace")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    _install_parent_death_watchdog()
     _install_os_trust_store()
     asyncio.run(main())
 # === ANCHOR: MAIN_RUN_END ===
