@@ -8,11 +8,43 @@ import os
 import shutil
 import sqlite3
 import tempfile
+import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from apps.server.domain.backup import BackupError, create_backup, schema_fingerprint
+
+
+def _replace_with_retry(src: Path, dst: Path) -> None:
+    """``os.replace(src, dst)`` retrying briefly on Windows ``PermissionError``.
+
+    POSIX renames over an open file atomically, but Windows refuses to replace a
+    file another handle still holds. The console stops the server before invoking
+    restore, yet the just-killed process's DB handle can linger a moment — so
+    retry for ~2s before giving up with a clean RestoreError (never a raw
+    PermissionError that would crash the frozen one-shot as PYI-16632)."""
+    last: Exception | None = None
+    for _ in range(10):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as exc:  # Windows: dst still held by a lingering handle
+            last = exc
+            time.sleep(0.2)
+    raise RestoreError(f"could not replace {dst} (still in use after retries): {last}")
+
+
+def _unlink_best_effort(path: Path) -> None:
+    """Delete a WAL/SHM sidecar, tolerating a brief Windows handle lag."""
+    for _ in range(10):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            time.sleep(0.2)
+    # Last resort: leave it. The DB itself was already swapped + integrity-checked;
+    # a leftover -wal/-shm beside the new DB is reconciled by SQLite on next open.
 
 
 class RestoreError(RuntimeError):
@@ -44,7 +76,11 @@ def inspect_backup(snapshot_path: Path) -> BackupInfo:
         raise RestoreError(f"snapshot not found: {snapshot_path}")
     conn = None
     try:
-        conn = sqlite3.connect(f"file:{snapshot_path}?mode=ro", uri=True)
+        # Build the read-only URI via Path.as_uri() so a Windows path
+        # (``C:\…`` with backslashes) becomes a valid ``file:///C:/…`` URI —
+        # a bare ``file:{path}`` with backslashes fails to open on Windows.
+        ro_uri = f"{snapshot_path.resolve().as_uri()}?mode=ro"
+        conn = sqlite3.connect(ro_uri, uri=True)
         integrity_ok = conn.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
         if not integrity_ok:
             raise RestoreError(f"snapshot failed integrity check: {snapshot_path}")
@@ -155,9 +191,9 @@ def perform_restore(
     db_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_db = db_path.with_name(db_path.name + ".restore-tmp")
     shutil.copy2(snapshot_path, tmp_db)
-    os.replace(tmp_db, db_path)
+    _replace_with_retry(tmp_db, db_path)
     for sidecar in (db_path.name + "-wal", db_path.name + "-shm"):
-        (db_path.parent / sidecar).unlink(missing_ok=True)
+        _unlink_best_effort(db_path.parent / sidecar)
 
     # 3. Replace the storage tree from the zip (swap dirs so a partial extract
     #    never leaves a half-populated tree).
@@ -171,8 +207,8 @@ def perform_restore(
                 zf.extractall(staging)
             if storage_root.exists():
                 old = storage_root.with_name(storage_root.name + f".old-{stamp}")
-                os.replace(storage_root, old)        # move live tree aside (atomic, same fs)
-            os.replace(staging, storage_root)        # move new tree in (atomic, same fs)
+                _replace_with_retry(storage_root, old)   # move live tree aside (atomic, same fs)
+            _replace_with_retry(staging, storage_root)   # move new tree in (atomic, same fs)
             if old is not None:
                 shutil.rmtree(old, ignore_errors=True)
             storage_restored = True

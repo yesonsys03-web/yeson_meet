@@ -287,26 +287,32 @@ def _inspect_backup_mode() -> int:
     """Read-only backup preview (YESON_INSPECT_BACKUP=1). Prints INSPECT_RESULT=json."""
     import json
     from pathlib import Path
-    from apps.server.domain.restore import RestoreError, inspect_backup, validate_restore
+    from apps.server.domain.restore import inspect_backup, validate_restore
 
     snap = os.environ.get("YESON_SNAPSHOT_PATH", "")
     if not snap:
         print("INSPECT_ERROR=missing YESON_SNAPSHOT_PATH", file=sys.stderr)
         return 2
+    # Catch EVERY exception (not just RestoreError): a raw exception escaping a
+    # frozen one-shot surfaces only as the opaque "[PYI-...] Failed to execute
+    # script" bootloader crash. Convert it to a readable INSPECT_ERROR (+ a
+    # traceback on stderr the desktop log captures) so the cause is visible.
     try:
         info = inspect_backup(Path(snap))
-    except RestoreError as exc:
-        print(f"INSPECT_ERROR={exc}", file=sys.stderr)
+        v = validate_restore(info, os.environ.get("YESON_CURRENT_VERSION") or None)
+        print("INSPECT_RESULT=" + json.dumps({
+            "stamp": info.stamp, "integrity_ok": info.integrity_ok,
+            "app_version": info.app_version, "session_count": info.session_count,
+            "utterance_count": info.utterance_count, "snapshot_bytes": info.snapshot_bytes,
+            "has_storage_zip": info.storage_zip_path is not None,
+            "validation": {"ok": v.ok, "level": v.level, "reason": v.reason},
+        }, ensure_ascii=False))
+        return 0
+    except Exception as exc:  # noqa: BLE001 — never crash as PYI-16632
+        import traceback
+        traceback.print_exc()
+        print(f"INSPECT_ERROR={type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    v = validate_restore(info, os.environ.get("YESON_CURRENT_VERSION") or None)
-    print("INSPECT_RESULT=" + json.dumps({
-        "stamp": info.stamp, "integrity_ok": info.integrity_ok,
-        "app_version": info.app_version, "session_count": info.session_count,
-        "utterance_count": info.utterance_count, "snapshot_bytes": info.snapshot_bytes,
-        "has_storage_zip": info.storage_zip_path is not None,
-        "validation": {"ok": v.ok, "level": v.level, "reason": v.reason},
-    }, ensure_ascii=False))
-    return 0
 
 
 def _restore_mode() -> int:
@@ -315,7 +321,7 @@ def _restore_mode() -> int:
     from datetime import datetime
     from pathlib import Path
     from apps.server.domain.backup import db_path_from_url
-    from apps.server.domain.restore import RestoreError, perform_restore
+    from apps.server.domain.restore import perform_restore
 
     snap = os.environ.get("YESON_SNAPSHOT_PATH", "")
     if not snap:
@@ -326,6 +332,9 @@ def _restore_mode() -> int:
     zip_env = os.environ.get("YESON_STORAGE_ZIP", "")
     safety_dir = Path(os.environ.get("YESON_SAFETY_DIR", str(db_path.parent / "pre-restore")))
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    # Catch EVERY exception (Windows os.replace PermissionError, path/URI errors,
+    # etc.) so the frozen one-shot reports a readable RESTORE_ERROR instead of the
+    # opaque "[PYI-...] Failed to execute script" bootloader crash.
     try:
         result = perform_restore(
             snapshot_path=Path(snap),
@@ -333,16 +342,18 @@ def _restore_mode() -> int:
             db_path=db_path, storage_root=storage_root,
             safety_dir=safety_dir, stamp=stamp,
         )
-    except RestoreError as exc:
-        print(f"RESTORE_ERROR={exc}", file=sys.stderr)
+        print("RESTORE_RESULT=" + json.dumps({
+            "integrity_ok": result.integrity_ok,
+            "restored_bytes": result.restored_bytes,
+            "storage_restored": result.storage_restored,
+            "safety_dir": str(result.safety_dir),
+        }, ensure_ascii=False))
+        return 0
+    except Exception as exc:  # noqa: BLE001 — never crash as PYI-16632
+        import traceback
+        traceback.print_exc()
+        print(f"RESTORE_ERROR={type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    print("RESTORE_RESULT=" + json.dumps({
-        "integrity_ok": result.integrity_ok,
-        "restored_bytes": result.restored_bytes,
-        "storage_restored": result.storage_restored,
-        "safety_dir": str(result.safety_dir),
-    }, ensure_ascii=False))
-    return 0
 
 
 def _install_parent_death_watchdog() -> None:
