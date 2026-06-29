@@ -1,6 +1,7 @@
 """S1 backup engine: consistent SQLite snapshot + storage zip + integrity check."""
 from __future__ import annotations
 
+import json
 import sqlite3
 import zipfile
 from pathlib import Path
@@ -217,3 +218,22 @@ def test_backup_to_destinations_raises_when_no_destinations(tmp_path: Path) -> N
             stamp="20260625-1700",
             keep=14,
         )
+
+
+def test_create_backup_writes_manifest(tmp_path: Path) -> None:
+    db = tmp_path / "yeson-meet.db"
+    _make_db(db, rows=2)
+    dest = tmp_path / "dest"; dest.mkdir()
+    result = create_backup(
+        database_url=f"sqlite+aiosqlite:///{db}",
+        storage_root=tmp_path / "storage",
+        dest_dir=dest,
+        stamp="20260629-1200",
+    )
+    manifest = dest / "yeson-meet-20260629-1200.json"
+    assert manifest.is_file()
+    assert result.manifest_path == manifest
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    assert data["stamp"] == "20260629-1200"
+    assert isinstance(data["schema"], str) and len(data["schema"]) == 16
+    assert "app_version" in data  # may be None when YESON_APP_VERSION unset

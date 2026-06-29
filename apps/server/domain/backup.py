@@ -14,6 +14,9 @@ layer's threadpool.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import shutil
 import sqlite3
 import tempfile
@@ -43,12 +46,29 @@ def db_path_from_url(database_url: str) -> Path:
 # === ANCHOR: BACKUP_DB_PATH_FROM_URL_END ===
 
 
+def schema_fingerprint(snapshot_path: Path) -> str:
+    """Stable 16-hex fingerprint of the DB schema (sorted table+column names)."""
+    conn = sqlite3.connect(str(snapshot_path))
+    try:
+        tables = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        )]
+        parts = []
+        for t in tables:
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info('{t}')")]
+            parts.append(f"{t}({','.join(sorted(cols))})")
+    finally:
+        conn.close()
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
+
+
 @dataclass(frozen=True)
 class BackupResult:
     """Manifest of one backup run."""
 
     snapshot_path: Path
     storage_zip_path: Path | None
+    manifest_path: Path
     snapshot_bytes: int
     integrity_ok: bool
     stamp: str
@@ -98,11 +118,26 @@ def create_backup(
         snapshot.unlink(missing_ok=True)
         raise BackupError(f"snapshot failed integrity check: {snapshot}")
 
+    manifest_path = dest / f"yeson-meet-{stamp}.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "stamp": stamp,
+                "app_version": os.environ.get("YESON_APP_VERSION") or None,
+                "schema": schema_fingerprint(snapshot),
+                "snapshot_bytes": snapshot.stat().st_size,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
     storage_zip_path = _archive_storage(Path(storage_root), dest, stamp)
 
     return BackupResult(
         snapshot_path=snapshot,
         storage_zip_path=storage_zip_path,
+        manifest_path=manifest_path,
         snapshot_bytes=snapshot.stat().st_size,
         integrity_ok=integrity_ok,
         stamp=stamp,
@@ -170,6 +205,7 @@ def backup_to_destinations(
                     raise BackupError(f"destination is not a directory: {dest}")
                 snap_dest = dest / staged.snapshot_path.name
                 shutil.copy2(staged.snapshot_path, snap_dest)
+                shutil.copy2(staged.manifest_path, dest / staged.manifest_path.name)
                 zip_dest: Path | None = None
                 if staged.storage_zip_path is not None:
                     zip_dest = dest / staged.storage_zip_path.name
@@ -199,7 +235,7 @@ def _prune(dest: Path, keep: int) -> int:
     if keep <= 0:
         return 0
     pruned = 0
-    for pattern in ("yeson-meet-*.db", "storage-*.zip"):
+    for pattern in ("yeson-meet-*.db", "storage-*.zip", "yeson-meet-*.json"):
         files = sorted(dest.glob(pattern), reverse=True)
         for old in files[keep:]:
             old.unlink(missing_ok=True)
