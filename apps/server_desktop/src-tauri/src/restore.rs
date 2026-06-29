@@ -1,6 +1,6 @@
 //! Backup restore orchestration (stop → one-shot swap → start), console side.
 use crate::server_process::{
-    emit_backend_log, locate_bundled_server, set_no_window, start_server_inner,
+    current_port, emit_backend_log, locate_bundled_server, set_no_window, start_server_inner,
     stop_server_inner, ServerProcessState, ServerStartRequest,
 };
 use std::process::{Command, Stdio};
@@ -91,6 +91,11 @@ pub fn restore_backup(
     snapshot_path: String,
     storage_zip_path: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    // Capture the port the server is currently bound to BEFORE stopping it so the
+    // restart brings it back on the same port. `current_port` returns None when the
+    // server is not running; passing None falls back to DEFAULT_PORT (8000), which
+    // matches the pre-existing behaviour and is safe for the not-running case.
+    let prior_port = current_port(&*state);
     emit_backend_log(&app, "info", "server", "restore: stopping server");
     let _ = stop_server_inner(&*state);
 
@@ -113,11 +118,14 @@ pub fn restore_backup(
         .and_then(|out| parse_marker(&out, "RESTORE_RESULT="));
 
     // Restart regardless so the operator is never left with a stopped server.
+    // Use the port captured before the stop so the server returns on the same
+    // address LAN clients expect. Provider is not tracked in state; None lets
+    // start_server_inner default to gemini_live (same as a fresh start).
     emit_backend_log(&app, "info", "server", "restore: starting server");
     let started = start_server_inner(
         &app,
         ServerStartRequest {
-            port: None,
+            port: prior_port,
             provider: None,
         },
         &*state,
