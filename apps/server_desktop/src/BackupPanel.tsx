@@ -12,6 +12,15 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useState } from "react";
 
 import { type BackupRunResult, login, pickBackupDir, runBackup } from "./backupAdmin";
+import {
+  type BackupPair,
+  type InspectResult,
+  type RestoreResult,
+  inspectBackup,
+  listDir,
+  pairBackups,
+  restoreBackup,
+} from "./backupRestore";
 
 type Props = { serverPort: number | null; running: boolean };
 
@@ -53,6 +62,17 @@ export default function BackupPanel({ serverPort, running }: Props) {
   const [result, setResult] = useState<BackupRunResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // --- Restore section state ---
+  const [restoreDir, setRestoreDir] = useState<string | null>(null);
+  const [restorePairs, setRestorePairs] = useState<BackupPair[]>([]);
+  const [selectedStamp, setSelectedStamp] = useState<string | null>(null);
+  const [inspectResult, setInspectResult] = useState<InspectResult | null>(null);
+  const [inspectBusy, setInspectBusy] = useState(false);
+  const [restoreConfirmText, setRestoreConfirmText] = useState("");
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreResult, setRestoreResult] = useState<RestoreResult | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem(DESTS_KEY, JSON.stringify(dests));
@@ -108,6 +128,69 @@ export default function BackupPanel({ serverPort, running }: Props) {
       setBusy(false);
     }
   }, [serverPort, token, dests, keep]);
+
+  const onPickRestoreDir = useCallback(async () => {
+    setRestoreError(null);
+    setInspectResult(null);
+    setSelectedStamp(null);
+    setRestoreResult(null);
+    setRestoreConfirmText("");
+    try {
+      const picked = await pickBackupDir();
+      if (!picked) return;
+      setRestoreDir(picked);
+      const files = await listDir(picked);
+      const pairs = pairBackups(files);
+      setRestorePairs(pairs);
+      if (pairs.length === 0) setRestoreError("선택한 폴더에 백업 파일이 없습니다.");
+    } catch (e) {
+      setRestoreError(errText(e));
+    }
+  }, []);
+
+  const onSelectBackup = useCallback(
+    async (stamp: string) => {
+      if (!restoreDir) return;
+      setSelectedStamp(stamp);
+      setInspectResult(null);
+      setRestoreResult(null);
+      setRestoreConfirmText("");
+      setRestoreError(null);
+      const pair = restorePairs.find((p) => p.stamp === stamp);
+      if (!pair) return;
+      setInspectBusy(true);
+      try {
+        const info = await inspectBackup(`${restoreDir}/${pair.snapshot}`);
+        setInspectResult(info);
+      } catch (e) {
+        setRestoreError(errText(e));
+      } finally {
+        setInspectBusy(false);
+      }
+    },
+    [restoreDir, restorePairs],
+  );
+
+  const onRestore = useCallback(async () => {
+    if (!restoreDir || !selectedStamp || !inspectResult) return;
+    const pair = restorePairs.find((p) => p.stamp === selectedStamp);
+    if (!pair) return;
+    setRestoreBusy(true);
+    setRestoreError(null);
+    setRestoreResult(null);
+    try {
+      const res = await restoreBackup(
+        `${restoreDir}/${pair.snapshot}`,
+        pair.storageZip ? `${restoreDir}/${pair.storageZip}` : null,
+      );
+      setRestoreResult(res);
+      setRestoreConfirmText("");
+    } catch (e) {
+      setRestoreError(errText(e));
+    } finally {
+      setRestoreBusy(false);
+    }
+  }, [restoreDir, selectedStamp, inspectResult, restorePairs]);
 
   if (!running || serverPort == null) {
     return (
@@ -240,6 +323,128 @@ export default function BackupPanel({ serverPort, running }: Props) {
           ))}
         </div>
       ) : null}
+
+      {/* ── 복원 section ───────────────────────────────────────────── */}
+      <div style={s.divider} />
+      <h2 style={s.title}>복원</h2>
+      <p style={s.hint}>
+        백업 폴더를 선택하면 복원 가능한 스냅샷 목록이 표시됩니다.
+        복원 시 서버가 일시 중지되며, 현재 DB는 안전 백업으로 자동 보존됩니다.
+      </p>
+
+      <div style={s.row}>
+        <button style={s.muted} onClick={() => void onPickRestoreDir()} disabled={restoreBusy || inspectBusy}>
+          📁 복원 폴더 선택…
+        </button>
+        {restoreDir ? <code style={s.destPath}>{restoreDir}</code> : null}
+      </div>
+
+      {restorePairs.length > 0 ? (
+        <div style={s.row}>
+          <label style={{ fontSize: 13, color: "var(--ys-text-label)" }}>
+            스냅샷
+            <select
+              style={{ ...s.input, marginLeft: 8, minWidth: 240 }}
+              value={selectedStamp ?? ""}
+              onChange={(e) => void onSelectBackup(e.target.value)}
+              disabled={inspectBusy || restoreBusy}
+            >
+              <option value="" disabled>— 백업 선택 —</option>
+              {restorePairs.map((p) => (
+                <option key={p.stamp} value={p.stamp}>
+                  {p.stamp}{p.storageZip ? " + storage" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      ) : null}
+
+      {inspectBusy ? <p style={s.hint}>미리보기 로딩 중…</p> : null}
+
+      {inspectResult && selectedStamp ? (() => {
+        const v = inspectResult.validation;
+        const blocked = v.level === "block";
+        const confirmReady = restoreConfirmText === "복원";
+        return (
+          <div style={s.previewBox}>
+            <div style={s.previewRow}>
+              <span style={s.previewLabel}>스탬프</span>
+              <span>{inspectResult.stamp}</span>
+            </div>
+            <div style={s.previewRow}>
+              <span style={s.previewLabel}>앱 버전</span>
+              <span>{inspectResult.app_version ?? "(알 수 없음)"}</span>
+            </div>
+            <div style={s.previewRow}>
+              <span style={s.previewLabel}>세션 수</span>
+              <span>{inspectResult.session_count}개</span>
+            </div>
+            <div style={s.previewRow}>
+              <span style={s.previewLabel}>발화 수</span>
+              <span>{inspectResult.utterance_count}개</span>
+            </div>
+            <div style={s.previewRow}>
+              <span style={s.previewLabel}>DB 크기</span>
+              <span>{fmtBytes(inspectResult.snapshot_bytes)}</span>
+            </div>
+            <div style={s.previewRow}>
+              <span style={s.previewLabel}>무결성</span>
+              <span style={{ color: inspectResult.integrity_ok ? "var(--ys-success-text)" : "var(--ys-danger-text)" }}>
+                {inspectResult.integrity_ok ? "✓ 통과" : "✕ 실패"}
+              </span>
+            </div>
+            <div style={s.previewRow}>
+              <span style={s.previewLabel}>storage 포함</span>
+              <span>{inspectResult.has_storage_zip ? "예" : "아니오"}</span>
+            </div>
+            {v.level !== "ok" ? (
+              <div style={{ ...s.previewRow, color: blocked ? "var(--ys-danger-text)" : "var(--ys-warn-text)" }}>
+                <span style={s.previewLabel}>{blocked ? "⛔ 차단" : "⚠️ 경고"}</span>
+                <span>{v.reason}</span>
+              </div>
+            ) : null}
+            {!blocked ? (
+              <div style={{ ...s.row, marginTop: 6 }}>
+                <input
+                  style={{ ...s.input, width: 120 }}
+                  placeholder={"복원" + " 입력"}
+                  value={restoreConfirmText}
+                  onChange={(e) => setRestoreConfirmText(e.target.value)}
+                  disabled={restoreBusy}
+                />
+                <button
+                  style={confirmReady && !restoreBusy ? s.dangerBtn : { ...s.dangerBtn, opacity: 0.45, cursor: "not-allowed" }}
+                  onClick={() => { if (confirmReady && !restoreBusy) void onRestore(); }}
+                  disabled={!confirmReady || restoreBusy}
+                  title={confirmReady ? "지금 복원" : '"복원" 을 입력하면 버튼이 활성화됩니다'}
+                >
+                  {restoreBusy ? "복원 중…" : "지금 복원"}
+                </button>
+                <span style={s.hint}>확인: 위 입력창에 "복원" 을 정확히 입력하세요</span>
+              </div>
+            ) : (
+              <p style={{ ...s.hint, color: "var(--ys-danger-text)", marginTop: 6 }}>
+                이 백업은 복원할 수 없습니다 — 버전 다운그레이드는 지원되지 않습니다.
+              </p>
+            )}
+          </div>
+        );
+      })() : null}
+
+      {restoreError ? <p style={s.error}>{restoreError}</p> : null}
+
+      {restoreResult ? (
+        <div style={s.resultBox} role="status">
+          <div style={{ fontWeight: 700 }}>
+            {restoreResult.integrity_ok ? "✓ 복원 완료" : "⚠️ 복원됨 (무결성 경고)"} · DB {fmtBytes(restoreResult.restored_bytes)}
+            {restoreResult.storage_restored ? " · storage 복원됨" : ""}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--ys-text-faint)" }}>
+            안전 백업 위치: {restoreResult.safety_dir}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -263,5 +468,10 @@ const s: Record<string, CSSProperties> = {
   keepLabel: { fontSize: 13, color: "var(--ys-text-label)", display: "flex", alignItems: "center" },
   resultBox: { padding: "10px 14px", borderRadius: "var(--ys-radius-md)", border: "1px solid var(--ys-success-border)", background: "var(--ys-success-bg)", color: "var(--ys-success-text)", fontSize: 13, display: "flex", flexDirection: "column", gap: 4 },
   failDetail: { fontSize: 12, color: "var(--ys-danger-text)", wordBreak: "break-all" },
+  divider: { borderTop: "1px solid var(--ys-border-subtle)", margin: "6px 0" },
+  previewBox: { padding: "10px 14px", borderRadius: "var(--ys-radius-md)", border: "1px solid var(--ys-border-strong)", background: "var(--ys-bg-raised)", fontSize: 13, display: "flex", flexDirection: "column", gap: 5 },
+  previewRow: { display: "flex", gap: 12, alignItems: "baseline" },
+  previewLabel: { minWidth: 90, color: "var(--ys-text-faint)", fontSize: 12 },
+  dangerBtn: { padding: "6px 14px", borderRadius: "var(--ys-radius-control)", border: "1px solid var(--ys-danger-text)", background: "var(--ys-danger-text)", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 },
 };
 // === ANCHOR: BACKUP_PANEL_END ===

@@ -46,6 +46,7 @@ pub fn run() {
             server_process::detect_lan_ip,
             restore::inspect_backup,
             restore::restore_backup,
+            restore::list_dir,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

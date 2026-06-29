@@ -137,3 +137,25 @@ pub fn restore_backup(
         (Err(e), _) => Err(format!("restore failed: {e}")),
     }
 }
+
+/// Return the file *names* (not full paths) inside `path`. Used by the console
+/// restore UI to enumerate backup snapshots without requiring `plugin-fs`.
+#[tauri::command]
+pub fn list_dir(path: String) -> Result<Vec<String>, String> {
+    let dir = std::path::Path::new(&path);
+    let rd = std::fs::read_dir(dir).map_err(|e| format!("read_dir {path}: {e}"))?;
+    let mut names: Vec<String> = rd
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            // Only regular files (skip subdirs, symlinks, etc.)
+            let ft = entry.file_type().ok()?;
+            if ft.is_file() {
+                entry.file_name().into_string().ok()
+            } else {
+                None
+            }
+        })
+        .collect();
+    names.sort();
+    Ok(names)
+}
