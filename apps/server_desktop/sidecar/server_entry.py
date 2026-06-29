@@ -45,6 +45,26 @@ def _default_appdata_dir() -> Path:
     return base / "yeson-meet"
 
 
+def _force_utf8_io() -> None:
+    """Force stdout/stderr to UTF-8, independent of the OS locale.
+
+    On a Windows Korean install the frozen interpreter defaults its piped
+    stdout/stderr to ``cp949``. Markers like ``INSPECT_RESULT=`` carry non-ASCII
+    text (e.g. the validation reason's em-dash ``—``), and ``print()`` then dies
+    with ``UnicodeEncodeError: 'cp949' codec can't encode``. ``PYTHONIOENCODING``/
+    ``PYTHONUTF8`` set by the Rust spawner are not reliably honored by the frozen
+    interpreter, so reconfigure the streams here — the canonical, locale-proof
+    fix that also matches the UTF-8 the Rust side decodes with.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8")
+            except (ValueError, OSError):
+                pass
+
+
 def _resolve_database_url() -> str:
     url = os.environ.get("DATABASE_URL")
     if url:
@@ -396,6 +416,11 @@ def _install_parent_death_watchdog() -> None:
 
 
 def main() -> int:
+    # Step 0: force UTF-8 stdout/stderr before ANY output, so one-shot markers
+    # (INSPECT_RESULT=/RESTORE_RESULT=) with non-ASCII text don't die on a cp949
+    # console (Windows Korean locale).
+    _force_utf8_io()
+
     # Step 1+2: resolve and pin DATABASE_URL BEFORE importing the app, because
     # apps.server.db.session binds the engine from this env var at import time.
     os.environ["DATABASE_URL"] = _resolve_database_url()
