@@ -60,9 +60,10 @@ pub fn discover_server() -> Result<Option<DiscoveredServer>, String> {
 
 /// Active TCP probe of an entire /24 subnet to find a yeson-meet server.
 /// `base` must be three dotted octets (e.g. "192.168.0"). `port` is the
-/// server port (typically 8000). Probes .1–.254 concurrently in chunks of
-/// 32 OS threads; accepts a host only if HTTP GET /api/v1/health returns 200.
-/// Returns sorted IPs (by last octet).
+/// server port (typically 8000). Probes .1–.254 concurrently (one short-lived
+/// thread per host, so the whole scan takes ~one connect-timeout); accepts a
+/// host only if its HTTP GET /api/v1/health status line is 200. Returns sorted
+/// IPs (by last octet).
 #[tauri::command]
 pub fn scan_subnet(base: String, port: u16) -> Result<Vec<String>, String> {
     // Validate: must be exactly three dotted octets, each parseable as u8
@@ -75,29 +76,21 @@ pub fn scan_subnet(base: String, port: u16) -> Result<Vec<String>, String> {
     }
 
     let found: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let hosts: Vec<u8> = (1u8..=254).collect();
-    let mut handles = Vec::new();
-
-    for chunk in hosts.chunks(32) {
-        let chunk = chunk.to_vec();
-        let base_clone = base.clone();
-        let found_clone = Arc::clone(&found);
-
-        let handle = thread::spawn(move || {
-            for host in chunk {
+    let handles: Vec<_> = (1u8..=254)
+        .map(|host| {
+            let base_clone = base.clone();
+            let found_clone = Arc::clone(&found);
+            thread::spawn(move || {
                 let ip = format!("{}.{}", base_clone, host);
-                let addr_str = format!("{}:{}", ip, port);
-                let addr = match addr_str.parse() {
+                let addr = match format!("{}:{}", ip, port).parse() {
                     Ok(a) => a,
-                    Err(_) => continue,
+                    Err(_) => return,
                 };
-
                 if let Ok(mut stream) =
-                    TcpStream::connect_timeout(&addr, Duration::from_millis(300))
+                    TcpStream::connect_timeout(&addr, Duration::from_millis(400))
                 {
-                    let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
-                    let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
-
+                    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+                    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
                     let req = format!(
                         "GET /api/v1/health HTTP/1.0\r\nHost: {}\r\nConnection: close\r\n\r\n",
                         ip
@@ -106,17 +99,23 @@ pub fn scan_subnet(base: String, port: u16) -> Result<Vec<String>, String> {
                         let mut buf = [0u8; 512];
                         let n = stream.read(&mut buf).unwrap_or(0);
                         let response = String::from_utf8_lossy(&buf[..n]);
-                        if response.contains("200") {
+                        // Match the STATUS LINE specifically (a stray "200" in the
+                        // body must not count as a healthy server).
+                        let status_ok = response
+                            .lines()
+                            .next()
+                            .map(|line| line.starts_with("HTTP/") && line.contains("200"))
+                            .unwrap_or(false);
+                        if status_ok {
                             if let Ok(mut lock) = found_clone.lock() {
                                 lock.push(ip);
                             }
                         }
                     }
                 }
-            }
-        });
-        handles.push(handle);
-    }
+            })
+        })
+        .collect();
 
     for handle in handles {
         let _ = handle.join();
@@ -132,4 +131,42 @@ pub fn scan_subnet(base: String, port: u16) -> Result<Vec<String>, String> {
     });
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    #[test]
+    fn scan_subnet_rejects_a_malformed_base() {
+        assert!(scan_subnet("192.168".to_string(), 8000).is_err());
+        assert!(scan_subnet("192.168.0.1".to_string(), 8000).is_err());
+        assert!(scan_subnet("abc.def.ghi".to_string(), 8000).is_err());
+    }
+
+    #[test]
+    fn scan_subnet_finds_a_healthy_server_on_loopback() {
+        // Throwaway HTTP/1.0 server on 127.0.0.1 that answers the health path 200.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            for conn in listener.incoming() {
+                if let Ok(mut stream) = conn {
+                    let mut buf = [0u8; 256];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(
+                        b"HTTP/1.0 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}",
+                    );
+                }
+            }
+        });
+        thread::sleep(Duration::from_millis(50)); // let the listener get ready
+
+        let found = scan_subnet("127.0.0".to_string(), port).expect("scan should succeed");
+        assert!(
+            found.contains(&"127.0.0.1".to_string()),
+            "expected 127.0.0.1 among results, got {found:?}"
+        );
+    }
 }
