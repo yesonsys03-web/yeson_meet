@@ -45,8 +45,8 @@ export function SubtitleView({ token }: { token: string }) {
                 {previous.text_ko}
               </div>
             ) : null}
-            <div className="text-5xl font-bold leading-tight">{latest.text_ko}</div>
-            <div className="text-2xl opacity-60">{latest.text_en}</div>
+            <div className="text-2xl font-bold leading-tight">{latest.text_ko}</div>
+            <div className="text-sm opacity-60">{latest.text_en}</div>
           </div>
         )}
       </section>
