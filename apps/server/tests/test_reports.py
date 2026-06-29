@@ -250,4 +250,46 @@ def test_build_session_report_merges_continuation_rows():
     assert len(ko_lines) == 1, f"Expected 1 KO line, got {len(ko_lines)}: {ko_lines}"
     en_lines = [l for l in result.splitlines() if l.startswith("- EN:") and l.strip() != "- EN:"]
     assert len(en_lines) == 1, f"Expected 1 non-empty EN line, got {en_lines}"
+
+
+# ---------------------------------------------------------------------------
+# FIX 3: live-subtitle pacing newlines inside text_ko/text_en must NOT survive
+# into reports. They are display hints (sentence pacing on the phone, invisible
+# there since HTML collapses \n) but in docx/PDF each \n becomes a <w:br/>, so a
+# single turn's Korean rendered as 4–5 lines with blank gaps and the one English
+# line appeared "empty / pushed to another line" beneath it.
+# ---------------------------------------------------------------------------
+
+def test_merge_collapses_internal_newlines_in_text_ko():
+    """Embedded \\n / \\n\\n inside one row's text_ko collapse to single spaces so
+    each turn renders as one prose block (KO) + one line (EN), properly aligned."""
+    rows = [
+        _utt_ns(1, "A", "The main tech we will use.", "첫 문장.\n둘째 문장.\n\n셋째 문장."),
+    ]
+    result = merge_continuation_utterances(rows)
+    assert len(result) == 1
+    assert "\n" not in result[0].text_ko
+    assert result[0].text_ko == "첫 문장. 둘째 문장. 셋째 문장."
+
+
+def test_merge_collapses_internal_newlines_in_text_en():
+    """Same normalization applies to text_en (defensive — symmetric rendering)."""
+    rows = [
+        _utt_ns(1, "A", "First line.\nSecond line.", "한 줄."),
+    ]
+    result = merge_continuation_utterances(rows)
+    assert "\n" not in result[0].text_en
+    assert result[0].text_en == "First line. Second line."
+
+
+def test_merge_collapses_newlines_when_merging_continuation_rows():
+    """When continuation rows merge, each fragment is also newline-normalized."""
+    rows = [
+        _utt_ns(1, "A", "Hi.", "안녕.\n반가워."),
+        _utt_ns(2, "A", "", "잘 지내요?\n\n또 봐요."),
+    ]
+    result = merge_continuation_utterances(rows)
+    assert len(result) == 1
+    assert "\n" not in result[0].text_ko
+    assert result[0].text_ko == "안녕. 반가워. 잘 지내요? 또 봐요."
 # === ANCHOR: TEST_REPORTS_END ===

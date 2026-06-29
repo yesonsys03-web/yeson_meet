@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from itertools import groupby
@@ -22,14 +23,26 @@ class MergedUtterance:
     text_ko: str
 
 
+def _collapse_ws(text: str) -> str:
+    """Collapse runs of whitespace — including the live-subtitle pacing newlines
+    embedded in stored text — into single spaces, then strip.
+
+    Live subtitles insert ``\\n``/``\\n\\n`` between sentences for on-screen
+    pacing (invisible on the phone since HTML collapses them). In a report those
+    newlines become ``<w:br/>`` line breaks in docx/PDF, so one turn's Korean
+    rendered as several lines with blank gaps and the single English line below
+    looked empty / pushed away. Reports want flowing prose, so normalize here."""
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def merge_continuation_utterances(rows) -> "list[MergedUtterance]":
     """Merge sentence-split continuation rows (empty text_en, same speaker) into
     the previous row's Korean, so each turn renders as [one English original] +
-    [full Korean translation]."""
+    [full Korean translation]. Internal pacing newlines are collapsed to spaces."""
     merged: list[MergedUtterance] = []
     for r in rows:
-        en = (r.text_en or "").strip()
-        ko = (r.text_ko or "").strip()
+        en = _collapse_ws(r.text_en or "")
+        ko = _collapse_ws(r.text_ko or "")
         if merged and not en and merged[-1].speaker == r.speaker:
             prev = merged[-1]
             prev.text_ko = (prev.text_ko + " " + ko).strip() if ko else prev.text_ko
@@ -40,7 +53,7 @@ def merge_continuation_utterances(rows) -> "list[MergedUtterance]":
                     speaker=r.speaker,
                     started_at=r.started_at,
                     ended_at=r.ended_at,
-                    text_en=(r.text_en or ""),
+                    text_en=en,
                     text_ko=ko,
                 )
             )
