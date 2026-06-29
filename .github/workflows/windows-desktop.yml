@@ -154,13 +154,15 @@ jobs:
       - name: Publish client installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.12
-          name: yeson-meet v0.9.12
+          tag_name: v0.9.13
+          name: yeson-meet v0.9.13
           prerelease: true
           body: |
-            ## yeson-meet v0.9.12 — 무엇이 바뀌었나
-            - 핸드폰(viewer) 자막 크기를 작은 화면에 맞게 조정: 주 자막을 이전의 절반 크기로 줄였습니다.
-            - 직전(이전) 자막은 읽기 좋은 크기로 유지했습니다.
+            ## yeson-meet v0.9.13 — 무엇이 바뀌었나
+            - 백업 복원 기능 추가: Backup 탭에서 백업을 골라 서버를 그 시점으로 되돌립니다(서버 이전·롤백·복제). 복원 전 현재 상태는 자동 안전백업됩니다.
+            - 다른 IP 대역의 서버 찾기: 서버 주소에 IP만 입력해도 되고(자동 ws://…:8000 변환), "서버 자동 검색"으로 다른 대역을 스캔할 수 있습니다.
+            - 듀얼 모니터에서 전체화면 자막·QR이 앱이 있는 모니터에 표시됩니다(주 모니터로 튀지 않음).
+            - 보고서에서 한글 번역 아래 영문이 비거나 어긋나던 정렬 문제를 수정했습니다.
 
             ### Windows 클라이언트
             Unsigned Windows test build of the yeson-meet desktop CLIENT app
