@@ -2,6 +2,7 @@
 mod backup_dialog;
 mod diagnostics;
 mod orphan_reaper;
+mod restore;
 mod server_config;
 mod server_process;
 mod tunnel;
@@ -43,6 +44,8 @@ pub fn run() {
             tunnel::live_session_count_cmd,
             tunnel::lan_viewer_base_cmd,
             server_process::detect_lan_ip,
+            restore::inspect_backup,
+            restore::restore_backup,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

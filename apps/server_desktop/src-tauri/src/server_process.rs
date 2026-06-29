@@ -139,7 +139,7 @@ fn set_process_group(command: &mut Command) {
 /// Suppress the console window Windows would otherwise pop for the
 /// console-subsystem frozen server exe. No-op off Windows; piped stdio is
 /// unaffected. (Same rationale as the client sidecar.)
-fn set_no_window(command: &mut Command) {
+pub(crate) fn set_no_window(command: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -156,9 +156,9 @@ fn set_no_window(command: &mut Command) {
 #[serde(rename_all = "camelCase")]
 pub struct ServerStartRequest {
     /// Port to bind. Defaults to 8000 when omitted/zero.
-    port: Option<u16>,
+    pub(crate) port: Option<u16>,
     /// AI provider override; defaults to the server's gemini_live.
-    provider: Option<String>,
+    pub(crate) provider: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -508,7 +508,7 @@ fn is_port_free(port: u16) -> bool {
 /// `bundle.resources`) and unpacked next to the app; the candidates below cover
 /// the bundled resource layout AND the dev `binaries/` staging dir so
 /// `cargo test`/`tauri dev` resolve the same path. Returns None when missing.
-fn locate_bundled_server() -> Option<PathBuf> {
+pub(crate) fn locate_bundled_server() -> Option<PathBuf> {
     let triple: &str = if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
         "x86_64-pc-windows-msvc"
     } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
@@ -959,7 +959,7 @@ fn append_log_file(app: &tauri::AppHandle, level: &str, source: &str, message: &
     }
 }
 
-fn emit_backend_log(
+pub(crate) fn emit_backend_log(
     app: &tauri::AppHandle,
     level: &'static str,
     source: &'static str,
