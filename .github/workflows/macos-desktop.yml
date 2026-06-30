@@ -72,15 +72,13 @@ jobs:
       - name: Publish installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.17
-          name: yeson-meet v0.9.17
+          tag_name: v0.9.18
+          name: yeson-meet v0.9.18
           prerelease: true
           body: |
-            ## yeson-meet v0.9.17 — 무엇이 바뀌었나
-            - **회의 첫 자막이 빨라졌습니다.** v0.9.16에서 회의 시작 시 첫 자막이 최대 ~45초까지 지연되던 회귀를 해결하고, 긴 첫 발화도 더 빨리 자막이 뜨도록 했습니다.
-            - **자막 깜박임**(회의 초반 자막이 너무 빨리 바뀌던 현상)을 개선했습니다.
-            - **회의 종료 후 재시작 시 자막이 안 나오던 문제**를 수정했습니다.
-            - 애니메이션 제작 용어 번역(클린업·레이아웃 등)은 그대로 유지됩니다.
+            ## yeson-meet v0.9.18 — 무엇이 바뀌었나
+            - **전체화면(F키) 자막 글자 크기를 고정**했습니다. 기존엔 자막 길이에 따라 크기가 들쭉날쭉했는데, 이제 일정한 크기로 표시되어 회의실에서 멀리서도 안정적으로 읽힙니다. 아주 긴 자막만 화면에 맞게 자동 축소됩니다.
+            - v0.9.17의 자막 콜드스타트(첫 자막 단축)·깜박임·재시작 수정 포함.
 
             ### macOS 클라이언트
             Unsigned (ad-hoc) macOS test build of the yeson-meet desktop CLIENT
