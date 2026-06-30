@@ -72,13 +72,13 @@ jobs:
       - name: Publish installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.14
-          name: yeson-meet v0.9.14
+          tag_name: v0.9.16
+          name: yeson-meet v0.9.16
           prerelease: true
           body: |
-            ## yeson-meet v0.9.14 — 무엇이 바뀌었나
-            - Windows에서 백업 복원 중 나던 오류(PYI-16632 "Failed to execute script")를 수정했습니다.
-            - 앱을 어떻게 종료하든(정상 종료/강제 종료/크래시) 자식 프로세스(사이드카·헬퍼)가 고아로 남지 않도록 정리를 강화했습니다: Windows Job Object + 시작 시 고아 정리 + 부모-사망 감지(서버·클라이언트 양쪽).
+            ## yeson-meet v0.9.16 — 무엇이 바뀌었나
+            - **회의 자막의 애니메이션 제작 전문용어 번역 품질을 개선했습니다**(서버 측). "cleanup"→"클린업" 등 2D 파이프라인(툰붐 하모니)·포토샵·제작 관리 용어 121개 사전 적용.
+            - 클라이언트 설정 패널 UI를 다듬고 창 최소 크기를 추가했습니다.
 
             ### macOS 클라이언트
             Unsigned (ad-hoc) macOS test build of the yeson-meet desktop CLIENT
