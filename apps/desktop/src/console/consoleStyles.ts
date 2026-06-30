@@ -337,7 +337,7 @@ export const consoleStyles: Record<string, CSSProperties> = {
     margin: "0 auto",
     color: "#93c5fd",
     opacity: 0.72,
-    fontSize: "clamp(22px, 2.4vw, 40px)",
+    fontSize: 60,
     fontWeight: 760,
     lineHeight: 1.28,
     textAlign: "center",

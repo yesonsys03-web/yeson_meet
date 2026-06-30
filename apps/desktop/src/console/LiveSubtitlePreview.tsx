@@ -106,6 +106,13 @@ function previousSubtitle(utterances: UtteranceTranscribed[], latestSeq: number 
   return null;
 }
 
+// Fixed fullscreen caption size (≈40pt at 96dpi). Stable per-line size — no
+// per-caption resizing — for readability across a meeting room (~3m). Long
+// captions wrap to more lines at this size; the fit logic only shrinks BELOW it
+// when even wrapping would overflow the screen, so a caption is never clipped.
+const FULLSCREEN_SUBTITLE_TARGET_PX = 80;
+const FULLSCREEN_SUBTITLE_MIN_PX = 24;
+
 function useFullscreenSubtitleFit(text: string, enabled: boolean): { ref: (node: HTMLDivElement | null) => void; style: CSSProperties | null } {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const [fontSize, setFontSize] = useState<number | null>(null);
@@ -126,8 +133,10 @@ function useFullscreenSubtitleFit(text: string, enabled: boolean): { ref: (node:
     const fitText = () => {
       const widthLimit = window.innerWidth * 0.9;
       const heightLimit = window.innerHeight * 0.9;
-      let low = 24;
-      let high = Math.min(260, Math.max(96, window.innerHeight * 0.42));
+      // Fixed target; only search DOWNWARD from it so the size stays constant for
+      // normal captions and merely shrinks for the rare caption too long to fit.
+      let low = FULLSCREEN_SUBTITLE_MIN_PX;
+      let high = FULLSCREEN_SUBTITLE_TARGET_PX;
       let best = low;
       const previousFontSize = element.style.fontSize;
 
