@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 
 GLOSSARY_PATH_ENV = "YESON_GLOSSARY_PATH"
+GLOSSARY_ENABLED_ENV = "GEMINI_GLOSSARY_ENABLED"
 STORAGE_ROOT_ENV = "STORAGE_ROOT"
 DEFAULT_STORAGE_ROOT = "/var/lib/yeson-meet/storage"
 GLOSSARY_FILENAME = "glossary.txt"
@@ -246,7 +247,18 @@ def _format_block(terms: list[tuple[str, str]]) -> str:
 
 
 def glossary_block() -> str:
-    """Prompt-ready instruction block listing every term mapping."""
+    """Prompt-ready instruction block listing every term mapping.
+
+    Returns "" when disabled via ``GEMINI_GLOSSARY_ENABLED`` (0/false/no/off) so
+    the glossary can be isolated as a variable without rebuilding the prompts.
+    """
+    if os.environ.get(GLOSSARY_ENABLED_ENV, "1").strip().lower() in (
+        "0",
+        "false",
+        "no",
+        "off",
+    ):
+        return ""
     load_glossary()
     return _cache["block"]  # type: ignore[return-value]
 # === ANCHOR: GLOSSARY_END ===

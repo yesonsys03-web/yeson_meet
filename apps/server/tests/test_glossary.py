@@ -75,6 +75,14 @@ def test_mtime_reload_without_restart(monkeypatch, tmp_path):
     assert dict(mod.load_glossary())["cleanup"] == "버전2"
 
 
+def test_glossary_disabled_returns_empty(monkeypatch, tmp_path):
+    mod = _fresh(monkeypatch, tmp_path, STORAGE_ROOT=str(tmp_path))
+    monkeypatch.setenv("GEMINI_GLOSSARY_ENABLED", "0")
+    assert mod.glossary_block() == ""
+    monkeypatch.setenv("GEMINI_GLOSSARY_ENABLED", "1")
+    assert "클린업" in mod.glossary_block()
+
+
 def test_missing_file_falls_back_to_defaults(monkeypatch, tmp_path):
     mod = _fresh(
         monkeypatch, tmp_path, YESON_GLOSSARY_PATH=str(tmp_path / "nope.txt")

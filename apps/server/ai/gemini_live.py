@@ -38,6 +38,7 @@ GENAI_USE_ENTERPRISE_ENV = "GOOGLE_GENAI_USE_ENTERPRISE"
 SEGMENT_MAX_SPEECH_MS_ENV = "GEMINI_SEGMENT_MAX_SPEECH_MS"
 FIRST_SEGMENT_MAX_SPEECH_MS_ENV = "GEMINI_FIRST_SEGMENT_MAX_SPEECH_MS"
 SEGMENT_HARD_MAX_SPEECH_MS_ENV = "GEMINI_SEGMENT_HARD_MAX_SPEECH_MS"
+FIRST_SEGMENT_HARD_MAX_SPEECH_MS_ENV = "GEMINI_FIRST_SEGMENT_HARD_MAX_SPEECH_MS"
 SEGMENT_CYCLE_SILENCE_MS_ENV = "GEMINI_SEGMENT_CYCLE_SILENCE_MS"
 SEGMENT_STUCK_WATCHDOG_MS_ENV = "GEMINI_SEGMENT_STUCK_WATCHDOG_MS"
 SEGMENT_EMPTY_TAIL_CYCLE_MS_ENV = "GEMINI_SEGMENT_EMPTY_TAIL_CYCLE_MS"
@@ -63,12 +64,15 @@ DEFAULT_EXPLICIT_VAD_RMS_DBFS_THRESHOLD = -50.0
 DEFAULT_EXPLICIT_VAD_END_SILENCE_MS = 320
 DEFAULT_EXPLICIT_VAD_MAX_SPEECH_MS = 2500
 DEFAULT_SEGMENT_MAX_SPEECH_MS = 120000
-# Cold-start lever: the FIRST segment of a session uses a shorter soft cap so
-# the first caption of a long opening utterance arrives sooner (~4.5s instead of
-# the full segment cap). Later segments keep the normal cap, so the rest of the
-# meeting is NOT split more often. Set 0 to disable (fall back to normal cap).
+# Cold-start lever: the FIRST segment uses shorter caps so the first caption of
+# a long opening utterance arrives sooner. The SOFT cap cuts at the first pause
+# after this many ms of speech; the HARD cap force-cuts even mid-sentence (the
+# real lever for a non-stop opening monologue — gemini-3.1 only transcribes at
+# turn end). Later segments keep the normal caps, so the rest of the meeting is
+# NOT split more often. Set 0 to disable (fall back to the normal cap).
 DEFAULT_FIRST_SEGMENT_MAX_SPEECH_MS = 4500
 DEFAULT_SEGMENT_HARD_MAX_SPEECH_MS = 300000
+DEFAULT_FIRST_SEGMENT_HARD_MAX_SPEECH_MS = 6000
 DEFAULT_SEGMENT_CYCLE_SILENCE_MS = 400
 # Speech가 보내졌는데도 input/output transcription이 안 오는 segment에 대한
 # 최대 대기. 시간을 초과하면 force-cycle해서 새 Gemini Live 세션으로 옮긴다.
@@ -96,8 +100,9 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """You are a real-time meeting assistant for a Korean animation/VFX studio.
 
 Translate English speech into concise Korean subtitle-style text.
-Use the animation-production glossary below for studio pipeline terms: render
-those terms in their given Korean form rather than translating them literally.
+Keep common studio pipeline terms in their established Korean loanword form
+rather than translating them literally (e.g. cleanup → 클린업, layout → 레이아웃,
+compositing → 컴포지팅, retake → 리테이크).
 Translate general business and engineering phrases into Korean.
 Keep subtitles to at most two short lines. If the speaker mixes Korean and
 English, keep the Korean as-is and translate only the English parts.
@@ -105,11 +110,6 @@ Do not invent company names, benchmark claims, or context not present in the
 speaker's words.
 Return only the Korean subtitle text. Do not repeat the source English.
 """
-
-
-def _system_instruction() -> str:
-    """SYSTEM_PROMPT plus the live (possibly operator-edited) glossary block."""
-    return SYSTEM_PROMPT + "\n" + glossary_block()
 
 
 class GeminiConfigHealth(TypedDict):
@@ -305,6 +305,23 @@ def _first_segment_max_chunks(normal_max_chunks: int) -> int:
     return min(chunks, normal_max_chunks)
 
 
+def _first_segment_hard_max_chunks(normal_hard_max_chunks: int) -> int:
+    """Hard cap for the FIRST segment only — force-cuts a non-stop opening
+    monologue so its first caption arrives ~6s in instead of waiting for the full
+    hard cap. Returns ``normal_hard_max_chunks`` when disabled (env <= 0) or when
+    the first-segment cap would exceed the normal hard cap (never longer).
+    """
+    first_ms = _int_env(
+        FIRST_SEGMENT_HARD_MAX_SPEECH_MS_ENV, DEFAULT_FIRST_SEGMENT_HARD_MAX_SPEECH_MS
+    )
+    if first_ms <= 0:
+        return normal_hard_max_chunks
+    chunks = max(1, math.ceil(first_ms / INPUT_CHUNK_MS))
+    if normal_hard_max_chunks <= 0:
+        return chunks
+    return min(chunks, normal_hard_max_chunks)
+
+
 def _segment_hard_max_chunks() -> int:
     hard_ms = _int_env(SEGMENT_HARD_MAX_SPEECH_MS_ENV, DEFAULT_SEGMENT_HARD_MAX_SPEECH_MS)
     if hard_ms <= 0:
@@ -456,6 +473,9 @@ class GeminiLiveProvider:
         segment_max_chunks = _segment_max_chunks()
         first_segment_max_chunks = _first_segment_max_chunks(segment_max_chunks)
         segment_hard_max_chunks = _segment_hard_max_chunks()
+        first_segment_hard_max_chunks = _first_segment_hard_max_chunks(
+            segment_hard_max_chunks
+        )
         segment_silence_chunks = _segment_cycle_silence_chunks()
 
         while True:
@@ -464,12 +484,17 @@ class GeminiLiveProvider:
             active_max_chunks = (
                 first_segment_max_chunks if segment_index == 1 else segment_max_chunks
             )
+            active_hard_max_chunks = (
+                first_segment_hard_max_chunks
+                if segment_index == 1
+                else segment_hard_max_chunks
+            )
             segment_state = AudioSegmentState()
             segment_audio = _bounded_audio_segment(
                 audio_source,
                 segment_state,
                 active_max_chunks,
-                hard_max_chunks=segment_hard_max_chunks,
+                hard_max_chunks=active_hard_max_chunks,
                 silence_chunk_run=segment_silence_chunks,
             )
             trace_extra = {**self._trace_extra, "gemini_segment": segment_index}
@@ -511,7 +536,7 @@ def _build_live_config(types: Any) -> Any:
     explicit_vad_enabled = _explicit_vad_supported()
     config_kwargs: dict[str, Any] = {
         "response_modalities": [modality],
-        "system_instruction": types.Content(parts=[types.Part(text=_system_instruction())]),
+        "system_instruction": types.Content(parts=[types.Part(text=SYSTEM_PROMPT)]),
         "input_audio_transcription": types.AudioTranscriptionConfig(),
         "output_audio_transcription": (
             None if modality == types.Modality.TEXT else types.AudioTranscriptionConfig()
