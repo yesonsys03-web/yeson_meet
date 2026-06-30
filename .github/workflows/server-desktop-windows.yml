@@ -95,12 +95,13 @@ jobs:
       - name: Publish installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.15
-          name: yeson-meet v0.9.15
+          tag_name: v0.9.16
+          name: yeson-meet v0.9.16
           prerelease: true
           body: |
-            ## yeson-meet v0.9.15 — 무엇이 바뀌었나
-            - Windows 한글(cp949) 환경에서 백업 **복원 미리보기**가 `INSPECT_ERROR=UnicodeEncodeError: 'cp949' codec can't encode character` 오류로 실패하던 문제를 수정했습니다. 서버가 출력 스트림을 항상 UTF-8로 강제하도록 바꿔, 복원 미리보기·복원이 OS 로케일과 무관하게 동작합니다.
+            ## yeson-meet v0.9.16 — 무엇이 바뀌었나
+            - **회의 자막의 애니메이션 제작 전문용어 번역 품질을 개선했습니다.** "cleanup"이 "청소"처럼 직역되던 문제를 고쳐, 클린업·레이아웃·컴포지팅·리테이크 등 2D 파이프라인(툰붐 하모니)·포토샵·제작 관리 용어 121개를 올바른 한국어 표기로 번역합니다.
+            - **운영자가 용어를 직접 추가/수정**할 수 있습니다. 서버 데이터 폴더에 `glossary.txt`를 만들고 `영어 => 한국어` 형식으로 한 줄씩 적으면, 서버 재동결 없이 다음 발화부터 반영됩니다.
 
             ### Windows 서버 콘솔
             Unsigned Windows test build of the yeson-meet server console

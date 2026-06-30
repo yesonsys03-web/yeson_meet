@@ -130,7 +130,7 @@ export function SetupAssistant() {
   return (
     <div style={styles.page}>
       <section style={styles.hero}>
-        <div>
+        <div style={styles.heroMain}>
           <p style={styles.eyebrow}>yeson-meet</p>
           <h1 style={styles.title}>미팅 실시간 자막</h1>
           <p style={styles.subtitle}>번역과 보고서 작성</p>

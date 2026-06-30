@@ -91,7 +91,7 @@ export function MeetingQuickStartPanel() {
   return (
     <section style={styles.quickStartPanel}>
       <div style={styles.quickStartHeader}>
-        <div>
+        <div style={styles.quickStartHeaderMain}>
           <p style={styles.eyebrow}>one-click meeting start</p>
           <h2 style={styles.quickStartTitle}>버튼 하나로 회의 시작</h2>
           <p style={styles.quickStartIntro}>

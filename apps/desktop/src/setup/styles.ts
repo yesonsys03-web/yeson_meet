@@ -23,13 +23,17 @@ export const styles: Record<string, CSSProperties> = {
   },
   hero: {
     flexShrink: 0,
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) 320px",
+    display: "flex",
+    flexWrap: "wrap",
     gap: 24,
     alignItems: "stretch",
     padding: "28px 32px 16px",
     background: "#eef2ff",
     borderBottom: "1px solid rgba(148,163,184,.25)",
+  },
+  heroMain: {
+    flex: "2 1 320px",
+    minWidth: 0,
   },
   scrollBody: {
     flex: 1,
@@ -47,9 +51,10 @@ export const styles: Record<string, CSSProperties> = {
   },
   title: {
     margin: "8px 0",
-    fontSize: 48,
-    lineHeight: 1,
+    fontSize: "clamp(28px, 5vw, 48px)",
+    lineHeight: 1.05,
     letterSpacing: "-.05em",
+    wordBreak: "keep-all",
   },
   subtitle: {
     maxWidth: 760,
@@ -59,6 +64,7 @@ export const styles: Record<string, CSSProperties> = {
     lineHeight: 1.55,
   },
   statusCard: {
+    flex: "1 1 260px",
     display: "flex",
     flexDirection: "column",
     gap: 8,
@@ -87,17 +93,22 @@ export const styles: Record<string, CSSProperties> = {
     boxShadow: "0 28px 70px rgba(30,64,175,.24)",
   },
   quickStartHeader: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) auto",
+    display: "flex",
+    flexWrap: "wrap",
     gap: 20,
     alignItems: "start",
     marginBottom: 20,
   },
+  quickStartHeaderMain: {
+    flex: "1 1 320px",
+    minWidth: 0,
+  },
   quickStartTitle: {
     margin: "8px 0",
-    fontSize: 30,
-    lineHeight: 1.08,
+    fontSize: "clamp(22px, 3.4vw, 30px)",
+    lineHeight: 1.12,
     letterSpacing: "-.04em",
+    wordBreak: "keep-all",
   },
   quickStartIntro: {
     maxWidth: 820,
@@ -110,15 +121,18 @@ export const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 8,
+    flexShrink: 0,
     minWidth: 150,
   },
   quickStartGrid: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) minmax(360px, .85fr)",
+    display: "flex",
+    flexWrap: "wrap",
     gap: 16,
     marginTop: 20,
   },
   quickStartCard: {
+    flex: "1 1 320px",
+    minWidth: 0,
     padding: 20,
     borderRadius: 24,
     color: "#0f172a",
@@ -126,6 +140,8 @@ export const styles: Record<string, CSSProperties> = {
     border: "1px solid rgba(255,255,255,.22)",
   },
   quickStartCardDark: {
+    flex: "1 1 320px",
+    minWidth: 0,
     padding: 20,
     borderRadius: 24,
     color: "#e2e8f0",

@@ -20,6 +20,7 @@ import struct
 import time
 from typing import Any, Literal, TypedDict
 
+from apps.server.ai.glossary import glossary_block
 from apps.server.ai.live_session import is_permanent_provider_error
 from apps.server.ai.providers import TranslatedUtterance
 
@@ -89,15 +90,20 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """You are a real-time meeting assistant for a Korean animation/VFX studio.
 
 Translate English speech into concise Korean subtitle-style text.
-Preserve only common studio pipeline terms in English (layout, retake, delivery,
-render, comp, rig, shot, asset). Translate general business and engineering
-phrases into Korean.
+Use the animation-production glossary below for studio pipeline terms: render
+those terms in their given Korean form rather than translating them literally.
+Translate general business and engineering phrases into Korean.
 Keep subtitles to at most two short lines. If the speaker mixes Korean and
 English, keep the Korean as-is and translate only the English parts.
 Do not invent company names, benchmark claims, or context not present in the
 speaker's words.
 Return only the Korean subtitle text. Do not repeat the source English.
 """
+
+
+def _system_instruction() -> str:
+    """SYSTEM_PROMPT plus the live (possibly operator-edited) glossary block."""
+    return SYSTEM_PROMPT + "\n" + glossary_block()
 
 
 class GeminiConfigHealth(TypedDict):
@@ -479,7 +485,7 @@ def _build_live_config(types: Any) -> Any:
     explicit_vad_enabled = _explicit_vad_supported()
     config_kwargs: dict[str, Any] = {
         "response_modalities": [modality],
-        "system_instruction": types.Content(parts=[types.Part(text=SYSTEM_PROMPT)]),
+        "system_instruction": types.Content(parts=[types.Part(text=_system_instruction())]),
         "input_audio_transcription": types.AudioTranscriptionConfig(),
         "output_audio_transcription": (
             None if modality == types.Modality.TEXT else types.AudioTranscriptionConfig()
@@ -1306,8 +1312,8 @@ async def _translate_partial_text_stream(
         ),
         contents=(
             "Translate this English meeting transcript fragment into concise Korean "
-            "subtitle text. Return only Korean. Preserve only common studio terms "
-            "such as layout, retake, render, comp, rig, shot, asset.\n\n"
+            "subtitle text. Return only Korean.\n"
+            + glossary_block() + "\n\n"
             f"English: {text}"
         ),
         config=types.GenerateContentConfig(
@@ -1337,8 +1343,8 @@ async def _translate_partial_delta_stream(
             "You are extending a Korean meeting subtitle in real time. "
             "Translate ONLY the new English continuation into Korean, so it can be "
             "appended to the existing Korean subtitle. Do not repeat the earlier "
-            "Korean. Output Korean only. Preserve common studio terms in English: "
-            "layout, retake, render, comp, rig, shot, asset.\n\n"
+            "Korean. Output Korean only.\n"
+            + glossary_block() + "\n\n"
             f"Earlier English (already translated, context only): {prev_en}\n"
             f"Earlier Korean (your previous output): {prev_ko}\n"
             f"New English continuation to translate: {delta_en}"
