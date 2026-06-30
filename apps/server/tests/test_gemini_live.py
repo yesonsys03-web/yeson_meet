@@ -11,6 +11,7 @@ from apps.server.ai.gemini_live import (
     _bounded_audio_segment,
     _build_live_config,
     _estimate_usage_cost_usd,
+    _first_segment_max_chunks,
     _has_subtitle_text,
     _pcm16le_rms_dbfs,
     _should_emit_partial_translation,
@@ -1747,4 +1748,25 @@ async def test_stream_session_still_splits_multi_sentence_final_without_partial(
     ]
     assert [u.seq for u in utterances] == [1, 2, 3]
     assert all(u.is_final for u in utterances)
+
+
+def test_first_segment_max_chunks_shortens_cold_start(monkeypatch) -> None:
+    monkeypatch.delenv("GEMINI_FIRST_SEGMENT_MAX_SPEECH_MS", raising=False)
+    # Default 4500ms / 20ms per chunk = 225, capped at the normal 10000ms=500.
+    assert _first_segment_max_chunks(500) == 225
+
+
+def test_first_segment_cap_never_exceeds_normal(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_FIRST_SEGMENT_MAX_SPEECH_MS", "999999")
+    assert _first_segment_max_chunks(500) == 500  # clamped to normal
+
+
+def test_first_segment_cap_disabled_falls_back_to_normal(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_FIRST_SEGMENT_MAX_SPEECH_MS", "0")
+    assert _first_segment_max_chunks(500) == 500
+
+
+def test_first_segment_cap_with_unlimited_normal(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_FIRST_SEGMENT_MAX_SPEECH_MS", "4500")
+    assert _first_segment_max_chunks(0) == 225  # normal unlimited → use first cap
 # === ANCHOR: TEST_GEMINI_LIVE_END ===

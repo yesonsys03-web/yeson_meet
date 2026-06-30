@@ -36,6 +36,7 @@ EXPLICIT_VAD_END_SILENCE_MS_ENV = "GEMINI_EXPLICIT_VAD_END_SILENCE_MS"
 EXPLICIT_VAD_MAX_SPEECH_MS_ENV = "GEMINI_EXPLICIT_VAD_MAX_SPEECH_MS"
 GENAI_USE_ENTERPRISE_ENV = "GOOGLE_GENAI_USE_ENTERPRISE"
 SEGMENT_MAX_SPEECH_MS_ENV = "GEMINI_SEGMENT_MAX_SPEECH_MS"
+FIRST_SEGMENT_MAX_SPEECH_MS_ENV = "GEMINI_FIRST_SEGMENT_MAX_SPEECH_MS"
 SEGMENT_HARD_MAX_SPEECH_MS_ENV = "GEMINI_SEGMENT_HARD_MAX_SPEECH_MS"
 SEGMENT_CYCLE_SILENCE_MS_ENV = "GEMINI_SEGMENT_CYCLE_SILENCE_MS"
 SEGMENT_STUCK_WATCHDOG_MS_ENV = "GEMINI_SEGMENT_STUCK_WATCHDOG_MS"
@@ -62,6 +63,11 @@ DEFAULT_EXPLICIT_VAD_RMS_DBFS_THRESHOLD = -50.0
 DEFAULT_EXPLICIT_VAD_END_SILENCE_MS = 320
 DEFAULT_EXPLICIT_VAD_MAX_SPEECH_MS = 2500
 DEFAULT_SEGMENT_MAX_SPEECH_MS = 120000
+# Cold-start lever: the FIRST segment of a session uses a shorter soft cap so
+# the first caption of a long opening utterance arrives sooner (~4.5s instead of
+# the full segment cap). Later segments keep the normal cap, so the rest of the
+# meeting is NOT split more often. Set 0 to disable (fall back to normal cap).
+DEFAULT_FIRST_SEGMENT_MAX_SPEECH_MS = 4500
 DEFAULT_SEGMENT_HARD_MAX_SPEECH_MS = 300000
 DEFAULT_SEGMENT_CYCLE_SILENCE_MS = 400
 # Speech가 보내졌는데도 input/output transcription이 안 오는 segment에 대한
@@ -283,6 +289,22 @@ def _segment_max_chunks() -> int:
     return max(1, math.ceil(segment_ms / INPUT_CHUNK_MS))
 
 
+def _first_segment_max_chunks(normal_max_chunks: int) -> int:
+    """Soft cap for the FIRST segment only — shortens cold-start latency to the
+    first caption. Returns ``normal_max_chunks`` when disabled (env <= 0) or when
+    the first-segment cap would exceed the normal cap (never longer than normal).
+    """
+    first_ms = _int_env(
+        FIRST_SEGMENT_MAX_SPEECH_MS_ENV, DEFAULT_FIRST_SEGMENT_MAX_SPEECH_MS
+    )
+    if first_ms <= 0:
+        return normal_max_chunks
+    chunks = max(1, math.ceil(first_ms / INPUT_CHUNK_MS))
+    if normal_max_chunks <= 0:
+        return chunks
+    return min(chunks, normal_max_chunks)
+
+
 def _segment_hard_max_chunks() -> int:
     hard_ms = _int_env(SEGMENT_HARD_MAX_SPEECH_MS_ENV, DEFAULT_SEGMENT_HARD_MAX_SPEECH_MS)
     if hard_ms <= 0:
@@ -432,17 +454,21 @@ class GeminiLiveProvider:
         config = _build_live_config(types)
         audio_source = audio.__aiter__()
         segment_max_chunks = _segment_max_chunks()
+        first_segment_max_chunks = _first_segment_max_chunks(segment_max_chunks)
         segment_hard_max_chunks = _segment_hard_max_chunks()
         segment_silence_chunks = _segment_cycle_silence_chunks()
 
         while True:
             self._segment_index += 1
             segment_index = self._segment_index
+            active_max_chunks = (
+                first_segment_max_chunks if segment_index == 1 else segment_max_chunks
+            )
             segment_state = AudioSegmentState()
             segment_audio = _bounded_audio_segment(
                 audio_source,
                 segment_state,
-                segment_max_chunks,
+                active_max_chunks,
                 hard_max_chunks=segment_hard_max_chunks,
                 silence_chunk_run=segment_silence_chunks,
             )
