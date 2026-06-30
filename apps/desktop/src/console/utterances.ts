@@ -11,6 +11,16 @@ export function upsertUtterance(current: UtteranceTranscribed[], next: Utterance
     const existing = current[existingIndex];
     if (!existing) return current;
     if (existing.is_final && !next.is_final) return current;
+    // Stability: a non-final partial must not SHRINK the visible text. A
+    // non-incremental partial can briefly reset to a short prefix; replacing a
+    // longer line with it pulses the box smaller→larger mid-caption (flicker).
+    // Hold the longer text until a longer partial or the final arrives (finals
+    // always win above).
+    if (!next.is_final && !existing.is_final) {
+      const existingLen = (existing.text_ko || existing.text_en || "").length;
+      const nextLen = (next.text_ko || next.text_en || "").length;
+      if (nextLen < existingLen) return current;
+    }
     const copy = [...current];
     copy[existingIndex] = next;
     return copy.slice(-MAX_UTTERANCES);

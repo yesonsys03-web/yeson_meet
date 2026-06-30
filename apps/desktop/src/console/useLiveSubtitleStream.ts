@@ -53,6 +53,12 @@ export function useLiveSubtitleStream(sessionId: string | null, operatorToken: s
     const activeSessionId = sessionId;
     const activeOperatorToken = operatorToken;
 
+    // New session → reset the seq de-dup cursor. Per-session seq numbers restart
+    // low, so a stale cursor left over from a prior meeting (e.g. 101) would
+    // reject the new meeting's seq 1..N and show NO subtitles after an end →
+    // restart. Backfill below re-raises it if this session already has history.
+    lastSeqRef.current = 0;
+
     let active = true;
     let ws: WebSocket | null = null;
     let backoff = 1000;

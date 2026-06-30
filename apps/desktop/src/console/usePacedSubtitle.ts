@@ -21,7 +21,13 @@ const CATCHUP_STEP_MS = 350; // 대기 1개 늘 때마다 표시시간을 이만
 // 배출한다. Gemini가 ~10초 묶음으로 자막을 쏟아낼 때 1.2초 바닥으로는 못 따라잡아
 // 화면이 수 초 뒤처졌다(7초→12초 회귀의 원인). 밀릴 때만 짧게 떠 다음 묶음 전에
 // 최신까지 따라잡으므로 지연을 파이프라인 수준으로 되돌린다 — 누락은 여전히 0.
-export const CATCHUP_FLOOR_MS = 450;
+// Floor on per-line display time even under a backlog. 450ms drained fast but
+// flashed by unreadably during the cold-start burst (rapid segment cycling →
+// many lines at once). 1000ms guarantees each line is on screen ≥1s — readable
+// even during a burst — while still draining a small cold-start backlog inside a
+// turn or two. Steady state (1 line per ~12s turn) never hits this floor, so
+// there is no added lag once warmed up.
+export const CATCHUP_FLOOR_MS = 1000;
 
 function textOf(utterance: UtteranceTranscribed): string {
   return utterance.text_ko || utterance.text_en || "";
@@ -74,14 +80,21 @@ export function usePacedSubtitle(utterances: UtteranceTranscribed[]): UtteranceT
     setShownSeq(maxSeq);
   }, [maxSeq]);
 
-  // 현재 자막이 보관 창(MAX_UTTERANCES)에서 잘려나갔으면 가장 오래된 보관분으로 복구.
+  // 현재 자막 seq가 보관 범위를 벗어나면 복구한다:
+  //  · shownSeq > maxSeq: 회의 종료→재시작 등으로 seq가 낮게 리셋된 새 세션.
+  //    이전 회의의 높은 seq를 가리킨 채면 새 회의 자막을 find 못 해 화면이
+  //    빈 채로 남는다 → 최신(maxSeq)으로 스냅.
+  //  · shownSeq < minSeq: 보관 창(MAX_UTTERANCES)에서 잘려나감 → 가장 오래된 보관분.
   useEffect(() => {
-    if (shownSeq === null || minSeq === null) return;
-    if (shownSeq < minSeq) {
+    if (shownSeq === null || minSeq === null || maxSeq === null) return;
+    if (shownSeq > maxSeq) {
+      shownAtRef.current = performance.now();
+      setShownSeq(maxSeq);
+    } else if (shownSeq < minSeq) {
       shownAtRef.current = performance.now();
       setShownSeq(minSeq);
     }
-  }, [shownSeq, minSeq]);
+  }, [shownSeq, minSeq, maxSeq]);
 
   // 표시시간이 지나고 더 높은 seq가 있으면 "바로 다음" seq로 한 칸 전진(건너뛰지 않음).
   useEffect(() => {
