@@ -15,6 +15,7 @@ from apps.server.db.models import AppUser, Session
 from apps.server.ops.alerts import operator_alerts
 from apps.server.ops.session_safety_scheduler import (
     _sweep_once,
+    end_live_sessions_at_startup,
     run_meeting_safety_watchdog,
     safety_poll_interval,
     stamp_live_sessions_disconnected,
@@ -54,6 +55,30 @@ def _factory(db_session: AsyncSession) -> async_sessionmaker:
     return async_sessionmaker(
         db_session.bind, expire_on_commit=False, class_=AsyncSession
     )
+
+
+@pytest.mark.asyncio
+async def test_startup_ends_lingering_live_session(db_session: AsyncSession) -> None:
+    # A fresh boot has no sidecar connected, so even a just-started live row is a
+    # ghost from a previous run and must be ended (fresh-environment-on-restart).
+    now = datetime.now(timezone.utc)
+    meeting = await _create_live_meeting(db_session, now - timedelta(seconds=5))
+
+    ended = await end_live_sessions_at_startup(_factory(db_session))
+
+    assert ended == 1
+    async with _factory(db_session)() as db2:
+        refreshed = (
+            await db2.execute(select(Session).where(Session.id == meeting.id))
+        ).scalar_one()
+    assert refreshed.status == "ended"
+    assert refreshed.ended_at is not None
+
+
+@pytest.mark.asyncio
+async def test_startup_noop_when_no_live_sessions(db_session: AsyncSession) -> None:
+    ended = await end_live_sessions_at_startup(_factory(db_session))
+    assert ended == 0
 
 
 def test_safety_poll_interval_default(monkeypatch: pytest.MonkeyPatch) -> None:

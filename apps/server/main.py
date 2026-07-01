@@ -24,9 +24,9 @@ from apps.server.api.v1.audio_stats import router as audio_stats_router
 from apps.server.ai.gemini_live import gemini_config_health
 from apps.server.ops.alerts import sync_gemini_config_alert
 from apps.server.ops.session_safety_scheduler import (
+    end_live_sessions_at_startup,
     run_meeting_safety_watchdog,
     safety_poll_interval,
-    stamp_live_sessions_disconnected,
 )
 from apps.server.db.session import AsyncSessionLocal
 from apps.server.ws.operator import router as ws_operator_router
@@ -96,17 +96,22 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Gemini Live disabled: GEMINI_API_KEY is not configured")
 
+    # Fresh boot has no sidecar connected, so any lingering "live" session is a
+    # ghost from a previous run that didn't end cleanly (app force-quit, crash,
+    # or client hard-reload). End them immediately so restarting the app gives a
+    # clean environment and the go-public guard isn't blocked by a phantom
+    # meeting. Runtime sidecar drops (server still up) are handled by the
+    # grace-based watchdog below, so a brief reconnect can still resume. Runs
+    # regardless of the watchdog interval.
+    try:
+        ended = await end_live_sessions_at_startup(AsyncSessionLocal)
+        if ended:
+            logger.info("Ended stale live sessions at startup", extra={"count": ended})
+    except Exception:
+        logger.exception("Startup stale-session cleanup failed")
+
     interval = safety_poll_interval()
     if interval > 0:
-        try:
-            stamped = await stamp_live_sessions_disconnected(AsyncSessionLocal)
-            if stamped:
-                logger.info(
-                    "Stamped live sessions disconnected at startup",
-                    extra={"count": stamped},
-                )
-        except Exception:
-            logger.exception("Startup disconnect re-stamp failed")
         watchdog = asyncio.create_task(run_meeting_safety_watchdog(interval))
     else:
         watchdog = None

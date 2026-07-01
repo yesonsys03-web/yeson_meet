@@ -96,6 +96,39 @@ async def stamp_live_sessions_disconnected(
 # === ANCHOR: SESSION_SAFETY_SCHEDULER_STAMP_LIVE_DISCONNECTED_END ===
 
 
+# === ANCHOR: SESSION_SAFETY_SCHEDULER_END_LIVE_AT_STARTUP_START ===
+async def end_live_sessions_at_startup(
+    session_factory: async_sessionmaker,
+    now: datetime | None = None,
+) -> int:
+    """Force-end every lingering ``live`` session at server boot.
+
+    A freshly started server has no sidecar connected yet, so any ``status ==
+    "live"`` row is a leftover from a previous run that terminated without a
+    clean end (app force-quit, crash, or client hard-reload) — never a real
+    meeting. Ending them here gives the operator the "fresh environment on
+    restart" they expect and clears the go-public guard immediately, instead of
+    leaving ghosts in the ~5-minute watchdog-grace limbo. Runtime sidecar drops
+    while the server keeps running are still handled by the grace-based watchdog
+    (``_sweep_once``), so a brief reconnect can still resume a live meeting.
+    """
+    when = now or datetime.now(timezone.utc)
+    ended = 0
+    async with session_factory() as db:
+        live = (
+            await db.execute(select(Session).where(Session.status == "live"))
+        ).scalars().all()
+        for meeting in live:
+            meeting.status = "ended"
+            if meeting.ended_at is None:
+                meeting.ended_at = when
+            ended += 1
+        if ended:
+            await db.commit()
+    return ended
+# === ANCHOR: SESSION_SAFETY_SCHEDULER_END_LIVE_AT_STARTUP_END ===
+
+
 # === ANCHOR: SESSION_SAFETY_SCHEDULER_RUN_WATCHDOG_START ===
 async def run_meeting_safety_watchdog(
     interval_seconds: float,
