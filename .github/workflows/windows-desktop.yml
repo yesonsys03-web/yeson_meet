@@ -154,13 +154,14 @@ jobs:
       - name: Publish client installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.19
-          name: yeson-meet v0.9.19
+          tag_name: v0.9.20
+          name: yeson-meet v0.9.20
           prerelease: true
           body: |
-            ## yeson-meet v0.9.19 — 무엇이 바뀌었나
-            - **라이브 자막 페이싱 수정**: 자막 한 줄이 실제 발화된 길이만큼 화면에 머물도록 개선했습니다. 기존엔 한 줄이 최대 5.5초만 표시돼, 긴 문장이 다 읽히기 전에 다음으로 넘어가거나 여러 줄이 우르르 빠르게 지나가는(자막이 튀는) 현상이 있었습니다. 이제 말한 시간에 맞춰 표시되어 읽기 편합니다.
-            - v0.9.18의 전체화면 자막 크기 고정, v0.9.17의 자막 콜드스타트·깜박임·재시작 수정 포함.
+            ## yeson-meet v0.9.20 — 무엇이 바뀌었나
+            - **자막에 `<br>` 같은 HTML 태그가 그대로 보이던 문제 수정** — 이제 깨끗한 텍스트로 표시됩니다(라이브 자막·저장 보고서 모두).
+            - **전문용어 표기 개선**: "pencil tool"이 "연필 툴"로 나오던 것을 "펜슬 툴"로 고정.
+            - v0.9.19의 라이브 자막 페이싱 개선 포함.
 
             ### Windows 클라이언트
             Unsigned Windows test build of the yeson-meet desktop CLIENT app
