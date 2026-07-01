@@ -95,13 +95,13 @@ jobs:
       - name: Publish installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.18
-          name: yeson-meet v0.9.18
+          tag_name: v0.9.19
+          name: yeson-meet v0.9.19
           prerelease: true
           body: |
-            ## yeson-meet v0.9.18 — 무엇이 바뀌었나
-            - **전체화면(F키) 자막 글자 크기를 고정**했습니다. 기존엔 자막 길이에 따라 크기가 들쭉날쭉했는데, 이제 일정한 크기로 표시되어 회의실에서 멀리서도 안정적으로 읽힙니다. 아주 긴 자막만 화면에 맞게 자동 축소됩니다.
-            - v0.9.17의 자막 콜드스타트(첫 자막 단축)·깜박임·재시작 수정 포함.
+            ## yeson-meet v0.9.19 — 무엇이 바뀌었나
+            - **라이브 자막 페이싱 수정**: 자막 한 줄이 실제 발화된 길이만큼 화면에 머물도록 개선했습니다. 기존엔 한 줄이 최대 5.5초만 표시돼, 긴 문장이 다 읽히기 전에 다음으로 넘어가거나 여러 줄이 우르르 빠르게 지나가는(자막이 튀는) 현상이 있었습니다. 이제 말한 시간에 맞춰 표시되어 읽기 편합니다.
+            - v0.9.18의 전체화면 자막 크기 고정, v0.9.17의 자막 콜드스타트·깜박임·재시작 수정 포함.
 
             ### Windows 서버 콘솔
             Unsigned Windows test build of the yeson-meet server console
