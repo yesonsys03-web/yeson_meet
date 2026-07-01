@@ -15,7 +15,11 @@ import type { UtteranceTranscribed } from "./types";
 export const MIN_FLOOR_MS = 1200;
 const BASE_READ_MS = 1400;
 const PER_CHAR_MS = 70;
-const MAX_READ_MS = 5500;
+// 서버는 발화를 ~10초(하드캡 12초) 단위로 묶어 한 세그먼트=한 자막으로 보낸다.
+// 상한이 발화길이보다 짧으면(예전 5.5초) 100자짜리 자막이 다 읽히기 전에 다음으로
+// 넘어가고 catch-up 압축까지 겹쳐 "읽기 전에 바뀜/우르르 flash"가 난다. 한 세그먼트를
+// 발화길이만큼 온전히 띄울 수 있게 상한을 하드캡 위로 둔다.
+const MAX_READ_MS = 13000;
 const CATCHUP_STEP_MS = 350; // 대기 1개 늘 때마다 표시시간을 이만큼 깎아 따라잡음
 // 백로그가 쌓이면 읽기시간 바닥을 MIN_FLOOR_MS에서 이 값까지 낮춰 큐를 빠르게
 // 배출한다. Gemini가 ~10초 묶음으로 자막을 쏟아낼 때 1.2초 바닥으로는 못 따라잡아
@@ -35,10 +39,14 @@ function textOf(utterance: UtteranceTranscribed): string {
 
 export function displayMsFor(utterance: UtteranceTranscribed | null, backlog: number): number {
   if (!utterance) return MIN_FLOOR_MS;
-  const read = Math.min(
-    Math.max(BASE_READ_MS + textOf(utterance).length * PER_CHAR_MS, MIN_FLOOR_MS),
-    MAX_READ_MS,
-  );
+  // 표시시간 기준 = 그 세그먼트가 실제로 발화된 길이(≈자막 도착 간격). 이만큼 띄워야
+  // 도착 속도와 균형이 맞아 backlog가 안 쌓이고 "읽기 전에 넘어감"이 사라진다.
+  // 글자수 기반 읽기시간을 하한으로 함께 보장하고, 타임스탬프가 없거나 이상하면
+  // (파싱 불가 → NaN) 글자수 기반으로 폴백한다.
+  const readingMs = BASE_READ_MS + textOf(utterance).length * PER_CHAR_MS;
+  const spokenMs = Date.parse(utterance.ended_at) - Date.parse(utterance.started_at);
+  const base = Number.isFinite(spokenMs) && spokenMs > 0 ? Math.max(spokenMs, readingMs) : readingMs;
+  const read = Math.min(Math.max(base, MIN_FLOOR_MS), MAX_READ_MS);
   const over = Math.max(0, backlog - 1);
   const compressed = read - over * CATCHUP_STEP_MS;
   // 따라잡는 동안에는 읽기 바닥도 함께 낮춘다(MIN_FLOOR→CATCHUP_FLOOR).

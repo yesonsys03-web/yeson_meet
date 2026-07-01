@@ -57,5 +57,31 @@ describe("displayMsFor", () => {
     // Long text reads longer than short text when caught up.
     expect(displayMsFor(long, 0)).toBeGreaterThan(displayMsFor(short, 0));
   });
+
+  function spokenUtterance(text: string, seconds: number): UtteranceTranscribed {
+    return {
+      ...utterance(text),
+      started_at: "2026-07-01T00:00:00.000Z",
+      ended_at: `2026-07-01T00:00:${String(seconds).padStart(2, "0")}.000Z`,
+    };
+  }
+
+  it("paces a segment to its spoken duration, not just its text length", () => {
+    // The fix: a ~10s segment carries ~10s of speech but modest text. The old
+    // char-only heuristic capped it at 5.5s → it got rushed off screen before
+    // the next segment arrived ("읽기 전에 바뀜"). Now it holds ~its spoken length.
+    const seg = spokenUtterance("짧은 자막", 10);
+    expect(displayMsFor(seg, 0)).toBe(10_000);
+  });
+
+  it("bounds spoken duration by the read ceiling", () => {
+    const seg = spokenUtterance("x", 30);
+    expect(displayMsFor(seg, 0)).toBe(13_000); // MAX_READ_MS
+  });
+
+  it("falls back to text-based read time when timestamps are missing/unparseable", () => {
+    // Guards the empty-string timestamps in fixtures and any bad server payload.
+    expect(displayMsFor(short, 0)).toBe(1_400); // BASE_READ_MS, unchanged
+  });
 });
 // === ANCHOR: USE_PACED_SUBTITLE_TEST_END ===
