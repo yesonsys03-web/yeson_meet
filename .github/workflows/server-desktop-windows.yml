@@ -95,14 +95,13 @@ jobs:
       - name: Publish installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.20
-          name: yeson-meet v0.9.20
+          tag_name: v0.9.21
+          name: yeson-meet v0.9.21
           prerelease: true
           body: |
-            ## yeson-meet v0.9.20 — 무엇이 바뀌었나
-            - **자막에 `<br>` 같은 HTML 태그가 그대로 보이던 문제 수정** — 이제 깨끗한 텍스트로 표시됩니다(라이브 자막·저장 보고서 모두).
-            - **전문용어 표기 개선**: "pencil tool"이 "연필 툴"로 나오던 것을 "펜슬 툴"로 고정.
-            - v0.9.19의 라이브 자막 페이싱 개선 포함.
+            ## yeson-meet v0.9.21 — 무엇이 바뀌었나
+            - **회의가 비정상 종료(앱 강제종료·크래시)된 뒤 서버를 다시 켜도 "회의가 진행 중"으로 남아 공개(Go live)가 막히던 문제 수정** — 서버 시작 시 남은 유령 세션을 자동 정리해 깨끗한 상태로 시작합니다.
+            - v0.9.20의 자막 `<br>` 태그 제거·"펜슬 툴" 용어 표기 수정 포함.
 
             ### Windows 서버 콘솔
             Unsigned Windows test build of the yeson-meet server console
