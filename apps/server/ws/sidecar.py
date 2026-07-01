@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from collections.abc import Mapping
 from dataclasses import replace
@@ -140,6 +141,29 @@ def _handle_control(session_id: UUID, ctrl: ControlMessage) -> None:
         audio_stats.mark_stopped(session_id, ctrl.reason)
 
 
+# The translation model sometimes formats "two short lines" with literal HTML
+# (<br>, <br/>) or stray formatting tags, which then render as visible markup in
+# the caption overlay and reports. Strip it here — the single choke point every
+# utterance (Live final + fast-partial) passes through before DB + fan-out — so
+# both live captions and saved reports show plain text. Kept conservative: only
+# a whitelist of formatting tags, so code-like "x < 3" text is untouched.
+_CAPTION_BR_RE = re.compile(r"<\s*br\s*/?\s*>", re.IGNORECASE)
+_CAPTION_HTML_TAG_RE = re.compile(
+    r"</?(?:b|i|u|p|em|strong|span|div|ul|ol|li|h[1-6])\s*/?>", re.IGNORECASE
+)
+
+
+def _strip_caption_markup(text: str) -> str:
+    """Drop stray HTML the model emits so captions show plain text. <br>
+    becomes a space; other formatting tags are removed; runs of spaces collapse."""
+    if not text:
+        return text
+    cleaned = _CAPTION_BR_RE.sub(" ", text)
+    cleaned = _CAPTION_HTML_TAG_RE.sub("", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return cleaned.strip()
+
+
 async def _persist_and_publish_ai_utterance(
     session_pk: int,
     session_uuid: UUID,
@@ -150,8 +174,8 @@ async def _persist_and_publish_ai_utterance(
         occurred_at=datetime.now(timezone.utc),
         seq=utterance.seq,
         speaker=utterance.speaker,
-        text_en=utterance.text_en,
-        text_ko=utterance.text_ko,
+        text_en=_strip_caption_markup(utterance.text_en),
+        text_ko=_strip_caption_markup(utterance.text_ko),
         started_at=utterance.started_at,
         ended_at=utterance.ended_at,
         is_final=utterance.is_final,
