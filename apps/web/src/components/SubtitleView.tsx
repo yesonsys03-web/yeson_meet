@@ -17,6 +17,11 @@ export function SubtitleView({ token }: { token: string }) {
   const latest = usePacedSubtitle(latestFinal);
   // 표시 중인(페이싱된) seq 기준 직전 발화 — 운영자 프리뷰와 동일한 catch-up.
   const previous = previousUtterance(finals, latest?.seq ?? null);
+  // 미리보기 줄 — 아직 확정 안 된 최신 파셜(지금 말하는 문장)이 실시간으로
+  // 자란다(~2-3초 지연). 읽기용 메인 줄(불변)과 역할 분리: 작고 흐린 인디케이터.
+  const lastItem = utterances[utterances.length - 1];
+  const rawPreview = lastItem && !lastItem.is_final ? lastItem.text_ko || lastItem.text_en || "" : "";
+  const preview = rawPreview.length > 80 ? `…${rawPreview.slice(-80)}` : rawPreview;
 
   return (
     <main className="min-h-screen bg-slate-900 text-slate-100 flex flex-col">
@@ -42,7 +47,7 @@ export function SubtitleView({ token }: { token: string }) {
           </div>
         ) : error ? (
           <div className="text-rose-400 text-2xl">{error}</div>
-        ) : !latest ? (
+        ) : !latest && !preview ? (
           <div className="text-slate-400 text-3xl">자막을 기다리는 중…</div>
         ) : (
           <div className="text-center max-w-5xl space-y-4">
@@ -51,8 +56,17 @@ export function SubtitleView({ token }: { token: string }) {
                 {previous.text_ko}
               </div>
             ) : null}
-            <div className="text-2xl font-bold leading-tight">{latest.text_ko}</div>
-            <div className="text-sm opacity-60">{latest.text_en}</div>
+            {latest ? (
+              <>
+                <div className="text-2xl font-bold leading-tight">{latest.text_ko}</div>
+                <div className="text-sm opacity-60">{latest.text_en}</div>
+              </>
+            ) : null}
+            {preview ? (
+              <div className="text-lg italic text-sky-300 opacity-60 text-left leading-snug">
+                ▸ {preview}
+              </div>
+            ) : null}
           </div>
         )}
       </section>
