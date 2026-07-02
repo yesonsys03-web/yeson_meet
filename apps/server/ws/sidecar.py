@@ -26,6 +26,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from apps.server.auth.device import hash_api_key
 from apps.server.ai.gemini_live import GeminiLiveProvider
+from apps.server.ai.gemini_live_translate import GeminiLiveTranslateProvider
 from apps.server.ai.google_stt_translate import GoogleSttTranslateProvider
 from apps.server.ai.live_session import AudioLiveSession
 from apps.server.ai.providers import STTProvider, TranslatedUtterance
@@ -126,6 +127,10 @@ def create_ai_provider(trace_extra: Mapping[str, object] | None = None) -> STTPr
         ):
             return None
         return GoogleSttTranslateProvider()
+    if provider_name in {"gemini_live_translate", "live_translate", "gemini_translate"}:
+        if not os.environ.get("GEMINI_API_KEY"):
+            return None
+        return GeminiLiveTranslateProvider(trace_extra=trace_extra)
     if not os.environ.get("GEMINI_API_KEY"):
         return None
     return GeminiLiveProvider(trace_extra=trace_extra)

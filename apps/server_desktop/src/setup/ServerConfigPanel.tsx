@@ -20,7 +20,7 @@ function presence(label: string, configured: boolean): string {
   return configured ? `${label}: configured` : `${label}: not set`;
 }
 
-const PROVIDERS = ["gemini_live", "google_stt_translate"] as const;
+const PROVIDERS = ["gemini_live", "gemini_live_translate", "google_stt_translate"] as const;
 const SUMMARY_BACKENDS = ["auto", "claude", "codex"] as const;
 
 export default function ServerConfigPanel() {

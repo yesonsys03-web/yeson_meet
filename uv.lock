@@ -495,7 +495,7 @@ wheels = [
 
 [[package]]
 name = "google-genai"
-version = "2.4.0"
+version = "2.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -509,9 +509,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b6/91/15fff1b7c22dc0b5b44fa348f151379721353d06a3da22dbbe15bf2c4dd9/google_genai-2.4.0.tar.gz", hash = "sha256:3f8d4bd618be2801e805dc698726731a70f34b438ea25a6c92800eef5b1f513e", size = 552025, upload-time = "2026-05-18T00:25:14.556Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/fe/b796087493c3c55371aa58b9f264841ace5bfdf8c668cafa7afa33c44bec/google_genai-2.10.0.tar.gz", hash = "sha256:77912cd558cd7dfd5b75c25fd1c609e78d7954dde583331104022a46ea90f9ee", size = 600039, upload-time = "2026-06-24T01:33:18.157Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ed/c8/1b49f6bb69dc7e291ba5d14926937bec4dffcc09ee875822636bd5ef3cf4/google_genai-2.4.0-py3-none-any.whl", hash = "sha256:48df1c44190b05b834fee9cffd360af6d6fd7f68164588e7ebd670fa34f71ee1", size = 818207, upload-time = "2026-05-18T00:25:12.426Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/39/00bcfd94de255d24249401efff4f48d77bf6066b46447e519fa193c0c299/google_genai-2.10.0-py3-none-any.whl", hash = "sha256:d5350311567ae660c24cbc1752aee4b3d660f89c0106d2dcd2a69978c35afe1e", size = 957974, upload-time = "2026-06-24T01:33:16.296Z" },
 ]
 
 [[package]]
@@ -1791,7 +1791,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "google-cloud-speech", specifier = ">=2.39.0" },
     { name = "google-cloud-translate", specifier = ">=3.26.0" },
-    { name = "google-genai", specifier = ">=2.4.0" },
+    { name = "google-genai", specifier = ">=2.10.0" },
     { name = "greenlet", specifier = ">=3.1" },
     { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7.4" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },

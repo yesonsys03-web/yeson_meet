@@ -26,6 +26,8 @@ GLOSSARY_ENABLED_ENV = "GEMINI_GLOSSARY_ENABLED"
 STORAGE_ROOT_ENV = "STORAGE_ROOT"
 DEFAULT_STORAGE_ROOT = "/var/lib/yeson-meet/storage"
 GLOSSARY_FILENAME = "glossary.txt"
+KO_CORRECTIONS_PATH_ENV = "YESON_GLOSSARY_KO_PATH"
+KO_CORRECTIONS_FILENAME = "glossary_ko.txt"
 
 # English term -> Korean caption rendering. Targeted at this studio's 2D
 # pipeline (Toon Boom Harmony / Adobe Photoshop) plus the production/management
@@ -261,4 +263,56 @@ def glossary_block() -> str:
         return ""
     load_glossary()
     return _cache["block"]  # type: ignore[return-value]
+
+
+# Korean-output corrections for providers that accept no prompt/instructions
+# (gemini-3.5-live-translate is "pure translation"), so the EN→KO prompt
+# glossary above cannot steer them. Applied as literal substring replacement on
+# the Korean caption text. Deliberately tiny and phrase-scoped: each left side
+# must be specific enough that it can only be a mistranslated studio term
+# (e.g. "연필 테스트"), never a phrase a speaker could legitimately mean.
+# Operators extend it via ``{STORAGE_ROOT}/glossary_ko.txt`` — same
+# ``wrong => right`` line syntax and no-restart mtime pickup as glossary.txt.
+DEFAULT_KO_CORRECTIONS: list[tuple[str, str]] = [
+    ("연필 테스트", "펜슬 테스트"),
+    ("연필테스트", "펜슬 테스트"),
+    ("청소 팀", "클린업 팀"),
+    ("청소팀", "클린업팀"),
+    ("청소 작업", "클린업 작업"),
+    ("중간 프레임", "인비트윈"),
+    ("선 테스트", "라인 테스트"),
+]
+
+_ko_cache: dict[str, object] = {"key": None, "terms": None}
+
+
+def _ko_corrections_path() -> Path:
+    explicit = os.environ.get(KO_CORRECTIONS_PATH_ENV)
+    if explicit:
+        return Path(explicit)
+    root = os.environ.get(STORAGE_ROOT_ENV) or DEFAULT_STORAGE_ROOT
+    return Path(root) / KO_CORRECTIONS_FILENAME
+
+
+def load_ko_corrections() -> list[tuple[str, str]]:
+    """Effective KO corrections (defaults merged with the override file)."""
+    path = _ko_corrections_path()
+    mtime, overrides = _read_overrides(path)
+    cache_key = (str(path), mtime)
+    if _ko_cache["key"] == cache_key and _ko_cache["terms"] is not None:
+        return _ko_cache["terms"]  # type: ignore[return-value]
+    terms = merge_glossary(DEFAULT_KO_CORRECTIONS, overrides)
+    _ko_cache["key"] = cache_key
+    _ko_cache["terms"] = terms
+    return terms
+
+
+def apply_ko_corrections(text: str) -> str:
+    """Rewrite known-bad literal renderings in Korean caption text."""
+    if not text:
+        return text
+    for wrong, right in load_ko_corrections():
+        if wrong in text:
+            text = text.replace(wrong, right)
+    return text
 # === ANCHOR: GLOSSARY_END ===
