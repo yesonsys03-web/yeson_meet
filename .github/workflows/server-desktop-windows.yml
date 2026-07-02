@@ -99,9 +99,10 @@ jobs:
           name: yeson-meet v0.9.22
           prerelease: true
           body: |
-            ## yeson-meet v0.9.21 — 무엇이 바뀌었나
-            - **회의가 비정상 종료(앱 강제종료·크래시)된 뒤 서버를 다시 켜도 "회의가 진행 중"으로 남아 공개(Go live)가 막히던 문제 수정** — 서버 시작 시 남은 유령 세션을 자동 정리해 깨끗한 상태로 시작합니다.
-            - v0.9.20의 자막 `<br>` 태그 제거·"펜슬 툴" 용어 표기 수정 포함.
+            ## yeson-meet v0.9.22 — 무엇이 바뀌었나
+            - **실시간 동시통역 자막(베타) 추가** — 서버 콘솔 Config에서 provider를 `gemini_live_translate`로 선택하면 자막이 10초 단위 묶음 대신 발화를 ~3초 뒤로 실시간으로 따라옵니다(문장 확정 중앙값 4초). 기본값은 기존 방식(`gemini_live`) 그대로라 설정을 바꾸지 않으면 동작 변화가 없습니다.
+            - **Config의 AI provider 선택이 서버 시작에 적용되지 않던 문제 수정** — 드롭다운 값이 저장만 되고 무시되던 버그.
+            - 자막 용어 보정 파일 지원 — 저장소 폴더의 `glossary_ko.txt`에 `잘못된표현 => 올바른표현` 한 줄씩 추가하면 재시작 없이 반영됩니다.
 
             ### Windows 서버 콘솔
             Unsigned Windows test build of the yeson-meet server console
