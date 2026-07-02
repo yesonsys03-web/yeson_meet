@@ -79,6 +79,14 @@ describe("displayMsFor", () => {
     expect(displayMsFor(seg, 0)).toBe(13_000); // MAX_READ_MS
   });
 
+  it("releases a spoken-paced line after read time once the next line waits", () => {
+    // "다음 자막이 살짝 늦게 나온다"(2026-07-02): 대기 중인 다음 자막이 있으면
+    // 발화길이(10s)만큼 붙잡지 않고 글자수 기반 읽기시간만 보장하고 넘어간다.
+    const seg = spokenUtterance("짧은 자막", 10);
+    expect(displayMsFor(seg, 1)).toBe(1_400 + "짧은 자막".length * 70);
+    expect(displayMsFor(seg, 1)).toBeLessThan(displayMsFor(seg, 0));
+  });
+
   it("falls back to text-based read time when timestamps are missing/unparseable", () => {
     // Guards the empty-string timestamps in fixtures and any bad server payload.
     expect(displayMsFor(short, 0)).toBe(1_400); // BASE_READ_MS, unchanged

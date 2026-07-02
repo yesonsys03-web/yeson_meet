@@ -45,7 +45,11 @@ export function displayMsFor(utterance: UtteranceTranscribed | null, backlog: nu
   // (파싱 불가 → NaN) 글자수 기반으로 폴백한다.
   const readingMs = BASE_READ_MS + textOf(utterance).length * PER_CHAR_MS;
   const spokenMs = Date.parse(utterance.ended_at) - Date.parse(utterance.started_at);
-  const base = Number.isFinite(spokenMs) && spokenMs > 0 ? Math.max(spokenMs, readingMs) : readingMs;
+  // 발화길이만큼 붙잡는 건 대기열이 비어 있을 때만(도착 페이스와 균형). 다음
+  // 자막이 이미 와서 기다리는 중(backlog>0)이면 읽기시간만 보장하고 바로
+  // 넘긴다 — 발화길이만큼 붙잡으면 다음 자막이 체감상 늦게 뜬다(2026-07-02).
+  const spokenPaced = backlog === 0 && Number.isFinite(spokenMs) && spokenMs > 0;
+  const base = spokenPaced ? Math.max(spokenMs, readingMs) : readingMs;
   const read = Math.min(Math.max(base, MIN_FLOOR_MS), MAX_READ_MS);
   const over = Math.max(0, backlog - 1);
   const compressed = read - over * CATCHUP_STEP_MS;

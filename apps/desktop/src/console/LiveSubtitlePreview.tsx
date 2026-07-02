@@ -69,11 +69,22 @@ export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = fal
   const subtitleText = latest?.text_ko || latest?.text_en || "";
   const previousSubtitleText = previous?.text_ko || previous?.text_en || "";
   const subtitleFit = useFullscreenSubtitleFit(subtitleText, fullscreen.isFullscreen);
+  // 전체화면 정렬은 표시 모드를 따른다. 문장 단위 모드는 줄이 뜬 뒤 바뀌지
+  // 않으므로 중앙 정렬(+balance)이 보기 좋고, 라이브 모드는 텍스트가 자라는
+  // 동안 재정렬로 출렁이지 않도록 왼쪽 정렬(스타일 기본값)을 유지한다.
+  const fullscreenAlign =
+    fullscreen.isFullscreen && displayMode === "sentence"
+      ? ({ textAlign: "center", textWrap: "balance" } as const)
+      : null;
   const textStyle = {
     ...consoleStyles.subtitleText,
     ...(fullscreen.isFullscreen ? consoleStyles.subtitleTextFullscreen : null),
+    ...fullscreenAlign,
     ...(fullscreen.isFullscreen ? subtitleFit.style : null),
   };
+  const contextStyle = fullscreen.isFullscreen
+    ? { ...consoleStyles.subtitleContextFullscreen, ...(fullscreenAlign ? { textAlign: "center" as const } : null) }
+    : consoleStyles.subtitleContext;
 
   if (!sessionId) {
     return (
@@ -116,7 +127,7 @@ export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = fal
       {latest ? (
         <div style={consoleStyles.subtitleStack}>
           {previousSubtitleText ? (
-            <div style={fullscreen.isFullscreen ? consoleStyles.subtitleContextFullscreen : consoleStyles.subtitleContext}>
+            <div style={contextStyle}>
               {previousSubtitleText}
             </div>
           ) : null}
