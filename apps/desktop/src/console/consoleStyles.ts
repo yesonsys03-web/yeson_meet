@@ -366,34 +366,6 @@ export const consoleStyles: Record<string, CSSProperties> = {
     overflowWrap: "break-word",
     textShadow: "0 4px 28px rgba(15,23,42,.52)",
   },
-  // 하이브리드 모드의 미리보기 줄 — 지금 말하는 문장의 파셜이 실시간으로 자라는
-  // 곳. 읽기용이 아니라 흘깃 보는 인디케이터라 일부러 작고 흐리게. 자라는
-  // 텍스트가 재정렬로 출렁이지 않도록 왼쪽 정렬 고정.
-  subtitlePreview: {
-    color: "#7dd3fc",
-    opacity: 0.62,
-    fontSize: 22,
-    fontWeight: 700,
-    fontStyle: "italic",
-    lineHeight: 1.3,
-    textAlign: "left",
-    wordBreak: "keep-all",
-    overflowWrap: "break-word",
-  },
-  subtitlePreviewFullscreen: {
-    width: "90vw",
-    maxWidth: "90vw",
-    margin: "0 auto",
-    color: "#7dd3fc",
-    opacity: 0.58,
-    fontSize: "clamp(20px, 2.2vw, 38px)",
-    fontWeight: 700,
-    fontStyle: "italic",
-    lineHeight: 1.3,
-    textAlign: "left",
-    wordBreak: "keep-all",
-    overflowWrap: "break-word",
-  },
   subtitleEmpty: {
     margin: "10px 0 0",
     color: "#94a3b8",
