@@ -69,14 +69,14 @@ jobs:
       - name: Publish installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.22
-          name: yeson-meet v0.9.22
+          tag_name: v0.9.23
+          name: yeson-meet v0.9.23
           prerelease: true
           body: |
-            ## yeson-meet v0.9.22 — 무엇이 바뀌었나
-            - **실시간 동시통역 자막(베타) 추가** — 서버 콘솔 Config에서 provider를 `gemini_live_translate`로 선택하면 자막이 10초 단위 묶음 대신 발화를 ~3초 뒤로 실시간으로 따라옵니다(문장 확정 중앙값 4초). 기본값은 기존 방식(`gemini_live`) 그대로라 설정을 바꾸지 않으면 동작 변화가 없습니다.
-            - **Config의 AI provider 선택이 서버 시작에 적용되지 않던 문제 수정** — 드롭다운 값이 저장만 되고 무시되던 버그.
-            - 자막 용어 보정 파일 지원 — 저장소 폴더의 `glossary_ko.txt`에 `잘못된표현 => 올바른표현` 한 줄씩 추가하면 재시작 없이 반영됩니다.
+            ## yeson-meet v0.9.23 — 무엇이 바뀌었나
+            - **동시통역 자막 표시가 "문장 단위"로 안정화** — 완성된 문장이 한 번에 떠서 읽는 동안 바뀌지 않습니다(짧은 문장은 ~45자까지 한 줄로 병합). 자막 패널의 표시 버튼으로 실시간(라이브) 방식과 전환할 수 있습니다.
+            - **자막 흐름 개선** — 다음 자막이 대기 중이면 더 빨리 전환되고, 전체화면(F) 자막의 좌우 출렁임을 수정했습니다.
+            - **10분 이상 회의 안정화(gemini_live_translate)** — Live API 세션 한도(GoAway)에서 자막 유실 없이 새 세션으로 교체합니다.
 
             ### macOS 서버 콘솔
             Unsigned (ad-hoc) macOS test build of the yeson-meet server console
