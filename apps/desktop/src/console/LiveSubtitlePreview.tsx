@@ -20,6 +20,21 @@ type LiveSubtitlePreviewProps = {
   meetingEndLabel?: string;
 };
 
+// 표시 모드 — "sentence"(기본): 확정(final) 자막만 표시해 완성된 문장이 한 번에
+// 떠서 머문다(읽기 안정). "live": 파셜 포함, 지금 말하는 문장이 실시간으로
+// 자란다(빠르지만 읽던 줄이 계속 바뀜). 별도 창(F 전체화면)도 localStorage로
+// 같은 모드를 공유한다.
+type SubtitleDisplayMode = "sentence" | "live";
+const DISPLAY_MODE_KEY = "yeson.subtitleDisplayMode";
+
+function loadDisplayMode(): SubtitleDisplayMode {
+  try {
+    return localStorage.getItem(DISPLAY_MODE_KEY) === "live" ? "live" : "sentence";
+  } catch {
+    return "sentence";
+  }
+}
+
 export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = false, meetingStartLabel, meetingEndLabel }: LiveSubtitlePreviewProps) {
   const stream = useLiveSubtitleStream(sessionId, operatorToken);
   const captureStatus = useCaptureStatus();
@@ -29,10 +44,28 @@ export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = fal
     ...consoleStyles.subtitlePanel,
     ...(fullscreen.isFullscreen ? consoleStyles.subtitlePanelFullscreen : null),
   };
+  const [displayMode, setDisplayMode] = useState<SubtitleDisplayMode>(loadDisplayMode);
+  const toggleDisplayMode = useCallback(() => {
+    setDisplayMode((mode) => {
+      const next: SubtitleDisplayMode = mode === "sentence" ? "live" : "sentence";
+      try {
+        localStorage.setItem(DISPLAY_MODE_KEY, next);
+      } catch {
+        // localStorage 불가 환경이면 이번 세션에만 적용
+      }
+      return next;
+    });
+  }, []);
+  // sentence 모드는 확정 자막만 페이서에 공급 — partial의 제자리 갱신이 사라져
+  // 완성 문장이 통째로 뜬다. live 모드는 기존처럼 전체(파셜 포함).
+  const visibleUtterances =
+    displayMode === "sentence"
+      ? stream.utterances.filter((item) => item.is_final)
+      : stream.utterances;
   // Paced display — 들어온 모든 발화(seq)를 순서대로, 글자수 비례 읽기시간만큼
   // 보여준다(누락 0). 밀리면 표시시간을 압축해 따라잡되 건너뛰지 않는다.
-  const latest = usePacedSubtitle(stream.utterances);
-  const previous = previousSubtitle(stream.utterances, latest?.seq ?? null);
+  const latest = usePacedSubtitle(visibleUtterances);
+  const previous = previousSubtitle(visibleUtterances, latest?.seq ?? null);
   const subtitleText = latest?.text_ko || latest?.text_en || "";
   const previousSubtitleText = previous?.text_ko || previous?.text_en || "";
   const subtitleFit = useFullscreenSubtitleFit(subtitleText, fullscreen.isFullscreen);
@@ -71,6 +104,8 @@ export function LiveSubtitlePreview({ operatorToken, sessionId, windowMode = fal
           level={captureLevel}
           meetingStartLabel={meetingStartLabel}
           meetingEndLabel={meetingEndLabel}
+          displayMode={displayMode}
+          onToggleDisplayMode={toggleDisplayMode}
         />
       ) : null}
       {stream.providerError ? (
@@ -187,6 +222,8 @@ function SubtitleHeader({
   level = null,
   meetingStartLabel,
   meetingEndLabel,
+  displayMode,
+  onToggleDisplayMode,
 }: {
   isFullscreen: boolean;
   onToggleFullscreen: () => Promise<void>;
@@ -195,6 +232,8 @@ function SubtitleHeader({
   level?: number | null;
   meetingStartLabel?: string;
   meetingEndLabel?: string;
+  displayMode?: SubtitleDisplayMode;
+  onToggleDisplayMode?: () => void;
 }) {
   return (
     <div style={consoleStyles.subtitleHeader}>
@@ -210,6 +249,16 @@ function SubtitleHeader({
       <div style={consoleStyles.subtitleHeaderActions}>
         {captureStatus ? <CaptureStatusChip state={captureStatus} /> : null}
         {captureStatus ? <CaptureLevelMeter dbfs={level} state={captureStatus} /> : null}
+        {displayMode && onToggleDisplayMode ? (
+          <button
+            type="button"
+            onClick={onToggleDisplayMode}
+            style={consoleStyles.subtitleFullscreenButton}
+            title="문장 단위: 완성된 문장만 표시(읽기 안정) · 라이브: 말하는 도중 자막이 실시간으로 자람"
+          >
+            {displayMode === "sentence" ? "표시: 문장 단위" : "표시: 라이브"}
+          </button>
+        ) : null}
         <button type="button" onClick={() => void onToggleFullscreen()} style={consoleStyles.subtitleFullscreenButton}>
           {isFullscreen ? "전체화면 종료" : "전체화면"}
         </button>

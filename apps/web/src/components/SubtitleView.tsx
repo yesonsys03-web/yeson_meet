@@ -5,12 +5,18 @@ import { previousUtterance } from "../lib/utterances";
 
 // === ANCHOR: SUBTITLEVIEW_SUBTITLEVIEW_START ===
 export function SubtitleView({ token }: { token: string }) {
-  const { latest: streamLatest, connected, ended, error, utterances } = useViewerWS(token);
+  const { connected, ended, error, utterances } = useViewerWS(token);
+  // 확정(final) 자막만 표시 — 파셜(자라는 중간본)을 그리면 읽던 문장이 계속
+  // 바뀌어 내용 파악이 어렵다는 피드백(2026-07-02). 완성 문장이 한 번에 떠서
+  // 읽기 시간만큼 머문다. live-translate에서는 문장 확정이 발화 종료 ~1초 뒤라
+  // 파셜 없이도 충분히 빠르다.
+  const finals = utterances.filter((item) => item.is_final);
+  const latestFinal = finals[finals.length - 1] ?? null;
   // 자막이 너무 빨리 다음 seq로 갱신되면 사용자가 읽을 시간이 부족하다.
   // 길이에 비례한 최소 표시 시간을 보장하면서 다음 자막은 큐에 보관해 노출.
-  const latest = usePacedSubtitle(streamLatest);
+  const latest = usePacedSubtitle(latestFinal);
   // 표시 중인(페이싱된) seq 기준 직전 발화 — 운영자 프리뷰와 동일한 catch-up.
-  const previous = previousUtterance(utterances, latest?.seq ?? null);
+  const previous = previousUtterance(finals, latest?.seq ?? null);
 
   return (
     <main className="min-h-screen bg-slate-900 text-slate-100 flex flex-col">

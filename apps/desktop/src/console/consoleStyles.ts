@@ -331,6 +331,11 @@ export const consoleStyles: Record<string, CSSProperties> = {
     lineHeight: 1.32,
     letterSpacing: "-.01em",
   },
+  // Fullscreen captions are LEFT-aligned on purpose: with center alignment
+  // (and textWrap:balance re-splitting lines) every text update re-flowed the
+  // whole block left-right — a visible "wobble" while a live line grows. Left
+  // alignment makes text extend rightward/downward only, so the anchor point
+  // of what you are reading never moves.
   subtitleContextFullscreen: {
     width: "86vw",
     maxWidth: "86vw",
@@ -340,7 +345,7 @@ export const consoleStyles: Record<string, CSSProperties> = {
     fontSize: 60,
     fontWeight: 760,
     lineHeight: 1.28,
-    textAlign: "center",
+    textAlign: "left",
     wordBreak: "keep-all",
     overflowWrap: "break-word",
   },
@@ -356,10 +361,9 @@ export const consoleStyles: Record<string, CSSProperties> = {
     fontWeight: 820,
     lineHeight: 1.24,
     letterSpacing: ".005em",
-    textAlign: "center",
+    textAlign: "left",
     wordBreak: "keep-all",
     overflowWrap: "break-word",
-    textWrap: "balance",
     textShadow: "0 4px 28px rgba(15,23,42,.52)",
   },
   subtitleEmpty: {
