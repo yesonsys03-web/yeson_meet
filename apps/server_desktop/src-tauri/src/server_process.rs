@@ -238,13 +238,23 @@ pub fn start_server_inner(
         ));
     }
 
+    // Provider precedence: explicit per-run request override → the keychain
+    // config (what the Config panel's provider dropdown saves) → gemini_live.
+    // The console UI always sends provider: null, so without the keychain
+    // fallback the dropdown selection was silently ignored at start.
     let provider = request
         .provider
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("gemini_live")
-        .to_string();
+        .map(str::to_string)
+        .or_else(|| {
+            crate::server_config::load_ensured()
+                .ok()
+                .map(|config| config.yeson_ai_provider.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| "gemini_live".to_string());
 
     let app_data_dir = app
         .path()
@@ -388,9 +398,9 @@ fn inject_secrets(command: &mut Command) -> Result<(), String> {
         // detection (claude → codex).
         ("YESON_SUMMARY_BACKEND", config.summary_backend.trim()),
         ("YESON_SUMMARY_MODEL", config.summary_model.trim()),
-        // YESON_AI_PROVIDER is set from the start request earlier (it is the
-        // per-run operator choice the GUI selector forwards), so it is not
-        // injected here to avoid the keychain silently overriding that choice.
+        // YESON_AI_PROVIDER is resolved at spawn time earlier (explicit start
+        // request override, else the keychain dropdown value), so it is not
+        // injected here where it could shadow that resolution.
     ];
     for (key, value) in pairs {
         if !value.is_empty() {
