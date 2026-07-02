@@ -38,6 +38,7 @@ INPUT_SAMPLE_RATE = 16000
 MODEL_ENV = "GEMINI_LIVE_TRANSLATE_MODEL"
 TARGET_LANGUAGE_ENV = "GEMINI_LIVE_TRANSLATE_TARGET"
 FORCE_FINAL_CHARS_ENV = "GEMINI_LT_FORCE_FINAL_CHARS"
+MIN_FINAL_CHARS_ENV = "GEMINI_LT_MIN_FINAL_CHARS"
 MAX_UTTERANCE_MS_ENV = "GEMINI_LT_MAX_UTTERANCE_MS"
 IDLE_FINAL_MS_ENV = "GEMINI_LT_IDLE_FINAL_MS"
 PARTIAL_MIN_DELTA_CHARS_ENV = "GEMINI_LT_PARTIAL_MIN_DELTA_CHARS"
@@ -47,6 +48,13 @@ DEFAULT_TARGET_LANGUAGE = "ko"
 # A caption line is force-finalized past this length even without sentence
 # punctuation, so a long rambling clause cannot grow one line unboundedly.
 DEFAULT_FORCE_FINAL_CHARS = 90
+# ...and is NOT finalized at a sentence boundary until it reaches this length,
+# so short sentences merge into one fuller caption line instead of flashing by
+# as one-clause morsels ("감질" feedback, 2026-07-02). This gates only the
+# sentence-boundary cut: the force/age caps and the idle flush still finalize
+# short text, so a speaker pausing after a short sentence is unaffected. Does
+# not add latency — text appears via partials; this only moves the line break.
+DEFAULT_MIN_FINAL_CHARS = 45
 # ...and past this age, so a slow trickle cannot pin one seq forever. Matches
 # the gemini_live hard cap so downstream pacing assumptions carry over.
 DEFAULT_MAX_UTTERANCE_MS = 12000
@@ -107,6 +115,7 @@ class TranscriptAssembler:
         self,
         provider_segment: int,
         force_final_chars: int | None = None,
+        min_final_chars: int | None = None,
         max_utterance_ms: int | None = None,
         idle_final_ms: int | None = None,
         partial_min_delta_chars: int | None = None,
@@ -114,6 +123,11 @@ class TranscriptAssembler:
         self._segment = provider_segment
         self._force_final_chars = force_final_chars or _int_env(
             FORCE_FINAL_CHARS_ENV, DEFAULT_FORCE_FINAL_CHARS
+        )
+        self._min_final_chars = (
+            min_final_chars
+            if min_final_chars is not None
+            else _int_env(MIN_FINAL_CHARS_ENV, DEFAULT_MIN_FINAL_CHARS)
         )
         self._max_utterance_s = (
             max_utterance_ms
@@ -156,7 +170,10 @@ class TranscriptAssembler:
             state.started_monotonic is not None
             and now - state.started_monotonic >= self._max_utterance_s
         )
-        if boundary > 0 and len(state.ko_buffer[:boundary].strip()) > 1:
+        boundary_len = (
+            len(state.ko_buffer[:boundary].strip()) if boundary > 0 else 0
+        )
+        if boundary_len > 1 and boundary_len >= self._min_final_chars:
             return self._finalize(split_at=boundary)
         if len(state.ko_buffer.strip()) >= self._force_final_chars or aged:
             return self._finalize(split_at=len(state.ko_buffer))

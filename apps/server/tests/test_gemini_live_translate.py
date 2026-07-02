@@ -13,6 +13,7 @@ def make_assembler(**kwargs: int) -> TranscriptAssembler:
     defaults = dict(
         provider_segment=1,
         force_final_chars=90,
+        min_final_chars=2,
         max_utterance_ms=12000,
         idle_final_ms=2000,
         partial_min_delta_chars=4,
@@ -97,6 +98,23 @@ class TestTranscriptAssembler:
         out = assembler.feed(None, " 연필 테스트 수정이 필요합니다.", now_monotonic=0.0)
         assert out[0].text_ko == "펜슬 테스트 수정이 필요합니다."
 
+    def test_min_final_chars_merges_short_sentences(self) -> None:
+        assembler = make_assembler(min_final_chars=20)
+        # 문장 경계가 있어도 20자 미만이면 줄을 끊지 않고 계속 자란다(파셜)
+        out = assembler.feed(None, " 좋아요.", now_monotonic=0.0)
+        assert [u.is_final for u in out] == [False]
+        out = assembler.feed(None, " 그럼 다음 안건으로 넘어가겠습니다.", now_monotonic=1.0)
+        assert [u.is_final for u in out] == [True]
+        assert out[0].text_ko == "좋아요. 그럼 다음 안건으로 넘어가겠습니다."
+        assert out[0].seq == 1
+
+    def test_min_final_chars_does_not_block_idle_flush(self) -> None:
+        assembler = make_assembler(min_final_chars=40, idle_final_ms=2000)
+        assembler.feed(None, " 네, 좋습니다.", now_monotonic=0.0)
+        out = assembler.poll(now_monotonic=2.5)
+        assert [u.is_final for u in out] == [True]
+        assert out[0].text_ko == "네, 좋습니다."
+
     def test_provider_segment_is_stamped(self) -> None:
         assembler = make_assembler(provider_segment=7)
         out = assembler.feed(None, " 확인했습니다.", now_monotonic=0.0)
@@ -159,7 +177,8 @@ async def _audio():
 
 
 class TestGeminiLiveTranslateProvider:
-    async def test_stream_assembles_and_sends_stream_end(self) -> None:
+    async def test_stream_assembles_and_sends_stream_end(self, monkeypatch) -> None:
+        monkeypatch.setenv("GEMINI_LT_MIN_FINAL_CHARS", "2")
         session = FakeSession(
             [
                 message(en=" Good morning."),
@@ -182,7 +201,8 @@ class TestGeminiLiveTranslateProvider:
         assert len(audio_sends) == 2
         assert session.model == "gemini-3.5-live-translate-preview"
 
-    async def test_go_away_recycles_cleanly_with_flush(self) -> None:
+    async def test_go_away_recycles_cleanly_with_flush(self, monkeypatch) -> None:
+        monkeypatch.setenv("GEMINI_LT_MIN_FINAL_CHARS", "2")
         session = FakeSession(
             [
                 message(ko=" 아직 안 끝난 문장"),
@@ -201,7 +221,8 @@ class TestGeminiLiveTranslateProvider:
         assert utterances[-1].is_final is True
         assert utterances[-1].text_ko == "아직 안 끝난 문장"
 
-    async def test_reconnect_bumps_provider_segment(self) -> None:
+    async def test_reconnect_bumps_provider_segment(self, monkeypatch) -> None:
+        monkeypatch.setenv("GEMINI_LT_MIN_FINAL_CHARS", "2")
         provider = GeminiLiveTranslateProvider(
             api_key="test-key",
             client=fake_client(FakeSession([message(ko=" 첫 세션입니다.")])),
