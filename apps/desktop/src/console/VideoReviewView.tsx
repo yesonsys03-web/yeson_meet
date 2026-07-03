@@ -68,8 +68,8 @@ export function VideoReviewView({ jobId, operatorToken, onBack }: VideoReviewVie
     }));
     if (payload.length === 0) return;
     await patchSegments(jobId, payload, operatorToken);
-    setEdits({});
     await refresh();
+    setEdits({});
   };
 
   const startBurn = async () => {
