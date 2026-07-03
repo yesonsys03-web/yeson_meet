@@ -95,14 +95,14 @@ jobs:
       - name: Publish installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.23
-          name: yeson-meet v0.9.23
+          tag_name: v0.9.24
+          name: yeson-meet v0.9.24
           prerelease: true
           body: |
-            ## yeson-meet v0.9.23 — 무엇이 바뀌었나
-            - **동시통역 자막 표시가 "문장 단위"로 안정화** — 완성된 문장이 한 번에 떠서 읽는 동안 바뀌지 않습니다(짧은 문장은 ~45자까지 한 줄로 병합). 자막 패널의 표시 버튼으로 실시간(라이브) 방식과 전환할 수 있습니다.
-            - **자막 흐름 개선** — 다음 자막이 대기 중이면 더 빨리 전환되고, 전체화면(F) 자막의 좌우 출렁임을 수정했습니다.
-            - **10분 이상 회의 안정화(gemini_live_translate)** — Live API 세션 한도(GoAway)에서 자막 유실 없이 새 세션으로 교체합니다.
+            ## yeson-meet v0.9.24 — 무엇이 바뀌었나
+            - **공개 터널 끊김 자동 복구** — 회의 중 공개 터널이 끊기면 서버 콘솔이 즉시 감지해 자동으로 다시 공개합니다(2초/10초/30초 3회 재시도). 이제 회의 중에도 "Go live/다시 공개"를 쓸 수 있습니다.
+            - **뷰어 QR 자동 갱신** — 터널이 다시 공개되면 클라이언트 앱의 뷰어 QR이 10초 안에 새 링크로 바뀌고 "QR을 다시 공유하세요" 안내가 표시됩니다. 청중은 새 QR을 한 번만 다시 스캔하면 됩니다(무료 퀵터널은 재발급 시 주소가 바뀝니다).
+            - **시작 안전성 강화** — 서버 포트를 다른 프로세스가 점유해 서버가 곧바로 종료된 경우, 엉뚱한 프로세스 앞으로 터널이 공개되지 않도록 자동 공개를 중단하고 원인을 로그에 남깁니다.
 
             ### Windows 서버 콘솔
             Unsigned Windows test build of the yeson-meet server console
