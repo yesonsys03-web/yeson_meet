@@ -21,6 +21,7 @@ from apps.server.api.v1.operator_alerts import router as operator_alerts_router
 from apps.server.api.v1.sessions import router as sessions_router
 from apps.server.api.v1.utterances import router as utterances_router
 from apps.server.api.v1.audio_stats import router as audio_stats_router
+from apps.server.api.v1.video_models import router as video_models_router
 from apps.server.ai.gemini_live import gemini_config_health
 from apps.server.ops.alerts import sync_gemini_config_alert
 from apps.server.ops.session_safety_scheduler import (
@@ -158,6 +159,7 @@ app.include_router(sessions_router, prefix="/api/v1")
 app.include_router(utterances_router, prefix="/api/v1")
 app.include_router(audio_stats_router, prefix="/api/v1")
 app.include_router(operator_alerts_router, prefix="/api/v1")
+app.include_router(video_models_router, prefix="/api/v1")
 app.include_router(ws_operator_router)
 app.include_router(ws_sidecar_router)
 app.include_router(ws_viewer_router)
