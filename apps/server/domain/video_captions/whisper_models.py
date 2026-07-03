@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +35,7 @@ CATALOG: dict[str, ModelInfo] = {
 
 # name -> True while a download thread is running
 _downloading: dict[str, bool] = {}
+_state_lock = threading.Lock()
 
 
 def models_root() -> Path:
@@ -61,19 +63,28 @@ def _snapshot_download(repo_id: str, local_dir: str) -> None:  # test seam
 
 
 def download_model(name: str) -> None:
-    """Blocking download — callers run this in a worker thread."""
+    """Blocking download — callers run this in a worker thread. Idempotent no-op if already downloading."""
     info = CATALOG[name]  # KeyError for unknown names is intentional
+    with _state_lock:
+        if _downloading.get(name):
+            logger.info("download_model(%s): already downloading — skip", name)
+            return
+        _downloading[name] = True
     dest = model_dir(name)
     dest.mkdir(parents=True, exist_ok=True)
-    _downloading[name] = True
     try:
+        logger.info("download_model(%s): start (%s)", name, info.repo_id)
         _snapshot_download(info.repo_id, str(dest))
+        logger.info("download_model(%s): done", name)
     finally:
         _downloading[name] = False
 
 
 def delete_model(name: str) -> None:
     CATALOG[name]
+    with _state_lock:
+        if _downloading.get(name):
+            raise RuntimeError(f"모델 '{name}'은(는) 다운로드 중이라 삭제할 수 없습니다.")
     shutil.rmtree(model_dir(name), ignore_errors=True)
 
 

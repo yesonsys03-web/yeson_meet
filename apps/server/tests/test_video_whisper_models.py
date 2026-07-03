@@ -55,3 +55,33 @@ def test_delete_model(tmp_path: Path):
     (d / "model.bin").write_bytes(b"x")
     wm.delete_model("base")
     assert not d.exists()
+
+
+def test_download_model_skips_when_already_downloading(monkeypatch):
+    calls = []
+    monkeypatch.setattr(wm, "_snapshot_download", lambda repo_id, local_dir: calls.append(repo_id))
+    wm._downloading["small"] = True
+    try:
+        wm.download_model("small")
+    finally:
+        wm._downloading["small"] = False
+    assert calls == []
+
+
+def test_download_model_clears_flag_on_failure(monkeypatch):
+    def boom(repo_id, local_dir):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(wm, "_snapshot_download", boom)
+    with pytest.raises(RuntimeError, match="network down"):
+        wm.download_model("tiny")
+    assert wm._downloading.get("tiny") is False
+
+
+def test_delete_model_refuses_while_downloading(tmp_path: Path):
+    wm._downloading["base"] = True
+    try:
+        with pytest.raises(RuntimeError, match="다운로드 중"):
+            wm.delete_model("base")
+    finally:
+        wm._downloading["base"] = False
