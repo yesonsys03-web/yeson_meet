@@ -27,6 +27,7 @@ async def _dispose_singleton_engine_pool():
     opened in a previous test's (now-closed) loop cannot be reused in this
     one. Dispose the pool before each test so it opens fresh on first use in
     the current loop; this does not touch what the tests exercise."""
+    await session_mod.engine.dispose()
     yield
     await session_mod.engine.dispose()
 
@@ -114,3 +115,12 @@ async def test_run_burn_job(monkeypatch, db_session, admin_user, tmp_path):
         select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
     assert loaded.status == "done"
     assert loaded.burned_path and Path(loaded.burned_path).exists()
+
+
+async def test_run_video_job_survives_missing_job(db_session):
+    # 존재하지 않는 job이어도 예외가 새어나가면 안 된다 (에러 기록 실패는 삼킴+로그)
+    await pl.run_video_job(uuid4())
+
+
+async def test_run_burn_job_survives_missing_job(db_session):
+    await pl.run_burn_job(uuid4(), "bottom", 40, 18)

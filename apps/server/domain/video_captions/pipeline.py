@@ -60,6 +60,13 @@ async def _set_status(external_id: UUID, status: str, *, error: str | None = Non
         await db.commit()
 
 
+async def _try_set_error(external_id: UUID, message: str) -> None:
+    try:
+        await _set_status(external_id, "error", error=message)
+    except Exception:  # noqa: BLE001 — 상태 기록 실패는 로그만 남기고 삼킨다 (최종 방어선의 방어선)
+        logger.exception("failed to record error status for job %s", external_id)
+
+
 async def run_video_job(external_id: UUID) -> None:
     try:
         async with AsyncSessionLocal() as db:
@@ -114,7 +121,7 @@ async def run_video_job(external_id: UUID) -> None:
                     external_id, len(en_segments))
     except Exception as exc:  # noqa: BLE001 — 파이프라인 최종 방어선
         logger.exception("video job %s failed", external_id)
-        await _set_status(external_id, "error", error=str(exc)[:1000])
+        await _try_set_error(external_id, str(exc)[:1000])
 
 
 async def run_burn_job(external_id: UUID, position: str, margin_v: int,
@@ -147,4 +154,4 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
         await _set_status(external_id, "done", burned_path=str(burned))
     except Exception as exc:  # noqa: BLE001
         logger.exception("burn job %s failed", external_id)
-        await _set_status(external_id, "error", error=str(exc)[:1000])
+        await _try_set_error(external_id, str(exc)[:1000])
