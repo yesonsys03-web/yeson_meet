@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -150,3 +151,22 @@ async def test_srt_download(client, admin_token, db_session, admin_user):
     assert resp.status_code == 200
     assert "안녕" in resp.text
     assert "00:00:00,000 --> 00:00:01,000" in resp.text
+
+
+async def test_upload_cleans_up_on_failure(client, admin_token, monkeypatch):
+    await _install_model()
+
+    async def boom(upload, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"partial")
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(api_vj, "save_upload", boom)
+    with pytest.raises(RuntimeError, match="disk full"):
+        await client.post(
+            "/api/v1/video-jobs/upload", headers=_auth(admin_token),
+            data={"whisper_model": "small"},
+            files={"file": ("clip.mp4", b"x", "video/mp4")},
+        )
+    jobs_root = Path(os.environ["STORAGE_ROOT"]) / "video_jobs"
+    assert not jobs_root.exists() or not any(jobs_root.iterdir())

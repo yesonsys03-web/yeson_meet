@@ -113,13 +113,18 @@ async def create_upload_job(
     filename = file.filename or "upload.mp4"
     suffix = Path(filename).suffix or ".mp4"
     dest = job_dir(external_id) / f"source{suffix}"
-    await save_upload(file, dest)
-    job = VideoJob(external_id=external_id, owner_user_id=user.id,
-                   title=title or filename, source_type="upload",
-                   source_ref=filename, whisper_model=whisper_model,
-                   status="queued", media_path=str(dest))
-    db.add(job)
-    await db.commit()
+    try:
+        await save_upload(file, dest)
+        job = VideoJob(external_id=external_id, owner_user_id=user.id,
+                       title=title or filename, source_type="upload",
+                       source_ref=filename, whisper_model=whisper_model,
+                       status="queued", media_path=str(dest))
+        db.add(job)
+        await db.commit()
+    except Exception:
+        # 실패 시 방금 쓴 파일/디렉터리 정리 — DB 행 없는 고아 파일 방지
+        shutil.rmtree(job_dir(external_id), ignore_errors=True)
+        raise
     _start_pipeline(external_id)
     return {"job_id": str(external_id)}
 
