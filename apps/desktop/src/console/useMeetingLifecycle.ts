@@ -1,12 +1,18 @@
 // === ANCHOR: USE_MEETING_LIFECYCLE_START ===
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { loadValues, storeValues } from "../setup/setupValues";
 import { loadOperatorLogin } from "../setup/credentials";
 import { startSidecar, stopSidecar } from "../setup/sidecarRunner";
-import { createSession, endSession, fetchSessionReport, fetchSessionReportHtml, loginOperator, sessionRequestBody, type ReportFormat } from "./sessionApi";
+import { createSession, endSession, fetchSessionReport, fetchSessionReportHtml, fetchSessionViewerUrl, loginOperator, sessionRequestBody, type ReportFormat } from "./sessionApi";
 import { runOneClickStart } from "./oneClickStart";
 import { DEFAULT_EXPORT_FORMATS, exportReports, exportSummary } from "./reportExport";
 import type { CreatedSession, EndedSession, MeetingDraft } from "./types";
+
+// While a meeting is live, re-check the viewer link this often. The server
+// console can re-publish the public tunnel mid-meeting (tunnel drop recovery),
+// which mints a NEW host — the QR must follow. Cheap LAN GET; 10s keeps the QR
+// close behind the ~2-15s auto re-publish without polling chatter.
+const VIEWER_URL_REFRESH_MS = 10_000;
 
 const initialDraft: MeetingDraft = {
   email: "admin@yeson.local",
@@ -37,6 +43,39 @@ export function useMeetingLifecycle() {
   );
   const sessionPayload = useMemo(() => sessionRequestBody(draft), [draft]);
   const contractPreview = useMemo(() => buildContractPreview(sessionPayload), [sessionPayload]);
+
+  // Viewer-link self-heal: while a meeting is live, keep the viewer URL (and
+  // the QR rendered from it) in sync with the server's CURRENT viewer base.
+  // Best-effort — a failed poll changes nothing and retries next tick. The ref
+  // mirrors the latest URL so the interval closure compares fresh state without
+  // re-arming on every URL change.
+  const liveSessionId = createdSession?.session_id ?? null;
+  const viewerUrlRef = useRef<string | null>(null);
+  viewerUrlRef.current = createdSession?.viewer_url ?? null;
+  useEffect(() => {
+    if (!liveSessionId || !draft.operatorToken) return;
+    const operatorToken = draft.operatorToken; // vibelign: allow-secret — 세션 상태의 토큰 참조일 뿐, 리터럴 아님
+    const id = window.setInterval(() => {
+      void (async () => {
+        try {
+          const next = await fetchSessionViewerUrl(liveSessionId, operatorToken);
+          if (next === viewerUrlRef.current) return;
+          setCreatedSession((current) =>
+            current && current.session_id === liveSessionId
+              ? { ...current, viewer_url: next }
+              : current,
+          );
+          // Keep the 미팅 시작 tab handoff in sync too, then tell the operator
+          // the old QR is dead and this one must be re-shared.
+          storeValues({ ...loadValues(), sessionId: liveSessionId, viewerUrl: next });
+          setStatusText("공개 링크가 새로 발급되었습니다 — 시청자에게 QR을 다시 공유하세요.");
+        } catch {
+          // best-effort: server momentarily unreachable / token expired — retry next tick
+        }
+      })();
+    }, VIEWER_URL_REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, [liveSessionId, draft.operatorToken]);
 
   function updateDraft<K extends keyof MeetingDraft>(key: K, value: MeetingDraft[K]) {
     setDraft((current) => ({ ...current, [key]: value }));

@@ -581,7 +581,7 @@ fn parse_live_count(body: &[u8]) -> Result<u32, String> {
 
 // === ANCHOR: TUNNEL_COMMANDS_START ===
 // P4.1b lifecycle commands. `start_tunnel_cmd` drives the FULL public-mode flow:
-// gate on "no live meeting" → bring up the viewer-only proxy + cloudflared
+// bring up the viewer-only proxy + cloudflared
 // (P4.1a) and capture the URL → persist it as the keychain `viewer_base` (for
 // cold-start env injection) → publish it to `{STORAGE_ROOT}/viewer_base.txt` so
 // the RUNNING server mints tunnel viewer URLs immediately (the server reads that
@@ -598,27 +598,20 @@ pub fn start_tunnel_cmd(
     server_state: tauri::State<'_, crate::server_process::ServerProcessState>,
 ) -> Result<TunnelStatus, String> {
     let _ = &server_state; // retained for signature/UI parity; no restart needed now.
-    // 1. Gate: refuse to go public while a meeting is live. Kept as a deliberate
-    //    current-behavior backstop (relaxing it is a separate follow-up); the UI
-    //    also hides "Go live" while a meeting is active. Fail-closed: an
-    //    unreachable probe blocks going public.
-    let live = live_session_count(server_port).map_err(|error| {
-        format!("cannot verify meeting state before going public: {error}")
-    })?;
-    if live > 0 {
-        return Err(
-            "a meeting is currently live — end the meeting before going public"
-                .to_string(),
-        );
-    }
+    // NOTE: the old "refuse while a meeting is live" gate is gone. Its rationale
+    // (going public used to restart the server, killing the live meeting) died
+    // with the restart-free flow above, and blocking re-publish also blocked
+    // RECOVERY when cloudflared dropped mid-meeting. Going public now never
+    // touches the running server; a mid-meeting re-publish just mints a NEW
+    // trycloudflare host, so the operator must re-share the viewer link.
 
-    // 2. Bring up proxy + cloudflared and capture the public URL (P4.1a).
+    // 1. Bring up proxy + cloudflared and capture the public URL (P4.1a).
     let status = start_tunnel(&tunnel_state, server_port)?;
     let Some(url) = status.url.clone() else {
         return Ok(status);
     };
 
-    // 3. Persist the captured URL as the keychain viewer_base so a future COLD
+    // 2. Persist the captured URL as the keychain viewer_base so a future COLD
     //    start injects VIEWER_BASE via inject_secrets. If this fails, tear the
     //    tunnel back down so we do not leave a public edge whose URL is unminted.
     if let Err(error) = crate::server_config::set_viewer_base(&url) {
@@ -626,7 +619,7 @@ pub fn start_tunnel_cmd(
         return Err(format!("failed to persist viewer_base: {error}"));
     }
 
-    // 4. Publish the URL to {STORAGE_ROOT}/viewer_base.txt so the ALREADY-RUNNING
+    // 3. Publish the URL to {STORAGE_ROOT}/viewer_base.txt so the ALREADY-RUNNING
     //    server mints tunnel viewer URLs at the next session creation — no
     //    restart. If the write fails, tear the tunnel back down so we do not
     //    leave a live public edge the server will never advertise.

@@ -83,12 +83,12 @@ export default function TunnelDegradedBanner({
           type="button"
           style={primaryAction}
           onClick={onRepublish}
-          disabled={busy || !running || meetingLive}
+          disabled={busy || !running}
           title={
             !running
               ? "서버를 먼저 시작하세요"
               : meetingLive
-                ? "회의가 진행 중입니다 — 회의를 끝낸 뒤 다시 공개하세요"
+                ? "새 공개 터널을 다시 엽니다 — 새 주소가 발급되므로 시청자에게 링크(QR)를 다시 공유하세요"
                 : "새 공개 터널을 다시 엽니다"
           }
         >

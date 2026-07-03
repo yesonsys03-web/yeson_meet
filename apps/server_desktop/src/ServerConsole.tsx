@@ -71,6 +71,11 @@ function sleep(ms: number): Promise<void> {
 const READINESS_POLL_INTERVAL_MS = 450;
 const READINESS_TIMEOUT_MS = 12_000;
 
+// Auto re-publish backoff when a published tunnel drops on its own (degraded).
+// Capped so a hard failure (e.g. trycloudflare rate limit / no network) can't
+// re-dial forever; the operator can always retry manually from the banner.
+const AUTO_REPUBLISH_DELAYS_MS = [2_000, 10_000, 30_000];
+
 async function waitForServerHttpReady(): Promise<boolean> {
   const deadline = Date.now() + READINESS_TIMEOUT_MS;
   for (;;) {
@@ -214,9 +219,24 @@ export default function ServerConsole() {
       if (autoGoLive && next.running) {
         append({ level: "info", source: "console", message: "auto go live: waiting for server to be ready…" });
         const ready = await waitForServerHttpReady();
-        if (ready) {
+        // Readiness alone is not proof it is OUR server: if our child died right
+        // after start (e.g. the port was already held by a foreign/orphan
+        // process), `live_session_count_cmd` resolves null (no port → no probe)
+        // and an imposter on the port would answer the HTTP probe anyway. Only
+        // publish when our child is still alive.
+        const alive = ready
+          ? await invoke<ServerStatus>("server_status")
+              .then((s) => {
+                setStatus(s);
+                return s.running;
+              })
+              .catch(() => false)
+          : false;
+        if (ready && alive) {
           append({ level: "info", source: "console", message: "auto go live: publishing tunnel…" });
           await goLiveRef.current();
+        } else if (ready) {
+          append({ level: "error", source: "console", message: "auto go live aborted: server process exited right after start (port already in use by another process?) — fix the port conflict and press Start again" });
         } else {
           append({ level: "warn", source: "console", message: "auto go live skipped: server not ready — running on LAN (use Go live to publish)" });
         }
@@ -327,6 +347,34 @@ export default function ServerConsole() {
   const meetingLive = (liveSessions ?? 0) > 0;
   const tunnelDegraded = tunnel?.degraded ?? false;
 
+  // Tunnel self-heal: when a published tunnel drops on its own (degraded), try
+  // to bring a fresh one up without operator action. Reuses the autoGoLive
+  // preference as the opt-out. Each failed attempt re-arms with the next delay
+  // in AUTO_REPUBLISH_DELAYS_MS, then gives up (the banner's manual "다시 공개"
+  // remains). Recovery mints a NEW public host — the operator must re-share the
+  // viewer link (QR); the client console's QR refreshes itself for the live
+  // meeting.
+  const autoRepublishAttempt = useRef(0);
+  useEffect(() => {
+    if (!tunnelDegraded) {
+      autoRepublishAttempt.current = 0; // healthy again (or fell back to LAN)
+      return;
+    }
+    if (!autoGoLive || !running || tunnelBusy) return;
+    const attempt = autoRepublishAttempt.current;
+    if (attempt >= AUTO_REPUBLISH_DELAYS_MS.length) return; // gave up
+    const id = window.setTimeout(() => {
+      autoRepublishAttempt.current = attempt + 1;
+      append({
+        level: "warn",
+        source: "console",
+        message: `public tunnel dropped — auto re-publishing (attempt ${attempt + 1}/${AUTO_REPUBLISH_DELAYS_MS.length}); a NEW link is minted, re-share the viewer QR`,
+      });
+      void goLiveRef.current();
+    }, AUTO_REPUBLISH_DELAYS_MS[attempt]);
+    return () => window.clearTimeout(id);
+  }, [tunnelDegraded, autoGoLive, running, tunnelBusy]);
+
   const navItems: Array<{ view: View; label: string }> = [
     { view: "logs", label: "Logs" },
     { view: "config", label: "Config" },
@@ -419,8 +467,9 @@ export default function ServerConsole() {
             </div>
           ) : null}
           {/* Public mode (P4.1b): expose the per-meeting viewer URL over a cloudflared
-              quick-tunnel. "Go live" is hidden while a meeting is active — going
-              public restarts the server, which would interrupt a live meeting. */}
+              quick-tunnel. Going public is restart-free, so it stays available even
+              while a meeting is live (a mid-meeting re-publish mints a NEW host —
+              the viewer link must be re-shared). */}
           <div style={styles.tunnelRow}>
             <span style={{ ...styles.badge, ...(tunnelOn ? styles.badgeOn : styles.badgeOff) }}>
               {tunnelOn ? "PUBLIC" : "LAN ONLY"}
@@ -437,12 +486,12 @@ export default function ServerConsole() {
               <button
                 style={{ ...styles.button, ...styles.start }}
                 onClick={onGoLive}
-                disabled={tunnelBusy || !running || meetingLive}
+                disabled={tunnelBusy || !running}
                 title={
                   !running
                     ? "start the server first"
                     : meetingLive
-                      ? "end the meeting before going public (it would be interrupted)"
+                      ? "publish a fresh public tunnel — a NEW address is minted, so re-share the viewer link (QR) with the audience"
                       : "publish the per-meeting viewer URL over a cloudflared tunnel"
                 }
               >
@@ -460,7 +509,7 @@ export default function ServerConsole() {
                   : !running
                     ? "server stopped — start it to enable public mode"
                     : meetingLive
-                      ? "a meeting is live — end it before going public"
+                      ? "a meeting is live — going public mints a NEW link; re-share it with viewers"
                       : "viewer URL stays LAN-only until you go public"}
               </span>
             )}

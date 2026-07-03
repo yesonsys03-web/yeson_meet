@@ -179,6 +179,46 @@ async def create_session(
     )
 
 
+# === ANCHOR: SESSIONS_VIEWER_URL_REFETCH_START ===
+class SessionViewerUrlOut(BaseModel):
+    session_id: UUID
+    viewer_url: str
+
+
+@router.get("/{session_id}/viewer-url", response_model=SessionViewerUrlOut)
+async def session_viewer_url(
+    session_id: UUID,
+    user: Annotated[AppUser, Depends(require_operator)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> SessionViewerUrlOut:
+    """Re-fetch the session's viewer link with the CURRENT viewer base.
+
+    The URL minted at session creation goes stale when the public tunnel is
+    re-published mid-meeting (a quick tunnel mints a new random host). The DB
+    viewer token stays valid, so recombining it with the fresh ``_viewer_base()``
+    (file > env > default, read per call) yields the shareable link for the
+    live meeting. The client console polls this while a meeting is live to keep
+    its viewer QR current.
+    """
+    del user  # authz is the operator gate itself (matches the report endpoints)
+    meeting = await _get_operator_session_or_404(db, session_id)
+    token = (
+        await db.execute(
+            select(SessionToken.token).where(
+                SessionToken.session_id == meeting.id,
+                SessionToken.kind == "viewer",
+            )
+        )
+    ).scalar_one_or_none()
+    if token is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Viewer token not found")
+    return SessionViewerUrlOut(
+        session_id=meeting.external_id,
+        viewer_url=f"{_viewer_base()}/v/{token}",
+    )
+# === ANCHOR: SESSIONS_VIEWER_URL_REFETCH_END ===
+
+
 # === ANCHOR: SESSIONS__GET_OPERATOR_SESSION_OR_404_START ===
 async def _get_operator_session_or_404(
     db: AsyncSession,

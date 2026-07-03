@@ -81,6 +81,22 @@ export async function endSession(sessionId: string, operatorToken: string): Prom
   return parseJsonResponse<EndedSession>(response, "End session");
 }
 
+export async function fetchSessionViewerUrl(sessionId: string, operatorToken: string): Promise<string> {
+  // Tunnel recovery: the viewer URL minted at creation goes stale when the
+  // server console re-publishes the public tunnel mid-meeting (new random
+  // trycloudflare host, same viewer token). This re-fetches the CURRENT link.
+  const response = await timedFetch(
+    "Refresh viewer URL",
+    `${apiBase()}/api/v1/sessions/${encodeURIComponent(sessionId)}/viewer-url`,
+    { headers: { Authorization: `Bearer ${operatorToken}` } },
+  );
+  const body = await parseJsonResponse<{ session_id: string; viewer_url: string }>(
+    response,
+    "Refresh viewer URL",
+  );
+  return body.viewer_url;
+}
+
 export async function fetchSessionReport(sessionId: string, operatorToken: string): Promise<string> {
   const response = await timedFetch("Download report", `${apiBase()}/api/v1/sessions/${encodeURIComponent(sessionId)}/report`, {
     headers: { Authorization: `Bearer ${operatorToken}` },
