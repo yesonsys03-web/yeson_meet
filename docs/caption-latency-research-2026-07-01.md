@@ -143,5 +143,34 @@ KO 후처리 보정) + sidecar 등록 + 콘솔 provider 드롭다운 + SDK 2.10 
 실 API E2E: 파셜 제자리 성장 + 문장 단위 final, 체감 ~1.5~3초. 남은 것=실회의 A/B(콘솔에서
 provider=gemini_live_translate 선택→서버 재시작).
 
+## 부록 3 (2026-07-03): 경로 C(+하이브리드) 풀 구현·실회의 E2E 후 **폐기** — 재조사·재구현 금지
+
+경로 C를 끝까지 구현해 실회의로 검증한 뒤 폐기했다. 브랜치 `local_whisper`(삭제됨)에서
+whisper base int8 + LocalAgreement-2 + CTranslate2 MT 파이프라인 전체(모델 자동 다운로드,
+콘솔 provider, frozen 번들, 리뷰 완료)를 만들었고, 이 Intel Mac(i9급) 실회의(Toon Boom
+튜토리얼 영상)로 3구성을 순차 판정했다:
+
+| 구성 | 실회의 판정 | 결정적 증거 |
+|---|---|---|
+| whisper base **전사(EN)** | **양호** — 병목 아님 | "I created a peg layer above…" 등 정확 |
+| M2M100-418M(MIT) 번역 | **사용 불가** | harmony→"조화", peg→"피그/꼬리/픽", rough→"잔인한" |
+| NLLB-600M(CC-BY-NC) 번역 | **사용 불가** (M2M100보단 나음) | light table→"빛을 끄는 테이블", "ループ" 혼입, 경어 오락가락 |
+| 하이브리드(로컬 STT+**Gemini 텍스트 번역** flash-lite) | 번역 ★★★ 해결, **그러나 유실+지연** | 라이트 테이블/페그/클린업 정확. 단 동기 번역 대기(문장당 0.7~1s)로 19분간 buffer force-trim **7회 → 발화 유실**, 확정 자막 3~6초 |
+
+**폐기 사유(사용자 결정)**: ①유실은 번역 비동기화로 고칠 수 있으나 ②LocalAgreement 구조상
+확정 지연 ~3초+ 는 불변(§4 실측·GPU 논문값 동일) → 현행 `gemini_live_translate`(1.5~3초)보다
+항상 느리고 ③원래 요구가 "품질보다 속도". 하이브리드의 유일한 우위는 비용(~$1.4/h→수십 원/h).
+
+**남는 교훈(재작업 시 필수 숙지)**:
+- CPU 로컬 MT(M2M100/NLLB/opus-mt)는 이 도메인에서 전부 탈락. `opus-mt-tc-big-en-ko`는 HF
+  업스트림 체크포인트 자체가 깨져 있음(vocab↔spm 불일치, 순수 HF 추론도 쓰레기 — 재시도 금지).
+- NLLB는 CC-BY-NC(비상업) — 사내 배포 자산으로 재배포 금지 결정 이력 있음.
+- 네트워크 번역을 전사 루프에 동기로 넣으면 오디오 적체→강제 트림→유실. 재작업 시 번역은
+  반드시 별도 태스크로.
+- 이 경로가 다시 유의미해지는 조건 = **GPU 서버 확보**(whisper large+대형 MT로 품질·전문용어
+  동시 해결) 또는 "오프라인/무유출 절대 요건" 등장. 그 전까지는 재조사 금지.
+- 설계·구현 기록: `docs/superpowers/specs/2026-07-02-local-whisper-provider-design.md`,
+  `docs/superpowers/plans/2026-07-02-local-whisper-provider.md` (main에 보존).
+
 ---
 *작성: 2026-07-01. 로컬 실측은 이 서버(i9-9900K, CPU only)에서 격리 venv로 수행. 가격·언어지원은 빠르게 변하므로 채택 전 재확인.*
