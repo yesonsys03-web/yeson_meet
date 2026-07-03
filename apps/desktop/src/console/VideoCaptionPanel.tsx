@@ -22,14 +22,15 @@ function formatBytes(n: number): string {
 type VideoCaptionPanelProps = {
   operatorToken: string | null;
   onTokenAcquired: (token: string) => void;
+  active: boolean;
 };
 
-export function VideoCaptionPanel({ operatorToken, onTokenAcquired }: VideoCaptionPanelProps) {
+export function VideoCaptionPanel({ operatorToken, onTokenAcquired, active }: VideoCaptionPanelProps) {
   if (!operatorToken) return <LoginGate onTokenAcquired={onTokenAcquired} />;
-  return <VideoCaptionInner token={operatorToken} />;
+  return <VideoCaptionInner token={operatorToken} active={active} />;
 }
 
-function VideoCaptionInner({ token }: { token: string }) {
+function VideoCaptionInner({ token, active }: { token: string; active: boolean }) {
   const [models, setModels] = useState<VideoModelInfo[]>([]);
   const [jobs, setJobs] = useState<VideoJobSummary[]>([]);
   const [selectedModel, setSelectedModel] = useState("small");
@@ -49,12 +50,13 @@ function VideoCaptionInner({ token }: { token: string }) {
     }
   }, [token]);
 
-  // 진행 중 작업/다운로드가 있는 동안 3초 폴링
+  // 탭이 보이는 동안만 3초 폴링 (숨김 탭은 mount 유지되므로 active로 게이트)
   useEffect(() => {
+    if (!active) return;
     void refresh();
     const timer = setInterval(() => void refresh(), 3000);
     return () => clearInterval(timer);
-  }, [refresh]);
+  }, [active, refresh]);
 
   const selectedInstalled = models.find((m) => m.name === selectedModel)?.downloaded;
 

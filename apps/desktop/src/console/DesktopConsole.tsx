@@ -89,6 +89,7 @@ export function DesktopConsole() {
           <VideoCaptionPanel
             operatorToken={operatorToken}
             onTokenAcquired={setOperatorToken}
+            active={activeView === "video"}
           />
         </section>
       </main>
