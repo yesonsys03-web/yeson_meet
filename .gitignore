@@ -26,6 +26,7 @@ target/
 apps/desktop/src-tauri/binaries/
 apps/server_desktop/src-tauri/binaries/yeson-server-*/
 apps/server_desktop/src-tauri/binaries/cloudflared-*/
+apps/server_desktop/src-tauri/binaries/ffmpeg-*/
 
 # Compose volumes
 deploy/data/

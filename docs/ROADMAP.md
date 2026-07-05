@@ -353,6 +353,14 @@ Slice 5 통과 시점에 다음을 결정한 뒤 β로 진입:
 - [ ] 모바일 네이티브 viewer (Capacitor 또는 RN)
 - [ ] 다국어 회의(영중일혼합) 지원
 
+### 영상 자막 스튜디오 (Video Caption Studio)
+
+> (2026-07-03) `video_caption_studio` 브랜치. 업로드/유튜브 영상 → faster-whisper 로컬 전사 → Gemini 배치 번역(용어사전) → 검수 뷰(플레이어+오버레이+세그먼트 편집) → 스타일 조정 후 ffmpeg burn-in → MP4/SRT 다운로드.
+
+- [x] T1~T13: 서버 도메인(모델 매니저/업로드/유튜브 입수/전사/번역/burn-in) + API + 클라 탭·검수 뷰·스타일 조정 UI 구현
+- [x] T14: `fetch-ffmpeg.sh`(cloudflared 패턴 복제, evermeet/BtbN/johnvansickle 정적 바이너리 벤더링) + `build-server.sh`/`build-server.ps1` PyInstaller `--collect-all faster_whisper/ctranslate2/av/onnxruntime/yt_dlp` + `tauri.conf.json` `binaries/ffmpeg-*` 리소스 glob + `server_process.rs::locate_bundled_ffmpeg()` → `YESON_FFMPEG_BIN` 주입 + 프로즌 재동결·자동화 스모크(curl 인증 게이트) 완료
+- [ ] T14 수동 E2E (자동화 세션 불가 — 운영자 확인 필요): 클라 "영상 자막" 탭 로그인→모델 목록, tiny 모델 실다운로드, 로컬 mp4 업로드→전사/번역/검수 진행, 검수 뷰 플레이어+오버레이+세킹+텍스트 수정, 스타일 조정→burn→MP4 다운로드 자막 위치 일치, 유튜브 URL 실입수 1건, 서버 pytest 전체 + 클라 vitest 전체 재확인
+
 ---
 
 ## 위험 / 미해결 항목

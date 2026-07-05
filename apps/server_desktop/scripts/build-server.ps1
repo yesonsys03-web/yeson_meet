@@ -64,6 +64,11 @@ $WebDist = (Resolve-Path "apps/web/dist").Path
     --collect-all docx `
     --hidden-import lxml._elementpath `
     --collect-submodules lxml `
+    --collect-all faster_whisper `
+    --collect-all ctranslate2 `
+    --collect-all av `
+    --collect-all onnxruntime `
+    --collect-all yt_dlp `
     --add-data "$WebDist;web_dist" `
     --distpath $Dist `
     --workpath $Work `
@@ -110,3 +115,13 @@ if (Test-Path $CfBin) {
     Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $CfBin
     Write-Host "-> $CfBin"
 }
+
+# Task 14: vendor the Windows ffmpeg binary so the tauri.conf binaries/ffmpeg-*
+# resource glob is satisfied at `tauri build`. fetch-ffmpeg.sh is bash (not
+# PowerShell) — on a Windows build host, run it manually from Git Bash BEFORE
+# (or after) this script:
+#   bash apps/server_desktop/scripts/fetch-ffmpeg.sh
+# It detects the MINGW/MSYS/CYGWIN triple and vendors the BtbN win64-gpl
+# ffmpeg.exe into apps/server_desktop/src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc/.
+# Not invoked automatically here to avoid a PowerShell->bash dependency in the
+# main freeze path; the packaged app cannot bundle ffmpeg without this step.

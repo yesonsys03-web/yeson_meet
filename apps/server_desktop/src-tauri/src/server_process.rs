@@ -319,6 +319,13 @@ pub fn start_server_inner(
         command.env("YESON_DEV", "1");
     }
     inject_secrets(&mut command)?;
+    // Task 14: point the video-caption-studio ffmpeg calls (domain/video_captions
+    // /ffmpeg.py::locate_ffmpeg reads YESON_FFMPEG_BIN before falling back to
+    // PATH) at the bundled binary so a plain user install (no ffmpeg on PATH)
+    // still works.
+    if let Some(ffmpeg) = locate_bundled_ffmpeg() {
+        command.env("YESON_FFMPEG_BIN", ffmpeg);
+    }
     augment_path_for_summary_cli(&mut command);
     set_process_group(&mut command);
     set_no_window(&mut command);
@@ -564,6 +571,47 @@ pub(crate) fn locate_bundled_server() -> Option<PathBuf> {
         }
     }
     // dev/test: the staged tree under src-tauri/binaries (CARGO_MANIFEST_DIR)
+    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
+
+    roots
+        .into_iter()
+        .map(|root| root.join(&dir_name).join(&bin_name))
+        .find(|path| path.is_file())
+}
+
+/// Locate the staged `ffmpeg-<triple>/ffmpeg[.exe]` binary vendored by
+/// `scripts/fetch-ffmpeg.sh` (Task 14). Mirrors `tunnel.rs::locate_cloudflared`
+/// and `locate_bundled_server` above: same bundled-resource + dev `binaries/`
+/// candidate roots, so `cargo test`/`tauri dev` and a packaged app resolve the
+/// same layout. Returns None when missing — the caller then relies on
+/// `locate_ffmpeg()`'s PATH fallback (apps/server/domain/video_captions/ffmpeg.py).
+fn locate_bundled_ffmpeg() -> Option<PathBuf> {
+    let triple: &str = if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        "x86_64-pc-windows-msvc"
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "aarch64-apple-darwin"
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "x86_64-apple-darwin"
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "x86_64-unknown-linux-gnu"
+    } else {
+        return None;
+    };
+    let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    let dir_name = format!("ffmpeg-{triple}");
+    let bin_name = format!("ffmpeg{suffix}");
+
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            roots.push(dir.to_path_buf());
+            roots.push(dir.join("binaries"));
+            if let Some(contents) = dir.parent() {
+                roots.push(contents.join("Resources"));
+                roots.push(contents.join("Resources").join("binaries"));
+            }
+        }
+    }
     roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
 
     roots

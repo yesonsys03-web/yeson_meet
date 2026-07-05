@@ -32,7 +32,7 @@
     "category": "Business",
     "shortDescription": "yeson-meet server operator console",
     "longDescription": "Desktop console that runs and supervises the packaged yeson-meet server.",
-    "resources": ["binaries/yeson-server-*/**/*", "binaries/cloudflared-*/**/*"],
+    "resources": ["binaries/yeson-server-*/**/*", "binaries/cloudflared-*/**/*", "binaries/ffmpeg-*/**/*"],
     "macOS": {
       "minimumSystemVersion": "14.2"
     }
