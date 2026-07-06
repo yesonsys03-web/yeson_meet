@@ -8,7 +8,6 @@ import { activeSegmentIndex, overlayStyleFor } from "./videoReviewLogic";
 
 type VideoReviewViewProps = {
   jobId: string;
-  operatorToken: string;
   onBack: () => void;
 };
 
@@ -17,7 +16,7 @@ function fmtMs(ms: number): string {
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
-export function VideoReviewView({ jobId, operatorToken, onBack }: VideoReviewViewProps) {
+export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
   const [job, setJob] = useState<VideoJobDetail | null>(null);
   const [edits, setEdits] = useState<Record<number, string>>({});
   const [style, setStyle] = useState<BurnStyle>({ position: "bottom", margin_v: 40, font_size: 18 });
@@ -43,11 +42,11 @@ export function VideoReviewView({ jobId, operatorToken, onBack }: VideoReviewVie
 
   const refresh = useCallback(async () => {
     try {
-      setJob(await getVideoJob(jobId, operatorToken));
+      setJob(await getVideoJob(jobId));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [jobId, operatorToken]);
+  }, [jobId]);
 
   useEffect(() => {
     void refresh();
@@ -82,7 +81,7 @@ export function VideoReviewView({ jobId, operatorToken, onBack }: VideoReviewVie
       seq: Number(seq), text_ko,
     }));
     if (payload.length === 0) return;
-    await patchSegments(jobId, payload, operatorToken);
+    await patchSegments(jobId, payload);
     await refresh();
     setEdits({});
   };
@@ -92,7 +91,7 @@ export function VideoReviewView({ jobId, operatorToken, onBack }: VideoReviewVie
     setError(null);
     try {
       await saveEdits();
-      await burnVideoJob(jobId, style, operatorToken);
+      await burnVideoJob(jobId, style);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -102,9 +101,7 @@ export function VideoReviewView({ jobId, operatorToken, onBack }: VideoReviewVie
   };
 
   const download = async (kind: "video" | "srt") => {
-    const response = await fetch(videoDownloadUrl(jobId, kind), {
-      headers: { Authorization: `Bearer ${operatorToken}` },
-    });
+    const response = await fetch(videoDownloadUrl(jobId, kind));
     if (!response.ok) {
       setError(`다운로드 실패: HTTP ${response.status}`);
       return;

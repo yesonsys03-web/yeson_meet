@@ -14,49 +14,44 @@ def _storage(monkeypatch, tmp_path: Path):
     yield
 
 
-async def test_list_models(client, admin_token):
-    resp = await client.get("/api/v1/video-models",
-                            headers={"Authorization": f"Bearer {admin_token}"})
+async def test_list_models(client):
+    resp = await client.get("/api/v1/video-models")
     assert resp.status_code == 200
     names = [m["name"] for m in resp.json()["models"]]
     assert names == ["tiny", "base", "small", "medium", "large-v3"]
 
 
-async def test_download_starts_background_thread(client, admin_token, monkeypatch):
+async def test_download_starts_background_thread(client, monkeypatch):
     started = {}
     monkeypatch.setattr(api_vm, "_spawn_download", lambda name: started.setdefault("name", name))
-    resp = await client.post("/api/v1/video-models/small/download",
-                             headers={"Authorization": f"Bearer {admin_token}"})
+    resp = await client.post("/api/v1/video-models/small/download")
     assert resp.status_code == 202
     assert started["name"] == "small"
 
 
-async def test_download_unknown_model_404(client, admin_token):
-    resp = await client.post("/api/v1/video-models/giant/download",
-                             headers={"Authorization": f"Bearer {admin_token}"})
+async def test_download_unknown_model_404(client):
+    resp = await client.post("/api/v1/video-models/giant/download")
     assert resp.status_code == 404
 
 
-async def test_delete_model(client, admin_token, tmp_path):
+async def test_delete_model(client, tmp_path):
     d = wm.model_dir("tiny")
     d.mkdir(parents=True)
     (d / "model.bin").write_bytes(b"x")
-    resp = await client.delete("/api/v1/video-models/tiny",
-                               headers={"Authorization": f"Bearer {admin_token}"})
+    resp = await client.delete("/api/v1/video-models/tiny")
     assert resp.status_code == 204
     assert not d.exists()
 
 
-async def test_requires_auth(client):
+async def test_no_auth_required(client):
     resp = await client.get("/api/v1/video-models")
-    assert resp.status_code in (401, 403)
+    assert resp.status_code == 200
 
 
-async def test_delete_model_downloading_conflict(client, admin_token, monkeypatch):
+async def test_delete_model_downloading_conflict(client, monkeypatch):
     wm._downloading["tiny"] = True
     try:
-        resp = await client.delete("/api/v1/video-models/tiny",
-                                   headers={"Authorization": f"Bearer {admin_token}"})
+        resp = await client.delete("/api/v1/video-models/tiny")
     finally:
         wm._downloading["tiny"] = False
     assert resp.status_code == 409

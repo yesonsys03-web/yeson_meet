@@ -38,10 +38,6 @@ export type BurnStyle = {
   font_size: number;
 };
 
-function authHeaders(token: string): Record<string, string> {
-  return { Authorization: `Bearer ${token}` };
-}
-
 async function request<T>(url: string, init: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) throw new Error(`video api failed: HTTP ${response.status}`);
@@ -49,29 +45,28 @@ async function request<T>(url: string, init: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function listVideoModels(token: string): Promise<VideoModelInfo[]> {
+export async function listVideoModels(): Promise<VideoModelInfo[]> {
   const out = await request<{ models: VideoModelInfo[] }>(
-    `${apiBase()}/api/v1/video-models`, { headers: authHeaders(token) });
+    `${apiBase()}/api/v1/video-models`, {});
   return out.models;
 }
 
-export async function downloadVideoModel(name: string, token: string): Promise<void> {
+export async function downloadVideoModel(name: string): Promise<void> {
   await request(`${apiBase()}/api/v1/video-models/${name}/download`,
-    { method: "POST", headers: authHeaders(token) });
+    { method: "POST" });
 }
 
-export async function deleteVideoModel(name: string, token: string): Promise<void> {
+export async function deleteVideoModel(name: string): Promise<void> {
   await request(`${apiBase()}/api/v1/video-models/${name}`,
-    { method: "DELETE", headers: authHeaders(token) });
+    { method: "DELETE" });
 }
 
 export async function createYoutubeJob(
   params: { url: string; whisperModel: string; title?: string },
-  token: string,
 ): Promise<{ job_id: string }> {
   return request(`${apiBase()}/api/v1/video-jobs`, {
     method: "POST",
-    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       youtube_url: params.url,
       whisper_model: params.whisperModel,
@@ -81,50 +76,49 @@ export async function createYoutubeJob(
 }
 
 export async function uploadVideoJob(
-  file: File, whisperModel: string, title: string, token: string,
+  file: File, whisperModel: string, title: string,
 ): Promise<{ job_id: string }> {
   const form = new FormData();
   form.append("file", file);
   form.append("whisper_model", whisperModel);
   if (title) form.append("title", title);
   return request(`${apiBase()}/api/v1/video-jobs/upload`,
-    { method: "POST", headers: authHeaders(token), body: form });
+    { method: "POST", body: form });
 }
 
-export async function listVideoJobs(token: string): Promise<VideoJobSummary[]> {
+export async function listVideoJobs(): Promise<VideoJobSummary[]> {
   const out = await request<{ items: VideoJobSummary[] }>(
-    `${apiBase()}/api/v1/video-jobs`, { headers: authHeaders(token) });
+    `${apiBase()}/api/v1/video-jobs`, {});
   return out.items;
 }
 
-export async function getVideoJob(jobId: string, token: string): Promise<VideoJobDetail> {
-  return request(`${apiBase()}/api/v1/video-jobs/${jobId}`,
-    { headers: authHeaders(token) });
+export async function getVideoJob(jobId: string): Promise<VideoJobDetail> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}`, {});
 }
 
 export async function patchSegments(
-  jobId: string, edits: Array<{ seq: number; text_ko: string }>, token: string,
+  jobId: string, edits: Array<{ seq: number; text_ko: string }>,
 ): Promise<void> {
   await request(`${apiBase()}/api/v1/video-jobs/${jobId}/segments`, {
     method: "PATCH",
-    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ edits }),
   });
 }
 
 export async function burnVideoJob(
-  jobId: string, style: BurnStyle, token: string,
+  jobId: string, style: BurnStyle,
 ): Promise<void> {
   await request(`${apiBase()}/api/v1/video-jobs/${jobId}/burn`, {
     method: "POST",
-    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(style),
   });
 }
 
-export async function deleteVideoJob(jobId: string, token: string): Promise<void> {
+export async function deleteVideoJob(jobId: string): Promise<void> {
   await request(`${apiBase()}/api/v1/video-jobs/${jobId}`,
-    { method: "DELETE", headers: authHeaders(token) });
+    { method: "DELETE" });
 }
 
 export function videoMediaUrl(jobId: string): string {

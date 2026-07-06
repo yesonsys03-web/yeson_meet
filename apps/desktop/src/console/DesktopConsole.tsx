@@ -87,8 +87,6 @@ export function DesktopConsole() {
         <section hidden={activeView !== "video"}
           style={activeView === "video" ? consoleStyles.sectionScroll : undefined}>
           <VideoCaptionPanel
-            operatorToken={operatorToken}
-            onTokenAcquired={setOperatorToken}
             active={activeView === "video"}
           />
         </section>

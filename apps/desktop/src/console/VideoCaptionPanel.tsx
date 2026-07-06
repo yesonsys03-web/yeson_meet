@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
-import { LoginGate } from "./KnowledgeRepositoryPanel";
 import {
   createYoutubeJob, deleteVideoJob, deleteVideoModel, downloadVideoModel,
   listVideoJobs, listVideoModels, uploadVideoJob,
@@ -23,17 +22,14 @@ function formatBytes(n: number): string {
 }
 
 type VideoCaptionPanelProps = {
-  operatorToken: string | null;
-  onTokenAcquired: (token: string) => void;
   active: boolean;
 };
 
-export function VideoCaptionPanel({ operatorToken, onTokenAcquired, active }: VideoCaptionPanelProps) {
-  if (!operatorToken) return <LoginGate onTokenAcquired={onTokenAcquired} />;
-  return <VideoCaptionInner token={operatorToken} active={active} />;
+export function VideoCaptionPanel({ active }: VideoCaptionPanelProps) {
+  return <VideoCaptionInner active={active} />;
 }
 
-function VideoCaptionInner({ token, active }: { token: string; active: boolean }) {
+function VideoCaptionInner({ active }: { active: boolean }) {
   const [models, setModels] = useState<VideoModelInfo[]>([]);
   const [jobs, setJobs] = useState<VideoJobSummary[]>([]);
   const [selectedModel, setSelectedModel] = useState("small");
@@ -46,13 +42,13 @@ function VideoCaptionInner({ token, active }: { token: string; active: boolean }
 
   const refresh = useCallback(async () => {
     try {
-      const [m, j] = await Promise.all([listVideoModels(token), listVideoJobs(token)]);
+      const [m, j] = await Promise.all([listVideoModels(), listVideoJobs()]);
       setModels(m);
       setJobs(j);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [token]);
+  }, []);
 
   // 탭이 보이는 동안만 3초 폴링 (숨김 탭은 mount 유지되므로 active로 게이트)
   useEffect(() => {
@@ -69,7 +65,7 @@ function VideoCaptionInner({ token, active }: { token: string; active: boolean }
     setBusy(true);
     setError(null);
     try {
-      await createYoutubeJob({ url: youtubeUrl.trim(), whisperModel: selectedModel }, token);
+      await createYoutubeJob({ url: youtubeUrl.trim(), whisperModel: selectedModel });
       setYoutubeUrl("");
       await refresh();
     } catch (err) {
@@ -83,7 +79,7 @@ function VideoCaptionInner({ token, active }: { token: string; active: boolean }
     setBusy(true);
     setError(null);
     try {
-      await uploadVideoJob(file, selectedModel, file.name, token);
+      await uploadVideoJob(file, selectedModel, file.name);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -94,7 +90,7 @@ function VideoCaptionInner({ token, active }: { token: string; active: boolean }
 
   if (reviewJobId) {
     return (
-      <VideoReviewView jobId={reviewJobId} operatorToken={token}
+      <VideoReviewView jobId={reviewJobId}
         onBack={() => { setReviewJobId(null); void refresh(); }} />
     );
   }
@@ -196,7 +192,7 @@ function VideoCaptionInner({ token, active }: { token: string; active: boolean }
                 <button type="button" style={consoleStyles.action}
                   onClick={() => {
                     setConfirmDeleteId(null);
-                    void deleteVideoJob(job.job_id, token).then(refresh);
+                    void deleteVideoJob(job.job_id).then(refresh);
                   }}>
                   정말 삭제
                 </button>
@@ -237,13 +233,13 @@ function VideoCaptionInner({ token, active }: { token: string; active: boolean }
               <>
                 <span style={{ fontSize: 13, color: "#30a46c" }}>설치됨</span>
                 <button type="button" style={consoleStyles.mutedAction}
-                  onClick={() => void deleteVideoModel(m.name, token).then(refresh)}>
+                  onClick={() => void deleteVideoModel(m.name).then(refresh)}>
                   삭제
                 </button>
               </>
             ) : (
               <button type="button" style={consoleStyles.mutedAction}
-                onClick={() => void downloadVideoModel(m.name, token).then(refresh)}>
+                onClick={() => void downloadVideoModel(m.name).then(refresh)}>
                 다운로드
               </button>
             )}

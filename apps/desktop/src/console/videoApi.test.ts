@@ -30,17 +30,17 @@ describe("videoApi", () => {
     vi.restoreAllMocks();
   });
 
-  it("listVideoModels GETs /api/v1/video-models with bearer", async () => {
+  it("listVideoModels GETs /api/v1/video-models without auth", async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ models: [] }) });
-    await listVideoModels("tok");
+    await listVideoModels();
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(String(url)).toBe("http://localhost:8000/api/v1/video-models");
-    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+    expect((init.headers as Record<string, string> | undefined)?.Authorization).toBeUndefined();
   });
 
   it("createYoutubeJob POSTs JSON body", async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({ job_id: "j1" }) });
-    const out = await createYoutubeJob({ url: "https://youtu.be/x", whisperModel: "small" }, "tok");
+    const out = await createYoutubeJob({ url: "https://youtu.be/x", whisperModel: "small" });
     expect(out.job_id).toBe("j1");
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({
@@ -51,7 +51,7 @@ describe("videoApi", () => {
   it("uploadVideoJob sends multipart FormData", async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({ job_id: "j2" }) });
     const file = new File([new Uint8Array([1, 2, 3])], "clip.mp4", { type: "video/mp4" });
-    await uploadVideoJob(file, "small", "제목", "tok");
+    await uploadVideoJob(file, "small", "제목");
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const form = init.body as FormData;
     expect(form.get("whisper_model")).toBe("small");
@@ -60,7 +60,7 @@ describe("videoApi", () => {
 
   it("burnVideoJob POSTs style body", async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 202, json: async () => ({ status: "burning" }) });
-    await burnVideoJob("j1", { position: "top", margin_v: 20, font_size: 24 }, "tok");
+    await burnVideoJob("j1", { position: "top", margin_v: 20, font_size: 24 });
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(String(url)).toContain("/api/v1/video-jobs/j1/burn");
     expect(JSON.parse(init.body as string).position).toBe("top");
@@ -72,6 +72,6 @@ describe("videoApi", () => {
 
   it("throws on non-ok responses", async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 409, json: async () => ({ detail: "x" }) });
-    await expect(listVideoModels("tok")).rejects.toThrow(/409/);
+    await expect(listVideoModels()).rejects.toThrow(/409/);
   });
 });

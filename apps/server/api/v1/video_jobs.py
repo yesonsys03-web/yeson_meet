@@ -1,8 +1,11 @@
 """Video caption job endpoints.
 
-/media is deliberately UNAUTHENTICATED: HTML5 <video> cannot attach an
-Authorization header, so the unguessable job UUID acts as the capability —
-the same trust decision as viewer tokens on the accepted LAN boundary.
+The entire video captions API is deliberately UNAUTHENTICATED (product
+decision 2026-07-06): this deployment treats the LAN as the trust boundary,
+the same acceptance already made for viewer tokens. /media in particular
+can never carry an Authorization header (HTML5 <video> cannot attach one),
+so its unguessable job UUID acts as the capability URL — the other
+endpoints extend that same trust decision rather than being a special case.
 """
 from __future__ import annotations
 
@@ -18,7 +21,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.server.auth.deps import require_operator
 from apps.server.db.models import AppUser, VideoJob, VideoSegment
 from apps.server.db.session import get_session
 from apps.server.domain.video_captions.ingest import save_upload
@@ -83,14 +85,28 @@ async def _get_job_or_404(db: AsyncSession, external_id: UUID) -> VideoJob:
     return job
 
 
+async def _default_owner_id(db: AsyncSession) -> int:
+    """무인증 개방 후 VideoJob.owner_user_id(NOT NULL FK) 채우기용 — 시스템의
+    첫 사용자를 소유자로 해석한다. 서버 콘솔 온보딩이 항상 계정을 먼저
+    만들므로 실질적으로 503에 도달하지 않는다."""
+    owner_id = (await db.execute(
+        select(AppUser.id).order_by(AppUser.id).limit(1)
+    )).scalar_one_or_none()
+    if owner_id is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "운영자 계정이 아직 없습니다 — 서버 콘솔에서 계정을 먼저 만드세요")
+    return owner_id
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_video_job(
     body: VideoJobCreateIn,
-    user: Annotated[AppUser, Depends(require_operator)],
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
     _require_model(body.whisper_model)
-    job = VideoJob(external_id=uuid4(), owner_user_id=user.id,
+    owner_id = await _default_owner_id(db)
+    job = VideoJob(external_id=uuid4(), owner_user_id=owner_id,
                    title=body.title or body.youtube_url, source_type="youtube",
                    source_ref=body.youtube_url, whisper_model=body.whisper_model,
                    status="queued")
@@ -102,7 +118,6 @@ async def create_video_job(
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 async def create_upload_job(
-    user: Annotated[AppUser, Depends(require_operator)],
     db: Annotated[AsyncSession, Depends(get_session)],
     file: Annotated[UploadFile, File()],
     whisper_model: Annotated[str, Form()],
@@ -115,7 +130,8 @@ async def create_upload_job(
     dest = job_dir(external_id) / f"source{suffix}"
     try:
         await save_upload(file, dest)
-        job = VideoJob(external_id=external_id, owner_user_id=user.id,
+        owner_id = await _default_owner_id(db)
+        job = VideoJob(external_id=external_id, owner_user_id=owner_id,
                        title=title or filename, source_type="upload",
                        source_ref=filename, whisper_model=whisper_model,
                        status="queued", media_path=str(dest))
@@ -131,7 +147,6 @@ async def create_upload_job(
 
 @router.get("")
 async def list_video_jobs(
-    _user: Annotated[AppUser, Depends(require_operator)],
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
     jobs = (await db.execute(
@@ -143,7 +158,6 @@ async def list_video_jobs(
 @router.get("/{external_id}")
 async def get_video_job(
     external_id: UUID,
-    _user: Annotated[AppUser, Depends(require_operator)],
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
     job = await _get_job_or_404(db, external_id)
@@ -170,7 +184,6 @@ class SegmentsPatchIn(BaseModel):
 async def patch_segments(
     external_id: UUID,
     body: SegmentsPatchIn,
-    _user: Annotated[AppUser, Depends(require_operator)],
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
     job = await _get_job_or_404(db, external_id)
@@ -189,7 +202,6 @@ async def patch_segments(
 async def burn_video_job(
     external_id: UUID,
     body: BurnIn,
-    _user: Annotated[AppUser, Depends(require_operator)],
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
     job = await _get_job_or_404(db, external_id)
@@ -207,7 +219,6 @@ async def burn_video_job(
 @router.get("/{external_id}/download")
 async def download_video_job(
     external_id: UUID,
-    _user: Annotated[AppUser, Depends(require_operator)],
     db: Annotated[AsyncSession, Depends(get_session)],
     kind: Annotated[str, Query(pattern="^(video|srt)$")] = "video",
 ):
@@ -245,7 +256,6 @@ async def stream_video_media(
 @router.delete("/{external_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_video_job(
     external_id: UUID,
-    _user: Annotated[AppUser, Depends(require_operator)],
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> None:
     job = await _get_job_or_404(db, external_id)

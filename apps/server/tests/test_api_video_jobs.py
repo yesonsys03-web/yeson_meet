@@ -19,10 +19,6 @@ def _env(monkeypatch, tmp_path: Path):
     yield
 
 
-def _auth(token: str) -> dict:
-    return {"Authorization": f"Bearer {token}"}
-
-
 async def _install_model(name: str = "small"):
     from apps.server.domain.video_captions.whisper_models import model_dir
     d = model_dir(name)
@@ -30,9 +26,9 @@ async def _install_model(name: str = "small"):
     (d / "model.bin").write_bytes(b"x")
 
 
-async def test_create_youtube_job(client, admin_token, db_session):
+async def test_create_youtube_job(client, admin_user, db_session):
     await _install_model()
-    resp = await client.post("/api/v1/video-jobs", headers=_auth(admin_token),
+    resp = await client.post("/api/v1/video-jobs",
                              json={"youtube_url": "https://youtu.be/abc",
                                    "whisper_model": "small"})
     assert resp.status_code == 201
@@ -43,18 +39,18 @@ async def test_create_youtube_job(client, admin_token, db_session):
     assert row.status == "queued"
 
 
-async def test_create_job_rejects_missing_model(client, admin_token):
-    resp = await client.post("/api/v1/video-jobs", headers=_auth(admin_token),
+async def test_create_job_rejects_missing_model(client):
+    resp = await client.post("/api/v1/video-jobs",
                              json={"youtube_url": "https://youtu.be/abc",
                                    "whisper_model": "medium"})
     assert resp.status_code == 409
     assert "다운로드" in resp.json()["detail"]
 
 
-async def test_upload_job_saves_file(client, admin_token, db_session, tmp_path):
+async def test_upload_job_saves_file(client, admin_user, db_session, tmp_path):
     await _install_model()
     resp = await client.post(
-        "/api/v1/video-jobs/upload", headers=_auth(admin_token),
+        "/api/v1/video-jobs/upload",
         data={"whisper_model": "small", "title": "클립"},
         files={"file": ("clip.mp4", b"fake-video-bytes", "video/mp4")},
     )
@@ -65,8 +61,7 @@ async def test_upload_job_saves_file(client, admin_token, db_session, tmp_path):
     assert row.title == "클립"
 
 
-async def test_detail_includes_segments_and_patch_edits(client, admin_token,
-                                                        db_session, admin_user):
+async def test_detail_includes_segments_and_patch_edits(client, db_session, admin_user):
     job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
                    source_type="upload", source_ref="c.mp4",
                    whisper_model="small", status="review")
@@ -77,14 +72,12 @@ async def test_detail_includes_segments_and_patch_edits(client, admin_token,
                                 text_en="Hi", text_ko="안녕"))
     await db_session.commit()
 
-    detail = await client.get(f"/api/v1/video-jobs/{job.external_id}",
-                              headers=_auth(admin_token))
+    detail = await client.get(f"/api/v1/video-jobs/{job.external_id}")
     assert detail.status_code == 200
     assert detail.json()["segments"][0]["text_ko"] == "안녕"
 
     patched = await client.patch(
         f"/api/v1/video-jobs/{job.external_id}/segments",
-        headers=_auth(admin_token),
         json={"edits": [{"seq": 1, "text_ko": "안녕하세요!"}]})
     assert patched.status_code == 200
     db_session.expire_all()
@@ -93,7 +86,7 @@ async def test_detail_includes_segments_and_patch_edits(client, admin_token,
     assert seg.text_ko == "안녕하세요!"
 
 
-async def test_burn_requires_review_status(client, admin_token, db_session,
+async def test_burn_requires_review_status(client, db_session,
                                            admin_user, monkeypatch):
     started = {}
     monkeypatch.setattr(api_vj, "_start_burn",
@@ -105,7 +98,6 @@ async def test_burn_requires_review_status(client, admin_token, db_session,
     await db_session.commit()
 
     resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/burn",
-                             headers=_auth(admin_token),
                              json={"position": "bottom", "margin_v": 40,
                                    "font_size": 18})
     assert resp.status_code == 409
@@ -114,7 +106,6 @@ async def test_burn_requires_review_status(client, admin_token, db_session,
     await db_session.commit()
     job_id = job.id
     resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/burn",
-                             headers=_auth(admin_token),
                              json={"position": "bottom", "margin_v": 40,
                                    "font_size": 18})
     assert resp.status_code == 202
@@ -141,7 +132,7 @@ async def test_media_is_capability_url_no_auth(client, db_session, admin_user,
     assert resp.content == b"stream-me"
 
 
-async def test_srt_download(client, admin_token, db_session, admin_user):
+async def test_srt_download(client, db_session, admin_user):
     job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
                    source_type="upload", source_ref="c.mp4",
                    whisper_model="small", status="review")
@@ -152,14 +143,13 @@ async def test_srt_download(client, admin_token, db_session, admin_user):
     await db_session.commit()
 
     resp = await client.get(
-        f"/api/v1/video-jobs/{job.external_id}/download?kind=srt",
-        headers=_auth(admin_token))
+        f"/api/v1/video-jobs/{job.external_id}/download?kind=srt")
     assert resp.status_code == 200
     assert "안녕" in resp.text
     assert "00:00:00,000 --> 00:00:01,000" in resp.text
 
 
-async def test_upload_cleans_up_on_failure(client, admin_token, monkeypatch):
+async def test_upload_cleans_up_on_failure(client, monkeypatch):
     await _install_model()
 
     async def boom(upload, dest):
@@ -170,9 +160,14 @@ async def test_upload_cleans_up_on_failure(client, admin_token, monkeypatch):
     monkeypatch.setattr(api_vj, "save_upload", boom)
     with pytest.raises(RuntimeError, match="disk full"):
         await client.post(
-            "/api/v1/video-jobs/upload", headers=_auth(admin_token),
+            "/api/v1/video-jobs/upload",
             data={"whisper_model": "small"},
             files={"file": ("clip.mp4", b"x", "video/mp4")},
         )
     jobs_root = Path(os.environ["STORAGE_ROOT"]) / "video_jobs"
     assert not jobs_root.exists() or not any(jobs_root.iterdir())
+
+
+async def test_no_auth_required_for_list(client, admin_user):
+    resp = await client.get("/api/v1/video-jobs")
+    assert resp.status_code == 200
