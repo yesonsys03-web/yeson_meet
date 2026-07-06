@@ -20,6 +20,10 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
   const [job, setJob] = useState<VideoJobDetail | null>(null);
   const [edits, setEdits] = useState<Record<number, string>>({});
   const [style, setStyle] = useState<BurnStyle>({ position: "bottom", margin_v: 40, font_size: 18 });
+  // 숫자 입력칸은 타이핑 중간값("2" 등)을 허용해야 하므로 문자열로 따로 들고,
+  // 유효 범위 값일 때만 style에 반영하고 blur 시점에 클램프·정규화한다.
+  const [marginText, setMarginText] = useState("40");
+  const [fontSizeText, setFontSizeText] = useState("18");
   const [currentMs, setCurrentMs] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -160,20 +164,46 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
             <label>
               여백{" "}
               <input type="range" min={0} max={200} value={style.margin_v}
-                onChange={(e) => setStyle({ ...style, margin_v: Number(e.target.value) })} />
-              <input type="number" min={0} max={200} value={style.margin_v}
-                onChange={(e) => setStyle({ ...style,
-                  margin_v: Math.max(0, Math.min(200, Number(e.target.value) || 0)) })}
+                onChange={(e) => {
+                  setStyle({ ...style, margin_v: Number(e.target.value) });
+                  setMarginText(e.target.value);
+                }} />
+              <input type="number" min={0} max={200} value={marginText}
+                onChange={(e) => {
+                  setMarginText(e.target.value);
+                  const n = Number(e.target.value);
+                  if (e.target.value !== "" && Number.isFinite(n) && n >= 0 && n <= 200) {
+                    setStyle({ ...style, margin_v: Math.round(n) });
+                  }
+                }}
+                onBlur={() => {
+                  const n = Math.max(0, Math.min(200, Math.round(Number(marginText)) || 0));
+                  setMarginText(String(n));
+                  setStyle({ ...style, margin_v: n });
+                }}
                 style={{ ...consoleStyles.input, width: 64, marginLeft: 6, padding: "2px 6px" }} />
               px
             </label>
             <label>
               글자 크기{" "}
               <input type="range" min={10} max={48} value={style.font_size}
-                onChange={(e) => setStyle({ ...style, font_size: Number(e.target.value) })} />
-              <input type="number" min={10} max={48} value={style.font_size}
-                onChange={(e) => setStyle({ ...style,
-                  font_size: Math.max(10, Math.min(48, Number(e.target.value) || 10)) })}
+                onChange={(e) => {
+                  setStyle({ ...style, font_size: Number(e.target.value) });
+                  setFontSizeText(e.target.value);
+                }} />
+              <input type="number" min={10} max={48} value={fontSizeText}
+                onChange={(e) => {
+                  setFontSizeText(e.target.value);
+                  const n = Number(e.target.value);
+                  if (e.target.value !== "" && Number.isFinite(n) && n >= 10 && n <= 48) {
+                    setStyle({ ...style, font_size: Math.round(n) });
+                  }
+                }}
+                onBlur={() => {
+                  const n = Math.max(10, Math.min(48, Math.round(Number(fontSizeText)) || 18));
+                  setFontSizeText(String(n));
+                  setStyle({ ...style, font_size: n });
+                }}
                 style={{ ...consoleStyles.input, width: 64, marginLeft: 6, padding: "2px 6px" }} />
               px
             </label>
