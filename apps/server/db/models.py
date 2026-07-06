@@ -182,6 +182,8 @@ class VideoJob(Base):
     # youtube URL or original upload filename
     source_ref: Mapped[str] = mapped_column(Text, nullable=False)
     whisper_model: Mapped[str] = mapped_column(String(32), nullable=False)
+    translate_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    translate_cli_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # queued|ingesting|extracting|transcribing|translating|review|burning|done|error
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="queued", default="queued"

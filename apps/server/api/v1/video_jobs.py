@@ -45,6 +45,9 @@ class VideoJobCreateIn(BaseModel):
     youtube_url: str
     whisper_model: str
     title: str | None = None
+    translate_provider: str | None = Field(
+        default=None, pattern="^(gemini|claude|codex|agy|opencode)$")
+    translate_cli_model: str | None = None
 
 
 class BurnIn(BaseModel):
@@ -60,6 +63,7 @@ def _job_out(job: VideoJob) -> dict:
         "source_type": job.source_type,
         "source_ref": job.source_ref,
         "whisper_model": job.whisper_model,
+        "translate_provider": job.translate_provider,
         "status": job.status,
         "progress": job.progress,
         "error": job.error,
@@ -109,6 +113,8 @@ async def create_video_job(
     job = VideoJob(external_id=uuid4(), owner_user_id=owner_id,
                    title=body.title or body.youtube_url, source_type="youtube",
                    source_ref=body.youtube_url, whisper_model=body.whisper_model,
+                   translate_provider=body.translate_provider,
+                   translate_cli_model=body.translate_cli_model,
                    status="queued")
     db.add(job)
     await db.commit()
@@ -122,6 +128,9 @@ async def create_upload_job(
     file: Annotated[UploadFile, File()],
     whisper_model: Annotated[str, Form()],
     title: Annotated[str | None, Form()] = None,
+    translate_provider: Annotated[
+        str | None, Form(pattern="^(gemini|claude|codex|agy|opencode)$")] = None,
+    translate_cli_model: Annotated[str | None, Form()] = None,
 ) -> dict:
     _require_model(whisper_model)
     external_id = uuid4()
@@ -134,6 +143,8 @@ async def create_upload_job(
         job = VideoJob(external_id=external_id, owner_user_id=owner_id,
                        title=title or filename, source_type="upload",
                        source_ref=filename, whisper_model=whisper_model,
+                       translate_provider=translate_provider,
+                       translate_cli_model=translate_cli_model,
                        status="queued", media_path=str(dest))
         db.add(job)
         await db.commit()

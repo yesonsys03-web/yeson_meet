@@ -45,7 +45,20 @@ describe("videoApi", () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({
       youtube_url: "https://youtu.be/x", whisper_model: "small", title: null,
+      translate_provider: null, translate_cli_model: null,
     });
+  });
+
+  it("createYoutubeJob sends translate_provider/translate_cli_model when set", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({ job_id: "j1" }) });
+    await createYoutubeJob({
+      url: "https://youtu.be/x", whisperModel: "small",
+      translateProvider: "opencode", translateCliModel: "opencode/deepseek-v4-flash-free",
+    });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.translate_provider).toBe("opencode");
+    expect(body.translate_cli_model).toBe("opencode/deepseek-v4-flash-free");
   });
 
   it("uploadVideoJob sends multipart FormData", async () => {
@@ -56,6 +69,16 @@ describe("videoApi", () => {
     const form = init.body as FormData;
     expect(form.get("whisper_model")).toBe("small");
     expect((form.get("file") as File).name).toBe("clip.mp4");
+    expect(form.get("translate_provider")).toBeNull();
+  });
+
+  it("uploadVideoJob appends translate_provider/translate_cli_model when set", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({ job_id: "j2" }) });
+    const file = new File([new Uint8Array([1, 2, 3])], "clip.mp4", { type: "video/mp4" });
+    await uploadVideoJob(file, "small", "제목", "claude");
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const form = init.body as FormData;
+    expect(form.get("translate_provider")).toBe("claude");
   });
 
   it("burnVideoJob POSTs style body", async () => {

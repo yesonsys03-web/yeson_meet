@@ -16,6 +16,7 @@ export type VideoJobSummary = {
   source_type: "youtube" | "upload";
   source_ref: string;
   whisper_model: string;
+  translate_provider: string | null;
   status: string;
   progress: number;
   error: string | null;
@@ -62,7 +63,10 @@ export async function deleteVideoModel(name: string): Promise<void> {
 }
 
 export async function createYoutubeJob(
-  params: { url: string; whisperModel: string; title?: string },
+  params: {
+    url: string; whisperModel: string; title?: string;
+    translateProvider?: string; translateCliModel?: string;
+  },
 ): Promise<{ job_id: string }> {
   return request(`${apiBase()}/api/v1/video-jobs`, {
     method: "POST",
@@ -71,17 +75,22 @@ export async function createYoutubeJob(
       youtube_url: params.url,
       whisper_model: params.whisperModel,
       title: params.title ?? null,
+      translate_provider: params.translateProvider || null,
+      translate_cli_model: params.translateCliModel || null,
     }),
   });
 }
 
 export async function uploadVideoJob(
   file: File, whisperModel: string, title: string,
+  translateProvider?: string, translateCliModel?: string,
 ): Promise<{ job_id: string }> {
   const form = new FormData();
   form.append("file", file);
   form.append("whisper_model", whisperModel);
   if (title) form.append("title", title);
+  if (translateProvider) form.append("translate_provider", translateProvider);
+  if (translateCliModel) form.append("translate_cli_model", translateCliModel);
   return request(`${apiBase()}/api/v1/video-jobs/upload`,
     { method: "POST", body: form });
 }

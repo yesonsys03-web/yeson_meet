@@ -171,3 +171,29 @@ async def test_upload_cleans_up_on_failure(client, monkeypatch):
 async def test_no_auth_required_for_list(client, admin_user):
     resp = await client.get("/api/v1/video-jobs")
     assert resp.status_code == 200
+
+
+async def test_create_youtube_job_saves_translate_provider(client, admin_user, db_session):
+    await _install_model()
+    resp = await client.post("/api/v1/video-jobs",
+                             json={"youtube_url": "https://youtu.be/abc",
+                                   "whisper_model": "small",
+                                   "translate_provider": "claude"})
+    assert resp.status_code == 201
+    job_id = resp.json()["job_id"]
+    row = (await db_session.execute(
+        select(VideoJob).where(VideoJob.external_id == job_id))).scalar_one()
+    assert row.translate_provider == "claude"
+
+    listed = await client.get("/api/v1/video-jobs")
+    item = next(j for j in listed.json()["items"] if j["job_id"] == job_id)
+    assert item["translate_provider"] == "claude"
+
+
+async def test_create_job_rejects_invalid_translate_provider(client, admin_user):
+    await _install_model()
+    resp = await client.post("/api/v1/video-jobs",
+                             json={"youtube_url": "https://youtu.be/abc",
+                                   "whisper_model": "small",
+                                   "translate_provider": "not-a-real-engine"})
+    assert resp.status_code == 422

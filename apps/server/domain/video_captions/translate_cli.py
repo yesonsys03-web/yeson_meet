@@ -160,9 +160,17 @@ def _timeout_from_env() -> float:
         return DEFAULT_CLI_TIMEOUT
 
 
-def create_translator() -> TranslationProvider:
-    """Select a TranslationProvider based on ``YESON_VIDEO_TRANSLATE_PROVIDER``."""
-    provider = os.environ.get(PROVIDER_ENV, "gemini").strip().lower()
+def create_translator(
+    provider: str | None = None, cli_model: str | None = None,
+) -> TranslationProvider:
+    """Select a TranslationProvider.
+
+    ``provider``/``cli_model`` (e.g. a per-job override) take priority over the
+    ``YESON_VIDEO_TRANSLATE_PROVIDER``/``YESON_TRANSLATE_CLI_MODEL`` env vars,
+    which remain the fallback when the argument is absent or blank — existing
+    call sites that omit the arguments keep their current env-driven behavior.
+    """
+    provider = (provider or "").strip().lower() or os.environ.get(PROVIDER_ENV, "gemini").strip().lower()
     timeout = _timeout_from_env()
 
     if provider in ("", "gemini"):
@@ -171,7 +179,7 @@ def create_translator() -> TranslationProvider:
     if provider in _BACKENDS:
         backend = _BACKENDS[provider]
         argv = list(backend.argv)
-        model = os.environ.get(CLI_MODEL_ENV)
+        model = (cli_model or "").strip() or os.environ.get(CLI_MODEL_ENV)
         if model and backend.model_flag:
             argv = argv + [backend.model_flag, model]
         return CliTranslator(argv, prompt_via=backend.prompt_via, timeout=timeout)

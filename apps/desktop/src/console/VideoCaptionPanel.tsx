@@ -16,6 +16,16 @@ const STATUS_LABEL: Record<string, string> = {
 const INFLIGHT_STATUSES = ["queued", "ingesting", "extracting", "transcribing",
                            "translating", "burning"];
 
+const TRANSLATE_ENGINES: Array<{ value: string; label: string }> = [
+  { value: "", label: "번역: Gemini (기본)" },
+  { value: "claude", label: "번역: Claude 구독" },
+  { value: "codex", label: "번역: Codex 구독" },
+  { value: "agy", label: "번역: Antigravity" },
+  { value: "opencode", label: "번역: OpenCode (딥시크 등)" },
+];
+
+const DEFAULT_OPENCODE_MODEL = "opencode/deepseek-v4-flash-free";
+
 function formatBytes(n: number): string {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}GB`;
   return `${Math.round(n / 1_000_000)}MB`;
@@ -33,6 +43,8 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const [models, setModels] = useState<VideoModelInfo[]>([]);
   const [jobs, setJobs] = useState<VideoJobSummary[]>([]);
   const [selectedModel, setSelectedModel] = useState("small");
+  const [translateProvider, setTranslateProvider] = useState("");
+  const [cliModel, setCliModel] = useState(DEFAULT_OPENCODE_MODEL);
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +77,11 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     setBusy(true);
     setError(null);
     try {
-      await createYoutubeJob({ url: youtubeUrl.trim(), whisperModel: selectedModel });
+      await createYoutubeJob({
+        url: youtubeUrl.trim(), whisperModel: selectedModel,
+        translateProvider: translateProvider || undefined,
+        translateCliModel: translateProvider === "opencode" ? cliModel : undefined,
+      });
       setYoutubeUrl("");
       await refresh();
     } catch (err) {
@@ -79,7 +95,11 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     setBusy(true);
     setError(null);
     try {
-      await uploadVideoJob(file, selectedModel, file.name);
+      await uploadVideoJob(
+        file, selectedModel, file.name,
+        translateProvider || undefined,
+        translateProvider === "opencode" ? cliModel : undefined,
+      );
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -127,6 +147,23 @@ function VideoCaptionInner({ active }: { active: boolean }) {
               </option>
             ))}
           </select>
+          <select
+            value={translateProvider}
+            onChange={(e) => setTranslateProvider(e.target.value)}
+            style={{ ...consoleStyles.input, width: 200 }}
+          >
+            {TRANSLATE_ENGINES.map((engine) => (
+              <option key={engine.value} value={engine.value}>{engine.label}</option>
+            ))}
+          </select>
+          {translateProvider === "opencode" ? (
+            <input
+              style={{ ...consoleStyles.input, width: 240 }}
+              placeholder={DEFAULT_OPENCODE_MODEL}
+              value={cliModel}
+              onChange={(e) => setCliModel(e.target.value)}
+            />
+          ) : null}
           <button type="button"
             style={{ ...consoleStyles.action, ...(youtubeDisabled ? consoleStyles.actionDisabled : null) }}
             disabled={youtubeDisabled}
@@ -167,6 +204,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
               </div>
               <div style={{ fontSize: 12, opacity: 0.7 }}>
                 {job.source_type === "youtube" ? "유튜브" : "업로드"} · {job.whisper_model} 모델
+                {job.translate_provider ? ` · 번역: ${job.translate_provider}` : ""}
                 {job.status === "error" && job.error ? ` · ${job.error}` : ""}
               </div>
               {INFLIGHT_STATUSES.includes(job.status) ? (

@@ -112,6 +112,8 @@ async def run_video_job(external_id: UUID) -> None:
             source_type, source_ref = job.source_type, job.source_ref
             media_path = job.media_path
             model_name = job.whisper_model
+            translate_provider = job.translate_provider
+            translate_cli_model = job.translate_cli_model
             job_id = job.id
 
         ffmpeg = locate_ffmpeg()
@@ -159,8 +161,10 @@ async def run_video_job(external_id: UUID) -> None:
         async def on_translate_progress(frac: float) -> None:
             await _set_progress(external_id, max(0, min(100, int(frac * 100))))
 
+        translator = create_translator(
+            provider=translate_provider, cli_model=translate_cli_model)
         ko_segments = await translate_segments(
-            en_segments, create_translator(), progress_cb=on_translate_progress)
+            en_segments, translator, progress_cb=on_translate_progress)
 
         async with AsyncSessionLocal() as db:
             await db.execute(delete(VideoSegment).where(VideoSegment.job_id == job_id))
