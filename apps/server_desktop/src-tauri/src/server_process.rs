@@ -239,9 +239,10 @@ pub fn start_server_inner(
     }
 
     // Provider precedence: explicit per-run request override → the keychain
-    // config (what the Config panel's provider dropdown saves) → gemini_live.
-    // The console UI always sends provider: null, so without the keychain
-    // fallback the dropdown selection was silently ignored at start.
+    // config (what the Config panel's provider dropdown saves) → DEFAULT_PROVIDER
+    // (gemini_live_translate — 동시통역, 더 정확). The console UI always sends
+    // provider: null, so without the keychain fallback the dropdown selection
+    // was silently ignored at start.
     let provider = request
         .provider
         .as_deref()
@@ -254,7 +255,7 @@ pub fn start_server_inner(
                 .map(|config| config.yeson_ai_provider.trim().to_string())
                 .filter(|value| !value.is_empty())
         })
-        .unwrap_or_else(|| "gemini_live".to_string());
+        .unwrap_or_else(|| crate::server_config::DEFAULT_PROVIDER.to_string());
 
     let app_data_dir = app
         .path()

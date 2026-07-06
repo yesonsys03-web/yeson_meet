@@ -45,7 +45,7 @@ pub struct ServerConfig {
     pub google_stt_language_code: String,
     /// Translate target language, e.g. `ko`.
     pub google_translate_target_language: String,
-    /// AI provider selector; defaults to `gemini_live`.
+    /// AI provider selector; defaults to `gemini_live_translate` (동시통역 — 더 정확).
     pub yeson_ai_provider: String,
     /// Public viewer base URL used to mint viewer links.
     pub viewer_base: String,
@@ -96,10 +96,10 @@ pub struct ServerConfigInput {
 /// Default provider when the operator hasn't picked one. Matches the server
 /// (`apps/server/ws/sidecar.py:120` reads `YESON_AI_PROVIDER` default
 /// `gemini_live`).
-pub const DEFAULT_PROVIDER: &str = "gemini_live";
+pub const DEFAULT_PROVIDER: &str = "gemini_live_translate";
 
 impl ServerConfig {
-    /// Provider with the `gemini_live` default applied (never empty).
+    /// Provider with the `gemini_live_translate` default applied (never empty).
     fn provider(&self) -> String {
         let trimmed = self.yeson_ai_provider.trim();
         if trimmed.is_empty() {
