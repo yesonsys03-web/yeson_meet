@@ -196,6 +196,10 @@ async def burn_video_job(
     if job.status not in ("review", "done", "error"):
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"검수 가능한 상태가 아닙니다 (status={job.status})")
+    job.status = "burning"
+    job.progress = 0
+    job.error = None
+    await db.commit()
     _start_burn(external_id, body.position, body.margin_v, body.font_size)
     return {"status": "burning"}
 

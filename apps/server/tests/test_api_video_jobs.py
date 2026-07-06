@@ -112,12 +112,18 @@ async def test_burn_requires_review_status(client, admin_token, db_session,
 
     job.status = "review"
     await db_session.commit()
+    job_id = job.id
     resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/burn",
                              headers=_auth(admin_token),
                              json={"position": "bottom", "margin_v": 40,
                                    "font_size": 18})
     assert resp.status_code == 202
     assert started["eid"] == job.external_id
+    db_session.expire_all()
+    burning = (await db_session.execute(select(VideoJob).where(
+        VideoJob.id == job_id))).scalar_one()
+    assert burning.status == "burning"
+    assert burning.progress == 0
 
 
 async def test_media_is_capability_url_no_auth(client, db_session, admin_user,
