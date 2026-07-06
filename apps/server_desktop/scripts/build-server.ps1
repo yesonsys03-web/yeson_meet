@@ -117,11 +117,26 @@ if (Test-Path $CfBin) {
 }
 
 # Task 14: vendor the Windows ffmpeg binary so the tauri.conf binaries/ffmpeg-*
-# resource glob is satisfied at `tauri build`. fetch-ffmpeg.sh is bash (not
-# PowerShell) — on a Windows build host, run it manually from Git Bash BEFORE
-# (or after) this script:
-#   bash apps/server_desktop/scripts/fetch-ffmpeg.sh
-# It detects the MINGW/MSYS/CYGWIN triple and vendors the BtbN win64-gpl
-# ffmpeg.exe into apps/server_desktop/src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc/.
-# Not invoked automatically here to avoid a PowerShell->bash dependency in the
-# main freeze path; the packaged app cannot bundle ffmpeg without this step.
+# resource glob is satisfied at `tauri build`. Idempotent (skips if present).
+# BtbN win64-gpl static build — same source as fetch-ffmpeg.sh's MINGW branch,
+# but fetched natively in PowerShell so CI (and local Windows builds) need no
+# Git Bash step. Without this, `tauri build` fails on the unmatched glob
+# (v1.0.0 Windows CI에서 실제 발생).
+$FfDir = "apps/server_desktop/src-tauri/binaries/ffmpeg-$Triple"
+$FfBin = Join-Path $FfDir "ffmpeg.exe"
+if (Test-Path $FfBin) {
+    Write-Host "ffmpeg already vendored: $FfBin"
+} else {
+    Write-Host "Vendoring ffmpeg (win64-gpl)..."
+    New-Item -ItemType Directory -Force -Path $FfDir | Out-Null
+    $FfTmp = Join-Path ([System.IO.Path]::GetTempPath()) "ffmpeg-dl-$PID"
+    New-Item -ItemType Directory -Force -Path $FfTmp | Out-Null
+    $FfZip = Join-Path $FfTmp "ffmpeg.zip"
+    Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip" -OutFile $FfZip
+    Expand-Archive -Path $FfZip -DestinationPath $FfTmp -Force
+    $FfExe = Get-ChildItem -Path $FfTmp -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+    if (-not $FfExe) { throw "ffmpeg.exe not found in downloaded archive" }
+    Copy-Item $FfExe.FullName $FfBin
+    Remove-Item -Recurse -Force $FfTmp
+    Write-Host "-> $FfBin"
+}
