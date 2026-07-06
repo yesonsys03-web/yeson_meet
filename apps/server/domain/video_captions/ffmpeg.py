@@ -11,6 +11,12 @@ from typing import Callable
 
 FFMPEG_BIN_ENV = "YESON_FFMPEG_BIN"
 
+# Windows에서 ffmpeg 콘솔 창이 번쩍이지 않도록 — CREATE_NO_WINDOW는 Windows 전용
+# 상수라 os.name == "nt"가 아닌 분기에서는 절대 참조하지 않는다 (mac/Linux AttributeError 방지).
+_SUBPROCESS_FLAGS: dict = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+)
+
 
 class FfmpegError(RuntimeError):
     pass
@@ -27,6 +33,7 @@ def _run(cmd: list[str], *, cwd: str | None = None) -> None:
     result = subprocess.run(
         cmd, capture_output=True, text=True,
         encoding="utf-8", errors="replace", cwd=cwd,
+        **_SUBPROCESS_FLAGS,
     )
     if result.returncode != 0:
         tail = (result.stderr or "")[-500:]
@@ -63,6 +70,7 @@ def burn_subtitles(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
         proc = subprocess.Popen(
             cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=stderr_f,
             text=True, encoding="utf-8", errors="replace",
+            **_SUBPROCESS_FLAGS,
         )
         assert proc.stdout is not None
         try:
