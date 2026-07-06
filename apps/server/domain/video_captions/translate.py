@@ -38,7 +38,13 @@ def build_translation_prompt(texts: list[str]) -> str:
     """
     numbered = json.dumps(texts, ensure_ascii=False)
     return (
-        "Translate each English subtitle line into concise Korean subtitle text.\n"
+        "Translate each English subtitle line into natural Korean subtitle text, "
+        "concise enough to read on screen.\n"
+        "When the English contains onomatopoeia, sound effects, or emphatic / "
+        "expressive wording (e.g. boom, whoosh, splash, buzz, sparkle, thud), "
+        "render it with the natural Korean 의성어·의태어 (예: 쿵, 쉬익, 첨벙, 윙, "
+        "반짝반짝, 쿵쾅) instead of a flat literal translation. Preserve the same "
+        "vividness and tone as the source.\n"
         "Input is a JSON array of strings; return ONLY a JSON array of the same "
         "length with the Korean translations in the same order.\n"
         "Return ONLY the JSON array. No prose, no markdown fences.\n"
@@ -83,6 +89,32 @@ class GeminiFlashTranslator:
         return [str(t) for t in out]
 
 
+async def _translate_resilient(
+    provider: TranslationProvider, texts: list[str],
+) -> list[str]:
+    """개수 불일치/오류에 견디는 배치 번역.
+
+    LLM이 두 줄을 합치거나 한 줄을 누락하면 반환 개수가 어긋나 자막이 밀린다.
+    그럴 땐 청크를 반으로 쪼개 재번역(입력이 달라져 정상 개수로 수렴)하고,
+    1줄까지 쪼개도 실패하면 그 줄만 원문을 유지해 작업 전체 중단을 막는다.
+    """
+    if not texts:
+        return []
+    try:
+        result = await provider.translate_batch(texts)
+        if len(result) == len(texts):
+            return result
+    except TranslationError:
+        pass
+    if len(texts) == 1:
+        logger.warning("translate: 1줄 번역 실패 — 원문 유지: %r", texts[0][:60])
+        return list(texts)
+    mid = len(texts) // 2
+    left = await _translate_resilient(provider, texts[:mid])
+    right = await _translate_resilient(provider, texts[mid:])
+    return left + right
+
+
 async def translate_segments(
     segments: list[SubSegment],
     provider: TranslationProvider,
@@ -93,9 +125,7 @@ async def translate_segments(
     out: list[SubSegment] = []
     for i in range(0, len(segments), chunk_size):
         chunk = segments[i:i + chunk_size]
-        translated = await provider.translate_batch([s.text for s in chunk])
-        if len(translated) != len(chunk):
-            raise TranslationError("provider returned wrong count")
+        translated = await _translate_resilient(provider, [s.text for s in chunk])
         for seg, ko in zip(chunk, translated):
             out.append(replace(seg, text=apply_ko_corrections(ko.strip())))
         logger.info("translate: %d/%d segments", len(out), len(segments))

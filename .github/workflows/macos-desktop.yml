@@ -72,11 +72,18 @@ jobs:
       - name: Publish installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: yeson-meet v1.0.0
+          tag_name: v1.0.1
+          name: yeson-meet v1.0.1
           prerelease: true
           body: |
-            ## yeson-meet v1.0.0 — 무엇이 바뀌었나
+            ## yeson-meet v1.0.1 — 무엇이 바뀌었나
+            ### v1.0.1 버그 수정 (Windows) 🔧
+            - **유튜브 다운로드 실패 수정** — "ffmpeg is not installed" 오류로 유튜브 영상을 받지 못하던 문제 해결(번들 ffmpeg 사용).
+            - **Codex 번역 엔진 오류 수정** — "trusted directory" 오류로 Codex 번역이 실패하던 문제 해결.
+            - **번역 중단 방지** — 일부 자막 줄 누락으로 작업 전체가 실패하던 것을 자동 재분할 번역으로 개선(정렬 보존). 끝까지 실패한 줄은 원문 유지.
+            - **번역 품질** — 의성어·의태어를 더 자연스러운 한국어로 옮기도록 번역 프롬프트 개선.
+
+            (아래는 v1.0.0 최초 릴리스 내용)
             ### 신규 기능: 자막 메이커 🎬
             - **영상에 한국어 자막 자동 생성** — 유튜브 URL을 붙여넣거나 내 컴퓨터의 동영상을 올리면, 말을 받아 적고(전사) 한국어로 번역해 자막을 만들어 줍니다. 클라이언트 앱 왼쪽 메뉴의 "자막 메이커" 탭에서 로그인 없이 바로 사용합니다.
             - **전사 모델 선택** — tiny(가장 빠름)부터 large-v3(최고 품질)까지 원하는 whisper 모델을 앱에서 직접 내려받아 선택합니다. 모델은 서버에 저장되며 설치 파일 크기에는 영향이 없습니다.
