@@ -124,3 +124,19 @@ async def test_run_video_job_survives_missing_job(db_session):
 
 async def test_run_burn_job_survives_missing_job(db_session):
     await pl.run_burn_job(uuid4(), "bottom", 40, 18)
+
+
+async def test_startup_sweep_fails_inflight_jobs(db_session, admin_user):
+    inflight = await _make_job(db_session, admin_user, status="transcribing")
+    inflight_id, inflight_external_id = inflight.id, inflight.external_id
+    done = await _make_job(db_session, admin_user, status="done")
+    done_id, done_external_id = done.id, done.external_id
+
+    await pl.fail_inflight_video_jobs_at_startup()
+
+    db_session.expire_all()
+    rows = {r.external_id: r for r in (await db_session.execute(
+        select(VideoJob).where(VideoJob.id.in_([inflight_id, done_id])))).scalars()}
+    assert rows[inflight_external_id].status == "error"
+    assert "재시작" in rows[inflight_external_id].error
+    assert rows[done_external_id].status == "done"

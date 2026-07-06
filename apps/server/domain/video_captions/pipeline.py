@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from apps.server.db.models import VideoJob, VideoSegment
 from apps.server.db.session import AsyncSessionLocal
@@ -26,6 +26,9 @@ logger = logging.getLogger("yeson.video.pipeline")
 
 _PROGRESS = {"ingesting": 10, "extracting": 25, "transcribing": 40,
              "translating": 75, "review": 90, "burning": 95, "done": 100}
+
+_INFLIGHT_STATUSES = ("queued", "ingesting", "extracting", "transcribing",
+                      "translating", "burning")
 
 # strong refs so fire-and-forget tasks are not garbage-collected mid-flight
 _tasks: set[asyncio.Task] = set()
@@ -122,6 +125,25 @@ async def run_video_job(external_id: UUID) -> None:
     except Exception as exc:  # noqa: BLE001 — 파이프라인 최종 방어선
         logger.exception("video job %s failed", external_id)
         await _try_set_error(external_id, str(exc)[:1000])
+
+
+async def fail_inflight_video_jobs_at_startup() -> None:
+    """서버 재시작으로 중단된 작업을 error로 정리 — end_live_sessions_at_startup과 같은 취지.
+
+    영상 자막 파이프라인은 프로세스 메모리상의 asyncio task로 진행되므로,
+    서버가 재시작되면 진행 중이던 job은 상태만 남고 다시 이어받을 코드가
+    없다 — 영구 좀비로 남아 큐를 막는다. 재시작 직후 in-flight 상태를 모두
+    error로 정리해 사용자가 삭제 후 재시도할 수 있게 한다.
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            update(VideoJob)
+            .where(VideoJob.status.in_(_INFLIGHT_STATUSES))
+            .values(status="error", error="서버 재시작으로 작업이 중단되었습니다. 삭제 후 다시 시도하세요.")
+        )
+        await db.commit()
+    if result.rowcount:
+        logger.info("startup sweep: %d in-flight video job(s) marked error", result.rowcount)
 
 
 async def run_burn_job(external_id: UUID, position: str, margin_v: int,
