@@ -114,7 +114,9 @@ class _Backend:
 
 _BACKENDS: dict[str, _Backend] = {
     "claude": _Backend(argv=["claude", "-p"], prompt_via="stdin", model_flag="--model"),
-    "codex": _Backend(argv=["codex", "exec"], prompt_via="stdin", model_flag="-m"),
+    # --skip-git-repo-check: codex exec는 신뢰된 git 디렉터리 밖에서 실행을 거부한다.
+    # 번역은 서버의 임의 작업 폴더에서 돌므로(레포 안이라는 보장 없음) 항상 우회한다.
+    "codex": _Backend(argv=["codex", "exec", "--skip-git-repo-check"], prompt_via="stdin", model_flag="-m"),
     "agy": _Backend(argv=["agy", "-p"], prompt_via="argv", model_flag="--model"),
     "opencode": _Backend(argv=["opencode", "run"], prompt_via="argv", model_flag="-m"),
 }

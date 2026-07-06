@@ -126,7 +126,7 @@ async def run_video_job(external_id: UUID) -> None:
 
         if source_type == "youtube":
             await _set_status(external_id, "ingesting")
-            src, title = await asyncio.to_thread(download_youtube, source_ref, workdir)
+            src, title = await asyncio.to_thread(download_youtube, source_ref, workdir, ffmpeg)
             await _set_status(external_id, "ingesting", media_path=str(src), title=title)
             media_path = str(src)
         if not media_path or not Path(media_path).exists():

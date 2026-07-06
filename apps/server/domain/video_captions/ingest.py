@@ -23,8 +23,14 @@ def _ytdl(opts: dict):  # test seam
     return YoutubeDL(opts)
 
 
-def download_youtube(url: str, dest_dir: Path) -> tuple[Path, str]:
-    """Blocking download — call via asyncio.to_thread. Returns (path, title)."""
+def download_youtube(url: str, dest_dir: Path,
+                     ffmpeg_location: str | None = None) -> tuple[Path, str]:
+    """Blocking download — call via asyncio.to_thread. Returns (path, title).
+
+    ``ffmpeg_location``: video+audio 스트림 병합에 ffmpeg가 필요한데 yt-dlp는
+    PATH만 보므로, 번들 설치(PATH에 ffmpeg 없음)에선 서버가 아는 번들 경로를
+    넘겨줘야 한다. 없으면 yt-dlp가 PATH를 탐색한다.
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
     opts = {
         "format": _YTDLP_FORMAT,
@@ -34,6 +40,8 @@ def download_youtube(url: str, dest_dir: Path) -> tuple[Path, str]:
         "no_warnings": True,
         "merge_output_format": "mp4",
     }
+    if ffmpeg_location:
+        opts["ffmpeg_location"] = ffmpeg_location
     try:
         with _ytdl(opts) as ydl:
             info = ydl.extract_info(url, download=True)

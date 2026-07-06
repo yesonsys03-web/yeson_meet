@@ -41,14 +41,29 @@ async def test_translate_segments_calls_async_progress_cb():
     assert seen == pytest.approx([3 / 7, 6 / 7, 1.0])
 
 
-async def test_length_mismatch_raises():
-    class Bad:
+async def test_translate_segments_recovers_from_count_mismatch():
+    """LLM이 배치에서 한 줄을 누락(개수 불일치)해도 쪼개 재번역해 정렬을 복구한다."""
+    class Dropper:
         async def translate_batch(self, texts):
-            return ["only one"]
+            # >1줄이면 마지막 줄을 빠뜨려 개수를 어긋나게 (LLM 병합/누락 흉내)
+            if len(texts) > 1:
+                return [f"KO:{t}" for t in texts[:-1]]
+            return [f"KO:{texts[0]}"]
 
-    with pytest.raises(tl.TranslationError):
-        await tl.translate_segments(
-            [SubSegment(1, 0, 1, "a"), SubSegment(2, 1, 2, "b")], Bad())
+    segs = [SubSegment(i, 0, 1, f"l{i}") for i in range(1, 5)]
+    out = await tl.translate_segments(segs, Dropper(), chunk_size=4)
+    assert [s.text for s in out] == ["KO:l1", "KO:l2", "KO:l3", "KO:l4"]
+
+
+async def test_translate_segments_keeps_source_when_unrecoverable():
+    """1줄까지 쪼개도 실패하면 그 줄은 원문 유지하고 작업은 중단 없이 완주한다."""
+    class AlwaysError:
+        async def translate_batch(self, texts):
+            raise tl.TranslationError("boom")
+
+    out = await tl.translate_segments(
+        [SubSegment(1, 0, 1, "a"), SubSegment(2, 1, 2, "b")], AlwaysError())
+    assert [s.text for s in out] == ["a", "b"]
 
 
 async def test_gemini_translator_parses_json_array(monkeypatch):
