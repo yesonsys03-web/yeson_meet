@@ -38,6 +38,7 @@ function VideoCaptionInner({ token, active }: { token: string; active: boolean }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reviewJobId, setReviewJobId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const refresh = useCallback(async () => {
@@ -181,14 +182,26 @@ function VideoCaptionInner({ token, active }: { token: string; active: boolean }
                 {job.status === "done" ? "결과 보기" : "검수하기"}
               </button>
             ) : null}
-            <button type="button" style={consoleStyles.mutedAction}
-              onClick={() => {
-                if (window.confirm(`"${job.title}" 작업을 삭제할까요?`)) {
-                  void deleteVideoJob(job.job_id, token).then(refresh);
-                }
-              }}>
-              삭제
-            </button>
+            {confirmDeleteId === job.job_id ? (
+              <>
+                <button type="button" style={consoleStyles.action}
+                  onClick={() => {
+                    setConfirmDeleteId(null);
+                    void deleteVideoJob(job.job_id, token).then(refresh);
+                  }}>
+                  정말 삭제
+                </button>
+                <button type="button" style={consoleStyles.mutedAction}
+                  onClick={() => setConfirmDeleteId(null)}>
+                  취소
+                </button>
+              </>
+            ) : (
+              <button type="button" style={consoleStyles.mutedAction}
+                onClick={() => setConfirmDeleteId(job.job_id)}>
+                삭제
+              </button>
+            )}
           </div>
         ))}
       </section>
