@@ -158,14 +158,24 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
               </select>
             </label>
             <label>
-              여백 {style.margin_v}px{" "}
+              여백{" "}
               <input type="range" min={0} max={200} value={style.margin_v}
                 onChange={(e) => setStyle({ ...style, margin_v: Number(e.target.value) })} />
+              <input type="number" min={0} max={200} value={style.margin_v}
+                onChange={(e) => setStyle({ ...style,
+                  margin_v: Math.max(0, Math.min(200, Number(e.target.value) || 0)) })}
+                style={{ ...consoleStyles.input, width: 64, marginLeft: 6, padding: "2px 6px" }} />
+              px
             </label>
             <label>
-              글자 크기 {style.font_size}px{" "}
+              글자 크기{" "}
               <input type="range" min={10} max={48} value={style.font_size}
                 onChange={(e) => setStyle({ ...style, font_size: Number(e.target.value) })} />
+              <input type="number" min={10} max={48} value={style.font_size}
+                onChange={(e) => setStyle({ ...style,
+                  font_size: Math.max(10, Math.min(48, Number(e.target.value) || 10)) })}
+                style={{ ...consoleStyles.input, width: 64, marginLeft: 6, padding: "2px 6px" }} />
+              px
             </label>
           </div>
 
