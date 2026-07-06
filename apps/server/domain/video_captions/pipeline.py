@@ -23,7 +23,8 @@ from .ffmpeg import (
 from .ingest import download_youtube
 from .srt import SubSegment, build_force_style, segments_to_srt
 from .transcribe import transcribe_audio
-from .translate import GeminiFlashTranslator, translate_segments
+from .translate import translate_segments
+from .translate_cli import create_translator
 
 logger = logging.getLogger("yeson.video.pipeline")
 
@@ -159,7 +160,7 @@ async def run_video_job(external_id: UUID) -> None:
             await _set_progress(external_id, max(0, min(100, int(frac * 100))))
 
         ko_segments = await translate_segments(
-            en_segments, GeminiFlashTranslator(), progress_cb=on_translate_progress)
+            en_segments, create_translator(), progress_cb=on_translate_progress)
 
         async with AsyncSessionLocal() as db:
             await db.execute(delete(VideoSegment).where(VideoSegment.job_id == job_id))

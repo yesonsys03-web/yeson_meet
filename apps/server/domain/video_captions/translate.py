@@ -31,6 +31,23 @@ class TranslationProvider(Protocol):
     async def translate_batch(self, texts: list[str]) -> list[str]: ...
 
 
+def build_translation_prompt(texts: list[str]) -> str:
+    """EN 자막 배열 → KO 번역 지시 프롬프트 (JSON in/out + 용어사전 주입).
+
+    Gemini와 구독 CLI provider(claude/codex/agy/opencode) 양쪽이 공유한다.
+    """
+    numbered = json.dumps(texts, ensure_ascii=False)
+    return (
+        "Translate each English subtitle line into concise Korean subtitle text.\n"
+        "Input is a JSON array of strings; return ONLY a JSON array of the same "
+        "length with the Korean translations in the same order.\n"
+        "Return ONLY the JSON array. No prose, no markdown fences.\n"
+        "Use this glossary:\n"
+        + glossary_block()
+        + "\n\nInput:\n" + numbered
+    )
+
+
 class GeminiFlashTranslator:
     def __init__(self, api_key: str | None = None, model: str | None = None):
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
@@ -52,15 +69,7 @@ class GeminiFlashTranslator:
         return response.text or ""
 
     async def translate_batch(self, texts: list[str]) -> list[str]:
-        numbered = json.dumps(texts, ensure_ascii=False)
-        prompt = (
-            "Translate each English subtitle line into concise Korean subtitle text.\n"
-            "Input is a JSON array of strings; return ONLY a JSON array of the same "
-            "length with the Korean translations in the same order.\n"
-            "Use this glossary:\n"
-            + glossary_block()
-            + "\n\nInput:\n" + numbered
-        )
+        prompt = build_translation_prompt(texts)
         raw = await self._generate(prompt)
         try:
             out = json.loads(raw)
