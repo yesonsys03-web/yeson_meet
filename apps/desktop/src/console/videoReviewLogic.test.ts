@@ -48,4 +48,11 @@ describe("sanitizeFilename", () => {
   it("leaves ordinary titles untouched", () => {
     expect(sanitizeFilename("meeting-2026-07-06")).toBe("meeting-2026-07-06");
   });
+  it("strips trailing dots/spaces (Windows) and falls back when empty", () => {
+    expect(sanitizeFilename("FINAL_LOCK_V02. ")).toBe("FINAL_LOCK_V02");
+    expect(sanitizeFilename("...")).toBe("video");
+  });
+  it("keeps Korean/unicode titles as-is (no encoding munging)", () => {
+    expect(sanitizeFilename("7월 회의 하이라이트")).toBe("7월 회의 하이라이트");
+  });
 });

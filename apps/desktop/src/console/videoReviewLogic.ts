@@ -3,9 +3,11 @@ import type { BurnStyle } from "./videoApi";
 
 // job.title은 자유 입력(YouTube 제목 등)이라 "Rig/Puppet" 처럼 경로 구분자를
 // 포함할 수 있다. 저장 다이얼로그 defaultPath/브라우저 다운로드 파일명 양쪽에
-// 안전하게 쓰기 위해 OS 금지문자를 "-"로 치환한다.
+// 안전하게 쓰기 위해 OS 금지문자를 "-"로 치환하고, Windows가 허용하지 않는
+// 파일명 끝의 점/공백도 제거한다 (빈 결과는 "video" 폴백).
 export function sanitizeFilename(name: string): string {
-  return name.replace(/[/\\:*?"<>|]/g, "-");
+  const cleaned = name.replace(/[/\\:*?"<>|]/g, "-").replace(/[. ]+$/, "").trim();
+  return cleaned || "video";
 }
 
 export function activeSegmentIndex(
