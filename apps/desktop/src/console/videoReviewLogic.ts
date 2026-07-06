@@ -1,6 +1,13 @@
 import type { CSSProperties } from "react";
 import type { BurnStyle } from "./videoApi";
 
+// job.title은 자유 입력(YouTube 제목 등)이라 "Rig/Puppet" 처럼 경로 구분자를
+// 포함할 수 있다. 저장 다이얼로그 defaultPath/브라우저 다운로드 파일명 양쪽에
+// 안전하게 쓰기 위해 OS 금지문자를 "-"로 치환한다.
+export function sanitizeFilename(name: string): string {
+  return name.replace(/[/\\:*?"<>|]/g, "-");
+}
+
 export function activeSegmentIndex(
   segments: Array<{ start_ms: number; end_ms: number }>,
   currentMs: number,

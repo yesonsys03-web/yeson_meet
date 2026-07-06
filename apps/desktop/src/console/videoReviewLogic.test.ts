@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeSegmentIndex, overlayStyleFor } from "./videoReviewLogic";
+import { activeSegmentIndex, overlayStyleFor, sanitizeFilename } from "./videoReviewLogic";
 
 const segs = [
   { start_ms: 0, end_ms: 1000 },
@@ -37,5 +37,15 @@ describe("overlayStyleFor", () => {
   it("applies the selected color to the overlay text", () => {
     const s = overlayStyleFor({ position: "bottom", margin_v: 40, font_size: 18, color: "#ff0000" });
     expect(s.color).toBe("#ff0000");
+  });
+});
+
+describe("sanitizeFilename", () => {
+  it("replaces each path-unsafe character with a dash", () => {
+    expect(sanitizeFilename("Rig/Puppet")).toBe("Rig-Puppet");
+    expect(sanitizeFilename('a:b*c?d"e<f>g|h\\i')).toBe("a-b-c-d-e-f-g-h-i");
+  });
+  it("leaves ordinary titles untouched", () => {
+    expect(sanitizeFilename("meeting-2026-07-06")).toBe("meeting-2026-07-06");
   });
 });

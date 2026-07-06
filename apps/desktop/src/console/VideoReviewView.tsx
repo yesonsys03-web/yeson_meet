@@ -4,7 +4,7 @@ import {
   burnVideoJob, getVideoJob, patchSegments, videoDownloadUrl, videoMediaUrl,
 } from "./videoApi";
 import type { BurnStyle, VideoJobDetail } from "./videoApi";
-import { activeSegmentIndex, overlayStyleFor } from "./videoReviewLogic";
+import { activeSegmentIndex, overlayStyleFor, sanitizeFilename } from "./videoReviewLogic";
 
 type VideoReviewViewProps = {
   jobId: string;
@@ -14,6 +14,12 @@ type VideoReviewViewProps = {
 function fmtMs(ms: number): string {
   const s = Math.floor(ms / 1000);
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+type TauriGlobal = typeof globalThis & { __TAURI_INTERNALS__?: unknown };
+
+function hasTauriRuntime(): boolean {
+  return Boolean((globalThis as TauriGlobal).__TAURI_INTERNALS__);
 }
 
 export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
@@ -29,6 +35,7 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
   const [currentMs, setCurrentMs] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [videoHeight, setVideoHeight] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -107,17 +114,53 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
   };
 
   const download = async (kind: "video" | "srt") => {
-    const response = await fetch(videoDownloadUrl(jobId, kind));
-    if (!response.ok) {
-      setError(`다운로드 실패: HTTP ${response.status}`);
+    setError(null);
+    setNotice(null);
+    const safeTitle = sanitizeFilename(job.title);
+    const suggestedName = kind === "srt" ? `${safeTitle}.srt` : `${safeTitle}-captioned.mp4`;
+
+    if (!hasTauriRuntime()) {
+      // 브라우저 dev 폴백: 저장 위치를 고를 수 없는 기존 blob 다운로드 방식.
+      const response = await fetch(videoDownloadUrl(jobId, kind));
+      if (!response.ok) {
+        setError(`다운로드 실패: HTTP ${response.status}`);
+        return;
+      }
+      const blob = await response.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = suggestedName;
+      a.click();
+      URL.revokeObjectURL(a.href);
       return;
     }
-    const blob = await response.blob();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = kind === "srt" ? `${job.title}.srt` : `${job.title}-captioned.mp4`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+
+    // Tauri 경로: 저장 다이얼로그로 위치·파일명을 먼저 고른 뒤 파일을 내려받는다.
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const path = await save({
+      defaultPath: suggestedName,
+      filters: [{
+        name: kind === "video" ? "MP4 video" : "SRT subtitle",
+        extensions: [kind === "video" ? "mp4" : "srt"],
+      }],
+    });
+    if (!path) return; // 사용자 취소
+
+    try {
+      const response = await fetch(videoDownloadUrl(jobId, kind));
+      if (!response.ok) {
+        setError(`다운로드 실패: HTTP ${response.status}`);
+        return;
+      }
+      // 전체 파일을 메모리에 올린다(arrayBuffer). 수백 MB 수준까지는 무난하지만
+      // 그 이상 대용량 영상은 v2에서 스트리밍 저장으로 개선 필요.
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const { writeFile } = await import("@tauri-apps/plugin-fs");
+      await writeFile(path, bytes);
+      setNotice(`저장됨: ${path}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const burnDisabled = busy || job.status === "burning";
@@ -132,6 +175,7 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
         <span style={{ fontSize: 13, opacity: 0.75 }}>{job.whisper_model} 모델로 전사됨</span>
       </div>
       {error ? <p style={{ color: "#e5484d", margin: 0 }}>{error}</p> : null}
+      {notice ? <p style={consoleStyles.statusInfo}>{notice}</p> : null}
 
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         {/* ---- 플레이어 + 자막 오버레이 ---- */}
