@@ -463,5 +463,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.freeze_support()  # frozen 앱에서 mp spawn 자식이 서버 전체를 재실행하는 것 방지
+
     sys.exit(main())
 # === ANCHOR: SERVER_ENTRY_END ===
