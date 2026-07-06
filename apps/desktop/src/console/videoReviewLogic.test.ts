@@ -29,4 +29,9 @@ describe("overlayStyleFor", () => {
     expect(s.top).toBe(20);
     expect(s.bottom).toBeUndefined();
   });
+  it("scales font and margin by renderedHeight/288 (libass PlayResY)", () => {
+    const s = overlayStyleFor({ position: "bottom", margin_v: 40, font_size: 18 }, 576);
+    expect(s.fontSize).toBe(36);
+    expect(s.bottom).toBe(80);
+  });
 });

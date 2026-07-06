@@ -24,7 +24,22 @@ export function VideoReviewView({ jobId, operatorToken, onBack }: VideoReviewVie
   const [currentMs, setCurrentMs] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [videoHeight, setVideoHeight] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  // burn(ffmpeg subtitles 필터)이 SRT를 ASS로 변환할 때 PlayResY=288 기준
+  // Fontsize/MarginV를 실제 렌더 높이로 스케일하므로, 미리보기도 실제 표시
+  // 높이를 알아야 같은 좌표계로 오버레이를 배치할 수 있다.
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const height = entries[0]?.contentRect.height;
+      if (height) setVideoHeight(height);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -125,7 +140,9 @@ export function VideoReviewView({ jobId, operatorToken, onBack }: VideoReviewVie
             style={{ width: "100%", borderRadius: 8, background: "#000" }}
             onTimeUpdate={(e) => setCurrentMs(e.currentTarget.currentTime * 1000)}
           />
-          {activeText ? <div style={overlayStyleFor(style)}>{activeText}</div> : null}
+          {activeText ? (
+            <div style={overlayStyleFor(style, videoHeight)}>{activeText}</div>
+          ) : null}
 
           {/* ---- 자막 스타일 컨트롤 ---- */}
           <div style={{ display: "flex", gap: 16, marginTop: 8, alignItems: "center",
