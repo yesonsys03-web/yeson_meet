@@ -151,11 +151,18 @@ jobs:
       # Publish the CLIENT installer to a rolling prerelease (like the server
       # console), so it can be downloaded from the repo's Releases page without
       # touching the full Actions artifact-storage quota.
+      # 릴리스 태그의 단일 출처 = tauri.conf.json 버전 (4개 워크플로 공통 규칙).
+      # windows-desktop은 위 빌드 step에서 tauri.conf.json의 .bundle만 덮어쓰므로
+      # .version은 보존됨 — 여기서 읽어도 안전.
+      - name: Read release version from tauri.conf
+        shell: bash
+        run: echo "VERSION=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)" >> "$GITHUB_ENV"
+
       - name: Publish client installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.1
-          name: yeson-meet v1.0.1
+          tag_name: v${{ env.VERSION }}
+          name: yeson-meet v${{ env.VERSION }}
           prerelease: true
           body: |
             ## yeson-meet v1.0.1 — 무엇이 바뀌었나

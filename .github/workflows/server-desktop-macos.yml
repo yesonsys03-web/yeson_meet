@@ -66,11 +66,16 @@ jobs:
       - name: List built installers
         run: find apps/server_desktop/src-tauri/target/release/bundle -name '*.dmg' -exec ls -lh {} \;
 
+      # 릴리스 태그의 단일 출처 = tauri.conf.json 버전 (4개 워크플로 공통 규칙).
+      - name: Read release version from tauri.conf
+        shell: bash
+        run: echo "VERSION=$(jq -r .version apps/server_desktop/src-tauri/tauri.conf.json)" >> "$GITHUB_ENV"
+
       - name: Publish installer to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.1
-          name: yeson-meet v1.0.1
+          tag_name: v${{ env.VERSION }}
+          name: yeson-meet v${{ env.VERSION }}
           prerelease: true
           body: |
             ## yeson-meet v1.0.1 — 무엇이 바뀌었나
