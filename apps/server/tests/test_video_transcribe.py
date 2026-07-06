@@ -40,6 +40,21 @@ def test_transcribe_maps_whisper_segments_to_subsegments(monkeypatch, tmp_path):
     ]
 
 
+def test_transcribe_reports_progress_via_callback(monkeypatch, tmp_path):
+    _installed("small", tmp_path)
+
+    class FakeModel:
+        def transcribe(self, path, **kwargs):
+            segs = [SimpleNamespace(start=0.0, end=1.5, text="Hello there"),
+                    SimpleNamespace(start=2.0, end=4.25, text="Second line")]
+            return iter(segs), SimpleNamespace(language="en", duration=10.0)
+
+    monkeypatch.setattr(tr, "_load_model", lambda name: FakeModel())
+    seen: list[float] = []
+    tr.transcribe_audio(tmp_path / "audio.wav", "small", seen.append)
+    assert seen == [0.15, 0.425]
+
+
 def test_transcribe_requires_downloaded_model(tmp_path):
     with pytest.raises(tr.ModelNotDownloadedError):
         tr.transcribe_audio(tmp_path / "audio.wav", "small")

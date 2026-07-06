@@ -28,6 +28,19 @@ async def test_translate_segments_chunks_and_replaces_text():
     assert segs[0].text == "line 1"  # 원본 불변
 
 
+async def test_translate_segments_calls_async_progress_cb():
+    segs = [SubSegment(seq=i, start_ms=i * 1000, end_ms=i * 1000 + 900, text=f"line {i}")
+            for i in range(1, 8)]
+    provider = FakeProvider()
+    seen: list[float] = []
+
+    async def progress_cb(frac: float) -> None:
+        seen.append(frac)
+
+    await tl.translate_segments(segs, provider, chunk_size=3, progress_cb=progress_cb)
+    assert seen == pytest.approx([3 / 7, 6 / 7, 1.0])
+
+
 async def test_length_mismatch_raises():
     class Bad:
         async def translate_batch(self, texts):

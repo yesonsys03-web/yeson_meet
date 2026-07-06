@@ -14,6 +14,9 @@ const STATUS_LABEL: Record<string, string> = {
   burning: "영상 굽는 중", done: "완료", error: "오류",
 };
 
+const INFLIGHT_STATUSES = ["queued", "ingesting", "extracting", "transcribing",
+                           "translating", "burning"];
+
 function formatBytes(n: number): string {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}GB`;
   return `${Math.round(n / 1_000_000)}MB`;
@@ -170,11 +173,17 @@ function VideoCaptionInner({ token, active }: { token: string; active: boolean }
                 {job.source_type === "youtube" ? "유튜브" : "업로드"} · {job.whisper_model} 모델
                 {job.status === "error" && job.error ? ` · ${job.error}` : ""}
               </div>
+              {INFLIGHT_STATUSES.includes(job.status) ? (
+                <div style={{ height: 4, borderRadius: 2, background: "rgba(255,255,255,0.12)",
+                             marginTop: 6 }}>
+                  <div style={{ height: 4, borderRadius: 2, width: `${job.progress}%`,
+                               background: "#4a9eda", transition: "width 0.5s" }} />
+                </div>
+              ) : null}
             </div>
             <span style={{ fontSize: 13, whiteSpace: "nowrap" }}>
               {STATUS_LABEL[job.status] ?? job.status}
-              {["queued", "ingesting", "extracting", "transcribing", "translating", "burning"]
-                .includes(job.status) ? ` ${job.progress}%` : ""}
+              {INFLIGHT_STATUSES.includes(job.status) ? ` ${job.progress}%` : ""}
             </span>
             {["review", "done"].includes(job.status) ? (
               <button type="button" style={consoleStyles.mutedAction}

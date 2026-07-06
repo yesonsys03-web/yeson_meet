@@ -16,7 +16,10 @@ from sqlalchemy import delete, select, update
 
 from apps.server.db.models import VideoJob, VideoSegment
 from apps.server.db.session import AsyncSessionLocal
-from .ffmpeg import burn_subtitles, ensure_preview, extract_audio, locate_ffmpeg
+from .ffmpeg import (
+    burn_subtitles, ensure_preview, extract_audio, locate_ffmpeg,
+    wav_duration_seconds,
+)
 from .ingest import download_youtube
 from .srt import SubSegment, build_force_style, segments_to_srt
 from .transcribe import transcribe_audio
@@ -24,8 +27,10 @@ from .translate import GeminiFlashTranslator, translate_segments
 
 logger = logging.getLogger("yeson.video.pipeline")
 
-_PROGRESS = {"ingesting": 10, "extracting": 25, "transcribing": 40,
-             "translating": 75, "review": 90, "burning": 95, "done": 100}
+# 계측되는 단계(전사/번역/굽기)는 단계 진입 시 0에서 시작해 단계 내부에서
+# 0→100%로 채워진다 — UI 라벨이 단계명을 보여주므로 절대 % 의미는 없다.
+_PROGRESS = {"ingesting": 5, "extracting": 15, "transcribing": 0,
+             "translating": 0, "review": 100, "burning": 0, "done": 100}
 
 
 def _another_instance_is_serving() -> bool:
@@ -78,6 +83,20 @@ async def _set_status(external_id: UUID, status: str, *, error: str | None = Non
         await db.commit()
 
 
+async def _set_progress(external_id: UUID, pct: int) -> None:
+    """단계 내부 진행률(0~100)만 갱신 — status/error는 건드리지 않는다.
+
+    진행률 갱신 실패가 파이프라인 자체를 죽이면 안 되므로 예외는 로그만.
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            job = await _load_job(db, external_id)
+            job.progress = pct
+            await db.commit()
+    except Exception:  # noqa: BLE001 — 진행률은 부가 정보, 실패해도 파이프라인은 계속
+        logger.exception("failed to update progress for job %s", external_id)
+
+
 async def _try_set_error(external_id: UUID, message: str) -> None:
     try:
         await _set_status(external_id, "error", error=message)
@@ -120,12 +139,27 @@ async def run_video_job(external_id: UUID) -> None:
                           preview_path=str(preview), audio_path=str(audio))
 
         await _set_status(external_id, "transcribing")
-        en_segments = await asyncio.to_thread(transcribe_audio, audio, model_name)
+        loop = asyncio.get_running_loop()
+        last_pct = {"v": -1}
+
+        def on_transcribe_progress(frac: float) -> None:
+            pct = max(0, min(100, int(frac * 100)))
+            if pct != last_pct["v"]:
+                last_pct["v"] = pct
+                asyncio.run_coroutine_threadsafe(_set_progress(external_id, pct), loop)
+
+        en_segments = await asyncio.to_thread(
+            transcribe_audio, audio, model_name, on_transcribe_progress)
         if not en_segments:
             raise RuntimeError("전사 결과가 비어 있습니다 (음성이 감지되지 않음).")
 
         await _set_status(external_id, "translating")
-        ko_segments = await translate_segments(en_segments, GeminiFlashTranslator())
+
+        async def on_translate_progress(frac: float) -> None:
+            await _set_progress(external_id, max(0, min(100, int(frac * 100))))
+
+        ko_segments = await translate_segments(
+            en_segments, GeminiFlashTranslator(), progress_cb=on_translate_progress)
 
         async with AsyncSessionLocal() as db:
             await db.execute(delete(VideoSegment).where(VideoSegment.job_id == job_id))
@@ -172,6 +206,7 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
         async with AsyncSessionLocal() as db:
             job = await _load_job(db, external_id)
             media_path = job.media_path
+            audio_path = job.audio_path
             rows = (await db.execute(
                 select(VideoSegment).where(VideoSegment.job_id == job.id)
                 .order_by(VideoSegment.seq)
@@ -184,14 +219,37 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
         if not segments:
             raise RuntimeError("구울 자막 세그먼트가 없습니다.")
 
+        duration: float | None = None
+        if audio_path:
+            try:
+                duration = wav_duration_seconds(Path(audio_path))
+            except Exception:  # noqa: BLE001 — 진행률 분모 실패는 진행바만 포기
+                logger.exception("failed to read audio duration for job %s", external_id)
+        if not duration:
+            duration = max((s.end_ms for s in segments), default=0) / 1000 or None
+
         workdir = job_dir(external_id)
         workdir.mkdir(parents=True, exist_ok=True)
         srt_path = workdir / "subs.srt"
         srt_path.write_text(segments_to_srt(segments), encoding="utf-8")
         burned = workdir / "burned.mp4"
         style = build_force_style(position, margin_v, font_size)
+
+        progress_cb = None
+        if duration:
+            loop = asyncio.get_running_loop()
+            last_pct = {"v": -1}
+
+            def on_burn_progress(seconds: float, _duration: float = duration) -> None:
+                pct = max(0, min(100, int(seconds / _duration * 100)))
+                if pct != last_pct["v"]:
+                    last_pct["v"] = pct
+                    asyncio.run_coroutine_threadsafe(_set_progress(external_id, pct), loop)
+
+            progress_cb = on_burn_progress
+
         await asyncio.to_thread(
-            burn_subtitles, ffmpeg, Path(media_path), srt_path, burned, style)
+            burn_subtitles, ffmpeg, Path(media_path), srt_path, burned, style, progress_cb)
         await _set_status(external_id, "done", burned_path=str(burned))
     except Exception as exc:  # noqa: BLE001
         logger.exception("burn job %s failed", external_id)

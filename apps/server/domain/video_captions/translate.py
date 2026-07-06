@@ -12,7 +12,7 @@ import json
 import logging
 import os
 from dataclasses import replace
-from typing import Protocol
+from typing import Awaitable, Callable, Protocol
 
 from apps.server.ai.glossary import apply_ko_corrections, glossary_block
 from .srt import SubSegment
@@ -79,6 +79,7 @@ async def translate_segments(
     provider: TranslationProvider,
     *,
     chunk_size: int = 50,
+    progress_cb: Callable[[float], Awaitable[None]] | None = None,
 ) -> list[SubSegment]:
     out: list[SubSegment] = []
     for i in range(0, len(segments), chunk_size):
@@ -89,4 +90,6 @@ async def translate_segments(
         for seg, ko in zip(chunk, translated):
             out.append(replace(seg, text=apply_ko_corrections(ko.strip())))
         logger.info("translate: %d/%d segments", len(out), len(segments))
+        if progress_cb is not None:
+            await progress_cb(len(out) / len(segments))
     return out

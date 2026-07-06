@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Callable
 
 from apps.server.ai.glossary import load_glossary
 from .srt import SubSegment
@@ -27,7 +28,8 @@ def _load_model(model_name: str):  # test seam
     return WhisperModel(str(model_dir(model_name)), device="cpu", compute_type="int8")
 
 
-def transcribe_audio(audio_path: Path, model_name: str) -> list[SubSegment]:
+def transcribe_audio(audio_path: Path, model_name: str,
+                     progress_cb: Callable[[float], None] | None = None) -> list[SubSegment]:
     """Blocking CPU work — call via asyncio.to_thread."""
     if not is_downloaded(model_name):
         raise ModelNotDownloadedError(
@@ -40,9 +42,12 @@ def transcribe_audio(audio_path: Path, model_name: str) -> list[SubSegment]:
         vad_filter=True,
         initial_prompt=glossary_initial_prompt(),
     )
+    duration = getattr(info, "duration", None)
     out: list[SubSegment] = []
     for i, seg in enumerate(segments, start=1):
         text = seg.text.strip()
+        if progress_cb is not None and duration:
+            progress_cb(min(seg.end / duration, 1.0))
         if not text:
             continue
         out.append(SubSegment(seq=i, start_ms=int(seg.start * 1000),

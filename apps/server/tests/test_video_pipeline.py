@@ -54,7 +54,7 @@ async def test_run_video_job_happy_path(monkeypatch, db_session, admin_user, tmp
     monkeypatch.setattr(pl, "extract_audio", lambda f, s, d: Path(d).write_bytes(b"a"))
     monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
     monkeypatch.setattr(pl, "transcribe_audio",
-                        lambda p, m: [SubSegment(1, 0, 1000, "Hello")])
+                        lambda p, m, cb=None: [SubSegment(1, 0, 1000, "Hello")])
 
     async def fake_translate(segs, provider, **kw):
         return [SubSegment(1, 0, 1000, "안녕하세요")]
@@ -101,7 +101,7 @@ async def test_run_burn_job(monkeypatch, db_session, admin_user, tmp_path):
     burned = {}
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
 
-    def fake_burn(ffmpeg, s, srt, dst, style):
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None):
         burned["style"] = style
         Path(dst).write_bytes(b"out")
 

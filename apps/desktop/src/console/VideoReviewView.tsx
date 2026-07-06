@@ -172,13 +172,20 @@ export function VideoReviewView({ jobId, operatorToken, onBack }: VideoReviewVie
             </label>
           </div>
 
-          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
             <button type="button"
               style={{ ...consoleStyles.action, ...(burnDisabled ? consoleStyles.actionDisabled : null) }}
               disabled={burnDisabled}
               onClick={() => void startBurn()}>
-              {job.status === "burning" ? "굽는 중…" : "이 스타일로 영상 굽기"}
+              {job.status === "burning" ? `굽는 중… ${job.progress}%` : "이 스타일로 영상 굽기"}
             </button>
+            {job.status === "burning" ? (
+              <div style={{ flex: "1 1 160px", height: 4, borderRadius: 2,
+                           background: "rgba(255,255,255,0.12)" }}>
+                <div style={{ height: 4, borderRadius: 2, width: `${job.progress}%`,
+                             background: "#4a9eda", transition: "width 0.5s" }} />
+              </div>
+            ) : null}
             {job.status === "done" ? (
               <>
                 <button type="button" style={consoleStyles.mutedAction}

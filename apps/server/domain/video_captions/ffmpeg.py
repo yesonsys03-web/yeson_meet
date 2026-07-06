@@ -4,7 +4,10 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
+import wave
 from pathlib import Path
+from typing import Callable
 
 FFMPEG_BIN_ENV = "YESON_FFMPEG_BIN"
 
@@ -37,11 +40,51 @@ def extract_audio(ffmpeg: str, src: Path, dst: Path) -> None:
 
 
 def burn_subtitles(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
-                   force_style: str) -> None:
-    """subtitles 필터는 경로 이스케이프가 취약 → cwd를 srt 디렉터리로 두고 상대 파일명 사용."""
+                   force_style: str,
+                   progress_cb: Callable[[float], None] | None = None) -> None:
+    """subtitles 필터는 경로 이스케이프가 취약 → cwd를 srt 디렉터리로 두고 상대 파일명 사용.
+
+    progress_cb가 주어지면 ``-progress pipe:1 -nostats``로 stdout을 스트리밍해
+    ``out_time_ms=``(마이크로초) 라인을 초 단위로 변환해 전달한다. stderr는
+    데드락 방지를 위해 PIPE로 받지 않고 임시 파일로 받는다.
+    """
     vf = f"subtitles={srt_path.name}:force_style='{force_style}'"
-    _run([ffmpeg, "-y", "-i", str(src), "-vf", vf, "-c:a", "copy", str(dst)],
-         cwd=str(srt_path.parent))
+    cmd = [ffmpeg, "-y", "-i", str(src), "-vf", vf, "-c:a", "copy"]
+    if progress_cb is not None:
+        cmd += ["-progress", "pipe:1", "-nostats"]
+    cmd.append(str(dst))
+    cwd = str(srt_path.parent)
+
+    if progress_cb is None:
+        _run(cmd, cwd=cwd)
+        return
+
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stderr_f:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=stderr_f,
+            text=True, encoding="utf-8", errors="replace",
+        )
+        assert proc.stdout is not None
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if line.startswith("out_time_ms="):
+                    try:
+                        progress_cb(int(line.split("=", 1)[1]) / 1_000_000.0)
+                    except ValueError:
+                        pass
+        finally:
+            proc.stdout.close()
+        returncode = proc.wait()
+        if returncode != 0:
+            stderr_f.seek(0)
+            tail = stderr_f.read()[-500:]
+            raise FfmpegError(f"ffmpeg failed (code={returncode}): {tail}")
+
+
+def wav_duration_seconds(path: Path) -> float:
+    with wave.open(str(path), "rb") as wf:
+        return wf.getnframes() / wf.getframerate()
 
 
 def ensure_preview(ffmpeg: str, src: Path, dst: Path) -> Path:

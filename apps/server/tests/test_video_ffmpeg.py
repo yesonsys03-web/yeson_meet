@@ -57,3 +57,68 @@ def test_nonzero_returncode_raises(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _Result(1, "boom"))
     with pytest.raises(ff.FfmpegError):
         ff.extract_audio("ffmpeg", tmp_path / "in.mp4", tmp_path / "audio.wav")
+
+
+def test_wav_duration_seconds(tmp_path: Path):
+    import wave
+
+    path = tmp_path / "audio.wav"
+    framerate = 16000
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(framerate)
+        wf.writeframes(b"\x00\x00" * framerate)  # 1초 분량 무음
+    assert ff.wav_duration_seconds(path) == pytest.approx(1.0)
+
+
+class _FakeStdout:
+    """Popen.stdout 대역 — 라인 이터러블 + close()."""
+
+    def __init__(self, lines: list[str]):
+        self._lines = lines
+
+    def __iter__(self):
+        return iter(self._lines)
+
+    def close(self):
+        pass
+
+
+class FakePopen:
+    """subprocess.Popen 대역 — stdout 라인 이터러블 + wait()."""
+
+    def __init__(self, cmd, **kwargs):
+        self.cmd = cmd
+        self.kwargs = kwargs
+        self.stdout = _FakeStdout([
+            "frame=1\n",
+            "out_time_ms=2500000\n",
+            "out_time_ms=5000000\n",
+            "progress=end\n",
+        ])
+
+    def wait(self):
+        return 0
+
+
+def test_burn_progress_parses_out_time_ms(monkeypatch, tmp_path: Path):
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+
+    captured_cmd: list[str] = []
+
+    def fake_popen(cmd, **kwargs):
+        captured_cmd.extend(cmd)
+        return FakePopen(cmd, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    seen: list[float] = []
+    ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
+                      "Alignment=2,MarginV=40,Fontsize=18", progress_cb=seen.append)
+
+    assert seen == [2.5, 5.0]
+    assert "-progress" in captured_cmd
+    assert "pipe:1" in captured_cmd
+    assert "-nostats" in captured_cmd
