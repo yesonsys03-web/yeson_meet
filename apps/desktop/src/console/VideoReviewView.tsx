@@ -132,17 +132,21 @@ export function VideoReviewView({ jobId, operatorToken, onBack }: VideoReviewVie
 
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         {/* ---- 플레이어 + 자막 오버레이 ---- */}
-        <div style={{ position: "relative", flex: "1 1 480px", minWidth: 360 }}>
-          <video
-            ref={videoRef}
-            src={videoMediaUrl(jobId)}
-            controls
-            style={{ width: "100%", borderRadius: 8, background: "#000" }}
-            onTimeUpdate={(e) => setCurrentMs(e.currentTarget.currentTime * 1000)}
-          />
-          {activeText ? (
-            <div style={overlayStyleFor(style, videoHeight)}>{activeText}</div>
-          ) : null}
+        <div style={{ flex: "1 1 480px", minWidth: 360 }}>
+          {/* 영상 전용 래퍼: 오버레이의 positioning context는 영상만 감싸야 함
+              (컨트롤/버튼까지 포함하면 bottom/top 기준이 영상 프레임 밖으로 어긋남) */}
+          <div style={{ position: "relative", lineHeight: 0 }}>
+            <video
+              ref={videoRef}
+              src={videoMediaUrl(jobId)}
+              controls
+              style={{ width: "100%", borderRadius: 8, background: "#000" }}
+              onTimeUpdate={(e) => setCurrentMs(e.currentTarget.currentTime * 1000)}
+            />
+            {activeText ? (
+              <div style={overlayStyleFor(style, videoHeight)}>{activeText}</div>
+            ) : null}
+          </div>
 
           {/* ---- 자막 스타일 컨트롤 ---- */}
           <div style={{ display: "flex", gap: 16, marginTop: 8, alignItems: "center",
