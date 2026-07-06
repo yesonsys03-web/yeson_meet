@@ -79,6 +79,8 @@ def clean_tables(setup_schema: None) -> None:  # type: ignore[return]
         conn.execute("DELETE FROM session_token")
         conn.execute("DELETE FROM session")
         conn.execute("DELETE FROM device")
+        conn.execute("DELETE FROM video_segment")
+        conn.execute("DELETE FROM video_job")
         conn.execute("DELETE FROM app_user")
         conn.commit()
 

@@ -80,6 +80,19 @@ async def create_schema() -> None:
         # never runs alembic). Seed past meetings once when the table is empty;
         # warm starts are a single cheap COUNT with no writes.
         await conn.run_sync(backfill_if_empty)
+        # Packaged-app additive migration: Alembic은 Postgres 전용이고 create_all은
+        # 기존 테이블에 컬럼을 추가하지 못한다. 번들 SQLite 경로에서 신규 컬럼을
+        # 여기서 보강한다 (idempotent — 새 설치는 create_all이 이미 최신).
+        if conn.dialect.name == "sqlite":
+            rows = (await conn.exec_driver_sql("PRAGMA table_info(video_job)")).fetchall()
+            existing = {row[1] for row in rows}
+            if existing:
+                if "translate_provider" not in existing:
+                    await conn.exec_driver_sql(
+                        "ALTER TABLE video_job ADD COLUMN translate_provider VARCHAR(32)")
+                if "translate_cli_model" not in existing:
+                    await conn.exec_driver_sql(
+                        "ALTER TABLE video_job ADD COLUMN translate_cli_model VARCHAR(128)")
 # === ANCHOR: SEED_CREATE_SCHEMA_END ===
 
 

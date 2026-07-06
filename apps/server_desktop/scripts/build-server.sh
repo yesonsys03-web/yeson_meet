@@ -65,6 +65,11 @@ echo "Building yeson-server (PyInstaller --onedir, Gemini-only)…"
     --collect-all docx \
     --hidden-import lxml._elementpath \
     --collect-submodules lxml \
+    --collect-all faster_whisper \
+    --collect-all ctranslate2 \
+    --collect-all av \
+    --collect-all onnxruntime \
+    --collect-all yt_dlp \
     --add-data "$(pwd)/apps/web/dist:web_dist" \
     --distpath "${DIST}" \
     --workpath "${WORK}" \
@@ -109,3 +114,11 @@ bash apps/server_desktop/scripts/smoke-server-bundle.sh
 # present. Without this the packaged app would lack the public-tunnel binary.
 echo "Vendoring cloudflared quick-tunnel binary (P4.3)…"
 bash apps/server_desktop/scripts/fetch-cloudflared.sh
+
+# Task 14: vendor the host-triple ffmpeg (subtitle burn-in + probing) so
+# tauri.conf's `binaries/ffmpeg-*` resource glob is satisfied when `tauri
+# build` packages the app. Idempotent — fetch-ffmpeg.sh skips the download if
+# already present. Without this the packaged app's video-caption feature has
+# no ffmpeg to fall back to (only PATH, which a plain user install may lack).
+echo "Vendoring ffmpeg binary (Task 14)…"
+bash apps/server_desktop/scripts/fetch-ffmpeg.sh

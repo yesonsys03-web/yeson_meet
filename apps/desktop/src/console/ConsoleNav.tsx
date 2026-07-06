@@ -13,6 +13,7 @@ const navItems: Array<{ view: ConsoleView; label: string; disabled?: boolean }> 
   { view: "settings", label: "Settings" },
   { view: "help", label: "Help Manual" },
   { view: "history", label: "회의 기록" },
+  { view: "video", label: "자막 메이커" },
 ];
 
 export function ConsoleNav({ activeView, onChange, appVersion }: ConsoleNavProps) {

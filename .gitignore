@@ -12,6 +12,10 @@ node_modules/
 dist/
 .vite/
 
+# repo uses pnpm workspaces — a stray bun.lock has been mistakenly committed
+# twice already; keep it untracked (the file itself may stay on disk).
+bun.lock
+
 # Python
 .venv/
 __pycache__/
@@ -26,6 +30,7 @@ target/
 apps/desktop/src-tauri/binaries/
 apps/server_desktop/src-tauri/binaries/yeson-server-*/
 apps/server_desktop/src-tauri/binaries/cloudflared-*/
+apps/server_desktop/src-tauri/binaries/ffmpeg-*/
 
 # Compose volumes
 deploy/data/

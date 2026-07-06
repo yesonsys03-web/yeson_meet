@@ -463,3 +463,72 @@ def test_pg_connect_listener_is_noop_for_postgres() -> None:
     assert not event.contains(session_mod.engine.sync_engine, "connect", fn), (
         "sqlite pragma listener must NOT be attached on the Postgres engine"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Task 19b upgrade path — bundled SQLite gets additive columns on an EXISTING
+# video_job table (create_all cannot ALTER an already-present table; Alembic
+# is Postgres-only and never runs on the bundle path).
+# ─────────────────────────────────────────────────────────────────────────────
+_OLD_VIDEO_JOB_DDL = """
+CREATE TABLE video_job (
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    external_id CHAR(32) NOT NULL UNIQUE,
+    owner_user_id BIGINT NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    source_type VARCHAR(16) NOT NULL,
+    source_ref TEXT NOT NULL,
+    whisper_model VARCHAR(32) NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'queued',
+    progress INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    media_path TEXT,
+    preview_path TEXT,
+    audio_path TEXT,
+    burned_path TEXT,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL
+)
+"""
+
+
+@pytest.mark.asyncio
+async def test_create_schema_adds_video_job_translate_columns_on_existing_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An in-place bundle upgrade: video_job already exists WITHOUT the Task
+    19b translate_provider / translate_cli_model columns (pre-f803b90 shape).
+    create_schema() must additively ALTER the existing table instead of
+    silently leaving it stale (create_all is a no-op on tables that already
+    exist), and must be safe to run again (idempotent)."""
+    seed_mod, engine, _ = _bind_sqlite_async(monkeypatch, tmp_path / "upgrade.db")
+
+    # Simulate the pre-existing (old-shape) bundle DB.
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql(_OLD_VIDEO_JOB_DDL)
+
+    async def _video_job_columns() -> set[str]:
+        async with engine.connect() as conn:
+            rows = (
+                await conn.exec_driver_sql("PRAGMA table_info(video_job)")
+            ).fetchall()
+        return {row[1] for row in rows}
+
+    before = await _video_job_columns()
+    assert "translate_provider" not in before
+    assert "translate_cli_model" not in before
+
+    await seed_mod.create_schema()
+
+    after = await _video_job_columns()
+    assert "translate_provider" in after
+    assert "translate_cli_model" in after
+    # All old columns preserved (additive, not destructive).
+    assert before <= after
+
+    # Idempotent: running again on the now-upgraded DB must not error.
+    await seed_mod.create_schema()
+    after_again = await _video_job_columns()
+    assert after_again == after
+
+    await engine.dispose()

@@ -9,6 +9,7 @@ import { SetupAssistant } from "../setup/SetupAssistant";
 import { ConsoleNav } from "./ConsoleNav";
 import { KnowledgeRepositoryPanel } from "./KnowledgeRepositoryPanel";
 import { NativeCaptureBanner } from "./NativeCaptureBanner";
+import { VideoCaptionPanel } from "./VideoCaptionPanel";
 import { consoleStyles } from "./consoleStyles";
 import type { ConsoleView } from "./types";
 
@@ -81,6 +82,12 @@ export function DesktopConsole() {
           <KnowledgeRepositoryPanel
             operatorToken={operatorToken}
             onTokenAcquired={setOperatorToken}
+          />
+        </section>
+        <section hidden={activeView !== "video"}
+          style={activeView === "video" ? consoleStyles.sectionScroll : undefined}>
+          <VideoCaptionPanel
+            active={activeView === "video"}
           />
         </section>
       </main>

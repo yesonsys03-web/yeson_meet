@@ -19,7 +19,7 @@ type LoginGateProps = {
   onTokenAcquired: (token: string) => void;
 };
 
-function LoginGate({ onTokenAcquired }: LoginGateProps) {
+export function LoginGate({ onTokenAcquired }: LoginGateProps) {
   const [email, setEmail] = useState("admin@yeson.local");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);

@@ -163,4 +163,66 @@ class Utterance(Base):
         Index("idx_utterance_session_started", "session_id", "started_at"),
     )
 # === ANCHOR: MODELS_UTTERANCE_END ===
+
+
+# === ANCHOR: MODELS_VIDEO_JOB_START ===
+class VideoJob(Base):
+    __tablename__ = "video_job"
+
+    id: Mapped[int] = mapped_column(_BigIntId, primary_key=True, autoincrement=True)
+    external_id: Mapped[PyUUID] = mapped_column(
+        Uuid(as_uuid=True), unique=True, nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        _BigIntId, ForeignKey("app_user.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    # "youtube" | "upload"
+    source_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    # youtube URL or original upload filename
+    source_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    whisper_model: Mapped[str] = mapped_column(String(32), nullable=False)
+    translate_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    translate_cli_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # queued|ingesting|extracting|transcribing|translating|review|burning|done|error
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="queued", default="queued"
+    )
+    progress: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0", default=0
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preview_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    audio_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    burned_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        server_default=func.now(), onupdate=func.now(),
+    )
+# === ANCHOR: MODELS_VIDEO_JOB_END ===
+
+
+# === ANCHOR: MODELS_VIDEO_SEGMENT_START ===
+class VideoSegment(Base):
+    __tablename__ = "video_segment"
+
+    id: Mapped[int] = mapped_column(_BigIntId, primary_key=True, autoincrement=True)
+    job_id: Mapped[int] = mapped_column(
+        _BigIntId, ForeignKey("video_job.id", ondelete="CASCADE"), nullable=False
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    text_en: Mapped[str] = mapped_column(Text, nullable=False)
+    text_ko: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("job_id", "seq", name="uq_video_segment_job_seq"),
+        Index("idx_video_segment_job", "job_id"),
+    )
+# === ANCHOR: MODELS_VIDEO_SEGMENT_END ===
 # === ANCHOR: MODELS_END ===
