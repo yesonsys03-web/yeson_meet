@@ -38,8 +38,8 @@ def _start_pipeline(external_id: UUID) -> None:  # test seam
 
 
 def _start_burn(external_id: UUID, position: str, margin_v: int,
-                font_size: int) -> None:  # test seam
-    start_task(run_burn_job(external_id, position, margin_v, font_size))
+                font_size: int, color: str) -> None:  # test seam
+    start_task(run_burn_job(external_id, position, margin_v, font_size, color))
 
 
 class VideoJobCreateIn(BaseModel):
@@ -55,6 +55,7 @@ class BurnIn(BaseModel):
     position: str = Field(pattern="^(bottom|top)$")
     margin_v: int = Field(ge=0, le=300)
     font_size: int = Field(ge=8, le=72)
+    color: str = Field(default="#FFFFFF", pattern="^#[0-9a-fA-F]{6}$")
 
 
 def _job_out(job: VideoJob) -> dict:
@@ -231,7 +232,7 @@ async def burn_video_job(
     job.progress = 0
     job.error = None
     await db.commit()
-    _start_burn(external_id, body.position, body.margin_v, body.font_size)
+    _start_burn(external_id, body.position, body.margin_v, body.font_size, body.color)
     return {"status": "burning"}
 
 

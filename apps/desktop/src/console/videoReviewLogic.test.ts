@@ -19,19 +19,23 @@ describe("activeSegmentIndex", () => {
 
 describe("overlayStyleFor", () => {
   it("bottom position anchors bottom with marginV", () => {
-    const s = overlayStyleFor({ position: "bottom", margin_v: 40, font_size: 18 });
+    const s = overlayStyleFor({ position: "bottom", margin_v: 40, font_size: 18, color: "#ffffff" });
     expect(s.bottom).toBe(40);
     expect(s.top).toBeUndefined();
     expect(s.fontSize).toBe(18);
   });
   it("top position anchors top", () => {
-    const s = overlayStyleFor({ position: "top", margin_v: 20, font_size: 24 });
+    const s = overlayStyleFor({ position: "top", margin_v: 20, font_size: 24, color: "#ffffff" });
     expect(s.top).toBe(20);
     expect(s.bottom).toBeUndefined();
   });
   it("scales font and margin by renderedHeight/288 (libass PlayResY)", () => {
-    const s = overlayStyleFor({ position: "bottom", margin_v: 40, font_size: 18 }, 576);
+    const s = overlayStyleFor({ position: "bottom", margin_v: 40, font_size: 18, color: "#ffffff" }, 576);
     expect(s.fontSize).toBe(36);
     expect(s.bottom).toBe(80);
+  });
+  it("applies the selected color to the overlay text", () => {
+    const s = overlayStyleFor({ position: "bottom", margin_v: 40, font_size: 18, color: "#ff0000" });
+    expect(s.color).toBe("#ff0000");
   });
 });

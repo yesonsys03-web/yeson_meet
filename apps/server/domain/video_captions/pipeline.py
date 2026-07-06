@@ -205,7 +205,7 @@ async def fail_inflight_video_jobs_at_startup() -> None:
 
 
 async def run_burn_job(external_id: UUID, position: str, margin_v: int,
-                       font_size: int) -> None:
+                       font_size: int, color: str = "#FFFFFF") -> None:
     try:
         await _set_status(external_id, "burning")
         async with AsyncSessionLocal() as db:
@@ -238,7 +238,7 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
         srt_path = workdir / "subs.srt"
         srt_path.write_text(segments_to_srt(segments), encoding="utf-8")
         burned = workdir / "burned.mp4"
-        style = build_force_style(position, margin_v, font_size)
+        style = build_force_style(position, margin_v, font_size, color)
 
         progress_cb = None
         if duration:

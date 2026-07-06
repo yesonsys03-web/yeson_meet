@@ -43,6 +43,7 @@ export type BurnStyle = {
   position: "bottom" | "top";
   margin_v: number;
   font_size: number;
+  color: string;
 };
 
 async function request<T>(url: string, init: RequestInit): Promise<T> {

@@ -84,10 +84,12 @@ describe("videoApi", () => {
 
   it("burnVideoJob POSTs style body", async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 202, json: async () => ({ status: "burning" }) });
-    await burnVideoJob("j1", { position: "top", margin_v: 20, font_size: 24 });
+    await burnVideoJob("j1", { position: "top", margin_v: 20, font_size: 24, color: "#ffff00" });
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(String(url)).toContain("/api/v1/video-jobs/j1/burn");
-    expect(JSON.parse(init.body as string).position).toBe("top");
+    const body = JSON.parse(init.body as string);
+    expect(body.position).toBe("top");
+    expect(body.color).toBe("#ffff00");
   });
 
   it("listTranslateEngines GETs /api/v1/video-jobs/translate-engines", async () => {

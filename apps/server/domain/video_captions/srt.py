@@ -29,7 +29,19 @@ def segments_to_srt(segments: list[SubSegment]) -> str:
     return "\n".join(blocks)
 
 
-def build_force_style(position: str, margin_v: int, font_size: int) -> str:
+def hex_to_ass_color(hex_color: str) -> str:
+    """`#RRGGBB` -> ASS/libass `&H00BBGGRR` (alpha 00=opaque, BGR order)."""
+    if (len(hex_color) != 7 or hex_color[0] != "#"
+            or not all(c in "0123456789abcdefABCDEF" for c in hex_color[1:])):
+        raise ValueError(f"invalid hex color: {hex_color!r}")
+    r, g, b = hex_color[1:3], hex_color[3:5], hex_color[5:7]
+    return f"&H00{b.upper()}{g.upper()}{r.upper()}"
+
+
+def build_force_style(position: str, margin_v: int, font_size: int,
+                      color: str = "#FFFFFF") -> str:
     """ffmpeg subtitles filter force_style value. 클라 미리보기와 동일 좌표계."""
     alignment = 8 if position == "top" else 2
-    return f"Alignment={alignment},MarginV={margin_v},Fontsize={font_size}"
+    ass_color = hex_to_ass_color(color)
+    return (f"Alignment={alignment},MarginV={margin_v},Fontsize={font_size},"
+            f"PrimaryColour={ass_color}")

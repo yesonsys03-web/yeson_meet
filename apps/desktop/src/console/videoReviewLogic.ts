@@ -31,7 +31,7 @@ export function overlayStyleFor(
     textAlign: "center",
     fontSize: style.font_size * scale,
     lineHeight: 1.35,
-    color: "#fff",
+    color: style.color,
     textShadow: "0 0 4px #000, 0 0 8px #000",
     pointerEvents: "none",
     whiteSpace: "pre-wrap",

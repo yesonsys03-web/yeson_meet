@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from apps.server.domain.video_captions.srt import (
-    SubSegment, build_force_style, segments_to_srt,
+    SubSegment, build_force_style, hex_to_ass_color, segments_to_srt,
 )
 
 
@@ -22,5 +24,24 @@ def test_srt_strips_newlines_inside_text():
 
 
 def test_build_force_style_bottom_and_top():
-    assert build_force_style("bottom", 40, 18) == "Alignment=2,MarginV=40,Fontsize=18"
-    assert build_force_style("top", 20, 24) == "Alignment=8,MarginV=20,Fontsize=24"
+    assert build_force_style("bottom", 40, 18) == (
+        "Alignment=2,MarginV=40,Fontsize=18,PrimaryColour=&H00FFFFFF")
+    assert build_force_style("top", 20, 24) == (
+        "Alignment=8,MarginV=20,Fontsize=24,PrimaryColour=&H00FFFFFF")
+
+
+def test_build_force_style_with_custom_color():
+    assert build_force_style("bottom", 40, 18, "#FF0000") == (
+        "Alignment=2,MarginV=40,Fontsize=18,PrimaryColour=&H000000FF")
+
+
+def test_hex_to_ass_color_converts_rgb_to_bgr():
+    assert hex_to_ass_color("#FFFF00") == "&H0000FFFF"
+    assert hex_to_ass_color("#FFFFFF") == "&H00FFFFFF"
+    assert hex_to_ass_color("#ff0000") == "&H000000FF"
+
+
+def test_hex_to_ass_color_rejects_invalid_input():
+    for bad in ("red", "#FFF", "#GGGGGG", "FFFFFF", "#FFFFFF0"):
+        with pytest.raises(ValueError):
+            hex_to_ass_color(bad)

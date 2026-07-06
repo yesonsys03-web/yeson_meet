@@ -19,7 +19,9 @@ function fmtMs(ms: number): string {
 export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
   const [job, setJob] = useState<VideoJobDetail | null>(null);
   const [edits, setEdits] = useState<Record<number, string>>({});
-  const [style, setStyle] = useState<BurnStyle>({ position: "bottom", margin_v: 40, font_size: 18 });
+  const [style, setStyle] = useState<BurnStyle>({
+    position: "bottom", margin_v: 40, font_size: 18, color: "#ffffff",
+  });
   // 숫자 입력칸은 타이핑 중간값("2" 등)을 허용해야 하므로 문자열로 따로 들고,
   // 유효 범위 값일 때만 style에 반영하고 blur 시점에 클램프·정규화한다.
   const [marginText, setMarginText] = useState("40");
@@ -206,6 +208,11 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
                 }}
                 style={{ ...consoleStyles.input, width: 64, marginLeft: 6, padding: "2px 6px" }} />
               px
+            </label>
+            <label>
+              색상{" "}
+              <input type="color" value={style.color}
+                onChange={(e) => setStyle({ ...style, color: e.target.value })} />
             </label>
           </div>
 

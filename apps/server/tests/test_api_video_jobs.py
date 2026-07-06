@@ -90,7 +90,7 @@ async def test_burn_requires_review_status(client, db_session,
                                            admin_user, monkeypatch):
     started = {}
     monkeypatch.setattr(api_vj, "_start_burn",
-                        lambda eid, p, m, f: started.setdefault("eid", eid))
+                        lambda eid, p, m, f, c: started.setdefault("eid", eid))
     job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
                    source_type="upload", source_ref="c.mp4",
                    whisper_model="small", status="transcribing")
@@ -115,6 +115,39 @@ async def test_burn_requires_review_status(client, db_session,
         VideoJob.id == job_id))).scalar_one()
     assert burning.status == "burning"
     assert burning.progress == 0
+
+
+async def test_burn_forwards_color_to_start_burn(client, db_session,
+                                                 admin_user, monkeypatch):
+    started = {}
+    monkeypatch.setattr(
+        api_vj, "_start_burn",
+        lambda eid, p, m, f, c: started.update(eid=eid, color=c))
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mp4",
+                   whisper_model="small", status="review")
+    db_session.add(job)
+    await db_session.commit()
+
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/burn",
+                             json={"position": "bottom", "margin_v": 40,
+                                   "font_size": 18, "color": "#FF0000"})
+    assert resp.status_code == 202
+    assert started["eid"] == job.external_id
+    assert started["color"] == "#FF0000"
+
+
+async def test_burn_rejects_invalid_color(client, db_session, admin_user):
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mp4",
+                   whisper_model="small", status="review")
+    db_session.add(job)
+    await db_session.commit()
+
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/burn",
+                             json={"position": "bottom", "margin_v": 40,
+                                   "font_size": 18, "color": "red"})
+    assert resp.status_code == 422
 
 
 async def test_media_is_capability_url_no_auth(client, db_session, admin_user,
