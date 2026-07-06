@@ -126,7 +126,8 @@ async def test_run_burn_job_survives_missing_job(db_session):
     await pl.run_burn_job(uuid4(), "bottom", 40, 18)
 
 
-async def test_startup_sweep_fails_inflight_jobs(db_session, admin_user):
+async def test_startup_sweep_fails_inflight_jobs(db_session, admin_user, monkeypatch):
+    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: False)
     inflight = await _make_job(db_session, admin_user, status="transcribing")
     inflight_id, inflight_external_id = inflight.id, inflight.external_id
     done = await _make_job(db_session, admin_user, status="done")
@@ -140,3 +141,15 @@ async def test_startup_sweep_fails_inflight_jobs(db_session, admin_user):
     assert rows[inflight_external_id].status == "error"
     assert "재시작" in rows[inflight_external_id].error
     assert rows[done_external_id].status == "done"
+
+
+async def test_startup_sweep_skipped_when_another_instance_serving(
+        db_session, admin_user, monkeypatch):
+    job = await _make_job(db_session, admin_user, status="transcribing")
+    external_id = job.external_id
+    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: True)
+    await pl.fail_inflight_video_jobs_at_startup()
+    db_session.expire_all()
+    loaded = (await db_session.execute(
+        select(VideoJob).where(VideoJob.external_id == external_id))).scalar_one()
+    assert loaded.status == "transcribing"

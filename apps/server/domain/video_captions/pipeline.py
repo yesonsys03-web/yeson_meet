@@ -27,6 +27,21 @@ logger = logging.getLogger("yeson.video.pipeline")
 _PROGRESS = {"ingesting": 10, "extracting": 25, "transcribing": 40,
              "translating": 75, "review": 90, "burning": 95, "done": 100}
 
+
+def _another_instance_is_serving() -> bool:
+    """이미 같은 포트를 서빙 중인 인스턴스가 있으면 True.
+
+    uvicorn은 lifespan startup을 소켓 바인딩보다 먼저 실행한다. 이중 기동된
+    두 번째 프로세스는 곧 'address already in use'로 죽는데, 그 전에 sweep이
+    돌면 살아있는 인스턴스의 진행 중 작업을 오판한다 — 그 경우 sweep을 건너뛴다.
+    """
+    import socket
+
+    port = int(os.environ.get("PORT", "8000"))
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
 _INFLIGHT_STATUSES = ("queued", "ingesting", "extracting", "transcribing",
                       "translating", "burning")
 
@@ -135,6 +150,10 @@ async def fail_inflight_video_jobs_at_startup() -> None:
     없다 — 영구 좀비로 남아 큐를 막는다. 재시작 직후 in-flight 상태를 모두
     error로 정리해 사용자가 삭제 후 재시도할 수 있게 한다.
     """
+    if _another_instance_is_serving():
+        logger.warning(
+            "startup video-job sweep skipped: another instance is already serving")
+        return
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             update(VideoJob)
