@@ -12,7 +12,8 @@ vi.mock("../diagnostics/appLog", () => ({
 }));
 
 import {
-  burnVideoJob, createYoutubeJob, listVideoModels, uploadVideoJob, videoMediaUrl,
+  burnVideoJob, createYoutubeJob, listTranslateEngines, listVideoModels, uploadVideoJob,
+  videoMediaUrl,
 } from "./videoApi";
 
 describe("videoApi", () => {
@@ -87,6 +88,25 @@ describe("videoApi", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(String(url)).toContain("/api/v1/video-jobs/j1/burn");
     expect(JSON.parse(init.body as string).position).toBe("top");
+  });
+
+  it("listTranslateEngines GETs /api/v1/video-jobs/translate-engines", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({
+        engines: [
+          { value: "gemini", label: "Gemini (기본)", available: true },
+          { value: "claude", label: "Claude 구독", available: false },
+        ],
+      }),
+    });
+    const out = await listTranslateEngines();
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:8000/api/v1/video-jobs/translate-engines");
+    expect(out).toEqual([
+      { value: "gemini", label: "Gemini (기본)", available: true },
+      { value: "claude", label: "Claude 구독", available: false },
+    ]);
   });
 
   it("videoMediaUrl builds capability URL without token", () => {

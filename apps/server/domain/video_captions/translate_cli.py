@@ -14,6 +14,7 @@ import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .translate import (
     GeminiFlashTranslator,
@@ -31,6 +32,77 @@ CLI_TIMEOUT_ENV = "YESON_TRANSLATE_CLI_TIMEOUT"
 DEFAULT_CLI_TIMEOUT = 300.0
 
 _PROMPT_PLACEHOLDER = "{prompt}"
+
+# Windows에서 콘솔 창이 번쩍이지 않도록 — CREATE_NO_WINDOW는 Windows 전용 상수라
+# os.name == "nt"가 아닌 분기에서는 절대 참조하지 않는다 (mac/Linux AttributeError 방지).
+_SUBPROCESS_FLAGS: dict = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+)
+
+_FALLBACK_BIN_DIRS = (
+    Path.home() / ".local" / "bin",
+    Path("/usr/local/bin"),
+    Path("/opt/homebrew/bin"),
+    Path.home() / ".bun" / "bin",
+    Path.home() / ".npm-global" / "bin",
+    Path.home() / "bin",
+)
+
+
+def _candidate_names(name: str, windows: bool) -> list[str]:
+    """폴백 디렉터리 직접 탐색용 후보 파일명 — shutil.which는 PATHEXT를 자동 처리하지만
+    폴백 경로는 수동으로 확장자 후보를 붙여야 한다."""
+    if not windows:
+        return [name]
+    if name.lower().endswith((".exe", ".cmd", ".bat")):
+        return [name]
+    return [name, f"{name}.exe", f"{name}.cmd", f"{name}.bat"]
+
+
+def _windows_fallback_dirs() -> tuple[Path, ...]:
+    dirs: list[Path] = []
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        dirs.append(Path(appdata) / "npm")  # npm 글로벌 .cmd 심
+    dirs.append(Path.home() / "scoop" / "shims")
+    localappdata = os.environ.get("LOCALAPPDATA")
+    if localappdata:
+        dirs.append(Path(localappdata) / "Programs")
+    return tuple(dirs)
+
+
+def _fallback_dirs() -> tuple[Path, ...]:
+    return _windows_fallback_dirs() if os.name == "nt" else _FALLBACK_BIN_DIRS
+
+
+def resolve_cli(name: str) -> str | None:
+    """PATH 우선, 실패 시 표준 설치 경로 폴백 (GUI 앱은 PATH가 최소인 경우 대비)."""
+    found = shutil.which(name)
+    if found:
+        return found
+    windows = os.name == "nt"
+    for directory in _fallback_dirs():
+        for candidate_name in _candidate_names(name, windows):
+            candidate = directory / candidate_name
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+    return None
+
+
+def list_translate_engines() -> list[dict]:
+    """클라 드롭다운용 — 서버에서 사용 가능한 번역 엔진과 설치 여부."""
+    return [
+        {"value": "gemini", "label": "Gemini (기본)",
+         "available": bool(os.environ.get("GEMINI_API_KEY"))},
+        {"value": "claude", "label": "Claude 구독",
+         "available": resolve_cli("claude") is not None},
+        {"value": "codex", "label": "Codex 구독",
+         "available": resolve_cli("codex") is not None},
+        {"value": "agy", "label": "Antigravity",
+         "available": resolve_cli("agy") is not None},
+        {"value": "opencode", "label": "OpenCode (딥시크 등)",
+         "available": resolve_cli("opencode") is not None},
+    ]
 
 
 @dataclass(frozen=True)
@@ -91,11 +163,14 @@ class CliTranslator:
         if self._checked_bin:
             return
         exe = self._argv[0]
-        if shutil.which(exe) is None:
+        resolved = resolve_cli(exe)
+        if resolved is None:
             raise TranslationError(
                 f"'{exe}' CLI를 찾을 수 없습니다. 서버 머신에 설치/로그인하고 PATH를 확인하세요 "
-                "(GUI로 띄운 서버는 PATH가 좁을 수 있음 — YESON_TRANSLATE_CLI로 절대경로 지정 가능)"
+                "(GUI로 띄운 서버는 PATH가 좁을 수 있음 — PATH와 표준 설치 경로(~/.local/bin 등)를 "
+                "모두 확인했습니다 — YESON_TRANSLATE_CLI로 절대경로 지정 가능)"
             )
+        self._argv[0] = resolved
         self._checked_bin = True
 
     def _run_cli(self, prompt: str) -> str:
@@ -118,6 +193,7 @@ class CliTranslator:
                 encoding="utf-8",
                 errors="replace",
                 timeout=self._timeout,
+                **_SUBPROCESS_FLAGS,
             )
         except subprocess.TimeoutExpired as exc:
             raise TranslationError(f"CLI 번역 시간 초과({self._timeout}s)") from exc

@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import {
   createYoutubeJob, deleteVideoJob, deleteVideoModel, downloadVideoModel,
-  listVideoJobs, listVideoModels, uploadVideoJob,
+  listTranslateEngines, listVideoJobs, listVideoModels, uploadVideoJob,
 } from "./videoApi";
-import type { VideoJobSummary, VideoModelInfo } from "./videoApi";
+import type { TranslateEngineInfo, VideoJobSummary, VideoModelInfo } from "./videoApi";
 import { VideoReviewView } from "./VideoReviewView";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -16,13 +16,32 @@ const STATUS_LABEL: Record<string, string> = {
 const INFLIGHT_STATUSES = ["queued", "ingesting", "extracting", "transcribing",
                            "translating", "burning"];
 
-const TRANSLATE_ENGINES: Array<{ value: string; label: string }> = [
-  { value: "", label: "번역: Gemini (기본)" },
-  { value: "claude", label: "번역: Claude 구독" },
-  { value: "codex", label: "번역: Codex 구독" },
-  { value: "agy", label: "번역: Antigravity" },
-  { value: "opencode", label: "번역: OpenCode (딥시크 등)" },
+type EngineOption = { value: string; label: string; available: boolean };
+
+// 서버 응답이 오기 전 첫 렌더용 폴백 — 깜빡임 방지 (서버 미설치 상태를 알기 전이므로 전부 available)
+const DEFAULT_ENGINE_OPTIONS: EngineOption[] = [
+  { value: "", label: "번역: Gemini (기본)", available: true },
+  { value: "claude", label: "번역: Claude 구독", available: true },
+  { value: "codex", label: "번역: Codex 구독", available: true },
+  { value: "agy", label: "번역: Antigravity", available: true },
+  { value: "opencode", label: "번역: OpenCode (딥시크 등)", available: true },
 ];
+
+// 서버의 gemini(값 없음=기본)를 클라 상태값 ""와 맞추고, 미설치 엔진은 disabled 처리
+function toEngineOptions(engines: TranslateEngineInfo[]): EngineOption[] {
+  return engines.map((engine) => {
+    const isGemini = engine.value === "gemini";
+    let label = `번역: ${engine.label}`;
+    if (!engine.available) {
+      label += isGemini ? " (서버에 키 없음)" : " (서버에 미설치)";
+    }
+    return {
+      value: isGemini ? "" : engine.value,
+      label,
+      available: isGemini ? true : engine.available, // 기본값이므로 gemini는 항상 선택 허용
+    };
+  });
+}
 
 const DEFAULT_OPENCODE_MODEL = "opencode/deepseek-v4-flash-free";
 
@@ -42,6 +61,7 @@ export function VideoCaptionPanel({ active }: VideoCaptionPanelProps) {
 function VideoCaptionInner({ active }: { active: boolean }) {
   const [models, setModels] = useState<VideoModelInfo[]>([]);
   const [jobs, setJobs] = useState<VideoJobSummary[]>([]);
+  const [engineOptions, setEngineOptions] = useState<EngineOption[]>(DEFAULT_ENGINE_OPTIONS);
   const [selectedModel, setSelectedModel] = useState("small");
   const [translateProvider, setTranslateProvider] = useState("");
   const [cliModel, setCliModel] = useState(DEFAULT_OPENCODE_MODEL);
@@ -54,9 +74,11 @@ function VideoCaptionInner({ active }: { active: boolean }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [m, j] = await Promise.all([listVideoModels(), listVideoJobs()]);
+      const [m, j, e] = await Promise.all(
+        [listVideoModels(), listVideoJobs(), listTranslateEngines()]);
       setModels(m);
       setJobs(j);
+      setEngineOptions(toEngineOptions(e));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -152,8 +174,10 @@ function VideoCaptionInner({ active }: { active: boolean }) {
             onChange={(e) => setTranslateProvider(e.target.value)}
             style={{ ...consoleStyles.input, width: 200 }}
           >
-            {TRANSLATE_ENGINES.map((engine) => (
-              <option key={engine.value} value={engine.value}>{engine.label}</option>
+            {engineOptions.map((engine) => (
+              <option key={engine.value} value={engine.value} disabled={!engine.available}>
+                {engine.label}
+              </option>
             ))}
           </select>
           {translateProvider === "opencode" ? (

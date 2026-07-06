@@ -27,6 +27,7 @@ from apps.server.domain.video_captions.ingest import save_upload
 from apps.server.domain.video_captions.pipeline import (job_dir, run_burn_job,
                                                         run_video_job, start_task)
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
+from apps.server.domain.video_captions.translate_cli import list_translate_engines
 from apps.server.domain.video_captions.whisper_models import CATALOG, is_downloaded
 
 router = APIRouter(tags=["video-jobs"], prefix="/video-jobs")
@@ -164,6 +165,13 @@ async def list_video_jobs(
         select(VideoJob).order_by(VideoJob.created_at.desc()).limit(100)
     )).scalars().all()
     return {"items": [_job_out(j) for j in jobs]}
+
+
+@router.get("/translate-engines")
+async def get_translate_engines() -> dict:
+    # 반드시 /{external_id} 동적 라우트보다 먼저 선언 — 선언 순서 매칭이라
+    # 뒤에 두면 "translate-engines"가 UUID로 파싱 시도되어 422가 난다.
+    return {"engines": list_translate_engines()}
 
 
 @router.get("/{external_id}")

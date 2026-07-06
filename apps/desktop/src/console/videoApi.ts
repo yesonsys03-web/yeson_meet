@@ -33,6 +33,12 @@ export type VideoSegmentOut = {
 
 export type VideoJobDetail = VideoJobSummary & { segments: VideoSegmentOut[] };
 
+export type TranslateEngineInfo = {
+  value: string;
+  label: string;
+  available: boolean;
+};
+
 export type BurnStyle = {
   position: "bottom" | "top";
   margin_v: number;
@@ -93,6 +99,12 @@ export async function uploadVideoJob(
   if (translateCliModel) form.append("translate_cli_model", translateCliModel);
   return request(`${apiBase()}/api/v1/video-jobs/upload`,
     { method: "POST", body: form });
+}
+
+export async function listTranslateEngines(): Promise<TranslateEngineInfo[]> {
+  const out = await request<{ engines: TranslateEngineInfo[] }>(
+    `${apiBase()}/api/v1/video-jobs/translate-engines`, {});
+  return out.engines;
 }
 
 export async function listVideoJobs(): Promise<VideoJobSummary[]> {

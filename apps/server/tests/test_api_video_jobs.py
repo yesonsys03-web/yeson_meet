@@ -190,6 +190,26 @@ async def test_create_youtube_job_saves_translate_provider(client, admin_user, d
     assert item["translate_provider"] == "claude"
 
 
+async def test_translate_engines_endpoint(client, admin_user):
+    resp = await client.get("/api/v1/video-jobs/translate-engines")
+    assert resp.status_code == 200
+    engines = resp.json()["engines"]
+    assert len(engines) == 5
+    assert {e["value"] for e in engines} == {
+        "gemini", "claude", "codex", "agy", "opencode"}
+    for engine in engines:
+        assert "label" in engine
+        assert isinstance(engine["available"], bool)
+
+
+async def test_translate_engines_route_does_not_shadow_detail_route(client, db_session, admin_user):
+    # "translate-engines"가 /{external_id} 동적 라우트보다 먼저 선언돼야 UUID로
+    # 오인 파싱되지 않는다 — test_detail_includes_segments_and_patch_edits가
+    # 상세 조회 자체는 이미 검증하므로, 여기서는 정적 라우트가 200을 반환하는지만 확인.
+    resp = await client.get("/api/v1/video-jobs/translate-engines")
+    assert resp.status_code == 200
+
+
 async def test_create_job_rejects_invalid_translate_provider(client, admin_user):
     await _install_model()
     resp = await client.post("/api/v1/video-jobs",
