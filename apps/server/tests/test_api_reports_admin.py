@@ -120,3 +120,26 @@ async def test_download_rejects_bad_fmt(client, db_session, admin_user):
     s = await _make_session(db_session, admin_user)
     resp = await client.get(f"/api/v1/reports/{s.external_id}/download?fmt=xml")
     assert resp.status_code == 400
+
+
+async def test_delete_files_only(client, db_session, admin_user, tmp_path):
+    s = await _make_session(db_session, admin_user)
+    d = tmp_path / str(s.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "report.md").write_text("x", encoding="utf-8")
+    (d / "report.pdf").write_bytes(b"%PDF")
+    (d / "summary.md").write_text("y", encoding="utf-8")
+
+    resp = await client.delete(f"/api/v1/reports/{s.external_id}/files")
+    assert resp.status_code == 204
+    assert not (d / "report.md").exists()
+    assert not (d / "report.pdf").exists()
+    assert not (d / "summary.md").exists()
+
+    # DB 세션과 자막은 보존됨
+    from apps.server.db.models import Session as S, Utterance as U
+    from sqlalchemy import select
+    kept = (await db_session.execute(select(S).where(S.external_id == s.external_id))).scalar_one_or_none()
+    assert kept is not None
+    utt = (await db_session.execute(select(U).where(U.session_id == s.id))).scalars().all()
+    assert len(utt) == 1

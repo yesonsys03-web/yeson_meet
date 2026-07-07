@@ -129,6 +129,18 @@ async def storage_usage(db: Annotated[AsyncSession, Depends(get_session)]) -> di
     return {"total_bytes": total, "session_count": count}
 
 
+@router.delete("/{external_id}/files", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_report_files(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> None:
+    meeting = await _get_session_or_404(db, external_id)
+    sid = str(meeting.external_id)
+    for fmt in _REPORT_FORMATS:
+        report_path(_storage_root(), sid, fmt).unlink(missing_ok=True)
+        summary_path(_storage_root(), sid, fmt).unlink(missing_ok=True)
+
+
 async def _load_summary_text(db: AsyncSession, meeting: Session) -> str | None:
     p = summary_path(_storage_root(), str(meeting.external_id), "md")
     if p.exists():
