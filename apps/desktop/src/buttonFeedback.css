@@ -1,0 +1,17 @@
+/* 전역 버튼 hover/press 피드백.
+ *
+ * 콘솔 버튼들은 인라인 스타일(consoleStyles)로 그려져 :hover/:active 같은
+ * 의사클래스를 쓸 수 없다. 그래서 클릭해도 "눌렸다"는 시각 반응이 없어 무반응처럼
+ * 느껴졌다(예: MP4 다운로드 → 곧바로 저장 팝업만 뜸). filter/transform은 인라인
+ * 스타일이 설정하지 않는 속성이라 배경색과 충돌 없이 모든 버튼에 눌림 표시를 준다.
+ * 비활성(disabled) 버튼은 제외. */
+button:not(:disabled) {
+  transition: filter 0.1s ease, transform 0.05s ease;
+}
+button:not(:disabled):hover {
+  filter: brightness(1.12);
+}
+button:not(:disabled):active {
+  filter: brightness(0.82);
+  transform: translateY(1px);
+}
