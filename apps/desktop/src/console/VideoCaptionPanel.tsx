@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import {
   createYoutubeJob, deleteVideoJob, deleteVideoModel, downloadVideoModel,
-  listTranslateEngines, listVideoJobs, listVideoModels, uploadVideoJob,
+  getVideoStorage, listTranslateEngines, listVideoJobs, listVideoModels, uploadVideoJob,
 } from "./videoApi";
-import type { TranslateEngineInfo, VideoJobSummary, VideoModelInfo } from "./videoApi";
+import type {
+  TranslateEngineInfo, VideoJobSummary, VideoModelInfo, VideoStorageInfo,
+} from "./videoApi";
 import { VideoReviewView } from "./VideoReviewView";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -61,6 +63,7 @@ export function VideoCaptionPanel({ active }: VideoCaptionPanelProps) {
 function VideoCaptionInner({ active }: { active: boolean }) {
   const [models, setModels] = useState<VideoModelInfo[]>([]);
   const [jobs, setJobs] = useState<VideoJobSummary[]>([]);
+  const [storage, setStorage] = useState<VideoStorageInfo | null>(null);
   const [engineOptions, setEngineOptions] = useState<EngineOption[]>(DEFAULT_ENGINE_OPTIONS);
   const [selectedModel, setSelectedModel] = useState("small");
   const [translateProvider, setTranslateProvider] = useState("");
@@ -74,11 +77,12 @@ function VideoCaptionInner({ active }: { active: boolean }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [m, j, e] = await Promise.all(
-        [listVideoModels(), listVideoJobs(), listTranslateEngines()]);
+      const [m, j, e, s] = await Promise.all(
+        [listVideoModels(), listVideoJobs(), listTranslateEngines(), getVideoStorage()]);
       setModels(m);
       setJobs(j);
       setEngineOptions(toEngineOptions(e));
+      setStorage(s);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -216,7 +220,16 @@ function VideoCaptionInner({ active }: { active: boolean }) {
 
       {/* ---- 작업 목록 ---- */}
       <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <h3 style={{ margin: 0 }}>작업 목록</h3>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between",
+                      gap: 12 }}>
+          <h3 style={{ margin: 0 }}>작업 목록</h3>
+          {storage ? (
+            <span style={{ fontSize: 12, opacity: 0.7 }}
+              title={`오래된 작업은 자동으로 정리되어 최근 ${storage.keep}개만 보관됩니다`}>
+              스토리지 {formatBytes(storage.total_bytes)} · 최근 {storage.keep}개 보관
+            </span>
+          ) : null}
+        </div>
         {jobs.length === 0 ? <p style={{ opacity: 0.7 }}>아직 작업이 없습니다.</p> : null}
         {jobs.map((job) => (
           <div key={job.job_id}

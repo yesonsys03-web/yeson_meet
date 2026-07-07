@@ -196,6 +196,9 @@ class VideoJob(Base):
     preview_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     audio_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     burned_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 미디어 길이(ms). 전사 후 audio.wav를 삭제하므로 굽기 진행률 분모를
+    # wav 대신 여기서 읽는다 (pipeline.run_burn_job).
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

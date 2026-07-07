@@ -18,14 +18,16 @@ from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
                      UploadFile, status)
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.server.db.models import AppUser, VideoJob, VideoSegment
 from apps.server.db.session import get_session
 from apps.server.domain.video_captions.ingest import save_upload
-from apps.server.domain.video_captions.pipeline import (job_dir, run_burn_job,
-                                                        run_video_job, start_task)
+from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP, job_dir,
+                                                        prune_old_video_jobs,
+                                                        run_burn_job, run_video_job,
+                                                        start_task, video_jobs_root)
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
 from apps.server.domain.video_captions.translate_cli import list_translate_engines
 from apps.server.domain.video_captions.whisper_models import CATALOG, is_downloaded
@@ -40,6 +42,12 @@ def _start_pipeline(external_id: UUID) -> None:  # test seam
 def _start_burn(external_id: UUID, position: str, margin_v: int,
                 font_size: int, color: str) -> None:  # test seam
     start_task(run_burn_job(external_id, position, margin_v, font_size, color))
+
+
+def _prune_old_jobs() -> None:  # test seam
+    # 새 작업이 생길 때마다 최근 RETENTION_KEEP개만 유지 (개수 상한 정책). 응답을
+    # 막지 않도록 fire-and-forget — 방금 만든 작업은 in-flight라 삭제 대상 제외.
+    start_task(prune_old_video_jobs())
 
 
 class VideoJobCreateIn(BaseModel):
@@ -120,6 +128,7 @@ async def create_video_job(
                    status="queued")
     db.add(job)
     await db.commit()
+    _prune_old_jobs()
     _start_pipeline(job.external_id)
     return {"job_id": str(job.external_id)}
 
@@ -154,6 +163,7 @@ async def create_upload_job(
         # 실패 시 방금 쓴 파일/디렉터리 정리 — DB 행 없는 고아 파일 방지
         shutil.rmtree(job_dir(external_id), ignore_errors=True)
         raise
+    _prune_old_jobs()
     _start_pipeline(external_id)
     return {"job_id": str(external_id)}
 
@@ -173,6 +183,25 @@ async def get_translate_engines() -> dict:
     # 반드시 /{external_id} 동적 라우트보다 먼저 선언 — 선언 순서 매칭이라
     # 뒤에 두면 "translate-engines"가 UUID로 파싱 시도되어 422가 난다.
     return {"engines": list_translate_engines()}
+
+
+@router.get("/storage")
+async def get_storage_usage(
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    # 반드시 /{external_id} 동적 라우트보다 먼저 선언 — translate-engines와 동일 이유.
+    root = video_jobs_root()
+    total = 0
+    if root.exists():
+        for path in root.rglob("*"):
+            if path.is_file():
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    pass  # 스캔 도중 사라진 파일은 무시
+    count = (await db.execute(
+        select(func.count()).select_from(VideoJob))).scalar_one()
+    return {"total_bytes": total, "job_count": count, "keep": RETENTION_KEEP}
 
 
 @router.get("/{external_id}")

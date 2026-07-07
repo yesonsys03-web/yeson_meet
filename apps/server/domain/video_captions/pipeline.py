@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 from pathlib import Path
 from uuid import UUID
 
@@ -51,6 +52,9 @@ def _another_instance_is_serving() -> bool:
 _INFLIGHT_STATUSES = ("queued", "ingesting", "extracting", "transcribing",
                       "translating", "burning")
 
+# 자막 메이커가 무한정 쌓이지 않도록 유지할 최근 작업 수 (개수 상한 정책).
+RETENTION_KEEP = 10
+
 # strong refs so fire-and-forget tasks are not garbage-collected mid-flight
 _tasks: set[asyncio.Task] = set()
 
@@ -61,9 +65,13 @@ def start_task(coro) -> None:
     task.add_done_callback(_tasks.discard)
 
 
-def job_dir(external_id: UUID | str) -> Path:
+def video_jobs_root() -> Path:
     root = os.environ.get("STORAGE_ROOT", "/var/lib/yeson-meet/storage")
-    return Path(root) / "video_jobs" / str(external_id)
+    return Path(root) / "video_jobs"
+
+
+def job_dir(external_id: UUID | str) -> Path:
+    return video_jobs_root() / str(external_id)
 
 
 async def _load_job(db, external_id: UUID) -> VideoJob:
@@ -156,6 +164,20 @@ async def run_video_job(external_id: UUID) -> None:
         if not en_segments:
             raise RuntimeError("전사 결과가 비어 있습니다 (음성이 감지되지 않음).")
 
+        # audio.wav의 유일한 소비자는 전사다. 끝났으니 굽기 진행률 분모로 쓸
+        # 길이만 duration_ms로 보존하고 wav는 즉시 삭제해 디스크를 회수한다.
+        duration_ms: int | None = None
+        try:
+            duration_ms = int(wav_duration_seconds(audio) * 1000)
+        except Exception:  # noqa: BLE001 — 길이 계산 실패는 세그먼트 최대 end_ms로 폴백
+            logger.exception("failed to read audio duration for job %s", external_id)
+        if not duration_ms:
+            duration_ms = max((s.end_ms for s in en_segments), default=0) or None
+        try:
+            audio.unlink(missing_ok=True)
+        except OSError:
+            logger.exception("failed to delete audio wav for job %s", external_id)
+
         await _set_status(external_id, "translating")
 
         async def on_translate_progress(frac: float) -> None:
@@ -173,7 +195,8 @@ async def run_video_job(external_id: UUID) -> None:
                                     end_ms=en.end_ms, text_en=en.text, text_ko=ko.text))
             await db.commit()
 
-        await _set_status(external_id, "review")
+        await _set_status(external_id, "review",
+                          duration_ms=duration_ms, audio_path=None)
         logger.info("video job %s ready for review (%d segments)",
                     external_id, len(en_segments))
     except Exception as exc:  # noqa: BLE001 — 파이프라인 최종 방어선
@@ -204,6 +227,71 @@ async def fail_inflight_video_jobs_at_startup() -> None:
         logger.info("startup sweep: %d in-flight video job(s) marked error", result.rowcount)
 
 
+async def _prune_pre_delete_hook(candidate_ids: list[int]) -> None:
+    """프루닝의 SELECT와 DELETE 사이 지점 (기본 no-op). 테스트가 여기서 상태
+    전이(review→burning)를 주입해 DELETE 시점의 상태 재확인 가드를 검증한다."""
+    return None
+
+
+async def prune_old_video_jobs(keep: int = RETENTION_KEEP) -> int:
+    """가장 최근 ``keep``개만 남기고 오래된 영상 작업을 삭제한다 (작업 폴더 + DB 행).
+
+    자막 메이커 작업은 원본/preview/burned mp4를 작업 폴더에 쌓으므로 정리하지
+    않으면 무한정 누적된다. 서버 시작 시와 새 작업 생성 직후 호출해 개수를
+    상한으로 유지한다. 진행 중(in-flight) 작업은 아무리 오래돼도 절대 지우지
+    않는다 — 실행 중인 굽기/전사의 입력 파일을 없애면 안 되기 때문.
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(
+                select(VideoJob.id, VideoJob.status).order_by(
+                    VideoJob.created_at.desc(), VideoJob.id.desc())
+            )).all()
+            candidate_ids = [r.id for r in rows[keep:]
+                             if r.status not in _INFLIGHT_STATUSES]
+            if not candidate_ids:
+                return 0
+            await _prune_pre_delete_hook(candidate_ids)
+            # 삭제 시점에 상태를 원자적으로 재확인한다. SELECT와 DELETE 사이에
+            # review→burning으로 전이한 작업(동시에 굽기가 시작된 경우)은 지우지
+            # 않는다 — 그 폴더/행을 지우면 진행 중인 run_burn_job이 깨진다. Core
+            # 벌크 삭제라 동시 프루닝 두 개가 겹쳐도 StaleDataError가 나지 않고,
+            # 실제로 삭제된 행만 RETURNING으로 받아 그 폴더만 정리한다.
+            deleted = (await db.execute(
+                delete(VideoJob)
+                .where(VideoJob.id.in_(candidate_ids),
+                       VideoJob.status.not_in(_INFLIGHT_STATUSES))
+                .returning(VideoJob.external_id)
+            )).all()
+            await db.commit()
+        for row in deleted:
+            shutil.rmtree(job_dir(row.external_id), ignore_errors=True)
+        if deleted:
+            logger.info("retention: pruned %d old video job(s) (keep=%d)",
+                        len(deleted), keep)
+        return len(deleted)
+    except Exception:  # noqa: BLE001 — fire-and-forget 태스크로도 호출되므로 삼키고 로그
+        logger.exception("video-job retention prune failed")
+        return 0
+
+
+async def prune_old_video_jobs_at_startup() -> int:
+    """서버 시작 시 리텐션 프루닝 — in-flight 스윕과 동일한 '다른 인스턴스가
+    서빙 중' 가드로 보호한다.
+
+    이중 기동된 비소유 프로세스(uvicorn lifespan이 포트 바인딩보다 먼저 도는)가
+    살아있는 인스턴스의 작업 폴더/DB 행을 지운 뒤 'address already in use'로
+    죽는 것을 막는다. 런타임 작업 생성 시 호출되는 prune_old_video_jobs()는
+    자기 자신이 이미 포트를 점유하고 있어 이 가드를 쓰면 항상 스킵되므로,
+    가드는 startup 경로에만 둔다.
+    """
+    if _another_instance_is_serving():
+        logger.warning(
+            "startup retention prune skipped: another instance is already serving")
+        return 0
+    return await prune_old_video_jobs()
+
+
 async def run_burn_job(external_id: UUID, position: str, margin_v: int,
                        font_size: int, color: str = "#FFFFFF") -> None:
     try:
@@ -212,6 +300,7 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
             job = await _load_job(db, external_id)
             media_path = job.media_path
             audio_path = job.audio_path
+            duration_ms = job.duration_ms
             rows = (await db.execute(
                 select(VideoSegment).where(VideoSegment.job_id == job.id)
                 .order_by(VideoSegment.seq)
@@ -224,8 +313,10 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
         if not segments:
             raise RuntimeError("구울 자막 세그먼트가 없습니다.")
 
-        duration: float | None = None
-        if audio_path:
+        # 진행률 분모: 전사 단계가 저장한 duration_ms를 우선 사용. audio.wav는 이미
+        # 삭제됐으므로, wav 폴백은 duration_ms 이전에 만들어진 옛 작업에만 해당한다.
+        duration: float | None = (duration_ms / 1000) if duration_ms else None
+        if not duration and audio_path and Path(audio_path).exists():
             try:
                 duration = wav_duration_seconds(Path(audio_path))
             except Exception:  # noqa: BLE001 — 진행률 분모 실패는 진행바만 포기

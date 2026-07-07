@@ -16,6 +16,8 @@ def _env(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
     # 파이프라인 자동 시작 차단 — API 계층만 검증
     monkeypatch.setattr(api_vj, "_start_pipeline", lambda external_id: None)
+    # 리텐션 프루닝도 차단 — 프루닝 로직은 test_video_pipeline에서 직접 검증한다.
+    monkeypatch.setattr(api_vj, "_prune_old_jobs", lambda: None)
     yield
 
 
@@ -241,6 +243,26 @@ async def test_translate_engines_route_does_not_shadow_detail_route(client, db_s
     # 상세 조회 자체는 이미 검증하므로, 여기서는 정적 라우트가 200을 반환하는지만 확인.
     resp = await client.get("/api/v1/video-jobs/translate-engines")
     assert resp.status_code == 200
+
+
+async def test_storage_endpoint_reports_usage(client, db_session, admin_user):
+    from apps.server.domain.video_captions.pipeline import job_dir
+    ext = uuid4()
+    d = job_dir(ext)  # STORAGE_ROOT is tmp_path via the _env fixture
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x" * 100)
+    job = VideoJob(external_id=ext, owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mp4", whisper_model="small",
+                   status="done")
+    db_session.add(job)
+    await db_session.commit()
+
+    resp = await client.get("/api/v1/video-jobs/storage")
+    assert resp.status_code == 200  # static route not shadowed by /{external_id}
+    body = resp.json()
+    assert body["total_bytes"] >= 100
+    assert body["job_count"] == 1
+    assert body["keep"] == 10
 
 
 async def test_create_job_rejects_invalid_translate_provider(client, admin_user):

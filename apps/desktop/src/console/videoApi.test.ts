@@ -12,8 +12,8 @@ vi.mock("../diagnostics/appLog", () => ({
 }));
 
 import {
-  burnVideoJob, createYoutubeJob, listTranslateEngines, listVideoModels, uploadVideoJob,
-  videoMediaUrl,
+  burnVideoJob, createYoutubeJob, getVideoStorage, listTranslateEngines, listVideoModels,
+  uploadVideoJob, videoMediaUrl,
 } from "./videoApi";
 
 describe("videoApi", () => {
@@ -109,6 +109,17 @@ describe("videoApi", () => {
       { value: "gemini", label: "Gemini (기본)", available: true },
       { value: "claude", label: "Claude 구독", available: false },
     ]);
+  });
+
+  it("getVideoStorage GETs /api/v1/video-jobs/storage", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ total_bytes: 123, job_count: 2, keep: 10 }),
+    });
+    const out = await getVideoStorage();
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:8000/api/v1/video-jobs/storage");
+    expect(out).toEqual({ total_bytes: 123, job_count: 2, keep: 10 });
   });
 
   it("videoMediaUrl builds capability URL without token", () => {

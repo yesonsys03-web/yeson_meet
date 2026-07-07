@@ -24,7 +24,10 @@ from apps.server.api.v1.audio_stats import router as audio_stats_router
 from apps.server.api.v1.video_models import router as video_models_router
 from apps.server.api.v1.video_jobs import router as video_jobs_router
 from apps.server.ai.gemini_live import gemini_config_health
-from apps.server.domain.video_captions.pipeline import fail_inflight_video_jobs_at_startup
+from apps.server.domain.video_captions.pipeline import (
+    fail_inflight_video_jobs_at_startup,
+    prune_old_video_jobs_at_startup,
+)
 from apps.server.ops.alerts import sync_gemini_config_alert
 from apps.server.ops.session_safety_scheduler import (
     end_live_sessions_at_startup,
@@ -120,6 +123,15 @@ async def lifespan(app: FastAPI):
         await fail_inflight_video_jobs_at_startup()
     except Exception:
         logger.exception("Startup video-job sweep failed")
+
+    # 자막 메이커 작업 폴더(원본/preview/burned mp4)가 무한정 쌓이지 않도록, 스윕
+    # 직후 최근 RETENTION_KEEP개만 남기고 오래된 작업을 회수한다. 스윕과 동일한
+    # '다른 인스턴스가 서빙 중' 가드로 보호되므로(이중 기동된 비소유 프로세스는
+    # 프루닝하지 않음), 살아있는 인스턴스의 작업을 지우지 않는다.
+    try:
+        await prune_old_video_jobs_at_startup()
+    except Exception:
+        logger.exception("Startup video-job retention prune failed")
 
     interval = safety_poll_interval()
     if interval > 0:

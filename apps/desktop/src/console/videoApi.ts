@@ -108,6 +108,16 @@ export async function listTranslateEngines(): Promise<TranslateEngineInfo[]> {
   return out.engines;
 }
 
+export type VideoStorageInfo = {
+  total_bytes: number;
+  job_count: number;
+  keep: number;
+};
+
+export async function getVideoStorage(): Promise<VideoStorageInfo> {
+  return request(`${apiBase()}/api/v1/video-jobs/storage`, {});
+}
+
 export async function listVideoJobs(): Promise<VideoJobSummary[]> {
   const out = await request<{ items: VideoJobSummary[] }>(
     `${apiBase()}/api/v1/video-jobs`, {});
