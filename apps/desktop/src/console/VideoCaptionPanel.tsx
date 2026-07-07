@@ -66,7 +66,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const [jobs, setJobs] = useState<VideoJobSummary[]>([]);
   const [storage, setStorage] = useState<VideoStorageInfo | null>(null);
   const [engineOptions, setEngineOptions] = useState<EngineOption[]>(DEFAULT_ENGINE_OPTIONS);
-  const [selectedModel, setSelectedModel] = useState("small");
+  const [selectedModel, setSelectedModel] = useState("base");
   const [translateProvider, setTranslateProvider] = useState("");
   const [cliModel, setCliModel] = useState(DEFAULT_OPENCODE_MODEL);
   const [youtubeUrl, setYoutubeUrl] = useState("");
