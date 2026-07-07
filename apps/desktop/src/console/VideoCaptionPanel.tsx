@@ -77,6 +77,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [batchStatus, setBatchStatus] = useState<string | null>(null);
+  const [modelMgmtOpen, setModelMgmtOpen] = useState(false);
 
   // webkitdirectory는 표준 타입에 없어 JSX 속성으로 못 준다 — 폴더 선택 input에
   // 직접 붙인다(WKWebView/WebView2 모두 지원). 폴더 안 모든 파일을 넘겨준다.
@@ -332,7 +333,18 @@ function VideoCaptionInner({ active }: { active: boolean }) {
 
       {/* ---- whisper 모델 매니저 ---- */}
       <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <h3 style={{ margin: 0 }}>전사 모델 관리</h3>
+        <button type="button"
+          onClick={() => setModelMgmtOpen((v) => !v)}
+          style={{ display: "flex", alignItems: "center", gap: 8, background: "none",
+                   border: 0, padding: 0, cursor: "pointer", color: "inherit", font: "inherit",
+                   alignSelf: "flex-start" }}>
+          <span aria-hidden style={{ fontSize: 12, opacity: 0.7, width: 12, display: "inline-block" }}>
+            {modelMgmtOpen ? "▾" : "▸"}
+          </span>
+          <h3 style={{ margin: 0 }}>전사 모델 관리</h3>
+        </button>
+        {modelMgmtOpen ? (
+        <>
         <p style={{ margin: 0, fontSize: 13, opacity: 0.75 }}>
           모델은 서버에 저장됩니다. 큰 모델일수록 정확하지만 전사가 느려집니다.
         </p>
@@ -364,6 +376,8 @@ function VideoCaptionInner({ active }: { active: boolean }) {
             )}
           </div>
         ))}
+        </>
+        ) : null}
       </section>
     </div>
   );
