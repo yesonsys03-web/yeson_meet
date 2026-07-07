@@ -14,10 +14,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.server.db.models import Session, Utterance
+from apps.server.db.search import FTS_TABLE, fts5_available
 from apps.server.db.session import get_session
 from apps.server.domain.report_docx import build_session_report_docx, build_summary_docx
 from apps.server.domain.report_html import build_session_report_html, build_summary_html
@@ -139,6 +140,27 @@ async def delete_report_files(
     for fmt in _REPORT_FORMATS:
         report_path(_storage_root(), sid, fmt).unlink(missing_ok=True)
         summary_path(_storage_root(), sid, fmt).unlink(missing_ok=True)
+
+
+@router.delete("/{external_id}/session", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_whole_session(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> None:
+    meeting = await _get_session_or_404(db, external_id)
+    session_pk = meeting.id
+    ext = str(meeting.external_id)
+    # 1) FTS 인덱스에서 세션 행 제거 (fts5 사용 가능할 때만)
+    if await fts5_available(db):
+        await db.execute(
+            text(f"DELETE FROM {FTS_TABLE} WHERE session_id = :sid"),
+            {"sid": str(session_pk)},
+        )
+    # 2) DB 행 삭제 (Utterance는 FK CASCADE)
+    await db.delete(meeting)
+    await db.commit()
+    # 3) 스토리지 디렉토리 제거
+    shutil.rmtree(_report_dir(ext), ignore_errors=True)
 
 
 async def _load_summary_text(db: AsyncSession, meeting: Session) -> str | None:

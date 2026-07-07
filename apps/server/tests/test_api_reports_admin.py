@@ -143,3 +143,31 @@ async def test_delete_files_only(client, db_session, admin_user, tmp_path):
     assert kept is not None
     utt = (await db_session.execute(select(U).where(U.session_id == s.id))).scalars().all()
     assert len(utt) == 1
+
+
+async def test_delete_whole_session(client, db_session, admin_user, tmp_path):
+    s = await _make_session(db_session, admin_user)
+    sid_pk = s.id
+    ext = s.external_id
+    d = tmp_path / str(ext)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "report.md").write_text("x", encoding="utf-8")
+
+    resp = await client.delete(f"/api/v1/reports/{ext}/session")
+    assert resp.status_code == 204
+
+    from apps.server.db.models import Session as S, Utterance as U
+    from sqlalchemy import select
+    gone = (await db_session.execute(select(S).where(S.external_id == ext))).scalar_one_or_none()
+    assert gone is None
+    # Utterance는 CASCADE로 삭제됨
+    utt = (await db_session.execute(select(U).where(U.session_id == sid_pk))).scalars().all()
+    assert utt == []
+    # 스토리지 디렉토리 제거됨
+    assert not d.exists()
+
+
+async def test_delete_session_404_for_unknown(client):
+    from uuid import uuid4
+    resp = await client.delete(f"/api/v1/reports/{uuid4()}/session")
+    assert resp.status_code == 404
