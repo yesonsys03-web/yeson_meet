@@ -70,6 +70,40 @@ def start_task(coro) -> None:
     task.add_done_callback(_tasks.discard)
 
 
+# 작업(external_id)별 파이프라인 태스크 레지스트리. 작업을 삭제할 때 실행 중인
+# 태스크를 취소해 세마포어를 즉시 반납하고, 지워진 행/파일에 대한 NoResultFound·
+# FileNotFound 에러를 반복하는 좀비 태스크를 없앤다.
+_job_tasks: dict[str, asyncio.Task] = {}
+
+
+def start_job_task(external_id: UUID, coro) -> None:
+    """external_id로 추적되는 파이프라인 태스크를 시작한다(취소 가능하도록)."""
+    key = str(external_id)
+    task = asyncio.create_task(coro)
+    _tasks.add(task)
+    _job_tasks[key] = task
+
+    def _done(t: asyncio.Task) -> None:
+        _tasks.discard(t)
+        if _job_tasks.get(key) is t:
+            _job_tasks.pop(key, None)
+
+    task.add_done_callback(_done)
+
+
+def cancel_job_task(external_id: UUID) -> bool:
+    """실행 중인 작업 파이프라인 태스크가 있으면 취소한다(삭제 시 호출).
+
+    run_video_job/run_burn_job은 finally에서 세마포어를 반납하므로 취소 시 즉시
+    반납된다(대기 중인 다음 작업이 진행). 이미 끝났거나 없으면 False.
+    """
+    task = _job_tasks.get(str(external_id))
+    if task is not None and not task.done():
+        task.cancel()
+        return True
+    return False
+
+
 def video_jobs_root() -> Path:
     root = os.environ.get("STORAGE_ROOT", "/var/lib/yeson-meet/storage")
     return Path(root) / "video_jobs"

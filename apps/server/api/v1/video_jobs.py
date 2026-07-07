@@ -24,10 +24,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.server.db.models import AppUser, VideoJob, VideoSegment
 from apps.server.db.session import get_session
 from apps.server.domain.video_captions.ingest import save_upload
-from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP, job_dir,
+from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
+                                                        cancel_job_task, job_dir,
                                                         prune_old_video_jobs,
                                                         run_burn_job, run_video_job,
-                                                        start_task, video_jobs_root)
+                                                        start_job_task, start_task,
+                                                        video_jobs_root)
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
 from apps.server.domain.video_captions.translate_cli import list_translate_engines
 from apps.server.domain.video_captions.whisper_models import CATALOG, is_downloaded
@@ -36,12 +38,13 @@ router = APIRouter(tags=["video-jobs"], prefix="/video-jobs")
 
 
 def _start_pipeline(external_id: UUID) -> None:  # test seam
-    start_task(run_video_job(external_id))
+    start_job_task(external_id, run_video_job(external_id))
 
 
 def _start_burn(external_id: UUID, position: str, margin_v: int,
                 font_size: int, color: str) -> None:  # test seam
-    start_task(run_burn_job(external_id, position, margin_v, font_size, color))
+    start_job_task(external_id,
+                   run_burn_job(external_id, position, margin_v, font_size, color))
 
 
 def _prune_old_jobs() -> None:  # test seam
@@ -332,6 +335,10 @@ async def delete_video_job(
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> None:
     job = await _get_job_or_404(db, external_id)
+    # 실행 중인 파이프라인이 있으면 먼저 취소한다 — 세마포어를 즉시 반납해 대기 중인
+    # 다음 작업이 진행되고, 지워진 행/파일에 대한 NoResultFound·FileNotFound를 반복하는
+    # 좀비 태스크를 막는다. 취소 후 폴더/행 삭제.
+    cancel_job_task(external_id)
     shutil.rmtree(job_dir(external_id), ignore_errors=True)
     await db.delete(job)
     await db.commit()

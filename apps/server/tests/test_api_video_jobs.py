@@ -203,6 +203,21 @@ async def test_upload_cleans_up_on_failure(client, monkeypatch):
     assert not jobs_root.exists() or not any(jobs_root.iterdir())
 
 
+async def test_delete_cancels_running_pipeline(client, db_session, admin_user, monkeypatch):
+    cancelled = {}
+    monkeypatch.setattr(api_vj, "cancel_job_task",
+                        lambda ext: cancelled.setdefault("ext", ext) or True)
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mp4", whisper_model="small",
+                   status="transcribing")
+    db_session.add(job)
+    await db_session.commit()
+
+    resp = await client.delete(f"/api/v1/video-jobs/{job.external_id}")
+    assert resp.status_code == 204
+    assert cancelled["ext"] == job.external_id  # running task cancelled on delete
+
+
 async def test_no_auth_required_for_list(client, admin_user):
     resp = await client.get("/api/v1/video-jobs")
     assert resp.status_code == 200

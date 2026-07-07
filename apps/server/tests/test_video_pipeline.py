@@ -116,6 +116,41 @@ async def test_run_video_job_serialized_by_semaphore(
     assert concur["max"] == 1  # never two transcriptions running at once
 
 
+async def test_cancel_job_task_releases_semaphore(
+        monkeypatch, db_session, admin_user, tmp_path):
+    """실행 중인 작업을 삭제(취소)하면 그 파이프라인 태스크가 즉시 멈추고 세마포어를
+    반납해야 한다. 안 그러면 좀비 태스크가 세마포어를 쥔 채 다른 작업을 무한 대기
+    시키고 NoResultFound/FileNotFound 에러를 반복한다(실사용 버그)."""
+    src = tmp_path / "a.mp4"; src.write_bytes(b"v")
+    job = await _make_job(db_session, admin_user, media_path=str(src))
+    ext = job.external_id
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
+    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d: Path(d).write_bytes(b"a"))
+    monkeypatch.setattr(pl, "transcribe_audio",
+                        lambda p, m, cb=None: [SubSegment(1, 0, 1000, "Hi")])
+
+    reached = asyncio.Event()
+    blocking = asyncio.Event()
+
+    async def fake_translate(segs, provider, **kw):
+        reached.set()
+        await blocking.wait()  # hold the semaphore (cancellable await) until cancelled
+        return [SubSegment(1, 0, 1000, "안녕")]
+
+    monkeypatch.setattr(pl, "translate_segments", fake_translate)
+
+    pl.start_job_task(ext, pl.run_video_job(ext))
+    await asyncio.wait_for(reached.wait(), timeout=5)
+    assert pl._JOB_SEMAPHORE.locked()  # job is mid-flight holding the semaphore
+
+    assert pl.cancel_job_task(ext) is True
+    await asyncio.sleep(0.1)  # let CancelledError propagate through the finally
+    assert not pl._JOB_SEMAPHORE.locked()  # semaphore released → queue can proceed
+    assert pl.cancel_job_task(ext) is False  # nothing left to cancel
+
+
 async def test_run_video_job_records_error(monkeypatch, db_session, admin_user, tmp_path):
     src = tmp_path / "clip.mp4"
     src.write_bytes(b"v")
