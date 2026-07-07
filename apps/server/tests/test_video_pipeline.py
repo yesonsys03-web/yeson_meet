@@ -187,7 +187,7 @@ async def test_run_burn_job(monkeypatch, db_session, admin_user, tmp_path):
 
     await pl.run_burn_job(external_id, "top", 20, 24)
 
-    assert burned["style"] == "Alignment=8,MarginV=20,Fontsize=24,PrimaryColour=&H00FFFFFF"
+    assert burned["style"] == "Alignment=6,MarginV=20,Fontsize=24,PrimaryColour=&H00FFFFFF"
     db_session.expire_all()
     loaded = (await db_session.execute(
         select(VideoJob).where(VideoJob.id == job_id))).scalar_one()

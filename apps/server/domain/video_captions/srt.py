@@ -40,8 +40,13 @@ def hex_to_ass_color(hex_color: str) -> str:
 
 def build_force_style(position: str, margin_v: int, font_size: int,
                       color: str = "#FFFFFF") -> str:
-    """ffmpeg subtitles filter force_style value. 클라 미리보기와 동일 좌표계."""
-    alignment = 8 if position == "top" else 2
+    """ffmpeg subtitles filter force_style value. 클라 미리보기와 동일 좌표계.
+
+    정렬값은 libass의 legacy SSA 규약을 따른다(ffmpeg subtitles 필터 실측):
+    상단-중앙=6, 하단-중앙=2. numpad 규약의 8을 쓰면 이 필터에서는 '중앙'으로
+    렌더돼 미리보기(상단)와 굽기 결과가 어긋난다.
+    """
+    alignment = 6 if position == "top" else 2
     ass_color = hex_to_ass_color(color)
     return (f"Alignment={alignment},MarginV={margin_v},Fontsize={font_size},"
             f"PrimaryColour={ass_color}")
