@@ -168,14 +168,38 @@ async def create_upload_job(
     return {"job_id": str(external_id)}
 
 
+def _job_dir_size(external_id: UUID | str) -> int:
+    """작업 폴더의 총 바이트. pathlib만 사용 — Windows/POSIX 공통. 스캔 중
+    사라진 파일(동시 프루닝)은 무시한다."""
+    total = 0
+    d = job_dir(external_id)
+    if d.exists():
+        for path in d.rglob("*"):
+            if path.is_file():
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    pass
+    return total
+
+
 @router.get("")
 async def list_video_jobs(
     db: Annotated[AsyncSession, Depends(get_session)],
+    with_sizes: Annotated[bool, Query()] = False,
 ) -> dict:
+    # with_sizes는 작업별 폴더 용량을 스캔한다 — 서버 콘솔 관리 패널 전용 옵트인.
+    # 클라이언트의 3초 폴링 핫패스는 기본값(False)이라 스캔 비용을 지지 않는다.
     jobs = (await db.execute(
         select(VideoJob).order_by(VideoJob.created_at.desc()).limit(100)
     )).scalars().all()
-    return {"items": [_job_out(j) for j in jobs]}
+    items = []
+    for job in jobs:
+        out = _job_out(job)
+        if with_sizes:
+            out["size_bytes"] = _job_dir_size(job.external_id)
+        items.append(out)
+    return {"items": items}
 
 
 @router.get("/translate-engines")

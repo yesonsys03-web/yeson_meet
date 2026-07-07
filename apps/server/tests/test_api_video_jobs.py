@@ -245,6 +245,30 @@ async def test_translate_engines_route_does_not_shadow_detail_route(client, db_s
     assert resp.status_code == 200
 
 
+async def test_list_with_sizes_adds_per_job_bytes(client, db_session, admin_user):
+    from apps.server.domain.video_captions.pipeline import job_dir
+    ext = uuid4()
+    d = job_dir(ext)  # STORAGE_ROOT is tmp_path via the _env fixture
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"y" * 250)
+    job = VideoJob(external_id=ext, owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mp4", whisper_model="small",
+                   status="done")
+    db_session.add(job)
+    await db_session.commit()
+
+    # default: no size_bytes (client hot-poll path stays cheap)
+    plain = await client.get("/api/v1/video-jobs")
+    assert plain.status_code == 200
+    assert "size_bytes" not in plain.json()["items"][0]
+
+    # opt-in: server console asks for per-job folder sizes
+    sized = await client.get("/api/v1/video-jobs?with_sizes=true")
+    assert sized.status_code == 200
+    item = next(j for j in sized.json()["items"] if j["job_id"] == str(ext))
+    assert item["size_bytes"] >= 250
+
+
 async def test_storage_endpoint_reports_usage(client, db_session, admin_user):
     from apps.server.domain.video_captions.pipeline import job_dir
     ext = uuid4()
