@@ -75,3 +75,27 @@ async def test_storage_usage(client, db_session, admin_user, tmp_path):
     body = resp.json()
     assert body["session_count"] >= 1
     assert body["total_bytes"] >= 6
+
+
+async def test_report_view_html(client, db_session, admin_user):
+    s = await _make_session(db_session, admin_user, title="뷰회의")
+    resp = await client.get(f"/api/v1/reports/{s.external_id}/view")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    assert "뷰회의" in resp.text
+
+
+async def test_report_view_404_for_unknown(client):
+    from uuid import uuid4
+    resp = await client.get(f"/api/v1/reports/{uuid4()}/view")
+    assert resp.status_code == 404
+
+
+async def test_summary_view_when_present(client, db_session, admin_user, tmp_path):
+    s = await _make_session(db_session, admin_user)
+    d = tmp_path / str(s.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "summary.md").write_text("핵심 요약 문장", encoding="utf-8")
+    resp = await client.get(f"/api/v1/reports/{s.external_id}/summary/view")
+    assert resp.status_code == 200
+    assert "핵심 요약" in resp.text

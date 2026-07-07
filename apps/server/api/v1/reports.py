@@ -13,12 +13,14 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.server.db.models import Session, Utterance
 from apps.server.db.session import get_session
-from apps.server.domain.reports import report_path, summary_path
+from apps.server.domain.report_html import build_session_report_html, build_summary_html
+from apps.server.domain.reports import regenerate_report_with_summary, report_path, summary_path
 
 router = APIRouter(prefix="/reports", tags=["reports-admin"])
 
@@ -118,3 +120,37 @@ async def storage_usage(db: Annotated[AsyncSession, Depends(get_session)]) -> di
                     pass
     count = (await db.execute(select(func.count()).select_from(Session))).scalar_one()
     return {"total_bytes": total, "session_count": count}
+
+
+async def _load_summary_text(db: AsyncSession, meeting: Session) -> str | None:
+    p = summary_path(_storage_root(), str(meeting.external_id), "md")
+    if p.exists():
+        return p.read_text(encoding="utf-8").strip() or None
+    utterances = await _session_utterances(db, meeting.id)
+    await regenerate_report_with_summary(_storage_root(), meeting, utterances)
+    if p.exists():
+        return p.read_text(encoding="utf-8").strip() or None
+    return None
+
+
+@router.get("/{external_id}/view", response_class=HTMLResponse)
+async def report_view(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> HTMLResponse:
+    meeting = await _get_session_or_404(db, external_id)
+    utterances = await _session_utterances(db, meeting.id)
+    html = build_session_report_html(meeting, utterances)
+    return HTMLResponse(content=html)
+
+
+@router.get("/{external_id}/summary/view", response_class=HTMLResponse)
+async def summary_view(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> HTMLResponse:
+    meeting = await _get_session_or_404(db, external_id)
+    summary = await _load_summary_text(db, meeting)
+    if not summary:
+        return HTMLResponse(content="<p>요약이 아직 없습니다.</p>")
+    return HTMLResponse(content=build_summary_html(meeting, summary))
