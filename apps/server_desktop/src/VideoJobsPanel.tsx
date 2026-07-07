@@ -124,17 +124,32 @@ export default function VideoJobsPanel({ serverPort, running }: Props) {
         </p>
       ) : null}
 
-      {/* 완료·오류 작업 일괄 삭제 (인라인 확인) */}
-      <div style={s.row}>
-        {confirmBulk ? (
-          <>
-            <span style={s.confirmMsg}>완료·오류 {completed.length}개 데이터를 모두 삭제할까요? 되돌릴 수 없습니다.</span>
+      {/* 완료·오류 작업 일괄 삭제 — 무엇이 지워질지 목록으로 명시한 뒤 확인.
+          "선택 삭제 후 남은 것 = 지키려는 것"인데 일괄 삭제가 그걸 쓸어버리는
+          실수를 막기 위해, 삭제 대상 제목/용량을 펼쳐 보여준다. */}
+      {confirmBulk ? (
+        <div style={s.confirmBox}>
+          <div style={s.confirmMsg}>
+            아래 완료·오류 작업 {completed.length}개가 삭제됩니다. 되돌릴 수 없습니다:
+          </div>
+          <ul style={s.confirmList}>
+            {completed.map((j) => (
+              <li key={j.job_id}>
+                {j.title}
+                {j.size_bytes != null ? ` — ${formatBytes(j.size_bytes)}` : ""}
+                {` (${STATUS_LABEL[j.status] ?? j.status})`}
+              </li>
+            ))}
+          </ul>
+          <div style={s.row}>
             <button style={{ ...s.danger, ...(busy ? s.disabled : {}) }} onClick={() => void performDeleteCompleted()} disabled={busy}>
-              정말 삭제
+              위 {completed.length}개 삭제
             </button>
             <button style={s.muted} onClick={() => setConfirmBulk(false)} disabled={busy}>취소</button>
-          </>
-        ) : (
+          </div>
+        </div>
+      ) : (
+        <div style={s.row}>
           <button
             style={{ ...s.danger, ...(busy || completed.length === 0 ? s.disabled : {}) }}
             onClick={() => setConfirmBulk(true)}
@@ -142,8 +157,8 @@ export default function VideoJobsPanel({ serverPort, running }: Props) {
           >
             완료·오류 작업 일괄 삭제{completed.length ? ` (${completed.length})` : ""}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {notice ? <p style={s.success}>{notice}</p> : null}
       {error ? <p style={s.error}>{error}</p> : null}
@@ -190,7 +205,9 @@ const s: Record<string, CSSProperties> = {
   disabled: { opacity: 0.5, cursor: "not-allowed" },
   success: { color: "var(--ys-success-text)", fontSize: 13, margin: "4px 0 0" },
   error: { color: "var(--ys-danger-text)", fontSize: 13, margin: "4px 0 0" },
-  confirmMsg: { fontSize: 13, color: "var(--ys-warning-text)" },
+  confirmBox: { padding: "10px 14px", borderRadius: "var(--ys-radius-md)", border: "1px solid var(--ys-warning-border)", background: "var(--ys-warning-bg)", display: "flex", flexDirection: "column", gap: 8 },
+  confirmMsg: { fontSize: 13, color: "var(--ys-warning-text)", fontWeight: 600 },
+  confirmList: { margin: 0, paddingLeft: 18, maxHeight: 180, overflowY: "auto", fontSize: 12, color: "var(--ys-text-body)", display: "flex", flexDirection: "column", gap: 2 },
   warnInline: { fontSize: 12, color: "var(--ys-warning-text)" },
   jobRow: { display: "flex", alignItems: "center", gap: 12, padding: "6px 0", borderBottom: "1px solid var(--ys-border-subtle)" },
   jobTitle: { fontSize: 13, fontWeight: 600, minWidth: 160, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
