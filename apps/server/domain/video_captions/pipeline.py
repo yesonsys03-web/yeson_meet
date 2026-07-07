@@ -58,6 +58,11 @@ RETENTION_KEEP = 10
 # strong refs so fire-and-forget tasks are not garbage-collected mid-flight
 _tasks: set[asyncio.Task] = set()
 
+# 영상 작업 직렬화: 다중 파일/폴더 배치를 한꺼번에 올려도 서버는 한 번에 하나씩만
+# 처리한다. whisper 전사는 CPU 집약적이라 동시에 여러 개 돌리면 서로 경합해 모두
+# 느려진다 — 세마포어(1)로 순차 처리해 배치 순서를 보장하고 자원 경합을 없앤다.
+_JOB_SEMAPHORE = asyncio.Semaphore(1)
+
 
 def start_task(coro) -> None:
     task = asyncio.create_task(coro)
@@ -114,6 +119,10 @@ async def _try_set_error(external_id: UUID, message: str) -> None:
 
 
 async def run_video_job(external_id: UUID) -> None:
+    # 전역 세마포어로 직렬화 — 획득 전까지 job.status는 'queued'로 남아 UI에
+    # '대기 중'으로 표시된다(생성 시 큐잉된 상태 그대로). acquire는 try 밖에서
+    # 하고 finally에서 반드시 release한다.
+    await _JOB_SEMAPHORE.acquire()
     try:
         async with AsyncSessionLocal() as db:
             job = await _load_job(db, external_id)
@@ -202,6 +211,8 @@ async def run_video_job(external_id: UUID) -> None:
     except Exception as exc:  # noqa: BLE001 — 파이프라인 최종 방어선
         logger.exception("video job %s failed", external_id)
         await _try_set_error(external_id, str(exc)[:1000])
+    finally:
+        _JOB_SEMAPHORE.release()
 
 
 async def fail_inflight_video_jobs_at_startup() -> None:

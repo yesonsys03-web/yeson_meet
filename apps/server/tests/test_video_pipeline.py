@@ -79,6 +79,43 @@ async def test_run_video_job_happy_path(monkeypatch, db_session, admin_user, tmp
     assert [(s.text_en, s.text_ko) for s in segs] == [("Hello", "안녕하세요")]
 
 
+async def test_run_video_job_serialized_by_semaphore(
+        monkeypatch, db_session, admin_user, tmp_path):
+    """여러 영상 작업을 동시에 띄워도 서버는 한 번에 하나씩만 처리해야 한다
+    (다중/폴더 배치 순차 보장 + 동시 whisper 전사 자원 경합 방지)."""
+    import time as _time
+
+    srcA = tmp_path / "a.mp4"; srcA.write_bytes(b"v")
+    srcB = tmp_path / "b.mp4"; srcB.write_bytes(b"v")
+    jobA = await _make_job(db_session, admin_user, media_path=str(srcA))
+    jobB = await _make_job(db_session, admin_user, media_path=str(srcB))
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
+    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d: Path(d).write_bytes(b"a"))
+
+    concur = {"cur": 0, "max": 0}
+
+    def fake_transcribe(p, m, cb=None):
+        concur["cur"] += 1
+        concur["max"] = max(concur["max"], concur["cur"])
+        _time.sleep(0.2)  # hold the stage so an overlap is observable if not serial
+        concur["cur"] -= 1
+        return [SubSegment(1, 0, 1000, "Hi")]
+
+    monkeypatch.setattr(pl, "transcribe_audio", fake_transcribe)
+
+    async def fake_translate(segs, provider, **kw):
+        return [SubSegment(1, 0, 1000, "안녕")]
+
+    monkeypatch.setattr(pl, "translate_segments", fake_translate)
+
+    await asyncio.gather(
+        pl.run_video_job(jobA.external_id), pl.run_video_job(jobB.external_id))
+
+    assert concur["max"] == 1  # never two transcriptions running at once
+
+
 async def test_run_video_job_records_error(monkeypatch, db_session, admin_user, tmp_path):
     src = tmp_path / "clip.mp4"
     src.write_bytes(b"v")

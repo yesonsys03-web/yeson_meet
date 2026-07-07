@@ -7,6 +7,7 @@ import {
 import type {
   TranslateEngineInfo, VideoJobSummary, VideoModelInfo, VideoStorageInfo,
 } from "./videoApi";
+import { filterVideoFiles, uploadBatch } from "./videoBatch";
 import { VideoReviewView } from "./VideoReviewView";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -74,6 +75,18 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const [reviewJobId, setReviewJobId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const [batchStatus, setBatchStatus] = useState<string | null>(null);
+
+  // webkitdirectory는 표준 타입에 없어 JSX 속성으로 못 준다 — 폴더 선택 input에
+  // 직접 붙인다(WKWebView/WebView2 모두 지원). 폴더 안 모든 파일을 넘겨준다.
+  useEffect(() => {
+    const el = folderInputRef.current;
+    if (el) {
+      el.setAttribute("webkitdirectory", "");
+      el.setAttribute("directory", "");
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -117,15 +130,31 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     }
   };
 
-  const submitFile = async (file: File) => {
+  // 다중 파일/폴더 배치 업로드. 드롭다운의 모델·번역엔진을 전체에 동일 적용하고,
+  // 순차로 업로드해 큐에 넣는다(실제 순차 처리는 서버 세마포어가 보장). 한 파일이
+  // 실패해도 배치를 멈추지 않고 나머지를 계속 올린 뒤 결과를 요약해 보여준다.
+  const submitFiles = async (files: File[]) => {
+    if (files.length === 0) {
+      setBatchStatus("업로드할 영상 파일이 없습니다.");
+      return;
+    }
     setBusy(true);
     setError(null);
+    setBatchStatus(null);
+    const cfg = {
+      whisperModel: selectedModel,
+      translateProvider: translateProvider || undefined,
+      translateCliModel: translateProvider === "opencode" ? cliModel : undefined,
+    };
     try {
-      await uploadVideoJob(
-        file, selectedModel, file.name,
-        translateProvider || undefined,
-        translateProvider === "opencode" ? cliModel : undefined,
-      );
+      const res = await uploadBatch(files, cfg, uploadVideoJob, (done, total, current) => {
+        setBatchStatus(done < total ? `업로드 중 ${done + 1}/${total} — ${current}` : null);
+      });
+      const parts = [`${res.ok}개 작업이 시작됐습니다 (순차 처리)`];
+      if (res.failed.length) {
+        parts.push(`${res.failed.length}개 실패: ${res.failed.map((x) => x.name).join(", ")}`);
+      }
+      setBatchStatus(parts.join(" · "));
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -204,13 +233,28 @@ function VideoCaptionInner({ active }: { active: boolean }) {
             onClick={() => fileInputRef.current?.click()}>
             로컬 파일 선택…
           </button>
-          <input ref={fileInputRef} type="file" accept="video/*" hidden
+          <button type="button"
+            style={{ ...consoleStyles.mutedAction, ...(fileDisabled ? consoleStyles.actionDisabled : null) }}
+            disabled={fileDisabled}
+            onClick={() => folderInputRef.current?.click()}>
+            폴더 선택…
+          </button>
+          {/* 다중 선택 지원 — 고른 파일 전부를 순차 업로드 */}
+          <input ref={fileInputRef} type="file" accept="video/*" multiple hidden
             onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void submitFile(file);
+              void submitFiles(Array.from(e.target.files ?? []));
+              e.target.value = "";
+            }} />
+          {/* 폴더 선택(webkitdirectory는 effect에서 부착) — 폴더 내 영상만 골라 순차 업로드 */}
+          <input ref={folderInputRef} type="file" hidden
+            onChange={(e) => {
+              void submitFiles(filterVideoFiles(Array.from(e.target.files ?? [])));
               e.target.value = "";
             }} />
         </div>
+        {batchStatus ? (
+          <p style={{ margin: 0, fontSize: 13, opacity: 0.85 }}>{batchStatus}</p>
+        ) : null}
         {!selectedInstalled ? (
           <p style={{ margin: 0, fontSize: 13, opacity: 0.75 }}>
             선택한 모델이 설치되어 있지 않습니다. 아래에서 먼저 다운로드하세요.
