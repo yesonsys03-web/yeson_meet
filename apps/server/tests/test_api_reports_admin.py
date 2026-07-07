@@ -99,3 +99,24 @@ async def test_summary_view_when_present(client, db_session, admin_user, tmp_pat
     resp = await client.get(f"/api/v1/reports/{s.external_id}/summary/view")
     assert resp.status_code == 200
     assert "핵심 요약" in resp.text
+
+
+async def test_report_download_md(client, db_session, admin_user):
+    s = await _make_session(db_session, admin_user, title="다운회의")
+    resp = await client.get(f"/api/v1/reports/{s.external_id}/download?fmt=md")
+    assert resp.status_code == 200
+    assert "다운회의" in resp.text
+
+
+async def test_report_download_docx_bytes(client, db_session, admin_user):
+    s = await _make_session(db_session, admin_user)
+    resp = await client.get(f"/api/v1/reports/{s.external_id}/download?fmt=docx")
+    assert resp.status_code == 200
+    # docx(zip)는 PK 매직 바이트로 시작
+    assert resp.content[:2] == b"PK"
+
+
+async def test_download_rejects_bad_fmt(client, db_session, admin_user):
+    s = await _make_session(db_session, admin_user)
+    resp = await client.get(f"/api/v1/reports/{s.external_id}/download?fmt=xml")
+    assert resp.status_code == 400

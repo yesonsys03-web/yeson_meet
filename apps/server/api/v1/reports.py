@@ -13,14 +13,21 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.server.db.models import Session, Utterance
 from apps.server.db.session import get_session
+from apps.server.domain.report_docx import build_session_report_docx, build_summary_docx
 from apps.server.domain.report_html import build_session_report_html, build_summary_html
-from apps.server.domain.reports import regenerate_report_with_summary, report_path, summary_path
+from apps.server.domain.report_pdf import convert_docx_to_pdf
+from apps.server.domain.reports import (
+    build_session_report,
+    regenerate_report_with_summary,
+    report_path,
+    summary_path,
+)
 
 router = APIRouter(prefix="/reports", tags=["reports-admin"])
 
@@ -154,3 +161,64 @@ async def summary_view(
     if not summary:
         return HTMLResponse(content="<p>요약이 아직 없습니다.</p>")
     return HTMLResponse(content=build_summary_html(meeting, summary))
+
+
+_MEDIA_TYPES = {
+    "md": "text/markdown; charset=utf-8",
+    "html": "text/html; charset=utf-8",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pdf": "application/pdf",
+}
+
+
+def _check_fmt(fmt: str) -> None:
+    if fmt not in _REPORT_FORMATS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"지원하지 않는 형식: {fmt}")
+
+
+@router.get("/{external_id}/download")
+async def report_download(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+    fmt: Annotated[str, Query()] = "md",
+) -> Response:
+    _check_fmt(fmt)
+    meeting = await _get_session_or_404(db, external_id)
+    utterances = await _session_utterances(db, meeting.id)
+    if fmt == "md":
+        data = build_session_report(meeting, utterances).encode("utf-8")
+    elif fmt == "html":
+        data = build_session_report_html(meeting, utterances).encode("utf-8")
+    elif fmt == "docx":
+        data = build_session_report_docx(meeting, utterances)
+    else:  # pdf
+        pdf = convert_docx_to_pdf(build_session_report_docx(meeting, utterances))
+        if pdf is None:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "PDF 변환 엔진 없음")
+        data = pdf
+    return Response(content=data, media_type=_MEDIA_TYPES[fmt])
+
+
+@router.get("/{external_id}/summary/download")
+async def summary_download(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+    fmt: Annotated[str, Query()] = "md",
+) -> Response:
+    _check_fmt(fmt)
+    meeting = await _get_session_or_404(db, external_id)
+    summary = await _load_summary_text(db, meeting)
+    if not summary:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "요약이 없습니다")
+    if fmt == "md":
+        data = summary.encode("utf-8")
+    elif fmt == "html":
+        data = build_summary_html(meeting, summary).encode("utf-8")
+    elif fmt == "docx":
+        data = build_summary_docx(meeting, summary)
+    else:  # pdf
+        pdf = convert_docx_to_pdf(build_summary_docx(meeting, summary))
+        if pdf is None:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "PDF 변환 엔진 없음")
+        data = pdf
+    return Response(content=data, media_type=_MEDIA_TYPES[fmt])
