@@ -103,3 +103,18 @@ async def list_reports(
         await db.execute(select(Session).order_by(Session.started_at.desc()).limit(200))
     ).scalars().all()
     return {"items": [_row(s, with_sizes=with_sizes) for s in sessions]}
+
+
+@router.get("/storage")
+async def storage_usage(db: Annotated[AsyncSession, Depends(get_session)]) -> dict:
+    root = Path(_storage_root())
+    total = 0
+    if root.exists():
+        for path in root.rglob("*"):
+            if path.is_file():
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    pass
+    count = (await db.execute(select(func.count()).select_from(Session))).scalar_one()
+    return {"total_bytes": total, "session_count": count}

@@ -63,3 +63,15 @@ async def test_list_reports_with_sizes(client, db_session, admin_user, tmp_path)
     resp = await client.get("/api/v1/reports?with_sizes=true")
     row = next(it for it in resp.json()["items"] if it["session_id"] == str(s.external_id))
     assert row["size_bytes"] >= 4
+
+
+async def test_storage_usage(client, db_session, admin_user, tmp_path):
+    s = await _make_session(db_session, admin_user)
+    d = tmp_path / str(s.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "report.md").write_text("abcdef", encoding="utf-8")
+    resp = await client.get("/api/v1/reports/storage")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["session_count"] >= 1
+    assert body["total_bytes"] >= 6
