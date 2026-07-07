@@ -53,7 +53,7 @@ _INFLIGHT_STATUSES = ("queued", "ingesting", "extracting", "transcribing",
                       "translating", "burning")
 
 # 자막 메이커가 무한정 쌓이지 않도록 유지할 최근 작업 수 (개수 상한 정책).
-RETENTION_KEEP = 10
+RETENTION_KEEP = 30
 
 # strong refs so fire-and-forget tasks are not garbage-collected mid-flight
 _tasks: set[asyncio.Task] = set()

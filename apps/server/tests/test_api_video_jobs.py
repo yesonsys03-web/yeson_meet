@@ -286,7 +286,7 @@ async def test_storage_endpoint_reports_usage(client, db_session, admin_user):
     body = resp.json()
     assert body["total_bytes"] >= 100
     assert body["job_count"] == 1
-    assert body["keep"] == 10
+    assert body["keep"] == 30
 
 
 async def test_create_job_rejects_invalid_translate_provider(client, admin_user):
