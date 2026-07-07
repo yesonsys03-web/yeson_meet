@@ -1,5 +1,5 @@
 // === ANCHOR: VIDEO_JOBS_PANEL_START ===
-// 서버 콘솔의 "자막메이커 데이터 삭제" 패널. 자막 메이커는 작업마다 원본/preview/
+// 서버 콘솔의 "자막메이커 데이터 관리" 패널. 자막 메이커는 작업마다 원본/preview/
 // burned mp4를 서버 스토리지에 쌓는다 — 파일이 서버에 있으니 관리(조회/용량/삭제)도
 // 서버 control plane에서 한다(deviceAdmin/BackupPanel과 동일 사상). 무인증 loopback
 // REST라 로그인 게이트가 없다. 자동 리텐션(최근 N개 유지)의 보완: 운영자가 특정
@@ -113,7 +113,7 @@ export default function VideoJobsPanel({ serverPort, running }: Props) {
   return (
     <div style={s.wrap}>
       <div style={s.headRow}>
-        <h2 style={s.title}>자막메이커 데이터 삭제</h2>
+        <h2 style={s.title}>자막메이커 데이터 관리</h2>
         <button style={s.muted} onClick={() => void refresh()} disabled={busy}>새로고침</button>
       </div>
 

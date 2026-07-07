@@ -381,7 +381,7 @@ export default function ServerConsole() {
     { view: "config", label: "Config" },
     { view: "devices", label: "Devices" },
     { view: "backup", label: "Backup" },
-    { view: "video", label: "자막메이커 데이터 삭제" },
+    { view: "video", label: "자막메이커 데이터 관리" },
   ];
 
   const visibleLogs = filterLogEntries(logs, logLevel, logQuery);
