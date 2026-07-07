@@ -36,6 +36,7 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<null | "video" | "srt">(null);
   const [videoHeight, setVideoHeight] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -116,37 +117,46 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
   const download = async (kind: "video" | "srt") => {
     setError(null);
     setNotice(null);
-    const safeTitle = sanitizeFilename(job.title);
-    const suggestedName = kind === "srt" ? `${safeTitle}.srt` : `${safeTitle}-captioned.mp4`;
+    setDownloading(kind); // 즉시 클릭 피드백 (버튼 라벨/비활성화)
+    // 전체를 try로 감싼다 — 예전엔 save()가 try 밖이라 저장 다이얼로그/권한 오류가
+    // void로 삼켜져 "아무 반응 없음"으로 보였다. finally에서 상태를 항상 되돌린다.
+    try {
+      const safeTitle = sanitizeFilename(job.title);
+      const suggestedName = kind === "srt" ? `${safeTitle}.srt` : `${safeTitle}-captioned.mp4`;
 
-    if (!hasTauriRuntime()) {
-      // 브라우저 dev 폴백: 저장 위치를 고를 수 없는 기존 blob 다운로드 방식.
-      const response = await fetch(videoDownloadUrl(jobId, kind));
-      if (!response.ok) {
-        setError(`다운로드 실패: HTTP ${response.status}`);
+      if (!hasTauriRuntime()) {
+        // 브라우저 dev 폴백: 저장 위치를 고를 수 없는 기존 blob 다운로드 방식.
+        const response = await fetch(videoDownloadUrl(jobId, kind));
+        if (!response.ok) {
+          setError(`다운로드 실패: HTTP ${response.status}`);
+          return;
+        }
+        const blob = await response.blob();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = suggestedName;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        setNotice(`다운로드됨: ${suggestedName}`);
         return;
       }
-      const blob = await response.blob();
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = suggestedName;
-      a.click();
-      URL.revokeObjectURL(a.href);
-      return;
-    }
 
-    // Tauri 경로: 저장 다이얼로그로 위치·파일명을 먼저 고른 뒤 파일을 내려받는다.
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const path = await save({
-      defaultPath: suggestedName,
-      filters: [{
-        name: kind === "video" ? "MP4 video" : "SRT subtitle",
-        extensions: [kind === "video" ? "mp4" : "srt"],
-      }],
-    });
-    if (!path) return; // 사용자 취소
+      // Tauri 경로: 저장 다이얼로그로 위치·파일명을 먼저 고른 뒤 파일을 내려받는다.
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const path = await save({
+        defaultPath: suggestedName,
+        filters: [{
+          name: kind === "video" ? "MP4 video" : "SRT subtitle",
+          extensions: [kind === "video" ? "mp4" : "srt"],
+        }],
+      });
+      if (!path) {
+        setNotice("저장이 취소되었습니다.");
+        return;
+      }
 
-    try {
+      // 대용량 MP4는 fetch+저장에 수 초 걸리므로 진행 중임을 알린다.
+      setNotice(kind === "video" ? "영상을 내려받는 중…" : "자막을 내려받는 중…");
       const response = await fetch(videoDownloadUrl(jobId, kind));
       if (!response.ok) {
         setError(`다운로드 실패: HTTP ${response.status}`);
@@ -160,6 +170,8 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
       setNotice(`저장됨: ${path}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloading(null);
     }
   };
 
@@ -276,13 +288,17 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
             ) : null}
             {job.status === "done" ? (
               <>
-                <button type="button" style={consoleStyles.mutedAction}
+                <button type="button"
+                  style={{ ...consoleStyles.mutedAction, ...(downloading ? consoleStyles.actionDisabled : null) }}
+                  disabled={downloading !== null}
                   onClick={() => void download("video")}>
-                  MP4 다운로드
+                  {downloading === "video" ? "MP4 준비 중…" : "MP4 다운로드"}
                 </button>
-                <button type="button" style={consoleStyles.mutedAction}
+                <button type="button"
+                  style={{ ...consoleStyles.mutedAction, ...(downloading ? consoleStyles.actionDisabled : null) }}
+                  disabled={downloading !== null}
                   onClick={() => void download("srt")}>
-                  SRT 다운로드
+                  {downloading === "srt" ? "SRT 준비 중…" : "SRT 다운로드"}
                 </button>
               </>
             ) : null}

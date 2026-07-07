@@ -18,14 +18,18 @@ from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
                      UploadFile, status)
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.server.db.models import AppUser, VideoJob, VideoSegment
 from apps.server.db.session import get_session
 from apps.server.domain.video_captions.ingest import save_upload
-from apps.server.domain.video_captions.pipeline import (job_dir, run_burn_job,
-                                                        run_video_job, start_task)
+from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
+                                                        cancel_job_task, job_dir,
+                                                        prune_old_video_jobs,
+                                                        run_burn_job, run_video_job,
+                                                        start_job_task, start_task,
+                                                        video_jobs_root)
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
 from apps.server.domain.video_captions.translate_cli import list_translate_engines
 from apps.server.domain.video_captions.whisper_models import CATALOG, is_downloaded
@@ -34,12 +38,19 @@ router = APIRouter(tags=["video-jobs"], prefix="/video-jobs")
 
 
 def _start_pipeline(external_id: UUID) -> None:  # test seam
-    start_task(run_video_job(external_id))
+    start_job_task(external_id, run_video_job(external_id))
 
 
 def _start_burn(external_id: UUID, position: str, margin_v: int,
                 font_size: int, color: str) -> None:  # test seam
-    start_task(run_burn_job(external_id, position, margin_v, font_size, color))
+    start_job_task(external_id,
+                   run_burn_job(external_id, position, margin_v, font_size, color))
+
+
+def _prune_old_jobs() -> None:  # test seam
+    # 새 작업이 생길 때마다 최근 RETENTION_KEEP개만 유지 (개수 상한 정책). 응답을
+    # 막지 않도록 fire-and-forget — 방금 만든 작업은 in-flight라 삭제 대상 제외.
+    start_task(prune_old_video_jobs())
 
 
 class VideoJobCreateIn(BaseModel):
@@ -120,6 +131,7 @@ async def create_video_job(
                    status="queued")
     db.add(job)
     await db.commit()
+    _prune_old_jobs()
     _start_pipeline(job.external_id)
     return {"job_id": str(job.external_id)}
 
@@ -154,18 +166,43 @@ async def create_upload_job(
         # 실패 시 방금 쓴 파일/디렉터리 정리 — DB 행 없는 고아 파일 방지
         shutil.rmtree(job_dir(external_id), ignore_errors=True)
         raise
+    _prune_old_jobs()
     _start_pipeline(external_id)
     return {"job_id": str(external_id)}
+
+
+def _job_dir_size(external_id: UUID | str) -> int:
+    """작업 폴더의 총 바이트. pathlib만 사용 — Windows/POSIX 공통. 스캔 중
+    사라진 파일(동시 프루닝)은 무시한다."""
+    total = 0
+    d = job_dir(external_id)
+    if d.exists():
+        for path in d.rglob("*"):
+            if path.is_file():
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    pass
+    return total
 
 
 @router.get("")
 async def list_video_jobs(
     db: Annotated[AsyncSession, Depends(get_session)],
+    with_sizes: Annotated[bool, Query()] = False,
 ) -> dict:
+    # with_sizes는 작업별 폴더 용량을 스캔한다 — 서버 콘솔 관리 패널 전용 옵트인.
+    # 클라이언트의 3초 폴링 핫패스는 기본값(False)이라 스캔 비용을 지지 않는다.
     jobs = (await db.execute(
         select(VideoJob).order_by(VideoJob.created_at.desc()).limit(100)
     )).scalars().all()
-    return {"items": [_job_out(j) for j in jobs]}
+    items = []
+    for job in jobs:
+        out = _job_out(job)
+        if with_sizes:
+            out["size_bytes"] = _job_dir_size(job.external_id)
+        items.append(out)
+    return {"items": items}
 
 
 @router.get("/translate-engines")
@@ -173,6 +210,25 @@ async def get_translate_engines() -> dict:
     # 반드시 /{external_id} 동적 라우트보다 먼저 선언 — 선언 순서 매칭이라
     # 뒤에 두면 "translate-engines"가 UUID로 파싱 시도되어 422가 난다.
     return {"engines": list_translate_engines()}
+
+
+@router.get("/storage")
+async def get_storage_usage(
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    # 반드시 /{external_id} 동적 라우트보다 먼저 선언 — translate-engines와 동일 이유.
+    root = video_jobs_root()
+    total = 0
+    if root.exists():
+        for path in root.rglob("*"):
+            if path.is_file():
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    pass  # 스캔 도중 사라진 파일은 무시
+    count = (await db.execute(
+        select(func.count()).select_from(VideoJob))).scalar_one()
+    return {"total_bytes": total, "job_count": count, "keep": RETENTION_KEEP}
 
 
 @router.get("/{external_id}")
@@ -279,6 +335,10 @@ async def delete_video_job(
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> None:
     job = await _get_job_or_404(db, external_id)
+    # 실행 중인 파이프라인이 있으면 먼저 취소한다 — 세마포어를 즉시 반납해 대기 중인
+    # 다음 작업이 진행되고, 지워진 행/파일에 대한 NoResultFound·FileNotFound를 반복하는
+    # 좀비 태스크를 막는다. 취소 후 폴더/행 삭제.
+    cancel_job_task(external_id)
     shutil.rmtree(job_dir(external_id), ignore_errors=True)
     await db.delete(job)
     await db.commit()

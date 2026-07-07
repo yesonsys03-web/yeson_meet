@@ -517,12 +517,14 @@ async def test_create_schema_adds_video_job_translate_columns_on_existing_db(
     before = await _video_job_columns()
     assert "translate_provider" not in before
     assert "translate_cli_model" not in before
+    assert "duration_ms" not in before
 
     await seed_mod.create_schema()
 
     after = await _video_job_columns()
     assert "translate_provider" in after
     assert "translate_cli_model" in after
+    assert "duration_ms" in after
     # All old columns preserved (additive, not destructive).
     assert before <= after
 

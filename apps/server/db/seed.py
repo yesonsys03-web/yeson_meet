@@ -93,6 +93,9 @@ async def create_schema() -> None:
                 if "translate_cli_model" not in existing:
                     await conn.exec_driver_sql(
                         "ALTER TABLE video_job ADD COLUMN translate_cli_model VARCHAR(128)")
+                if "duration_ms" not in existing:
+                    await conn.exec_driver_sql(
+                        "ALTER TABLE video_job ADD COLUMN duration_ms INTEGER")
 # === ANCHOR: SEED_CREATE_SCHEMA_END ===
 
 

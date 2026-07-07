@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -67,10 +69,86 @@ async def test_run_video_job_happy_path(monkeypatch, db_session, admin_user, tmp
     loaded = (await db_session.execute(
         select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
     assert loaded.status == "review"
-    assert loaded.audio_path is not None
+    # audio.wav는 전사 후 유일 소비자가 사라지므로 즉시 삭제되고, 굽기 진행률
+    # 분모로 쓰던 길이는 duration_ms로 DB에 남는다 (b"a" 가짜 wav는 wave 파싱
+    # 실패 → 세그먼트 최대 end_ms 폴백).
+    assert loaded.audio_path is None
+    assert loaded.duration_ms == 1000
     segs = (await db_session.execute(
         select(VideoSegment).where(VideoSegment.job_id == job_id))).scalars().all()
     assert [(s.text_en, s.text_ko) for s in segs] == [("Hello", "안녕하세요")]
+
+
+async def test_run_video_job_serialized_by_semaphore(
+        monkeypatch, db_session, admin_user, tmp_path):
+    """여러 영상 작업을 동시에 띄워도 서버는 한 번에 하나씩만 처리해야 한다
+    (다중/폴더 배치 순차 보장 + 동시 whisper 전사 자원 경합 방지)."""
+    import time as _time
+
+    srcA = tmp_path / "a.mp4"; srcA.write_bytes(b"v")
+    srcB = tmp_path / "b.mp4"; srcB.write_bytes(b"v")
+    jobA = await _make_job(db_session, admin_user, media_path=str(srcA))
+    jobB = await _make_job(db_session, admin_user, media_path=str(srcB))
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
+    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d: Path(d).write_bytes(b"a"))
+
+    concur = {"cur": 0, "max": 0}
+
+    def fake_transcribe(p, m, cb=None):
+        concur["cur"] += 1
+        concur["max"] = max(concur["max"], concur["cur"])
+        _time.sleep(0.2)  # hold the stage so an overlap is observable if not serial
+        concur["cur"] -= 1
+        return [SubSegment(1, 0, 1000, "Hi")]
+
+    monkeypatch.setattr(pl, "transcribe_audio", fake_transcribe)
+
+    async def fake_translate(segs, provider, **kw):
+        return [SubSegment(1, 0, 1000, "안녕")]
+
+    monkeypatch.setattr(pl, "translate_segments", fake_translate)
+
+    await asyncio.gather(
+        pl.run_video_job(jobA.external_id), pl.run_video_job(jobB.external_id))
+
+    assert concur["max"] == 1  # never two transcriptions running at once
+
+
+async def test_cancel_job_task_releases_semaphore(
+        monkeypatch, db_session, admin_user, tmp_path):
+    """실행 중인 작업을 삭제(취소)하면 그 파이프라인 태스크가 즉시 멈추고 세마포어를
+    반납해야 한다. 안 그러면 좀비 태스크가 세마포어를 쥔 채 다른 작업을 무한 대기
+    시키고 NoResultFound/FileNotFound 에러를 반복한다(실사용 버그)."""
+    src = tmp_path / "a.mp4"; src.write_bytes(b"v")
+    job = await _make_job(db_session, admin_user, media_path=str(src))
+    ext = job.external_id
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
+    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d: Path(d).write_bytes(b"a"))
+    monkeypatch.setattr(pl, "transcribe_audio",
+                        lambda p, m, cb=None: [SubSegment(1, 0, 1000, "Hi")])
+
+    reached = asyncio.Event()
+    blocking = asyncio.Event()
+
+    async def fake_translate(segs, provider, **kw):
+        reached.set()
+        await blocking.wait()  # hold the semaphore (cancellable await) until cancelled
+        return [SubSegment(1, 0, 1000, "안녕")]
+
+    monkeypatch.setattr(pl, "translate_segments", fake_translate)
+
+    pl.start_job_task(ext, pl.run_video_job(ext))
+    await asyncio.wait_for(reached.wait(), timeout=5)
+    assert pl._JOB_SEMAPHORE.locked()  # job is mid-flight holding the semaphore
+
+    assert pl.cancel_job_task(ext) is True
+    await asyncio.sleep(0.1)  # let CancelledError propagate through the finally
+    assert not pl._JOB_SEMAPHORE.locked()  # semaphore released → queue can proceed
+    assert pl.cancel_job_task(ext) is False  # nothing left to cancel
 
 
 async def test_run_video_job_records_error(monkeypatch, db_session, admin_user, tmp_path):
@@ -109,7 +187,7 @@ async def test_run_burn_job(monkeypatch, db_session, admin_user, tmp_path):
 
     await pl.run_burn_job(external_id, "top", 20, 24)
 
-    assert burned["style"] == "Alignment=8,MarginV=20,Fontsize=24,PrimaryColour=&H00FFFFFF"
+    assert burned["style"] == "Alignment=6,MarginV=20,Fontsize=24,PrimaryColour=&H00FFFFFF"
     db_session.expire_all()
     loaded = (await db_session.execute(
         select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
@@ -153,3 +231,192 @@ async def test_startup_sweep_skipped_when_another_instance_serving(
     loaded = (await db_session.execute(
         select(VideoJob).where(VideoJob.external_id == external_id))).scalar_one()
     assert loaded.status == "transcribing"
+
+
+async def _make_dated_job(db_session, admin_user, created_at, *, status="done"):
+    job = VideoJob(
+        external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+        source_type="upload", source_ref="clip.mp4", whisper_model="small",
+        status=status, created_at=created_at)
+    db_session.add(job)
+    await db_session.commit()
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    return job
+
+
+async def test_prune_keeps_most_recent_n(db_session, admin_user):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    jobs = [await _make_dated_job(db_session, admin_user, base + timedelta(minutes=i))
+            for i in range(12)]  # index 0 = oldest, 11 = newest
+    ext = [j.external_id for j in jobs]  # capture before expiry/deletion
+
+    removed = await pl.prune_old_video_jobs(keep=10)
+
+    assert removed == 2
+    db_session.expire_all()
+    surviving = {r.external_id for r in (await db_session.execute(
+        select(VideoJob))).scalars()}
+    # 10 newest remain; 2 oldest gone from DB and disk
+    assert ext[0] not in surviving
+    assert ext[1] not in surviving
+    assert not pl.job_dir(ext[0]).exists()
+    assert not pl.job_dir(ext[1]).exists()
+    for e in ext[2:]:
+        assert e in surviving
+        assert pl.job_dir(e).exists()
+
+
+async def test_prune_never_deletes_inflight_job(db_session, admin_user):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    # oldest job is still burning — must survive even though it is beyond keep=10
+    burning = await _make_dated_job(db_session, admin_user, base, status="burning")
+    older_done = await _make_dated_job(
+        db_session, admin_user, base + timedelta(minutes=1), status="done")
+    recent = [await _make_dated_job(
+        db_session, admin_user, base + timedelta(minutes=2 + i))
+        for i in range(10)]
+    burning_ext = burning.external_id
+    older_done_ext = older_done.external_id
+    recent_ext = [j.external_id for j in recent]
+
+    removed = await pl.prune_old_video_jobs(keep=10)
+
+    assert removed == 1  # only older_done pruned; burning protected
+    db_session.expire_all()
+    surviving = {r.external_id for r in (await db_session.execute(
+        select(VideoJob))).scalars()}
+    assert burning_ext in surviving
+    assert pl.job_dir(burning_ext).exists()
+    assert older_done_ext not in surviving
+    assert all(e in surviving for e in recent_ext)
+
+
+async def test_prune_at_startup_skipped_when_another_instance_serving(
+        db_session, admin_user, monkeypatch):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for i in range(12):
+        await _make_dated_job(db_session, admin_user, base + timedelta(minutes=i))
+    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: True)
+
+    removed = await pl.prune_old_video_jobs_at_startup()
+
+    assert removed == 0  # non-owning double-start must not prune the live instance
+    db_session.expire_all()
+    remaining = (await db_session.execute(
+        select(VideoJob))).scalars().all()
+    assert len(remaining) == 12
+
+
+async def test_prune_reasserts_status_at_delete_time(
+        monkeypatch, db_session, admin_user):
+    """SELECT와 DELETE 사이에 review→burning으로 전이한 작업은 지우면 안 된다.
+
+    스냅샷에서는 review(정당한 프루닝 후보)였다가, DELETE 직전에 굽기가
+    시작(POST /burn)돼 burning이 된 작업. 상태 재확인 가드가 이를 살려야 한다.
+    """
+    from sqlalchemy import update as sa_update
+
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    review_job = await _make_dated_job(db_session, admin_user, base, status="review")
+    review_ext, review_pk = review_job.external_id, review_job.id
+    for i in range(10):
+        await _make_dated_job(db_session, admin_user, base + timedelta(minutes=1 + i))
+
+    async def flip_to_burning(candidate_ids):
+        # the exact TOCTOU window: snapshot already taken, delete not yet issued
+        assert review_pk in candidate_ids
+        async with pl.AsyncSessionLocal() as db:
+            await db.execute(sa_update(VideoJob)
+                             .where(VideoJob.id == review_pk)
+                             .values(status="burning"))
+            await db.commit()
+
+    monkeypatch.setattr(pl, "_prune_pre_delete_hook", flip_to_burning)
+
+    removed = await pl.prune_old_video_jobs(keep=10)
+
+    assert removed == 0  # the now-burning job is spared by the delete-time guard
+    db_session.expire_all()
+    surviving = {r.external_id for r in (await db_session.execute(
+        select(VideoJob))).scalars()}
+    assert review_ext in surviving
+    assert pl.job_dir(review_ext).exists()
+
+
+async def test_run_video_job_deletes_audio_after_transcribe(
+        monkeypatch, db_session, admin_user, tmp_path):
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"v")
+    job = await _make_job(db_session, admin_user, media_path=str(src))
+    external_id = job.external_id
+    audio_seen = {}
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
+
+    def fake_extract(f, s, d):
+        Path(d).write_bytes(b"a")
+
+    def fake_transcribe(p, m, cb=None):
+        # the wav must still exist while transcription consumes it
+        audio_seen["exists_during"] = Path(p).exists()
+        return [SubSegment(1, 0, 2500, "Hello")]
+
+    monkeypatch.setattr(pl, "extract_audio", fake_extract)
+    monkeypatch.setattr(pl, "transcribe_audio", fake_transcribe)
+
+    async def fake_translate(segs, provider, **kw):
+        return [SubSegment(1, 0, 2500, "안녕")]
+
+    monkeypatch.setattr(pl, "translate_segments", fake_translate)
+
+    await pl.run_video_job(external_id)
+
+    assert audio_seen["exists_during"] is True
+    assert not (pl.job_dir(external_id) / "audio.wav").exists()
+    db_session.expire_all()
+    loaded = (await db_session.execute(
+        select(VideoJob).where(VideoJob.external_id == external_id))).scalar_one()
+    assert loaded.audio_path is None
+    assert loaded.duration_ms == 2500
+
+
+async def test_run_burn_job_uses_stored_duration_without_wav(
+        monkeypatch, db_session, admin_user, tmp_path):
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"v")
+    job = await _make_job(db_session, admin_user, media_path=str(src), status="review")
+    job.duration_ms = 4000
+    await db_session.commit()
+    job_id, external_id = job.id, job.external_id
+    db_session.add(VideoSegment(job_id=job_id, seq=1, start_ms=0, end_ms=1000,
+                                text_en="Hello", text_ko="안녕"))
+    await db_session.commit()
+
+    progress_pcts: list[int] = []
+
+    async def fake_set_progress(eid, pct):
+        progress_pcts.append(pct)
+
+    monkeypatch.setattr(pl, "_set_progress", fake_set_progress)
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None):
+        # duration must come from duration_ms (4.0s), NOT the segment max (1.0s),
+        # so a progress callback at 2s maps to 50% (would be 100%-capped otherwise).
+        assert progress_cb is not None
+        progress_cb(2.0)
+        Path(dst).write_bytes(b"out")
+
+    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+
+    await pl.run_burn_job(external_id, "bottom", 40, 18)
+    await asyncio.sleep(0)  # let the thread-scheduled progress callback drain
+
+    assert 50 in progress_pcts
+    db_session.expire_all()
+    loaded = (await db_session.execute(
+        select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
+    assert loaded.status == "done"

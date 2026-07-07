@@ -24,10 +24,12 @@ def test_srt_strips_newlines_inside_text():
 
 
 def test_build_force_style_bottom_and_top():
+    # libass(ffmpeg subtitles 필터)는 legacy SSA 정렬 규약 — 상단-중앙은 6이다
+    # (numpad의 8은 이 규약에서 '중앙'으로 렌더됨). 하단-중앙 2는 두 규약이 동일.
     assert build_force_style("bottom", 40, 18) == (
         "Alignment=2,MarginV=40,Fontsize=18,PrimaryColour=&H00FFFFFF")
     assert build_force_style("top", 20, 24) == (
-        "Alignment=8,MarginV=20,Fontsize=24,PrimaryColour=&H00FFFFFF")
+        "Alignment=6,MarginV=20,Fontsize=24,PrimaryColour=&H00FFFFFF")
 
 
 def test_build_force_style_with_custom_color():
