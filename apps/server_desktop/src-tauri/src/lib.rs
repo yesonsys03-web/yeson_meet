@@ -4,6 +4,7 @@ mod diagnostics;
 #[cfg(windows)]
 mod job;
 mod orphan_reaper;
+mod report_dialog;
 mod restore;
 mod server_config;
 mod server_process;
@@ -33,6 +34,7 @@ pub fn run() {
             diagnostics::save_app_log,
             diagnostics::open_log_dir,
             backup_dialog::pick_backup_dir,
+            report_dialog::save_report_bytes,
             server_process::start_server,
             server_process::stop_server,
             server_process::server_status,

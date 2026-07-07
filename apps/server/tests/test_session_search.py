@@ -238,6 +238,53 @@ async def test_reindex_idempotent_and_summary_indexed(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_fts_row_deleted_by_session_pk_key(tmp_path: Path) -> None:
+    """Mirrors the DELETE /api/v1/reports/{external_id}/session FTS-cleanup line:
+    ``DELETE FROM session_search_fts WHERE session_id = :sid`` with
+    ``sid = str(session_pk)``. Never exercised on the Postgres-backed conftest
+    suite (fts5_available is False there) but this IS the branch that runs in
+    the SQLite production bundle — needs its own direct SQLite proof."""
+    engine = await _sqlite_engine(tmp_path)
+    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+    async with factory() as db:
+        await reindex_session_fts(db, 11, [("안녕", "hello")], "요약")
+        await reindex_session_fts(db, 22, [("반가워", "hi there")], "요약2")
+        await db.commit()
+
+        # Both sessions' rows exist before the delete.
+        n_11 = (await db.execute(
+            text("SELECT count(*) FROM session_search_fts WHERE session_id = :sid"),
+            {"sid": str(11)},
+        )).scalar()
+        n_22 = (await db.execute(
+            text("SELECT count(*) FROM session_search_fts WHERE session_id = :sid"),
+            {"sid": str(22)},
+        )).scalar()
+        assert n_11 > 0
+        assert n_22 > 0
+
+        # The exact statement the endpoint runs on meeting deletion.
+        await db.execute(
+            text("DELETE FROM session_search_fts WHERE session_id = :sid"),
+            {"sid": str(11)},
+        )
+        await db.commit()
+
+        n_11_after = (await db.execute(
+            text("SELECT count(*) FROM session_search_fts WHERE session_id = :sid"),
+            {"sid": str(11)},
+        )).scalar()
+        n_22_after = (await db.execute(
+            text("SELECT count(*) FROM session_search_fts WHERE session_id = :sid"),
+            {"sid": str(22)},
+        )).scalar()
+        assert n_11_after == 0
+        assert n_22_after == n_22  # a different session_pk's rows are untouched
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_create_schema_creates_fts_table(tmp_path: Path, monkeypatch) -> None:
     """The cold-bundle create_schema() path creates the FTS table on SQLite."""
     import apps.server.db.seed as seed_mod

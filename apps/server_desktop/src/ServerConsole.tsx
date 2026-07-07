@@ -9,6 +9,7 @@ import TunnelDegradedBanner from "./TunnelDegradedBanner";
 import DevicePanel from "./DevicePanel";
 import BackupPanel from "./BackupPanel";
 import VideoJobsPanel from "./VideoJobsPanel";
+import ReportsPanel from "./ReportsPanel";
 
 type ServerStatus = {
   running: boolean;
@@ -120,7 +121,7 @@ export default function ServerConsole() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<AppLogEntry[]>([]);
-  type View = "logs" | "config" | "devices" | "backup" | "video";
+  type View = "logs" | "config" | "devices" | "backup" | "reports" | "video";
   const [activeView, setActiveView] = useState<View>("logs");
   const [logLevel, setLogLevel] = useState<AppLogEntry["level"] | "all">("all");
   const [logQuery, setLogQuery] = useState("");
@@ -381,6 +382,7 @@ export default function ServerConsole() {
     { view: "config", label: "Config" },
     { view: "devices", label: "Devices" },
     { view: "backup", label: "Backup" },
+    { view: "reports", label: "보고서 관리" },
     { view: "video", label: "자막메이커 데이터 관리" },
   ];
 
@@ -582,6 +584,9 @@ export default function ServerConsole() {
           </section>
           <section hidden={activeView !== "backup"} style={activeView === "backup" ? styles.viewScroll : undefined}>
             <BackupPanel serverPort={status?.port ?? null} running={running} />
+          </section>
+          <section hidden={activeView !== "reports"} style={activeView === "reports" ? styles.viewScroll : undefined}>
+            <ReportsPanel serverPort={status?.port ?? null} running={running} />
           </section>
           <section hidden={activeView !== "video"} style={activeView === "video" ? styles.viewScroll : undefined}>
             <VideoJobsPanel serverPort={status?.port ?? null} running={running} />
