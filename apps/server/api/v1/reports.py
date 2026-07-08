@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
@@ -41,6 +42,19 @@ def _storage_root() -> str:
 
 def _report_dir(sid: str) -> Path:
     return Path(_storage_root()) / sid
+
+
+def _iso_utc(value: datetime | None) -> str | None:
+    """NAIVE UTC 저장 관례 → tz 붙여 직렬화.
+
+    tz 접미사 없이 내보내면 클라이언트 new Date(iso)가 로컬 시각으로 오해해
+    UTC 오프셋만큼 어긋나 보인다(sessions.py _serialize_utc와 동일 이유 —
+    보고서 관리 탭 '시작'이 9시간 틀리게 보이던 버그, 2026-07-08)."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
 
 
 def _report_files_size(sid: str) -> int:
@@ -101,8 +115,8 @@ def _row(meeting: Session, *, with_sizes: bool) -> dict:
         "session_id": sid,
         "title": meeting.title,
         "status": meeting.status,
-        "started_at": meeting.started_at.isoformat() if meeting.started_at else None,
-        "ended_at": meeting.ended_at.isoformat() if meeting.ended_at else None,
+        "started_at": _iso_utc(meeting.started_at),
+        "ended_at": _iso_utc(meeting.ended_at),
         "report_ready": _report_ready(meeting),
         "summary_ready": _summary_ready(meeting),
     }
@@ -117,7 +131,9 @@ async def list_reports(
     with_sizes: Annotated[bool, Query()] = False,
 ) -> dict:
     sessions = (
-        await db.execute(select(Session).order_by(Session.started_at.desc()).limit(200))
+        await db.execute(select(Session)
+                         .order_by(Session.started_at.desc(), Session.id.desc())
+                         .limit(200))
     ).scalars().all()
     return {"items": [_row(s, with_sizes=with_sizes) for s in sessions]}
 

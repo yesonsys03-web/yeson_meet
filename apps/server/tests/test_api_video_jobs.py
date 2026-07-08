@@ -390,3 +390,32 @@ async def test_cancel_rejects_finished_job(client, db_session, admin_user):
     await db_session.commit()
     resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/cancel")
     assert resp.status_code == 409
+
+
+async def test_list_orders_same_second_jobs_by_id_desc(client, db_session, admin_user):
+    # 일괄 업로드는 여러 작업이 같은 초(created_at)에 생긴다 — id 타이브레이커로
+    # 생성 역순이 안정적으로 유지되는지 검증(정렬 뒤섞임 회귀 가드).
+    from datetime import datetime
+
+    ts = datetime(2026, 7, 8, 6, 0, 0)
+    for i in range(3):
+        db_session.add(VideoJob(external_id=uuid4(), owner_user_id=admin_user.id,
+                                title=f"clip-{i}", source_type="upload",
+                                source_ref=f"c{i}.mp4", whisper_model="small",
+                                status="queued", created_at=ts))
+    await db_session.commit()
+
+    resp = await client.get("/api/v1/video-jobs")
+    titles = [j["title"] for j in resp.json()["items"]]
+    assert titles[:3] == ["clip-2", "clip-1", "clip-0"]
+
+
+async def test_job_created_at_serialized_with_utc_offset(client, db_session, admin_user):
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mp4",
+                   whisper_model="small", status="queued")
+    db_session.add(job)
+    await db_session.commit()
+    resp = await client.get("/api/v1/video-jobs")
+    created = resp.json()["items"][0]["created_at"]
+    assert created.endswith("+00:00") or created.endswith("Z")
