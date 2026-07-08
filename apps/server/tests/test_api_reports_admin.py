@@ -77,6 +77,30 @@ async def test_storage_usage(client, db_session, admin_user, tmp_path):
     assert body["total_bytes"] >= 6
 
 
+async def test_storage_usage_excludes_non_report_files(client, db_session, admin_user, tmp_path):
+    """스토리지 사용량은 report.*/summary.*만 세고, video_jobs 등 무관한
+    대용량 산출물(자막메이커 mp4)은 제외해야 한다 — 트리 전체 합산 회귀 방지."""
+    s = await _make_session(db_session, admin_user)
+    sd = tmp_path / str(s.external_id)
+    sd.mkdir(parents=True, exist_ok=True)
+    (sd / "report.md").write_text("abcdef", encoding="utf-8")  # 6 bytes, 세어야 함
+    # STORAGE_ROOT/video_jobs/<id>/source.mp4 — 보고서와 무관, 제외돼야 함
+    vd = tmp_path / "video_jobs" / "job1"
+    vd.mkdir(parents=True, exist_ok=True)
+    (vd / "source.mp4").write_bytes(b"x" * 5_000_000)  # 5MB
+    # 세션 디렉토리 안의 비-보고서 파일도 제외돼야 함
+    (sd / "recording.wav").write_bytes(b"y" * 3_000_000)  # 3MB
+
+    resp = await client.get("/api/v1/reports/storage")
+    body = resp.json()
+    # report.md(6B)만 잡히고 mp4(5MB)·wav(3MB)는 빠져야 함
+    assert body["total_bytes"] == 6
+
+    resp2 = await client.get("/api/v1/reports?with_sizes=true")
+    row = next(it for it in resp2.json()["items"] if it["session_id"] == str(s.external_id))
+    assert row["size_bytes"] == 6
+
+
 async def test_report_view_html(client, db_session, admin_user):
     s = await _make_session(db_session, admin_user, title="뷰회의")
     resp = await client.get(f"/api/v1/reports/{s.external_id}/view")
