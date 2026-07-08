@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from apps.server.domain.video_captions import gpu_pack as gp
 from apps.server.domain.video_captions import whisper_models as wm
 from apps.server.api.v1 import video_models as api_vm
 
@@ -55,3 +56,62 @@ async def test_delete_model_downloading_conflict(client, monkeypatch):
     finally:
         wm._downloading["tiny"] = False
     assert resp.status_code == 409
+
+
+def _install_fake_gpu_pack() -> None:
+    d = gp.bin_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "cublas64_12.dll").write_bytes(b"x")
+    (d / "cudnn_ops64_9.dll").write_bytes(b"x")
+
+
+async def test_gpu_status_shape(client, monkeypatch):
+    monkeypatch.setattr(gp, "gpu_name", lambda: None)
+    resp = await client.get("/api/v1/video-models/gpu")
+    assert resp.status_code == 200
+    body = resp.json()
+    for key in ("supported", "installed", "enabled", "cuda_available",
+                "downloading", "approx_bytes"):
+        assert key in body
+
+
+async def test_gpu_pack_unsupported_platform_409(client, monkeypatch):
+    monkeypatch.setattr(gp, "is_supported", lambda: False)
+    resp = await client.post("/api/v1/video-models/gpu/pack")
+    assert resp.status_code == 409
+
+
+async def test_gpu_pack_download_starts_thread(client, monkeypatch):
+    monkeypatch.setattr(gp, "is_supported", lambda: True)
+    started = {}
+    monkeypatch.setattr(api_vm, "_spawn_gpu_pack_download",
+                        lambda: started.setdefault("hit", True))
+    resp = await client.post("/api/v1/video-models/gpu/pack")
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "started"
+    assert started["hit"] is True
+
+
+async def test_gpu_pack_already_installed(client, monkeypatch):
+    monkeypatch.setattr(gp, "is_supported", lambda: True)
+    _install_fake_gpu_pack()
+    resp = await client.post("/api/v1/video-models/gpu/pack")
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "already_installed"
+
+
+async def test_gpu_enable_without_pack_409(client):
+    resp = await client.post("/api/v1/video-models/gpu/enable",
+                             json={"enabled": True})
+    assert resp.status_code == 409
+
+
+async def test_gpu_enable_disable_roundtrip(client):
+    _install_fake_gpu_pack()
+    resp = await client.post("/api/v1/video-models/gpu/enable",
+                             json={"enabled": True})
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is True
+    resp = await client.post("/api/v1/video-models/gpu/enable",
+                             json={"enabled": False})
+    assert resp.json()["enabled"] is False

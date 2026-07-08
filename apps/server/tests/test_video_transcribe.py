@@ -33,7 +33,7 @@ def test_transcribe_maps_whisper_segments_to_subsegments(monkeypatch, tmp_path):
                     SimpleNamespace(start=2.0, end=4.25, text="Second line")]
             return iter(segs), SimpleNamespace(language="en")
 
-    monkeypatch.setattr(tr, "_load_model", lambda name: FakeModel())
+    monkeypatch.setattr(tr, "_load_model", lambda name, *a: FakeModel())
     out = tr.transcribe_audio(tmp_path / "audio.wav", "small")
     assert [(s.seq, s.start_ms, s.end_ms, s.text) for s in out] == [
         (1, 0, 1500, "Hello there"), (2, 2000, 4250, "Second line"),
@@ -49,7 +49,7 @@ def test_transcribe_reports_progress_via_callback(monkeypatch, tmp_path):
                     SimpleNamespace(start=2.0, end=4.25, text="Second line")]
             return iter(segs), SimpleNamespace(language="en", duration=10.0)
 
-    monkeypatch.setattr(tr, "_load_model", lambda name: FakeModel())
+    monkeypatch.setattr(tr, "_load_model", lambda name, *a: FakeModel())
     seen: list[float] = []
     tr.transcribe_audio(tmp_path / "audio.wav", "small", seen.append)
     assert seen == [0.15, 0.425]
@@ -137,7 +137,7 @@ def test_transcribe_splits_long_segments_via_word_timestamps(monkeypatch, tmp_pa
                                    words=_words(15, 29))
             return iter([seg1, seg2]), SimpleNamespace(language="en", duration=29.0)
 
-    monkeypatch.setattr(tr, "_load_model", lambda name: FakeModel())
+    monkeypatch.setattr(tr, "_load_model", lambda name, *a: FakeModel())
     out = tr.transcribe_audio(tmp_path / "audio.wav", "small")
     assert len(out) > 1
     for cue in out:

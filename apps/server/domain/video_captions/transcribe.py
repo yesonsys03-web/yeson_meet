@@ -1,4 +1,4 @@
-"""Batch transcription via local faster-whisper (CPU int8)."""
+"""Batch transcription via local faster-whisper (기본 CPU int8, 옵트인 CUDA)."""
 from __future__ import annotations
 
 import logging
@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from apps.server.ai.glossary import load_glossary
+from . import gpu_pack
 from .srt import SubSegment
 from .whisper_models import is_downloaded, model_dir
 
@@ -27,10 +28,12 @@ def glossary_initial_prompt(max_terms: int = 40) -> str:
     return "Animation production meeting. Terms: " + ", ".join(terms)
 
 
-def _load_model(model_name: str):  # test seam
+def _load_model(model_name: str, device: str = "cpu",
+                compute_type: str = "int8"):  # test seam
     from faster_whisper import WhisperModel
 
-    return WhisperModel(str(model_dir(model_name)), device="cpu", compute_type="int8")
+    return WhisperModel(str(model_dir(model_name)), device=device,
+                        compute_type=compute_type)
 
 
 def _cue_text(chunk: list) -> str:
@@ -89,12 +92,29 @@ def words_to_cues(words: list, max_seconds: float = MAX_CUE_SECONDS,
 
 def transcribe_audio(audio_path: Path, model_name: str,
                      progress_cb: Callable[[float], None] | None = None) -> list[SubSegment]:
-    """Blocking CPU work — call via asyncio.to_thread."""
+    """Blocking CPU/GPU work — call via asyncio.to_thread.
+
+    디바이스는 gpu_pack.resolve_device()가 정한다(기본 CPU, 옵트인 CUDA).
+    CUDA는 로드/전사 어느 지점에서든 실패할 수 있어(드라이버·VRAM 등)
+    실패 시 CPU int8로 1회 폴백한다.
+    """
     if not is_downloaded(model_name):
         raise ModelNotDownloadedError(
             f"whisper 모델 '{model_name}'이 설치되어 있지 않습니다. 먼저 다운로드하세요."
         )
-    model = _load_model(model_name)
+    device, compute_type = gpu_pack.resolve_device()
+    try:
+        return _transcribe_on(audio_path, model_name, device, compute_type, progress_cb)
+    except Exception:
+        if device == "cpu":
+            raise
+        logger.warning("transcribe: CUDA 실패 — CPU로 폴백", exc_info=True)
+        return _transcribe_on(audio_path, model_name, "cpu", "int8", progress_cb)
+
+
+def _transcribe_on(audio_path: Path, model_name: str, device: str, compute_type: str,
+                   progress_cb: Callable[[float], None] | None) -> list[SubSegment]:
+    model = _load_model(model_name, device, compute_type)
     segments, info = model.transcribe(
         str(audio_path),
         language="en",
@@ -118,5 +138,6 @@ def transcribe_audio(audio_path: Path, model_name: str,
             fallback.append(SubSegment(seq=i, start_ms=int(seg.start * 1000),
                                        end_ms=int(seg.end * 1000), text=text))
     out = words_to_cues(all_words) if all_words else fallback
-    logger.info("transcribe: %d segments (model=%s)", len(out), model_name)
+    logger.info("transcribe: %d segments (model=%s, device=%s)",
+                len(out), model_name, device)
     return out
