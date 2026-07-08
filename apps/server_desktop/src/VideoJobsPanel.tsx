@@ -21,6 +21,7 @@ const STATUS_LABEL: Record<string, string> = {
 // 진행 중(입력 파일이 살아있어야 하는) 상태 — 삭제 시 경고. 자동 리텐션과 동일 개념.
 const INFLIGHT = new Set(["queued", "ingesting", "extracting", "transcribing", "translating", "burning"]);
 const COMPLETED = new Set(["done", "error"]);
+const PAGE_SIZE = 15;
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -41,6 +42,7 @@ export default function VideoJobsPanel({ serverPort, running }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null); // 행별 인라인 확인
   const [confirmBulk, setConfirmBulk] = useState(false); // 일괄 삭제 인라인 확인
+  const [page, setPage] = useState(0);
 
   const refresh = useCallback(async () => {
     if (serverPort == null) return;
@@ -79,6 +81,10 @@ export default function VideoJobsPanel({ serverPort, running }: Props) {
   );
 
   const completed = jobs.filter((j) => COMPLETED.has(j.status));
+
+  const totalPages = Math.max(1, Math.ceil(jobs.length / PAGE_SIZE));
+  const curPage = Math.min(page, totalPages - 1); // jobs 축소(삭제) 시 자동 클램프
+  const pagedJobs = jobs.slice(curPage * PAGE_SIZE, curPage * PAGE_SIZE + PAGE_SIZE);
 
   const performDeleteCompleted = useCallback(async () => {
     if (serverPort == null || completed.length === 0) return;
@@ -166,7 +172,17 @@ export default function VideoJobsPanel({ serverPort, running }: Props) {
       {jobs.length === 0 ? (
         <p style={s.hint}>자막 메이커 작업이 없습니다.</p>
       ) : (
-        jobs.map((j) => (
+        <>
+          {jobs.length > PAGE_SIZE ? (
+            <div style={s.pager}>
+              <button style={{ ...s.muted, ...(curPage === 0 ? s.disabled : {}) }} onClick={() => setPage(0)} disabled={curPage === 0}>« 처음</button>
+              <button style={{ ...s.muted, ...(curPage === 0 ? s.disabled : {}) }} onClick={() => setPage(curPage - 1)} disabled={curPage === 0}>‹ 이전</button>
+              <span style={s.pagerInfo}>{curPage + 1} / {totalPages} 페이지 · 총 {jobs.length}개</span>
+              <button style={{ ...s.muted, ...(curPage >= totalPages - 1 ? s.disabled : {}) }} onClick={() => setPage(curPage + 1)} disabled={curPage >= totalPages - 1}>다음 ›</button>
+              <button style={{ ...s.muted, ...(curPage >= totalPages - 1 ? s.disabled : {}) }} onClick={() => setPage(totalPages - 1)} disabled={curPage >= totalPages - 1}>마지막 »</button>
+            </div>
+          ) : null}
+          {pagedJobs.map((j) => (
           <div key={j.job_id} style={{ ...s.jobRow, ...(INFLIGHT.has(j.status) ? { opacity: 0.75 } : {}) }}>
             <span style={s.jobTitle} title={j.title}>{j.title}</span>
             <span style={s.jobMeta}>
@@ -188,7 +204,8 @@ export default function VideoJobsPanel({ serverPort, running }: Props) {
               <button style={s.muted} onClick={() => setConfirmId(j.job_id)} disabled={busy}>삭제</button>
             )}
           </div>
-        ))
+          ))}
+        </>
       )}
     </div>
   );
@@ -212,5 +229,7 @@ const s: Record<string, CSSProperties> = {
   jobRow: { display: "flex", alignItems: "center", gap: 12, padding: "6px 0", borderBottom: "1px solid var(--ys-border-subtle)" },
   jobTitle: { fontSize: 13, fontWeight: 600, minWidth: 160, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   jobMeta: { fontSize: 12, color: "var(--ys-text-faint)", flex: "1 1 auto" },
+  pager: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, margin: "2px 0 8px", flexWrap: "wrap" },
+  pagerInfo: { fontSize: 12, color: "var(--ys-text-faint)", minWidth: 150, textAlign: "center" },
 };
 // === ANCHOR: VIDEO_JOBS_PANEL_END ===

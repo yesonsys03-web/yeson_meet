@@ -30,6 +30,7 @@ import {
 type Props = { serverPort: number | null; running: boolean };
 
 const FORMATS: ReportFmt[] = ["md", "html", "docx", "pdf"];
+const PAGE_SIZE = 15;
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -52,6 +53,7 @@ export default function ReportsPanel({ serverPort, running }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmFiles, setConfirmFiles] = useState<string | null>(null); // 행별 1단계 확인
   const [sessionConfirm, setSessionConfirm] = useState<{ id: string; step: 1 | 2 } | null>(null); // 행별 2단계 확인
+  const [page, setPage] = useState(0);
 
   const refresh = useCallback(async () => {
     if (serverPort == null) return;
@@ -136,10 +138,48 @@ export default function ReportsPanel({ serverPort, running }: Props) {
     [serverPort, refresh, selected],
   );
 
+  const selectedTitle = rows.find((r) => r.session_id === selected)?.title ?? "";
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const curPage = Math.min(page, totalPages - 1); // rows 축소(삭제) 시 자동 클램프
+  const pagedRows = rows.slice(curPage * PAGE_SIZE, curPage * PAGE_SIZE + PAGE_SIZE);
+
   if (!running || serverPort == null) {
     return (
       <div style={s.wrap}>
         <p style={s.hint}>서버를 먼저 시작하세요 — 보고서 관리는 실행 중인 서버에 연결합니다.</p>
+      </div>
+    );
+  }
+
+  if (selected) {
+    return (
+      <div style={s.wrap}>
+        <div style={s.reviewer}>
+          <div style={s.reviewerTabs}>
+            <button style={s.backBtn} onClick={() => setSelected(null)}>← 목록으로</button>
+            <strong style={s.reviewerTitle} title={selectedTitle}>{selectedTitle || "보고서"}</strong>
+            <span style={s.spacer} />
+            <button style={viewKind === "report" ? s.tabBtnActive : s.tabBtn} onClick={() => setViewKind("report")}>보고서</button>
+            <button style={viewKind === "summary" ? s.tabBtnActive : s.tabBtn} onClick={() => setViewKind("summary")}>요약</button>
+          </div>
+          <div style={s.reviewerTabs}>
+            <span style={s.hint}>내보내기</span>
+            {FORMATS.map((f) => (
+              <button key={f} style={{ ...s.muted, ...(busy ? s.disabled : {}) }} onClick={() => void onExport(selected, viewKind, f)} disabled={busy}>
+                {f.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          {notice ? <p style={s.success}>{notice}</p> : null}
+          {error ? <p style={s.error}>{error}</p> : null}
+          <iframe
+            title="report-view"
+            style={s.reviewerFrameTall}
+            sandbox=""
+            src={reportViewUrl(serverPort, selected, viewKind)}
+          />
+        </div>
       </div>
     );
   }
@@ -165,6 +205,15 @@ export default function ReportsPanel({ serverPort, running }: Props) {
         <p style={s.hint}>보고서가 없습니다.</p>
       ) : (
         <>
+          {rows.length > PAGE_SIZE ? (
+            <div style={s.pager}>
+              <button style={{ ...s.muted, ...(curPage === 0 ? s.disabled : {}) }} onClick={() => setPage(0)} disabled={curPage === 0}>« 처음</button>
+              <button style={{ ...s.muted, ...(curPage === 0 ? s.disabled : {}) }} onClick={() => setPage(curPage - 1)} disabled={curPage === 0}>‹ 이전</button>
+              <span style={s.pagerInfo}>{curPage + 1} / {totalPages} 페이지 · 총 {rows.length}개</span>
+              <button style={{ ...s.muted, ...(curPage >= totalPages - 1 ? s.disabled : {}) }} onClick={() => setPage(curPage + 1)} disabled={curPage >= totalPages - 1}>다음 ›</button>
+              <button style={{ ...s.muted, ...(curPage >= totalPages - 1 ? s.disabled : {}) }} onClick={() => setPage(totalPages - 1)} disabled={curPage >= totalPages - 1}>마지막 »</button>
+            </div>
+          ) : null}
           <div style={s.headerRow}>
             <span style={s.colTitle}>제목</span>
             <span style={s.colStatus}>상태</span>
@@ -172,7 +221,7 @@ export default function ReportsPanel({ serverPort, running }: Props) {
             <span style={s.colSize}>크기</span>
             <span style={s.colActions}>동작</span>
           </div>
-          {rows.map((r) => (
+          {pagedRows.map((r) => (
             <div key={r.session_id} style={{ ...s.reportRow, ...(selected === r.session_id ? s.reportRowSelected : {}) }}>
               <span style={{ ...s.colTitle, ...s.reportTitle }} title={r.title}>{r.title}</span>
               <span style={s.colStatus}>{r.report_ready ? "준비됨" : "미준비"}</span>
@@ -217,28 +266,6 @@ export default function ReportsPanel({ serverPort, running }: Props) {
           ))}
         </>
       )}
-
-      {selected ? (
-        <div style={s.reviewer}>
-          <div style={s.reviewerTabs}>
-            <button style={viewKind === "report" ? s.tabBtnActive : s.tabBtn} onClick={() => setViewKind("report")}>보고서</button>
-            <button style={viewKind === "summary" ? s.tabBtnActive : s.tabBtn} onClick={() => setViewKind("summary")}>요약</button>
-            <span style={s.spacer} />
-            {FORMATS.map((f) => (
-              <button key={f} style={{ ...s.muted, ...(busy ? s.disabled : {}) }} onClick={() => void onExport(selected, viewKind, f)} disabled={busy}>
-                {f.toUpperCase()}
-              </button>
-            ))}
-            <button style={s.muted} onClick={() => setSelected(null)}>닫기</button>
-          </div>
-          <iframe
-            title="report-view"
-            style={s.reviewerFrame}
-            sandbox=""
-            src={reportViewUrl(serverPort, selected, viewKind)}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -266,8 +293,13 @@ const s: Record<string, CSSProperties> = {
   reviewer: { display: "flex", flexDirection: "column", gap: 8, marginTop: 8, border: "1px solid var(--ys-border-strong)", borderRadius: "var(--ys-radius-md)", padding: 10 },
   reviewerTabs: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
   tabBtn: { padding: "5px 12px", borderRadius: "var(--ys-radius-control)", border: "1px solid var(--ys-border-strong)", background: "transparent", color: "var(--ys-text-label)", cursor: "pointer", fontSize: 12 },
-  tabBtnActive: { padding: "5px 12px", borderRadius: "var(--ys-radius-control)", border: "1px solid var(--ys-border-strong)", background: "var(--ys-text-strong)", color: "var(--ys-surface, #fff)", fontWeight: 600, cursor: "pointer", fontSize: 12 },
+  tabBtnActive: { padding: "5px 12px", borderRadius: "var(--ys-radius-control)", border: "1px solid var(--ys-accent)", background: "var(--ys-accent)", color: "var(--ys-on-accent)", fontWeight: 600, cursor: "pointer", fontSize: 12 },
   spacer: { flex: "1 1 auto" },
+  pager: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, margin: "2px 0 8px", flexWrap: "wrap" },
+  pagerInfo: { fontSize: 12, color: "var(--ys-text-faint)", minWidth: 150, textAlign: "center" },
   reviewerFrame: { width: "100%", height: 480, border: "1px solid var(--ys-border-subtle)", borderRadius: "var(--ys-radius-md)", background: "#fff" },
+  reviewerFrameTall: { width: "100%", height: "72vh", minHeight: 420, border: "1px solid var(--ys-border-subtle)", borderRadius: "var(--ys-radius-md)", background: "#fff" },
+  reviewerTitle: { fontSize: 14, fontWeight: 600, color: "var(--ys-text-strong)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 340 },
+  backBtn: { padding: "6px 12px", borderRadius: "var(--ys-radius-control)", border: "1px solid var(--ys-border-strong)", background: "transparent", color: "var(--ys-text-label)", cursor: "pointer", fontSize: 13, fontWeight: 600 },
 };
 // === ANCHOR: REPORTS_PANEL_END ===
