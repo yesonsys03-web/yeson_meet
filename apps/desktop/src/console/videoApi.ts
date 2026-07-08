@@ -78,6 +78,7 @@ export type GpuStatus = {
   cuda_available: boolean;
   enabled: boolean;
   approx_bytes: number;
+  last_error?: string | null;
 };
 
 export async function getGpuStatus(): Promise<GpuStatus> {

@@ -673,10 +673,19 @@ function VideoCaptionInner({ active }: { active: boolean }) {
             {gpu.downloading ? (
               <span style={{ fontSize: 13 }}>GPU 팩 다운로드 중… {gpu.progress ?? 0}%</span>
             ) : !gpu.installed ? (
-              <button type="button" style={consoleStyles.mutedAction}
-                onClick={() => void downloadGpuPack().then(refresh)}>
-                GPU 팩 다운로드
-              </button>
+              <>
+                {gpu.last_error ? (
+                  <span style={{ fontSize: 12, color: "#e5484d", maxWidth: 320 }}
+                    title={gpu.last_error}>
+                    다운로드 실패: {gpu.last_error}
+                  </span>
+                ) : null}
+                <button type="button" style={consoleStyles.mutedAction}
+                  onClick={() => void downloadGpuPack().then(refresh)
+                    .catch((e) => setError(e instanceof Error ? e.message : String(e)))}>
+                  {gpu.last_error ? "다시 시도" : "GPU 팩 다운로드"}
+                </button>
+              </>
             ) : (
               <>
                 <span style={{ fontSize: 13,
@@ -684,7 +693,8 @@ function VideoCaptionInner({ active }: { active: boolean }) {
                   {gpu.cuda_available ? "CUDA 인식됨" : "CUDA 미인식"}
                 </span>
                 <button type="button" style={consoleStyles.mutedAction}
-                  onClick={() => void setGpuEnabled(!gpu.enabled).then(refresh)}>
+                  onClick={() => void setGpuEnabled(!gpu.enabled).then(refresh)
+                    .catch((e) => setError(e instanceof Error ? e.message : String(e)))}>
                   {gpu.enabled ? "GPU 사용 끄기" : "GPU 사용 켜기"}
                 </button>
               </>
