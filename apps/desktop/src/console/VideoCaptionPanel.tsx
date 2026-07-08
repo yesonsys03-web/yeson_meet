@@ -535,7 +535,8 @@ function VideoCaptionInner({ active }: { active: boolean }) {
               style={["review", "done"].includes(job.status) ? undefined : { visibility: "hidden" }}
               title="일괄 작업 선택" />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {/* 파일명은 잘라내지 않는다 — 언더스코어 이름은 공백이 없어 breakAll 줄바꿈 */}
+              <div style={{ wordBreak: "break-all" }}>
                 {job.title}
               </div>
               <div style={{ fontSize: 12, opacity: 0.7 }}>
