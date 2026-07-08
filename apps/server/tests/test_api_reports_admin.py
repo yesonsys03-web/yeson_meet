@@ -195,3 +195,13 @@ async def test_delete_session_404_for_unknown(client):
     from uuid import uuid4
     resp = await client.delete(f"/api/v1/reports/{uuid4()}/session")
     assert resp.status_code == 404
+
+
+async def test_list_reports_started_at_has_utc_offset(client, db_session, admin_user):
+    # NAIVE UTC 저장 관례 — tz 접미사 없이 내보내면 클라가 로컬로 오해해
+    # '시작' 시각이 UTC 오프셋(KST=9시간)만큼 어긋난다(2026-07-08 회귀 가드).
+    await _make_session(db_session, admin_user, title="시간검증")
+    resp = await client.get("/api/v1/reports")
+    row = next(it for it in resp.json()["items"] if it["title"] == "시간검증")
+    assert row["started_at"] is not None
+    assert row["started_at"].endswith("+00:00") or row["started_at"].endswith("Z")

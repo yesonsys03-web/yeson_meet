@@ -10,6 +10,7 @@ endpoints extend that same trust decision rather than being a special case.
 from __future__ import annotations
 
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID, uuid4
@@ -69,6 +70,16 @@ class BurnIn(BaseModel):
     color: str = Field(default="#FFFFFF", pattern="^#[0-9a-fA-F]{6}$")
 
 
+def _iso_utc(value: datetime | None) -> str | None:
+    """NAIVE UTC 저장 관례 → tz 붙여 직렬화 (sessions.py _serialize_utc와 동일 이유 —
+    tz 없이 내보내면 클라 new Date가 로컬로 오해해 UTC 오프셋만큼 어긋난다)."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
+
+
 def _job_out(job: VideoJob) -> dict:
     return {
         "job_id": str(job.external_id),
@@ -80,7 +91,7 @@ def _job_out(job: VideoJob) -> dict:
         "status": job.status,
         "progress": job.progress,
         "error": job.error,
-        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "created_at": _iso_utc(job.created_at),
     }
 
 
@@ -193,8 +204,12 @@ async def list_video_jobs(
 ) -> dict:
     # with_sizes는 작업별 폴더 용량을 스캔한다 — 서버 콘솔 관리 패널 전용 옵트인.
     # 클라이언트의 3초 폴링 핫패스는 기본값(False)이라 스캔 비용을 지지 않는다.
+    # created_at은 초 단위라 일괄 업로드 작업들이 같은 값으로 묶여 순서가 섞인다
+    # → id를 타이브레이커로 생성 역순을 안정화(2026-07-08 Windows 실기기 정렬 버그).
     jobs = (await db.execute(
-        select(VideoJob).order_by(VideoJob.created_at.desc()).limit(100)
+        select(VideoJob)
+        .order_by(VideoJob.created_at.desc(), VideoJob.id.desc())
+        .limit(100)
     )).scalars().all()
     items = []
     for job in jobs:
