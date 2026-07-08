@@ -69,6 +69,34 @@ export async function deleteVideoModel(name: string): Promise<void> {
     { method: "DELETE" });
 }
 
+export type GpuStatus = {
+  supported: boolean;
+  gpu_name: string | null;
+  installed: boolean;
+  downloading: boolean;
+  progress: number | null;
+  cuda_available: boolean;
+  enabled: boolean;
+  approx_bytes: number;
+};
+
+export async function getGpuStatus(): Promise<GpuStatus> {
+  return request(`${apiBase()}/api/v1/video-models/gpu`, {});
+}
+
+export async function downloadGpuPack(): Promise<void> {
+  await request(`${apiBase()}/api/v1/video-models/gpu/pack`,
+    { method: "POST" });
+}
+
+export async function setGpuEnabled(enabled: boolean): Promise<void> {
+  await request(`${apiBase()}/api/v1/video-models/gpu/enable`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 export async function createYoutubeJob(
   params: {
     url: string; whisperModel: string; title?: string;

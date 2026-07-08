@@ -12,8 +12,8 @@ vi.mock("../diagnostics/appLog", () => ({
 }));
 
 import {
-  burnVideoJob, createYoutubeJob, getVideoStorage, listTranslateEngines, listVideoModels,
-  uploadVideoJob, videoMediaUrl,
+  burnVideoJob, createYoutubeJob, downloadGpuPack, getGpuStatus, getVideoStorage,
+  listTranslateEngines, listVideoModels, setGpuEnabled, uploadVideoJob, videoMediaUrl,
 } from "./videoApi";
 
 describe("videoApi", () => {
@@ -124,6 +124,35 @@ describe("videoApi", () => {
 
   it("videoMediaUrl builds capability URL without token", () => {
     expect(videoMediaUrl("j1")).toBe("http://localhost:8000/api/v1/video-jobs/j1/media");
+  });
+
+  it("getGpuStatus GETs /api/v1/video-models/gpu", async () => {
+    const status = {
+      supported: true, gpu_name: "NVIDIA GeForce RTX 3060", installed: false,
+      downloading: false, progress: null, cuda_available: false, enabled: false,
+      approx_bytes: 1_000_000_000,
+    };
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => status });
+    const out = await getGpuStatus();
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:8000/api/v1/video-models/gpu");
+    expect(out).toEqual(status);
+  });
+
+  it("downloadGpuPack POSTs /api/v1/video-models/gpu/pack", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 202, json: async () => ({ status: "started" }) });
+    await downloadGpuPack();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:8000/api/v1/video-models/gpu/pack");
+    expect(init.method).toBe("POST");
+  });
+
+  it("setGpuEnabled POSTs JSON body", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ enabled: true }) });
+    await setGpuEnabled(true);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:8000/api/v1/video-models/gpu/enable");
+    expect(JSON.parse(init.body as string)).toEqual({ enabled: true });
   });
 
   it("throws on non-ok responses", async () => {
