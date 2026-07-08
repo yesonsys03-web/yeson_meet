@@ -12,8 +12,9 @@ vi.mock("../diagnostics/appLog", () => ({
 }));
 
 import {
-  burnVideoJob, createYoutubeJob, downloadGpuPack, getGpuStatus, getVideoStorage,
-  listTranslateEngines, listVideoModels, setGpuEnabled, uploadVideoJob, videoMediaUrl,
+  burnVideoJob, cancelVideoJob, createYoutubeJob, downloadGpuPack, getGpuStatus,
+  getVideoStorage, listTranslateEngines, listVideoModels, rebuildVideoJob,
+  setGpuEnabled, uploadVideoJob, videoMediaUrl,
 } from "./videoApi";
 
 describe("videoApi", () => {
@@ -144,6 +145,22 @@ describe("videoApi", () => {
     await downloadGpuPack();
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(String(url)).toBe("http://localhost:8000/api/v1/video-models/gpu/pack");
+    expect(init.method).toBe("POST");
+  });
+
+  it("rebuildVideoJob POSTs /api/v1/video-jobs/{id}/rebuild", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 202, json: async () => ({ status: "queued" }) });
+    await rebuildVideoJob("j1");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:8000/api/v1/video-jobs/j1/rebuild");
+    expect(init.method).toBe("POST");
+  });
+
+  it("cancelVideoJob POSTs /api/v1/video-jobs/{id}/cancel", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 202, json: async () => ({ status: "canceled" }) });
+    await cancelVideoJob("j1");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:8000/api/v1/video-jobs/j1/cancel");
     expect(init.method).toBe("POST");
   });
 

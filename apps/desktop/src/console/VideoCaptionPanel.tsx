@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import {
-  burnVideoJob, createYoutubeJob, deleteVideoJob, deleteVideoModel, downloadGpuPack,
-  downloadVideoModel, getGpuStatus, getVideoStorage, listTranslateEngines, listVideoJobs,
-  listVideoModels, setGpuEnabled, uploadVideoJob, videoDownloadUrl,
+  burnVideoJob, cancelVideoJob, createYoutubeJob, deleteVideoJob, deleteVideoModel,
+  downloadGpuPack, downloadVideoModel, getGpuStatus, getVideoStorage,
+  listTranslateEngines, listVideoJobs, listVideoModels, rebuildVideoJob, setGpuEnabled,
+  uploadVideoJob, videoDownloadUrl,
 } from "./videoApi";
 import type {
   BurnStyle, GpuStatus, TranslateEngineInfo, VideoJobSummary, VideoModelInfo,
@@ -88,6 +89,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [reviewJobId, setReviewJobId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmRebuildId, setConfirmRebuildId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [batchStatus, setBatchStatus] = useState<string | null>(null);
@@ -496,6 +498,35 @@ function VideoCaptionInner({ active }: { active: boolean }) {
                 onClick={() => setReviewJobId(job.job_id)}>
                 {job.status === "done" ? "결과 보기" : "검수하기"}
               </button>
+            ) : null}
+            {INFLIGHT_STATUSES.includes(job.status) ? (
+              <button type="button" style={consoleStyles.mutedAction}
+                onClick={() => void cancelVideoJob(job.job_id).then(refresh)}>
+                취소
+              </button>
+            ) : null}
+            {["review", "done", "error"].includes(job.status) ? (
+              confirmRebuildId === job.job_id ? (
+                <>
+                  <button type="button" style={consoleStyles.action}
+                    onClick={() => {
+                      setConfirmRebuildId(null);
+                      void rebuildVideoJob(job.job_id).then(refresh);
+                    }}>
+                    정말 재생성
+                  </button>
+                  <button type="button" style={consoleStyles.mutedAction}
+                    onClick={() => setConfirmRebuildId(null)}>
+                    취소
+                  </button>
+                </>
+              ) : (
+                <button type="button" style={consoleStyles.mutedAction}
+                  title="같은 소스·같은 옵션으로 전사/번역을 다시 실행합니다 (기존 검수 편집은 사라짐)"
+                  onClick={() => setConfirmRebuildId(job.job_id)}>
+                  재생성
+                </button>
+              )
             ) : null}
             {confirmDeleteId === job.job_id ? (
               <>
