@@ -28,7 +28,9 @@ def test_transcribe_maps_whisper_segments_to_subsegments(monkeypatch, tmp_path):
         def transcribe(self, path, **kwargs):
             assert kwargs["language"] == "en"
             assert kwargs["vad_filter"] is True
-            assert "cleanup" in kwargs["initial_prompt"]
+            # 용어사전 initial_prompt 주입 금지 회귀 가드 — base 모델 30초 윈도우
+            # 유실 원인(2026-07-08)
+            assert "initial_prompt" not in kwargs
             segs = [SimpleNamespace(start=0.0, end=1.5, text=" Hello there "),
                     SimpleNamespace(start=2.0, end=4.25, text="Second line")]
             return iter(segs), SimpleNamespace(language="en")
@@ -58,12 +60,6 @@ def test_transcribe_reports_progress_via_callback(monkeypatch, tmp_path):
 def test_transcribe_requires_downloaded_model(tmp_path):
     with pytest.raises(tr.ModelNotDownloadedError):
         tr.transcribe_audio(tmp_path / "audio.wav", "small")
-
-
-def test_glossary_initial_prompt_contains_terms():
-    prompt = tr.glossary_initial_prompt(max_terms=5)
-    assert prompt.startswith("Animation production meeting.")
-    assert len(prompt) < 600
 
 
 def _w(start: float, end: float, word: str):

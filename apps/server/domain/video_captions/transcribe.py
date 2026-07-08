@@ -5,7 +5,6 @@ import logging
 from pathlib import Path
 from typing import Callable
 
-from apps.server.ai.glossary import load_glossary
 from . import gpu_pack
 from .srt import SubSegment
 from .whisper_models import is_downloaded, model_dir
@@ -20,12 +19,6 @@ _BREAK_AFTER = (".", "?", "!", ",", ";", ":")
 
 class ModelNotDownloadedError(RuntimeError):
     pass
-
-
-def glossary_initial_prompt(max_terms: int = 40) -> str:
-    """whisper initial_prompt는 ~224 토큰 제한 → 용어 키워드만 압축 주입."""
-    terms = [en for en, _ko in load_glossary()[:max_terms]]
-    return "Animation production meeting. Terms: " + ", ".join(terms)
 
 
 def _load_model(model_name: str, device: str = "cpu",
@@ -115,11 +108,14 @@ def transcribe_audio(audio_path: Path, model_name: str,
 def _transcribe_on(audio_path: Path, model_name: str, device: str, compute_type: str,
                    progress_cb: Callable[[float], None] | None) -> list[SubSegment]:
     model = _load_model(model_name, device, compute_type)
+    # initial_prompt(용어사전) 주입 금지 — 회의용 프롬프트가 본편 대사 전사에서
+    # 오도성 문맥이 되어, base 모델이 30초 윈도우 하나를 통째로 버리는 회귀를
+    # 일으켰다(2026-07-08, 14.9~30.9s 유실 실측·분리실험으로 확정). 용어 매핑은
+    # 번역 단계(build_translation_prompt의 glossary_block)가 전담한다.
     segments, info = model.transcribe(
         str(audio_path),
         language="en",
         vad_filter=True,
-        initial_prompt=glossary_initial_prompt(),
         word_timestamps=True,
     )
     duration = getattr(info, "duration", None)
