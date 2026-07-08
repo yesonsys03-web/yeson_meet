@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import {
-  burnVideoJob, createYoutubeJob, deleteVideoJob, deleteVideoModel, downloadVideoModel,
-  getVideoStorage, listTranslateEngines, listVideoJobs, listVideoModels, uploadVideoJob,
-  videoDownloadUrl,
+  burnVideoJob, createYoutubeJob, deleteVideoJob, deleteVideoModel, downloadGpuPack,
+  downloadVideoModel, getGpuStatus, getVideoStorage, listTranslateEngines, listVideoJobs,
+  listVideoModels, setGpuEnabled, uploadVideoJob, videoDownloadUrl,
 } from "./videoApi";
 import type {
-  BurnStyle, TranslateEngineInfo, VideoJobSummary, VideoModelInfo, VideoStorageInfo,
+  BurnStyle, GpuStatus, TranslateEngineInfo, VideoJobSummary, VideoModelInfo,
+  VideoStorageInfo,
 } from "./videoApi";
 import { filterVideoFiles, uploadBatch } from "./videoBatch";
 import { actionableJobIds, captionedFileName, partitionSelection } from "./videoBatchOps";
@@ -75,6 +76,7 @@ export function VideoCaptionPanel({ active }: VideoCaptionPanelProps) {
 
 function VideoCaptionInner({ active }: { active: boolean }) {
   const [models, setModels] = useState<VideoModelInfo[]>([]);
+  const [gpu, setGpu] = useState<GpuStatus | null>(null);
   const [jobs, setJobs] = useState<VideoJobSummary[]>([]);
   const [storage, setStorage] = useState<VideoStorageInfo | null>(null);
   const [engineOptions, setEngineOptions] = useState<EngineOption[]>(DEFAULT_ENGINE_OPTIONS);
@@ -106,12 +108,16 @@ function VideoCaptionInner({ active }: { active: boolean }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [m, j, e, s] = await Promise.all(
-        [listVideoModels(), listVideoJobs(), listTranslateEngines(), getVideoStorage()]);
+      const [m, j, e, s, g] = await Promise.all([
+        listVideoModels(), listVideoJobs(), listTranslateEngines(), getVideoStorage(),
+        // 구버전 서버 번들에는 /gpu 라우트가 없다 — GPU 카드만 숨기고 패널은 살린다
+        getGpuStatus().catch(() => null),
+      ]);
       setModels(m);
       setJobs(j);
       setEngineOptions(toEngineOptions(e));
       setStorage(s);
+      setGpu(g);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -560,6 +566,37 @@ function VideoCaptionInner({ active }: { active: boolean }) {
             )}
           </div>
         ))}
+        {gpu?.supported ? (
+          <div
+            style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 12px",
+                     border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8 }}>
+            <div style={{ flex: 1 }}>
+              <strong>GPU 전사 (NVIDIA CUDA)</strong>
+              <span style={{ fontSize: 12, opacity: 0.7, marginLeft: 8 }}>
+                {gpu.gpu_name ?? "GPU 미감지"} · GPU 팩 {formatBytes(gpu.approx_bytes)}
+              </span>
+            </div>
+            {gpu.downloading ? (
+              <span style={{ fontSize: 13 }}>GPU 팩 다운로드 중… {gpu.progress ?? 0}%</span>
+            ) : !gpu.installed ? (
+              <button type="button" style={consoleStyles.mutedAction}
+                onClick={() => void downloadGpuPack().then(refresh)}>
+                GPU 팩 다운로드
+              </button>
+            ) : (
+              <>
+                <span style={{ fontSize: 13,
+                               color: gpu.cuda_available ? "#30a46c" : "#e5484d" }}>
+                  {gpu.cuda_available ? "CUDA 인식됨" : "CUDA 미인식"}
+                </span>
+                <button type="button" style={consoleStyles.mutedAction}
+                  onClick={() => void setGpuEnabled(!gpu.enabled).then(refresh)}>
+                  {gpu.enabled ? "GPU 사용 끄기" : "GPU 사용 켜기"}
+                </button>
+              </>
+            )}
+          </div>
+        ) : null}
         </>
         ) : null}
       </section>
