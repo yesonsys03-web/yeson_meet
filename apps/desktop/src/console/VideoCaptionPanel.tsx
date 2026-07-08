@@ -4,13 +4,14 @@ import {
   burnVideoJob, cancelVideoJob, createYoutubeJob, deleteVideoJob, deleteVideoModel,
   downloadGpuPack, downloadVideoModel, getGpuStatus, getVideoStorage,
   listTranslateEngines, listVideoJobs, listVideoModels, rebuildVideoJob, setGpuEnabled,
-  uploadVideoJob, videoDownloadUrl,
+  uploadVideoJob, videoDownloadUrl, videoUploadUrl,
 } from "./videoApi";
 import type {
   BurnStyle, GpuStatus, TranslateEngineInfo, VideoJobSummary, VideoModelInfo,
   VideoStorageInfo,
 } from "./videoApi";
-import { filterVideoFiles, uploadBatch } from "./videoBatch";
+import { filterVideoFiles, uploadBatch, uploadBatchNative } from "./videoBatch";
+import type { NativeVideoFile } from "./videoBatch";
 import { actionableJobIds, captionedFileName, partitionSelection } from "./videoBatchOps";
 import { VideoReviewView } from "./VideoReviewView";
 
@@ -174,6 +175,57 @@ function VideoCaptionInner({ active }: { active: boolean }) {
       const res = await uploadBatch(files, cfg, uploadVideoJob, (done, total, current) => {
         setBatchStatus(done < total ? `업로드 중 ${done + 1}/${total} — ${current}` : null);
       });
+      const parts = [`${res.ok}개 작업이 시작됐습니다 (순차 처리)`];
+      if (res.failed.length) {
+        parts.push(`${res.failed.length}개 실패: ${res.failed.map((x) => x.name).join(", ")}`);
+      }
+      setBatchStatus(parts.join(" · "));
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 네이티브 폴더 선택 — <input webkitdirectory>는 WebView2 런타임 버전에 따라
+  // 폴더 피커가 안 열리는 회귀가 있어(2026-07-08 Windows), Tauri에서는 네이티브
+  // 다이얼로그로 폴더를 고르고 열거·업로드를 Rust 커맨드에 맡긴다(스트리밍).
+  // 브라우저 dev에서만 기존 webkitdirectory input으로 폴백.
+  const pickFolder = async () => {
+    if (!hasTauriRuntime()) {
+      folderInputRef.current?.click();
+      return;
+    }
+    setError(null);
+    setBatchStatus(null);
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const dir = await open({ directory: true, title: "영상 폴더 선택" });
+    if (typeof dir !== "string") return;
+    setBusy(true);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const entries = await invoke<NativeVideoFile[]>("list_video_files", { dir });
+      if (entries.length === 0) {
+        setBatchStatus("선택한 폴더에 영상 파일이 없습니다.");
+        return;
+      }
+      const cfg = {
+        whisperModel: selectedModel,
+        translateProvider: translateProvider || undefined,
+        translateCliModel: translateProvider === "opencode" ? cliModel : undefined,
+      };
+      const res = await uploadBatchNative(entries, cfg, (entry, c) =>
+        invoke("upload_video_file", {
+          uploadUrl: videoUploadUrl(),
+          path: entry.path,
+          whisperModel: c.whisperModel,
+          title: entry.name,
+          translateProvider: c.translateProvider ?? null,
+          translateCliModel: c.translateCliModel ?? null,
+        }), (done, total, current) => {
+          setBatchStatus(done < total ? `업로드 중 ${done + 1}/${total} — ${current}` : null);
+        });
       const parts = [`${res.ok}개 작업이 시작됐습니다 (순차 처리)`];
       if (res.failed.length) {
         parts.push(`${res.failed.length}개 실패: ${res.failed.map((x) => x.name).join(", ")}`);
@@ -369,7 +421,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
           <button type="button"
             style={{ ...consoleStyles.mutedAction, ...(fileDisabled ? consoleStyles.actionDisabled : null) }}
             disabled={fileDisabled}
-            onClick={() => folderInputRef.current?.click()}>
+            onClick={() => void pickFolder()}>
             폴더 선택…
           </button>
           {/* 다중 선택 지원 — 고른 파일 전부를 순차 업로드 */}

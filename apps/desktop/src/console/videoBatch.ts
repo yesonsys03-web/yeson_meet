@@ -32,6 +32,30 @@ export type UploadFn = (
   translateCliModel?: string,
 ) => Promise<unknown>;
 
+// Tauri 네이티브 폴더 선택 경로(list_video_files 커맨드)의 항목.
+export type NativeVideoFile = { path: string; name: string };
+
+async function runSequentialBatch<T extends { name: string }>(
+  items: T[],
+  doUpload: (item: T) => Promise<unknown>,
+  onProgress?: (done: number, total: number, current: string) => void,
+): Promise<BatchResult> {
+  const failed: BatchFailure[] = [];
+  let ok = 0;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!;
+    onProgress?.(i, items.length, item.name);
+    try {
+      await doUpload(item);
+      ok += 1;
+    } catch (e) {
+      failed.push({ name: item.name, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  onProgress?.(items.length, items.length, "");
+  return { ok, failed };
+}
+
 /**
  * 파일들을 공용 설정(모델·번역엔진)으로 순차 업로드한다. 한 파일이 실패해도
  * 배치를 중단하지 않고 나머지를 계속 올린 뒤, 실패 목록을 함께 반환한다.
@@ -43,18 +67,24 @@ export async function uploadBatch(
   upload: UploadFn,
   onProgress?: (done: number, total: number, current: string) => void,
 ): Promise<BatchResult> {
-  const failed: BatchFailure[] = [];
-  let ok = 0;
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i]!;
-    onProgress?.(i, files.length, file.name);
-    try {
-      await upload(file, cfg.whisperModel, file.name, cfg.translateProvider, cfg.translateCliModel);
-      ok += 1;
-    } catch (e) {
-      failed.push({ name: file.name, error: e instanceof Error ? e.message : String(e) });
-    }
-  }
-  onProgress?.(files.length, files.length, "");
-  return { ok, failed };
+  return runSequentialBatch(
+    files,
+    (file) => upload(file, cfg.whisperModel, file.name,
+                     cfg.translateProvider, cfg.translateCliModel),
+    onProgress,
+  );
+}
+
+/**
+ * 네이티브 폴더 선택 경로용 배치 — 파일 내용을 웹뷰가 못 읽으므로 업로드는
+ * Rust 커맨드(upload_video_file)가 경로에서 직접 스트리밍한다. 실패 무중단
+ * 순차 처리 semantics는 uploadBatch와 동일.
+ */
+export async function uploadBatchNative(
+  entries: NativeVideoFile[],
+  cfg: BatchConfig,
+  uploadPath: (entry: NativeVideoFile, cfg: BatchConfig) => Promise<unknown>,
+  onProgress?: (done: number, total: number, current: string) => void,
+): Promise<BatchResult> {
+  return runSequentialBatch(entries, (entry) => uploadPath(entry, cfg), onProgress);
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { filterVideoFiles, uploadBatch } from "./videoBatch";
+import { filterVideoFiles, uploadBatch, uploadBatchNative } from "./videoBatch";
 
 function f(name: string): File {
   return new File([new Uint8Array([1, 2, 3])], name, { type: "application/octet-stream" });
@@ -50,5 +50,28 @@ describe("uploadBatch", () => {
       (done, total) => ticks.push([done, total]),
     );
     expect(ticks).toEqual([[0, 2], [1, 2], [2, 2]]);
+  });
+});
+
+describe("uploadBatchNative", () => {
+  it("업로드 경로 배치 — 실패 무중단 순차 처리 + 진행 콜백", async () => {
+    const entries = [
+      { path: "/v/a.mp4", name: "a.mp4" },
+      { path: "/v/b.mov", name: "b.mov" },
+      { path: "/v/c.mkv", name: "c.mkv" },
+    ];
+    const cfg = { whisperModel: "small" };
+    const calls: string[] = [];
+    const progress: Array<[number, number, string]> = [];
+    const res = await uploadBatchNative(entries, cfg, async (e, c) => {
+      calls.push(`${e.path}:${c.whisperModel}`);
+      if (e.name === "b.mov") throw new Error("boom");
+    }, (d, t, cur) => progress.push([d, t, cur]));
+
+    expect(res.ok).toBe(2);
+    expect(res.failed).toEqual([{ name: "b.mov", error: "boom" }]);
+    expect(calls).toEqual(["/v/a.mp4:small", "/v/b.mov:small", "/v/c.mkv:small"]);
+    expect(progress[0]).toEqual([0, 3, "a.mp4"]);
+    expect(progress.at(-1)).toEqual([3, 3, ""]);
   });
 });

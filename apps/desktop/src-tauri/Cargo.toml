@@ -25,7 +25,10 @@ mdns-sd = "0.20"
 hostname = "0.4.2"
 # 대용량 mp4 일괄 다운로드용 — 서버에서 받아 파일로 바로 쓴다(플러그인 fs 스코프·IPC 우회).
 # 윈도우 native-tls(SChannel) 이슈를 피하려 rustls-tls 사용(교훈: rustls/ring이 윈도우 안전).
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "multipart", "stream"] }
+# 폴더 일괄 업로드 스트리밍용(GB급 원본을 상수 메모리로 멀티파트 전송)
+tokio = { version = "1", features = ["fs"] }
+tokio-util = { version = "0.7", features = ["io"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = ["Win32_System_JobObjects", "Win32_System_Threading", "Win32_Foundation", "Win32_Security"] }
