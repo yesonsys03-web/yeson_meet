@@ -6,6 +6,7 @@ mod discovery;
 mod job;
 mod orphan_reaper;
 mod sidecar;
+mod video_download;
 
 use tauri::Manager;
 
@@ -34,6 +35,7 @@ pub fn run() {
             discovery::discover_server,
             discovery::device_label,
             discovery::scan_subnet,
+            video_download::download_to_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
