@@ -17,6 +17,7 @@ def _isolate(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(gp, "_progress", 0)
     monkeypatch.setattr(gp, "_cuda_checked", None)
     monkeypatch.setattr(gp, "_activated", False)
+    monkeypatch.setattr(gp, "_last_error", None)
     yield
 
 
@@ -111,6 +112,25 @@ def test_resolve_device_defaults_to_cpu(monkeypatch):
     assert gp.resolve_device() == ("cpu", "int8")
 
 
+def test_download_pack_failure_recorded_not_swallowed(monkeypatch):
+    # 워커 스레드 예외는 UI에 안 보인다 — last_error로 표면화해야
+    # "버튼 눌러도 반응 없음"이 재발하지 않는다(2026-07-08 Windows 회귀 가드).
+    def boom(pkg):
+        raise RuntimeError("네트워크 실패")
+
+    monkeypatch.setattr(gp, "_wheel_url", boom)
+    gp.download_pack()
+    assert gp._downloading is False
+    assert gp._last_error is not None and "네트워크 실패" in gp._last_error
+    assert gp.status()["last_error"] == gp._last_error
+    # 재시도 시작 시 이전 오류는 리셋
+    monkeypatch.setattr(gp, "_wheel_url", lambda pkg: ("u", 1))
+    monkeypatch.setattr(gp, "_download_file", lambda u, d, cb: None)
+    monkeypatch.setattr(gp, "_extract_dlls", lambda w, d: 0)
+    gp.download_pack()
+    assert gp._last_error is None
+
+
 def test_cuda_available_caches_failure(monkeypatch):
     calls: list[int] = []
 
@@ -128,6 +148,7 @@ def test_status_shape(monkeypatch):
     monkeypatch.setattr(gp, "gpu_name", lambda: None)
     out = gp.status()
     assert set(out) == {"supported", "gpu_name", "installed", "downloading",
-                        "progress", "cuda_available", "enabled", "approx_bytes"}
+                        "progress", "cuda_available", "enabled", "approx_bytes",
+                        "last_error"}
     assert out["installed"] is False
     assert out["cuda_available"] is False  # 미설치면 ctranslate2 검사 자체를 안 함
