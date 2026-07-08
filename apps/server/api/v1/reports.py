@@ -14,7 +14,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse, Response
-from sqlalchemy import func, select, text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.server.db.models import Session, Utterance
@@ -43,16 +43,23 @@ def _report_dir(sid: str) -> Path:
     return Path(_storage_root()) / sid
 
 
-def _dir_size(sid: str) -> int:
-    d = _report_dir(sid)
+def _report_files_size(sid: str) -> int:
+    """보고서/요약 문서 파일(report.*/summary.*)만 합산한다.
+
+    세션 디렉토리를 통째로 훑지 않는 이유: STORAGE_ROOT 밑에는 video_jobs/ 등
+    보고서와 무관한 대용량 산출물(자막메이커 mp4 등)이 함께 있어서, 트리 전체를
+    세면 "보고서 사용량"이 실제 문서 크기의 수십~수백 배로 부풀려진다.
+    """
     total = 0
-    if d.exists():
-        for path in d.rglob("*"):
-            if path.is_file():
-                try:
-                    total += path.stat().st_size
-                except OSError:
-                    pass
+    for fmt in _REPORT_FORMATS:
+        for p in (
+            report_path(_storage_root(), sid, fmt),
+            summary_path(_storage_root(), sid, fmt),
+        ):
+            try:
+                total += p.stat().st_size
+            except OSError:
+                pass
     return total
 
 
@@ -100,7 +107,7 @@ def _row(meeting: Session, *, with_sizes: bool) -> dict:
         "summary_ready": _summary_ready(meeting),
     }
     if with_sizes:
-        out["size_bytes"] = _dir_size(sid)
+        out["size_bytes"] = _report_files_size(sid)
     return out
 
 
@@ -117,17 +124,11 @@ async def list_reports(
 
 @router.get("/storage")
 async def storage_usage(db: Annotated[AsyncSession, Depends(get_session)]) -> dict:
-    root = Path(_storage_root())
-    total = 0
-    if root.exists():
-        for path in root.rglob("*"):
-            if path.is_file():
-                try:
-                    total += path.stat().st_size
-                except OSError:
-                    pass
-    count = (await db.execute(select(func.count()).select_from(Session))).scalar_one()
-    return {"total_bytes": total, "session_count": count}
+    # 보고서/요약 문서 파일만 합산 — video_jobs 등 무관한 대용량 산출물은 제외
+    # (STORAGE_ROOT 트리 전체를 세면 자막메이커 mp4까지 잡혀 수 GB로 부풀려진다).
+    external_ids = (await db.execute(select(Session.external_id))).scalars().all()
+    total = sum(_report_files_size(str(ext)) for ext in external_ids)
+    return {"total_bytes": total, "session_count": len(external_ids)}
 
 
 @router.delete("/{external_id}/files", status_code=status.HTTP_204_NO_CONTENT)
