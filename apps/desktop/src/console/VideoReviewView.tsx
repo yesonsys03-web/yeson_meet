@@ -5,6 +5,7 @@ import {
 } from "./videoApi";
 import type { BurnStyle, VideoJobDetail } from "./videoApi";
 import { activeSegmentIndex, overlayStyleFor, sanitizeFilename } from "./videoReviewLogic";
+import { captionedFileName } from "./videoBatchOps";
 
 type VideoReviewViewProps = {
   jobId: string;
@@ -122,7 +123,7 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
     // void로 삼켜져 "아무 반응 없음"으로 보였다. finally에서 상태를 항상 되돌린다.
     try {
       const safeTitle = sanitizeFilename(job.title);
-      const suggestedName = kind === "srt" ? `${safeTitle}.srt` : `${safeTitle}-captioned.mp4`;
+      const suggestedName = kind === "srt" ? `${safeTitle}.srt` : captionedFileName(job.title);
 
       if (!hasTauriRuntime()) {
         // 브라우저 dev 폴백: 저장 위치를 고를 수 없는 기존 blob 다운로드 방식.

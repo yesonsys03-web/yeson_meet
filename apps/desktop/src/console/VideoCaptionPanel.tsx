@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import {
-  createYoutubeJob, deleteVideoJob, deleteVideoModel, downloadVideoModel,
+  burnVideoJob, createYoutubeJob, deleteVideoJob, deleteVideoModel, downloadVideoModel,
   getVideoStorage, listTranslateEngines, listVideoJobs, listVideoModels, uploadVideoJob,
+  videoDownloadUrl,
 } from "./videoApi";
 import type {
-  TranslateEngineInfo, VideoJobSummary, VideoModelInfo, VideoStorageInfo,
+  BurnStyle, TranslateEngineInfo, VideoJobSummary, VideoModelInfo, VideoStorageInfo,
 } from "./videoApi";
 import { filterVideoFiles, uploadBatch } from "./videoBatch";
+import { actionableJobIds, captionedFileName, partitionSelection } from "./videoBatchOps";
 import { VideoReviewView } from "./VideoReviewView";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -18,6 +20,16 @@ const STATUS_LABEL: Record<string, string> = {
 
 const INFLIGHT_STATUSES = ["queued", "ingesting", "extracting", "transcribing",
                            "translating", "burning"];
+
+const PAGE_SIZE = 15;
+
+// 일괄 굽기 공용 스타일 — 개별 검수 없이 굽는 대량 워크플로용 기본값(VideoReviewView 기본값과 동일).
+const DEFAULT_BURN_STYLE: BurnStyle = { position: "bottom", margin_v: 40, font_size: 18, color: "#ffffff" };
+
+type TauriGlobal = typeof globalThis & { __TAURI_INTERNALS__?: unknown };
+function hasTauriRuntime(): boolean {
+  return Boolean((globalThis as TauriGlobal).__TAURI_INTERNALS__);
+}
 
 type EngineOption = { value: string; label: string; available: boolean };
 
@@ -78,6 +90,9 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [batchStatus, setBatchStatus] = useState<string | null>(null);
   const [modelMgmtOpen, setModelMgmtOpen] = useState(false);
+  const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(0);
+  const [confirmBatchBurn, setConfirmBatchBurn] = useState(false);
 
   // webkitdirectory는 표준 타입에 없어 JSX 속성으로 못 준다 — 폴더 선택 input에
   // 직접 붙인다(WKWebView/WebView2 모두 지원). 폴더 안 모든 파일을 넘겨준다.
@@ -164,12 +179,121 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     }
   };
 
+  const toggleJob = useCallback((id: string) => {
+    setSelectedJobs((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = useCallback(() => {
+    setSelectedJobs((prev) => {
+      const ids = actionableJobIds(jobs);
+      const allSel = ids.length > 0 && ids.every((id) => prev.has(id));
+      return allSel ? new Set() : new Set(ids);
+    });
+  }, [jobs]);
+
+  // 선택 굽기 — 검수 없이 공용 기본 스타일로 굽는다. 한 건 실패해도 나머지 계속.
+  const runBatchBurn = useCallback(async () => {
+    const { burnable } = partitionSelection(jobs, selectedJobs);
+    if (burnable.length === 0) return;
+    setConfirmBatchBurn(false);
+    setBusy(true);
+    setError(null);
+    setBatchStatus(null);
+    let ok = 0;
+    const failed: string[] = [];
+    for (const j of burnable) {
+      try {
+        await burnVideoJob(j.job_id, DEFAULT_BURN_STYLE);
+        ok += 1;
+      } catch {
+        failed.push(j.title);
+      }
+    }
+    const parts = [`${ok}개 굽기를 시작했습니다`];
+    if (failed.length) parts.push(`${failed.length}개 실패: ${failed.join(", ")}`);
+    setBatchStatus(parts.join(" · "));
+    setSelectedJobs(new Set());
+    await refresh();
+    setBusy(false);
+  }, [jobs, selectedJobs, refresh]);
+
+  // 선택 다운로드 — 폴더 하나를 고른 뒤 완료 작업의 mp4를 그 안에 {제목}-captioned.mp4로 저장.
+  const runBatchDownload = useCallback(async () => {
+    const { downloadable } = partitionSelection(jobs, selectedJobs);
+    if (downloadable.length === 0) return;
+    setError(null);
+    setBatchStatus(null);
+
+    if (!hasTauriRuntime()) {
+      // 브라우저 dev 폴백: 폴더 지정 없이 순차 blob 다운로드.
+      for (const j of downloadable) {
+        try {
+          const res = await fetch(videoDownloadUrl(j.job_id, "video"));
+          if (!res.ok) continue;
+          const blob = await res.blob();
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = captionedFileName(j.title);
+          a.click();
+          URL.revokeObjectURL(a.href);
+        } catch { /* skip */ }
+      }
+      setBatchStatus(`${downloadable.length}개 다운로드 시작`);
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const dir = await open({ directory: true, title: "다운로드 폴더 선택" });
+      if (typeof dir !== "string") {
+        setBatchStatus("저장이 취소되었습니다.");
+        return;
+      }
+      const { join } = await import("@tauri-apps/api/path");
+      const { invoke } = await import("@tauri-apps/api/core");
+      let ok = 0;
+      const failed: string[] = [];
+      for (const j of downloadable) {
+        try {
+          setBatchStatus(`내려받는 중 ${ok + 1}/${downloadable.length} — ${j.title}`);
+          const path = await join(dir, captionedFileName(j.title));
+          // 받기+쓰기를 Rust에서 처리 — fs 스코프 무관(다른 드라이브 OK) + 대용량 IPC 회피.
+          await invoke("download_to_file", { url: videoDownloadUrl(j.job_id, "video"), path });
+          ok += 1;
+        } catch {
+          failed.push(j.title);
+        }
+      }
+      const parts = [`${ok}개 저장됨 → ${dir}`];
+      if (failed.length) parts.push(`${failed.length}개 실패: ${failed.join(", ")}`);
+      setBatchStatus(parts.join(" · "));
+      setSelectedJobs(new Set());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [jobs, selectedJobs]);
+
   if (reviewJobId) {
     return (
       <VideoReviewView jobId={reviewJobId}
         onBack={() => { setReviewJobId(null); void refresh(); }} />
     );
   }
+
+  const totalPages = Math.max(1, Math.ceil(jobs.length / PAGE_SIZE));
+  const curPage = Math.min(page, totalPages - 1); // jobs 축소(삭제/프루닝) 시 자동 클램프
+  const pagedJobs = jobs.slice(curPage * PAGE_SIZE, curPage * PAGE_SIZE + PAGE_SIZE);
+  const { burnable: burnableSel, downloadable: downloadableSel } = partitionSelection(jobs, selectedJobs);
+  const actionableIds = actionableJobIds(jobs);
+  const allActionableSelected = actionableIds.length > 0 && actionableIds.every((id) => selectedJobs.has(id));
 
   const youtubeDisabled = busy || !selectedInstalled || !youtubeUrl.trim();
   const fileDisabled = busy || !selectedInstalled;
@@ -276,10 +400,70 @@ function VideoCaptionInner({ active }: { active: boolean }) {
           ) : null}
         </div>
         {jobs.length === 0 ? <p style={{ opacity: 0.7 }}>아직 작업이 없습니다.</p> : null}
-        {jobs.map((job) => (
+
+        {/* 일괄 작업 바 — 체크박스로 고른 검수 대기 작업을 공용 스타일로 일괄 굽기,
+            완료 작업을 폴더 하나에 일괄 다운로드. 개별 검수/다운로드는 각 행에서 계속 가능. */}
+        {jobs.length > 0 ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+              <input type="checkbox" checked={allActionableSelected} onChange={toggleAll}
+                disabled={busy || actionableIds.length === 0} />
+              전체 선택
+            </label>
+            {confirmBatchBurn ? (
+              <>
+                <span style={{ fontSize: 13, opacity: 0.85 }}>
+                  {burnableSel.length}개를 검수 없이 바로 굽습니다.
+                </span>
+                <button type="button" style={consoleStyles.action}
+                  disabled={busy} onClick={() => void runBatchBurn()}>확인</button>
+                <button type="button" style={consoleStyles.mutedAction}
+                  disabled={busy} onClick={() => setConfirmBatchBurn(false)}>취소</button>
+              </>
+            ) : (
+              <button type="button"
+                title="선택한 작업 중 '검수 대기' 상태만 검수 없이 공용 스타일로 굽습니다 (완료된 작업은 제외)"
+                style={{ ...consoleStyles.action, ...(busy || burnableSel.length === 0 ? consoleStyles.actionDisabled : null) }}
+                disabled={busy || burnableSel.length === 0}
+                onClick={() => setConfirmBatchBurn(true)}>
+                선택 굽기{burnableSel.length ? ` (${burnableSel.length})` : ""}
+              </button>
+            )}
+            <button type="button"
+              title="선택한 작업 중 '완료' 상태의 mp4만 폴더 하나를 골라 일괄 저장합니다 (아직 안 구워진 작업은 제외)"
+              style={{ ...consoleStyles.mutedAction, ...(busy || downloadableSel.length === 0 ? consoleStyles.actionDisabled : null) }}
+              disabled={busy || downloadableSel.length === 0}
+              onClick={() => void runBatchDownload()}>
+              선택 다운로드{downloadableSel.length ? ` (${downloadableSel.length})` : ""}
+            </button>
+            <span style={{ flex: 1 }} />
+            {selectedJobs.size > 0 ? (
+              <span style={{ fontSize: 12, opacity: 0.7 }}>{selectedJobs.size}개 선택됨</span>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* 페이지 네비게이션 — 15개/페이지, 상단에서 바로 이동 */}
+        {jobs.length > PAGE_SIZE ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" style={{ ...consoleStyles.mutedAction, ...(curPage === 0 ? consoleStyles.actionDisabled : null) }} disabled={curPage === 0} onClick={() => setPage(0)}>« 처음</button>
+            <button type="button" style={{ ...consoleStyles.mutedAction, ...(curPage === 0 ? consoleStyles.actionDisabled : null) }} disabled={curPage === 0} onClick={() => setPage(curPage - 1)}>‹ 이전</button>
+            <span style={{ fontSize: 12, opacity: 0.7, minWidth: 150, textAlign: "center" }}>{curPage + 1} / {totalPages} 페이지 · 총 {jobs.length}개</span>
+            <button type="button" style={{ ...consoleStyles.mutedAction, ...(curPage >= totalPages - 1 ? consoleStyles.actionDisabled : null) }} disabled={curPage >= totalPages - 1} onClick={() => setPage(curPage + 1)}>다음 ›</button>
+            <button type="button" style={{ ...consoleStyles.mutedAction, ...(curPage >= totalPages - 1 ? consoleStyles.actionDisabled : null) }} disabled={curPage >= totalPages - 1} onClick={() => setPage(totalPages - 1)}>마지막 »</button>
+          </div>
+        ) : null}
+
+        {pagedJobs.map((job) => (
           <div key={job.job_id}
             style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px",
                      border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8 }}>
+            <input type="checkbox"
+              checked={selectedJobs.has(job.job_id)}
+              disabled={busy || !["review", "done"].includes(job.status)}
+              onChange={() => toggleJob(job.job_id)}
+              style={["review", "done"].includes(job.status) ? undefined : { visibility: "hidden" }}
+              title="일괄 작업 선택" />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {job.title}
