@@ -92,9 +92,9 @@ def resolve_cli(name: str) -> str | None:
 def list_translate_engines() -> list[dict]:
     """클라 드롭다운용 — 서버에서 사용 가능한 번역 엔진과 설치 여부."""
     return [
-        {"value": "gemini", "label": "Gemini (기본)",
+        {"value": "gemini", "label": "Gemini",
          "available": bool(os.environ.get("GEMINI_API_KEY"))},
-        {"value": "claude", "label": "Claude 구독",
+        {"value": "claude", "label": "Claude 구독 (기본)",
          "available": resolve_cli("claude") is not None},
         {"value": "codex", "label": "Codex 구독",
          "available": resolve_cli("codex") is not None},
