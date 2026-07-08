@@ -227,7 +227,9 @@ const s: Record<string, CSSProperties> = {
   confirmList: { margin: 0, paddingLeft: 18, maxHeight: 180, overflowY: "auto", fontSize: 12, color: "var(--ys-text-body)", display: "flex", flexDirection: "column", gap: 2 },
   warnInline: { fontSize: 12, color: "var(--ys-warning-text)" },
   jobRow: { display: "flex", alignItems: "center", gap: 12, padding: "6px 0", borderBottom: "1px solid var(--ys-border-subtle)" },
-  jobTitle: { fontSize: 13, fontWeight: 600, minWidth: 160, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  // 파일명은 잘라내지 않고 전부 보여준다(…말줄임 금지) — 긴 이름은 줄바꿈.
+  // 언더스코어 파일명은 공백이 없어 breakAll이 필요하다.
+  jobTitle: { fontSize: 13, fontWeight: 600, minWidth: 160, wordBreak: "break-all" },
   jobMeta: { fontSize: 12, color: "var(--ys-text-faint)", flex: "1 1 auto" },
   pager: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, margin: "2px 0 8px", flexWrap: "wrap" },
   pagerInfo: { fontSize: 12, color: "var(--ys-text-faint)", minWidth: 150, textAlign: "center" },
