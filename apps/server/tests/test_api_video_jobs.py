@@ -311,3 +311,82 @@ async def test_create_job_rejects_invalid_translate_provider(client, admin_user)
                                    "whisper_model": "small",
                                    "translate_provider": "not-a-real-engine"})
     assert resp.status_code == 422
+
+
+async def test_rebuild_resets_job_and_requeues(client, db_session, admin_user,
+                                               monkeypatch, tmp_path):
+    started = {}
+    monkeypatch.setattr(api_vj, "_start_pipeline",
+                        lambda eid: started.setdefault("eid", eid))
+    src = tmp_path / "source.mov"
+    src.write_bytes(b"x" * 10)
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mov",
+                   whisper_model="base", translate_provider="claude",
+                   status="done", progress=100, media_path=str(src),
+                   burned_path="/tmp/old-burned.mp4", error=None)
+    db_session.add(job)
+    await db_session.commit()
+    job_id = job.id
+
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/rebuild")
+    assert resp.status_code == 202
+    assert started["eid"] == job.external_id
+    db_session.expire_all()
+    row = (await db_session.execute(select(VideoJob).where(
+        VideoJob.id == job_id))).scalar_one()
+    assert row.status == "queued"
+    assert row.progress == 0
+    assert row.burned_path is None
+    # 옵션은 보존 — 같은 소스·같은 설정으로 재실행
+    assert row.whisper_model == "base"
+    assert row.translate_provider == "claude"
+
+
+async def test_rebuild_rejects_inflight_job(client, db_session, admin_user):
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mov",
+                   whisper_model="base", status="transcribing")
+    db_session.add(job)
+    await db_session.commit()
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/rebuild")
+    assert resp.status_code == 409
+
+
+async def test_rebuild_rejects_upload_without_source_file(client, db_session,
+                                                          admin_user):
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mov",
+                   whisper_model="base", status="done",
+                   media_path="/nope/missing.mov")
+    db_session.add(job)
+    await db_session.commit()
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/rebuild")
+    assert resp.status_code == 409
+
+
+async def test_cancel_inflight_job_marks_error(client, db_session, admin_user):
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mov",
+                   whisper_model="base", status="translating", progress=40)
+    db_session.add(job)
+    await db_session.commit()
+    job_id = job.id
+
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/cancel")
+    assert resp.status_code == 202
+    db_session.expire_all()
+    row = (await db_session.execute(select(VideoJob).where(
+        VideoJob.id == job_id))).scalar_one()
+    assert row.status == "error"
+    assert "취소" in (row.error or "")
+
+
+async def test_cancel_rejects_finished_job(client, db_session, admin_user):
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mov",
+                   whisper_model="base", status="done")
+    db_session.add(job)
+    await db_session.commit()
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/cancel")
+    assert resp.status_code == 409

@@ -292,6 +292,59 @@ async def burn_video_job(
     return {"status": "burning"}
 
 
+@router.post("/{external_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
+async def cancel_video_job(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """진행 중 파이프라인 중단 — 행은 남겨 재생성/삭제 선택지를 준다.
+
+    취소는 베스트에포트: 태스크 cancel은 다음 await 지점에서 멎고 세마포어가
+    즉시 반납된다(삭제 경로와 동일 semantics). 상태는 error로 남겨 재생성
+    버튼의 대상이 되게 한다.
+    """
+    job = await _get_job_or_404(db, external_id)
+    if job.status in ("review", "done", "error"):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"이미 종료된 작업입니다 (status={job.status})")
+    cancel_job_task(external_id)
+    job.status = "error"
+    job.progress = 0
+    job.error = "사용자가 작업을 취소했습니다."
+    await db.commit()
+    return {"status": "canceled"}
+
+
+@router.post("/{external_id}/rebuild", status_code=status.HTTP_202_ACCEPTED)
+async def rebuild_video_job(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """같은 소스·같은 옵션으로 파이프라인 재실행(제자리 재생성).
+
+    대용량 원본을 다시 업로드하지 않고 전사/번역을 다시 돌리는 용도(모델·
+    프롬프트 수정 후 재작업 등). run_video_job이 세그먼트를 선삭제 후 재삽입
+    하므로 별도 정리는 상태 리셋만으로 충분하다. 기존 검수 편집과 굽기
+    결과는 폐기된다.
+    """
+    job = await _get_job_or_404(db, external_id)
+    if job.status not in ("review", "done", "error"):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"진행 중인 작업은 재생성할 수 없습니다 (status={job.status})")
+    if job.source_type == "upload" and (
+            not job.media_path or not Path(job.media_path).exists()):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "원본 영상 파일이 남아 있지 않아 재생성할 수 없습니다.")
+    cancel_job_task(external_id)  # 방어적 — 터미널 상태면 실행 중 태스크 없음
+    job.status = "queued"
+    job.progress = 0
+    job.error = None
+    job.burned_path = None  # 새 검수 전까지 옛 굽기 결과 다운로드 방지
+    await db.commit()
+    _start_pipeline(external_id)
+    return {"status": "queued"}
+
+
 @router.get("/{external_id}/download")
 async def download_video_job(
     external_id: UUID,

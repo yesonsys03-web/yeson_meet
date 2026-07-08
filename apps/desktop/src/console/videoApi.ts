@@ -181,6 +181,16 @@ export async function deleteVideoJob(jobId: string): Promise<void> {
     { method: "DELETE" });
 }
 
+export async function rebuildVideoJob(jobId: string): Promise<void> {
+  await request(`${apiBase()}/api/v1/video-jobs/${jobId}/rebuild`,
+    { method: "POST" });
+}
+
+export async function cancelVideoJob(jobId: string): Promise<void> {
+  await request(`${apiBase()}/api/v1/video-jobs/${jobId}/cancel`,
+    { method: "POST" });
+}
+
 export function videoMediaUrl(jobId: string): string {
   return `${apiBase()}/api/v1/video-jobs/${jobId}/media`;
 }
