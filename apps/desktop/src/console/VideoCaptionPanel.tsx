@@ -38,8 +38,8 @@ type EngineOption = { value: string; label: string; available: boolean };
 
 // 서버 응답이 오기 전 첫 렌더용 폴백 — 깜빡임 방지 (서버 미설치 상태를 알기 전이므로 전부 available)
 const DEFAULT_ENGINE_OPTIONS: EngineOption[] = [
-  { value: "", label: "번역: Gemini (기본)", available: true },
-  { value: "claude", label: "번역: Claude 구독", available: true },
+  { value: "", label: "번역: Gemini", available: true },
+  { value: "claude", label: "번역: Claude 구독 (기본)", available: true },
   { value: "codex", label: "번역: Codex 구독", available: true },
   { value: "agy", label: "번역: Antigravity", available: true },
   { value: "opencode", label: "번역: OpenCode (딥시크 등)", available: true },
@@ -83,7 +83,9 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const [storage, setStorage] = useState<VideoStorageInfo | null>(null);
   const [engineOptions, setEngineOptions] = useState<EngineOption[]>(DEFAULT_ENGINE_OPTIONS);
   const [selectedModel, setSelectedModel] = useState("base");
-  const [translateProvider, setTranslateProvider] = useState("");
+  // 번역 기본값=Claude 구독(사용자 결정 2026-07-08). 서버에 claude CLI가 없으면
+  // 아래 effect가 Gemini("")로 폴백한다.
+  const [translateProvider, setTranslateProvider] = useState("claude");
   const [cliModel, setCliModel] = useState(DEFAULT_OPENCODE_MODEL);
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [busy, setBusy] = useState(false);
@@ -125,6 +127,14 @@ function VideoCaptionInner({ active }: { active: boolean }) {
       setError(err instanceof Error ? err.message : String(err));
     }
   }, []);
+
+  // 선택된 번역 엔진이 서버에 없으면(미설치) Gemini("")로 폴백 — 기본값이
+  // claude라서 claude CLI 없는 서버에서도 업로드가 막히지 않게 한다.
+  useEffect(() => {
+    if (!translateProvider) return;
+    const opt = engineOptions.find((o) => o.value === translateProvider);
+    if (opt && !opt.available) setTranslateProvider("");
+  }, [engineOptions, translateProvider]);
 
   // 탭이 보이는 동안만 3초 폴링 (숨김 탭은 mount 유지되므로 active로 게이트)
   useEffect(() => {
