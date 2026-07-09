@@ -1,4 +1,5 @@
 // === ANCHOR: CONSOLE_NAV_START ===
+import type { ReactNode } from "react";
 import { consoleStyles } from "./consoleStyles";
 import type { ConsoleView } from "./types";
 
@@ -6,6 +7,7 @@ type ConsoleNavProps = {
   activeView: ConsoleView;
   onChange: (view: ConsoleView) => void;
   appVersion?: string;
+  updateBanner?: ReactNode;
 };
 
 const navItems: Array<{ view: ConsoleView; label: string; disabled?: boolean }> = [
@@ -16,11 +18,12 @@ const navItems: Array<{ view: ConsoleView; label: string; disabled?: boolean }> 
   { view: "video", label: "자막 메이커" },
 ];
 
-export function ConsoleNav({ activeView, onChange, appVersion }: ConsoleNavProps) {
+export function ConsoleNav({ activeView, onChange, appVersion, updateBanner }: ConsoleNavProps) {
   return (
     <aside style={consoleStyles.sidebar}>
       <p style={consoleStyles.brand}>yeson-meet operator</p>
       {appVersion ? <p style={consoleStyles.version}>v{appVersion}</p> : null}
+      {updateBanner ?? null}
       <nav style={consoleStyles.nav} aria-label="Desktop console sections">
         {navItems.map((item) => (
           <button

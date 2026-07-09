@@ -7,6 +7,8 @@ import { HelpManualPanel } from "../help/HelpManualPanel";
 import { SettingsPanel } from "../settings/SettingsPanel";
 import { SetupAssistant } from "../setup/SetupAssistant";
 import { ConsoleNav } from "./ConsoleNav";
+import { UpdateBanner } from "./UpdateBanner";
+import { useAutoUpdate } from "../updater/useAutoUpdate";
 import { KnowledgeRepositoryPanel } from "./KnowledgeRepositoryPanel";
 import { NativeCaptureBanner } from "./NativeCaptureBanner";
 import { VideoCaptionPanel } from "./VideoCaptionPanel";
@@ -25,6 +27,8 @@ export function DesktopConsole() {
   // App version from the Tauri bundle (tauri.conf.json). Best-effort: outside the
   // Tauri runtime (e.g. tests) getVersion rejects and the version line stays hidden.
   const [appVersion, setAppVersion] = useState<string>("");
+  // Background auto-update: silent check/download, restart-to-apply banner.
+  const update = useAutoUpdate();
 
   useEffect(() => {
     installAppLogCapture();
@@ -54,7 +58,14 @@ export function DesktopConsole() {
 
   return (
     <div style={consoleStyles.page}>
-      <ConsoleNav activeView={activeView} onChange={setActiveView} appVersion={appVersion} />
+      <ConsoleNav
+        activeView={activeView}
+        onChange={setActiveView}
+        appVersion={appVersion}
+        updateBanner={
+          <UpdateBanner status={update.status} onCheckNow={update.checkNow} onApplyNow={update.applyNow} />
+        }
+      />
       <main style={consoleStyles.content}>
         <NativeCaptureBanner />
         <section
