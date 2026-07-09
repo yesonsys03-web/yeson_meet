@@ -77,6 +77,9 @@ jobs:
 
       - name: Build Tauri Windows installer
         shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           $iconPath = "apps/desktop/src-tauri/icons/icon.ico"
           if (!(Test-Path $iconPath)) {
@@ -158,12 +161,11 @@ jobs:
         shell: bash
         run: echo "VERSION=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)" >> "$GITHUB_ENV"
 
-      - name: Publish client installer to prerelease
+      - name: Publish client installer to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
           name: yeson-meet v${{ env.VERSION }}
-          prerelease: true
           body: |
             ## yeson-meet v1.1.3 — 무엇이 바뀌었나
 
@@ -184,4 +186,17 @@ jobs:
             - 자산: macOS(Apple Silicon·Intel) + Windows, 클라이언트·서버 콘솔.
           files: |
             apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+            apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe.sig
           fail_on_unmatched_files: true
+
+      - name: Merge client entry into update manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ env.VERSION }}
+          REPO: ${{ github.repository }}
+          MANIFEST: latest-client.json
+          PLATFORM_KEY: windows-x86_64
+          ARTIFACT_GLOB: apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+        run: bash .github/scripts/merge-update-manifest.sh

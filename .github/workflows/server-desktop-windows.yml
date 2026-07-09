@@ -84,6 +84,9 @@ jobs:
       - name: Build server console installer (nsis + msi)
         shell: pwsh
         working-directory: apps/server_desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --bundles nsis msi
 
       - name: List built installers
@@ -99,12 +102,11 @@ jobs:
         shell: bash
         run: echo "VERSION=$(jq -r .version apps/server_desktop/src-tauri/tauri.conf.json)" >> "$GITHUB_ENV"
 
-      - name: Publish installer to prerelease
+      - name: Publish installer to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
           name: yeson-meet v${{ env.VERSION }}
-          prerelease: true
           body: |
             ## yeson-meet v1.1.3 — 무엇이 바뀌었나
 
@@ -125,5 +127,17 @@ jobs:
             - 자산: macOS(Apple Silicon·Intel) + Windows, 클라이언트·서버 콘솔.
           files: |
             apps/server_desktop/src-tauri/target/release/bundle/nsis/*.exe
+            apps/server_desktop/src-tauri/target/release/bundle/nsis/*-setup.exe.sig
             apps/server_desktop/src-tauri/target/release/bundle/msi/*.msi
           fail_on_unmatched_files: true
+
+      - name: Merge server entry into update manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ env.VERSION }}
+          REPO: ${{ github.repository }}
+          MANIFEST: latest-server.json
+          PLATFORM_KEY: windows-x86_64
+          ARTIFACT_GLOB: apps/server_desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+        run: bash .github/scripts/merge-update-manifest.sh
