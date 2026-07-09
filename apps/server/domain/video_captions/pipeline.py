@@ -17,6 +17,7 @@ from sqlalchemy import delete, select, update
 
 from apps.server.db.models import VideoJob, VideoSegment
 from apps.server.db.session import AsyncSessionLocal
+from . import gpu_pack
 from .ffmpeg import (
     burn_subtitles, ensure_preview, extract_audio, kill_active, locate_ffmpeg,
     wav_duration_seconds,
@@ -454,10 +455,14 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
 
             progress_cb = on_burn_progress
 
+        # 굽기도 전사와 같은 GPU 토글을 따른다 — 꺼져 있으면 GPU 인코더 프로브
+        # 자체를 건너뛰고 libx264로 굽는다(2026-07-09 버그: 이전엔 토글과
+        # 무관하게 항상 GPU 후보를 프로브했다).
+        use_gpu = gpu_pack.is_enabled()
         try:
             await asyncio.to_thread(
                 burn_subtitles, ffmpeg, Path(media_path), srt_path, burned, style,
-                progress_cb, proc_key=str(external_id))
+                progress_cb, proc_key=str(external_id), use_gpu=use_gpu)
         except StaleRunCancelled:
             # 취소된 실행 — 이미 cancelled로 마킹된 상태를 error로 덮어쓰지 않는다.
             logger.info("burn job %s: stale run (generation %d) cancelled early",

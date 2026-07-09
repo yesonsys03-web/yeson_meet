@@ -180,7 +180,7 @@ async def test_run_burn_job(monkeypatch, db_session, admin_user, tmp_path):
     burned = {}
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
 
-    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None):
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None, use_gpu=None):
         burned["style"] = style
         Path(dst).write_bytes(b"out")
 
@@ -194,6 +194,35 @@ async def test_run_burn_job(monkeypatch, db_session, admin_user, tmp_path):
         select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
     assert loaded.status == "done"
     assert loaded.burned_path and Path(loaded.burned_path).exists()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_run_burn_job_passes_gpu_pack_is_enabled_as_use_gpu(
+        monkeypatch, db_session, admin_user, tmp_path, enabled):
+    """굽기는 전사와 같은 토글을 따라야 한다 — gpu_pack.is_enabled()가 그대로
+    burn_subtitles(use_gpu=...)로 전달되는지 확인 (버그: 이전엔 배선이 없었다)."""
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"v")
+    job = await _make_job(db_session, admin_user, media_path=str(src), status="review")
+    job_id, external_id = job.id, job.external_id
+    db_session.add(VideoSegment(job_id=job_id, seq=1, start_ms=0, end_ms=1000,
+                                text_en="Hello", text_ko="안녕하세요"))
+    await db_session.commit()
+
+    monkeypatch.setattr(pl.gpu_pack, "is_enabled", lambda: enabled)
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+
+    seen_use_gpu = {}
+
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None, use_gpu=None):
+        seen_use_gpu["v"] = use_gpu
+        Path(dst).write_bytes(b"out")
+
+    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+
+    await pl.run_burn_job(external_id, "top", 20, 24)
+
+    assert seen_use_gpu["v"] is enabled
 
 
 async def test_run_video_job_survives_missing_job(db_session):
@@ -404,7 +433,7 @@ async def test_run_burn_job_uses_stored_duration_without_wav(
     monkeypatch.setattr(pl, "_set_progress", fake_set_progress)
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
 
-    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None):
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None, use_gpu=None):
         # duration must come from duration_ms (4.0s), NOT the segment max (1.0s),
         # so a progress callback at 2s maps to 50% (would be 100%-capped otherwise).
         assert progress_cb is not None
@@ -555,7 +584,7 @@ async def test_run_burn_job_killed_ffmpeg_error_stays_cancelled(
             await db.commit()
         pl._bump_generation(ext)
 
-    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None):
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None, use_gpu=None):
         asyncio.run_coroutine_threadsafe(_cancel_mid_burn(), loop).result(timeout=10)
         raise FfmpegError("ffmpeg failed (code=-9): killed")
 
@@ -596,7 +625,7 @@ async def test_run_burn_job_stale_generation_stops_and_keeps_cancelled(
             await db.commit()
         pl._bump_generation(ext)
 
-    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None):
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None, use_gpu=None):
         assert progress_cb is not None
         asyncio.run_coroutine_threadsafe(_cancel_mid_burn(), loop).result(timeout=10)
         progress_cb(2.0)  # stale 세대 감지 → StaleRunCancelled를 기대
