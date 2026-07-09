@@ -339,8 +339,8 @@ export function CaptureView() {
     <main className="min-h-screen bg-slate-900 text-slate-100 flex justify-center p-6">
       <div className={`w-full space-y-6 ${s.phase === "capturing" ? "max-w-5xl" : "max-w-2xl"}`}>
         <header>
-          <h1 className="text-2xl font-bold">웹 캡처 — 실시간 자막</h1>
-          <p className="text-sm text-slate-400">구글밋 탭의 소리를 잡아 자막을 만듭니다. 앱 설치가 필요 없습니다.</p>
+          <h1 className="text-2xl font-bold">YESON-MEET WEB-실시간 자막</h1>
+          <p className="text-sm text-slate-400">앱 설치 없이 웹에서 라이브 미팅 번역</p>
         </header>
         <SupportBanners />
         {s.error && (
