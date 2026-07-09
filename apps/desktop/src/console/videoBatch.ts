@@ -22,7 +22,10 @@ export type BatchConfig = {
 };
 
 export type BatchFailure = { name: string; error: string };
-export type BatchResult = { ok: number; failed: BatchFailure[] };
+export type BatchResult = { ok: number; failed: BatchFailure[]; skipped: number };
+
+// 배치 도중 "전체 취소"를 눌렀는지 매 파일 시작 전에 확인하기 위한 훅.
+export type BatchAbortOpts = { isCancelled?: () => boolean };
 
 export type UploadFn = (
   file: File,
@@ -39,10 +42,18 @@ async function runSequentialBatch<T extends { name: string }>(
   items: T[],
   doUpload: (item: T) => Promise<unknown>,
   onProgress?: (done: number, total: number, current: string) => void,
+  opts?: BatchAbortOpts,
 ): Promise<BatchResult> {
   const failed: BatchFailure[] = [];
   let ok = 0;
+  let skipped = 0;
   for (let i = 0; i < items.length; i++) {
+    // 각 파일 업로드 시작 "전"에 확인 — "전체 취소"가 눌렸으면 남은 파일은
+    // 아예 시작하지 않고 스킵한다(이미 시작한 업로드는 끝까지 둔다).
+    if (opts?.isCancelled?.()) {
+      skipped = items.length - i;
+      break;
+    }
     const item = items[i]!;
     onProgress?.(i, items.length, item.name);
     try {
@@ -52,8 +63,8 @@ async function runSequentialBatch<T extends { name: string }>(
       failed.push({ name: item.name, error: e instanceof Error ? e.message : String(e) });
     }
   }
-  onProgress?.(items.length, items.length, "");
-  return { ok, failed };
+  onProgress?.(items.length - skipped, items.length, "");
+  return { ok, failed, skipped };
 }
 
 /**
@@ -66,12 +77,14 @@ export async function uploadBatch(
   cfg: BatchConfig,
   upload: UploadFn,
   onProgress?: (done: number, total: number, current: string) => void,
+  opts?: BatchAbortOpts,
 ): Promise<BatchResult> {
   return runSequentialBatch(
     files,
     (file) => upload(file, cfg.whisperModel, file.name,
                      cfg.translateProvider, cfg.translateCliModel),
     onProgress,
+    opts,
   );
 }
 
@@ -85,6 +98,7 @@ export async function uploadBatchNative(
   cfg: BatchConfig,
   uploadPath: (entry: NativeVideoFile, cfg: BatchConfig) => Promise<unknown>,
   onProgress?: (done: number, total: number, current: string) => void,
+  opts?: BatchAbortOpts,
 ): Promise<BatchResult> {
-  return runSequentialBatch(entries, (entry) => uploadPath(entry, cfg), onProgress);
+  return runSequentialBatch(entries, (entry) => uploadPath(entry, cfg), onProgress, opts);
 }
