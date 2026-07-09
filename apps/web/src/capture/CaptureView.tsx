@@ -168,26 +168,49 @@ export function CaptureView() {
 
   const canSubtitleFullscreen = s.phase === "capturing";
   const canQrFullscreen = !!s.viewerUrl;
+
+  // 데스크탑 앱의 전체화면 창처럼 모니터 전체를 덮도록 브라우저 Fullscreen API 사용.
+  // 키다운(사용자 제스처) 안에서 직접 호출해야 허용된다. 실패 시(권한 등) 창 내 오버레이로 폴백.
+  function openFullscreen(mode: Exclude<FullscreenMode, null>) {
+    setFullscreen(mode);
+    if (!document.fullscreenElement) void document.documentElement.requestFullscreen().catch(() => {});
+  }
+  function closeFullscreen() {
+    setFullscreen(null);
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+  }
+
   useEffect(() => {
     if (!canSubtitleFullscreen && !canQrFullscreen) return;
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        setFullscreen(null);
+        closeFullscreen();
         return;
       }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.repeat || isEditableTarget(event.target)) return;
       if (event.code === "KeyF" && canSubtitleFullscreen) {
         event.preventDefault();
-        setFullscreen((m) => (m === "subtitle" ? null : "subtitle"));
+        if (fullscreen === "subtitle") closeFullscreen();
+        else openFullscreen("subtitle");
       } else if (event.code === "KeyQ" && canQrFullscreen) {
         event.preventDefault();
-        setFullscreen((m) => (m === "qr" ? null : "qr"));
+        if (fullscreen === "qr") closeFullscreen();
+        else openFullscreen("qr");
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [canSubtitleFullscreen, canQrFullscreen]);
+  });
+
+  // 브라우저가 자체적으로 전체화면을 빠져나간 경우(Esc는 브라우저가 먼저 처리) 오버레이도 닫는다.
+  useEffect(() => {
+    function onFsChange() {
+      if (!document.fullscreenElement) setFullscreen(null);
+    }
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
 
   return (
     <main className="min-h-screen bg-slate-900 text-slate-100 flex justify-center p-6">
@@ -293,9 +316,9 @@ export function CaptureView() {
         )}
       </div>
       {fullscreen === "subtitle" && canSubtitleFullscreen && (
-        <SubtitleFullscreenOverlay latest={subtitles.latest} onClose={() => setFullscreen(null)} />
+        <SubtitleFullscreenOverlay latest={subtitles.latest} onClose={closeFullscreen} />
       )}
-      {fullscreen === "qr" && s.viewerUrl && <QrFullscreenOverlay viewerUrl={s.viewerUrl} onClose={() => setFullscreen(null)} />}
+      {fullscreen === "qr" && s.viewerUrl && <QrFullscreenOverlay viewerUrl={s.viewerUrl} onClose={closeFullscreen} />}
     </main>
   );
 }
