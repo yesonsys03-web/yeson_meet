@@ -1,7 +1,9 @@
 name: Server console macOS installer
 
 # Builds the macOS .dmg for the server console (apps/server_desktop) and
-# publishes it as a prerelease asset. Manual-only (workflow_dispatch): macOS
+# publishes it to the versioned full release (vX.Y.Z), together with the updater
+# artifact (.app.tar.gz + .sig) and the latest-server.json update manifest that
+# the in-app updater polls. Manual-only (workflow_dispatch): macOS
 # runners bill at 10x, so this never auto-runs on push — trigger from the
 # Actions tab when a macOS build is wanted. Unsigned (ad-hoc, P9'): first launch
 # via System Settings > Privacy & Security > "Open Anyway" (see docs/INSTALL.md).

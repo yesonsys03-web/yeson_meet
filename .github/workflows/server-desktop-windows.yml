@@ -11,10 +11,12 @@ name: Server console Windows installer
 # (PyInstaller --onedir of the FastAPI server). If that freeze fails, this build
 # fails — which is itself the P0 signal (-> P0.4 uv-launcher contingency).
 #
-# Delivery: the installer is published as a **prerelease asset**, NOT an Actions
-# artifact, because Actions artifact STORAGE can be full (the 0.5GB included pool)
-# while a multi-hundred-MB frozen-server installer needs room; release assets live
-# in a separate, effectively-unlimited pool. Download it from the repo's Releases.
+# Delivery: the installer is published as a **versioned full-release asset**
+# (vX.Y.Z, plus the NSIS updater .sig and the latest-server.json update manifest),
+# NOT an Actions artifact, because Actions artifact STORAGE can be full (the
+# 0.5GB included pool) while a multi-hundred-MB frozen-server installer needs
+# room; release assets live in a separate, effectively-unlimited pool. Download
+# it from the repo's Releases.
 on:
   workflow_dispatch:
   push:
@@ -93,8 +95,9 @@ jobs:
         shell: pwsh
         run: Get-ChildItem -Recurse apps/server_desktop/src-tauri/target/release/bundle -Include *.exe,*.msi | Select-Object FullName, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
 
-      # Publish to a rolling prerelease (overwritten each run) — avoids the full
-      # Actions artifact-storage quota. Download from repo -> Releases.
+      # Publish to the versioned full release (updater manifest is merged in the
+      # step after) — avoids the full Actions artifact-storage quota. Download
+      # from repo -> Releases.
       # 릴리스 태그의 단일 출처 = tauri.conf.json 버전. 4개 워크플로가 각자
       # 여기서 읽어 v${VERSION}으로 발행하므로, 버전을 tauri.conf에서만 올리면
       # 되고 자산이 서로 다른 태그로 흩어질 일이 없다.

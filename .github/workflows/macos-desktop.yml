@@ -1,7 +1,9 @@
 name: Client app macOS installer
 
 # Builds the macOS .dmg for the desktop CLIENT (apps/desktop) and publishes it
-# as a prerelease asset. Manual-only (workflow_dispatch): macOS runners bill at
+# to the versioned full release (vX.Y.Z), together with the updater artifact
+# (.app.tar.gz + .sig) and the latest-client.json update manifest that the
+# in-app updater polls. Manual-only (workflow_dispatch): macOS runners bill at
 # 10x, so this never auto-runs on push. On macOS, Tauri auto-merges
 # tauri.macos.conf.json, whose beforeBuildCommand builds the Swift native helper
 # + the PyInstaller sidecar + the frontend, then bundles them via externalBin.
