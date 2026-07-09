@@ -82,7 +82,7 @@ export function CaptureView() {
   const subtitles = useOperatorSubtitles(s.phase === "capturing" ? s.sessionId : null, s.operatorToken);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const recent = subtitles.utterances.filter((u) => u.is_final).slice(-3);
+  const recent = subtitles.utterances.filter((u) => u.is_final).slice(-2);
 
   return (
     <main className="min-h-screen bg-slate-900 text-slate-100 flex justify-center p-6">
@@ -157,12 +157,14 @@ export function CaptureView() {
               <input type="checkbox" checked={s.micOn} onChange={() => void s.toggleMic()} />
               내 목소리 포함(마이크)
             </label>
-            <div className="rounded-lg bg-slate-900/60 p-3 min-h-[5rem] space-y-1">
+            {/* 고정 높이 + 아래 정렬: 최신 자막이 항상 바닥에, 넘치는 옛 자막은 위로 잘림 — 레이아웃 출렁임 방지 */}
+            <div className="rounded-lg bg-slate-900/60 p-4 h-44 overflow-hidden flex flex-col justify-end gap-3">
               {recent.length === 0 && <p className="text-sm text-slate-500">자막이 오면 여기 표시됩니다…</p>}
-              {recent.map((u) => (
-                <p key={u.seq} className="text-sm">
-                  <span className="text-slate-400">{u.text_en}</span> <span className="text-slate-100">{u.text_ko}</span>
-                </p>
+              {recent.map((u, i) => (
+                <div key={u.seq} className={i === recent.length - 1 ? "" : "opacity-50"}>
+                  <p className="text-xs text-slate-500 truncate">{u.text_en}</p>
+                  <p className="text-lg leading-snug text-slate-50">{u.text_ko}</p>
+                </div>
               ))}
             </div>
             {s.viewerUrl && <ViewerQr viewerUrl={s.viewerUrl} />}
