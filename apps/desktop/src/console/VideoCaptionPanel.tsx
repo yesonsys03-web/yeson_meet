@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import {
-  burnVideoJob, cancelVideoJob, createYoutubeJob, deleteVideoJob, deleteVideoModel,
-  downloadGpuPack, downloadVideoModel, getGpuStatus, getVideoStorage,
+  burnVideoJob, cancelAllVideoJobs, cancelVideoJob, createYoutubeJob, deleteVideoJob,
+  deleteVideoModel, downloadGpuPack, downloadVideoModel, getGpuStatus, getVideoStorage,
   listTranslateEngines, listVideoJobs, listVideoModels, rebuildVideoJob, setGpuEnabled,
   uploadVideoJob, videoDownloadUrl, videoUploadUrl,
 } from "./videoApi";
@@ -10,15 +10,19 @@ import type {
   BurnStyle, GpuStatus, TranslateEngineInfo, VideoJobSummary, VideoModelInfo,
   VideoStorageInfo,
 } from "./videoApi";
-import { filterVideoFiles, uploadBatch, uploadBatchNative } from "./videoBatch";
+import {
+  abortBatchThenCancelAll, filterVideoFiles, uploadBatch, uploadBatchNative,
+} from "./videoBatch";
 import type { NativeVideoFile } from "./videoBatch";
-import { actionableJobIds, captionedFileName, partitionSelection } from "./videoBatchOps";
+import {
+  actionableJobIds, canRebuild, captionedFileName, overallProgress, partitionSelection,
+} from "./videoBatchOps";
 import { VideoReviewView } from "./VideoReviewView";
 
 const STATUS_LABEL: Record<string, string> = {
   queued: "대기 중", ingesting: "영상 가져오는 중", extracting: "오디오 추출 중",
   transcribing: "전사 중", translating: "번역 중", review: "검수 대기",
-  burning: "영상 굽는 중", done: "완료", error: "오류",
+  burning: "영상 굽는 중", done: "완료", error: "오류", cancelled: "취소됨",
 };
 
 const INFLIGHT_STATUSES = ["queued", "ingesting", "extracting", "transcribing",
@@ -95,6 +99,12 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const [confirmRebuildId, setConfirmRebuildId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
+  // "전체 취소" 클릭 시 true — 진행 중인 업로드 루프가 다음 파일 시작 전에 확인해
+  // 멈춘다(이미 시작한 업로드는 끝까지 둔다). 각 배치 시작 시 false로 리셋.
+  const batchCancelRef = useRef(false);
+  // 진행 중인 배치의 promise — 전체 취소가 cancel-all 호출 전에 이 promise의
+  // settle을 기다려, 취소 직후 완료된 업로드가 취소를 비껴가는 누락을 막는다.
+  const batchPromiseRef = useRef<Promise<unknown> | null>(null);
   const [batchStatus, setBatchStatus] = useState<string | null>(null);
   const [modelMgmtOpen, setModelMgmtOpen] = useState(false);
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
@@ -176,16 +186,20 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     setBusy(true);
     setError(null);
     setBatchStatus(null);
+    batchCancelRef.current = false;
     const cfg = {
       whisperModel: selectedModel,
       translateProvider: translateProvider || undefined,
       translateCliModel: translateProvider === "opencode" ? cliModel : undefined,
     };
     try {
-      const res = await uploadBatch(files, cfg, uploadVideoJob, (done, total, current) => {
+      const batch = uploadBatch(files, cfg, uploadVideoJob, (done, total, current) => {
         setBatchStatus(done < total ? `업로드 중 ${done + 1}/${total} — ${current}` : null);
-      });
+      }, { isCancelled: () => batchCancelRef.current });
+      batchPromiseRef.current = batch;
+      const res = await batch;
       const parts = [`${res.ok}개 작업이 시작됐습니다 (순차 처리)`];
+      if (res.skipped) parts.push(`${res.skipped}개 취소로 건너뜀`);
       if (res.failed.length) {
         parts.push(`${res.failed.length}개 실패: ${res.failed.map((x) => x.name).join(", ")}`);
       }
@@ -194,6 +208,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      batchPromiseRef.current = null;
       setBusy(false);
     }
   };
@@ -213,6 +228,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     const dir = await open({ directory: true, title: "영상 폴더 선택" });
     if (typeof dir !== "string") return;
     setBusy(true);
+    batchCancelRef.current = false;
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const entries = await invoke<NativeVideoFile[]>("list_video_files", { dir });
@@ -225,7 +241,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
         translateProvider: translateProvider || undefined,
         translateCliModel: translateProvider === "opencode" ? cliModel : undefined,
       };
-      const res = await uploadBatchNative(entries, cfg, (entry, c) =>
+      const batch = uploadBatchNative(entries, cfg, (entry, c) =>
         invoke("upload_video_file", {
           uploadUrl: videoUploadUrl(),
           path: entry.path,
@@ -235,8 +251,11 @@ function VideoCaptionInner({ active }: { active: boolean }) {
           translateCliModel: c.translateCliModel ?? null,
         }), (done, total, current) => {
           setBatchStatus(done < total ? `업로드 중 ${done + 1}/${total} — ${current}` : null);
-        });
+        }, { isCancelled: () => batchCancelRef.current });
+      batchPromiseRef.current = batch;
+      const res = await batch;
       const parts = [`${res.ok}개 작업이 시작됐습니다 (순차 처리)`];
+      if (res.skipped) parts.push(`${res.skipped}개 취소로 건너뜀`);
       if (res.failed.length) {
         parts.push(`${res.failed.length}개 실패: ${res.failed.map((x) => x.name).join(", ")}`);
       }
@@ -245,6 +264,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      batchPromiseRef.current = null;
       setBusy(false);
     }
   };
@@ -351,6 +371,25 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     }
   }, [jobs, selectedJobs]);
 
+  // 전체 취소 — ①업로드 루프 abort 플래그 → ②진행 중 배치의 settle 대기 →
+  // ③서버 전체 취소(대기열 선취소 후 활성 작업 취소). 이 순서라 cancel-all
+  // 시점에 업로드가 in-flight일 수 없어, 방금 완료된 업로드가 취소를 비껴가는
+  // 누락이 없다.
+  const cancelAllBatch = useCallback(async () => {
+    setError(null);
+    try {
+      await abortBatchThenCancelAll(
+        () => { batchCancelRef.current = true; },
+        batchPromiseRef.current,
+        cancelAllVideoJobs,
+      );
+      setBatchStatus("전체 취소를 요청했습니다.");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [refresh]);
+
   if (reviewJobId) {
     return (
       <VideoReviewView jobId={reviewJobId}
@@ -364,6 +403,9 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const { burnable: burnableSel, downloadable: downloadableSel } = partitionSelection(jobs, selectedJobs);
   const actionableIds = actionableJobIds(jobs);
   const allActionableSelected = actionableIds.length > 0 && actionableIds.every((id) => selectedJobs.has(id));
+  // 로컬 배치 업로드가 진행 중이거나(busy), 서버에 대기/실행 중인 작업이 하나라도
+  // 있으면 "전체 취소" 버튼을 노출한다.
+  const showCancelAll = busy || jobs.some((j) => INFLIGHT_STATUSES.includes(j.status));
 
   const youtubeDisabled = busy || !selectedInstalled || !youtubeUrl.trim();
   const fileDisabled = busy || !selectedInstalled;
@@ -447,6 +489,10 @@ function VideoCaptionInner({ active }: { active: boolean }) {
               e.target.value = "";
             }} />
         </div>
+        <p style={{ margin: 0, fontSize: 12, opacity: 0.6 }}>
+          Windows 폴더 선택창에는 폴더만 표시됩니다 — 폴더를 선택하면 내부 영상을 자동으로
+          찾습니다. 파일을 직접 보며 고르려면 &apos;로컬 파일 선택…&apos;을 쓰세요.
+        </p>
         {batchStatus ? (
           <p style={{ margin: 0, fontSize: 13, opacity: 0.85 }}>{batchStatus}</p>
         ) : null}
@@ -462,12 +508,21 @@ function VideoCaptionInner({ active }: { active: boolean }) {
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between",
                       gap: 12 }}>
           <h3 style={{ margin: 0 }}>작업 목록</h3>
-          {storage ? (
-            <span style={{ fontSize: 12, opacity: 0.7 }}
-              title={`오래된 작업은 자동으로 정리되어 최근 ${storage.keep}개만 보관됩니다`}>
-              스토리지 {formatBytes(storage.total_bytes)} · 최근 {storage.keep}개 보관
-            </span>
-          ) : null}
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {showCancelAll ? (
+              <button type="button" style={consoleStyles.mutedAction}
+                title="진행 중인 업로드 루프를 멈추고, 서버에 대기/실행 중인 모든 작업을 취소합니다"
+                onClick={() => void cancelAllBatch()}>
+                전체 취소
+              </button>
+            ) : null}
+            {storage ? (
+              <span style={{ fontSize: 12, opacity: 0.7 }}
+                title={`오래된 작업은 자동으로 정리되어 최근 ${storage.keep}개만 보관됩니다`}>
+                스토리지 {formatBytes(storage.total_bytes)} · 최근 {storage.keep}개 보관
+              </span>
+            ) : null}
+          </div>
         </div>
         {jobs.length === 0 ? <p style={{ opacity: 0.7 }}>아직 작업이 없습니다.</p> : null}
 
@@ -547,14 +602,16 @@ function VideoCaptionInner({ active }: { active: boolean }) {
               {INFLIGHT_STATUSES.includes(job.status) ? (
                 <div style={{ height: 4, borderRadius: 2, background: "rgba(255,255,255,0.12)",
                              marginTop: 6 }}>
-                  <div style={{ height: 4, borderRadius: 2, width: `${job.progress}%`,
+                  <div style={{ height: 4, borderRadius: 2,
+                               width: `${overallProgress(job.status, job.progress)}%`,
                                background: "#4a9eda", transition: "width 0.5s" }} />
                 </div>
               ) : null}
             </div>
             <span style={{ fontSize: 13, whiteSpace: "nowrap" }}>
               {STATUS_LABEL[job.status] ?? job.status}
-              {INFLIGHT_STATUSES.includes(job.status) ? ` ${job.progress}%` : ""}
+              {INFLIGHT_STATUSES.includes(job.status)
+                ? ` ${overallProgress(job.status, job.progress)}%` : ""}
             </span>
             {["review", "done"].includes(job.status) ? (
               <button type="button" style={consoleStyles.mutedAction}
@@ -568,7 +625,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
                 취소
               </button>
             ) : null}
-            {["review", "done", "error"].includes(job.status) ? (
+            {canRebuild(job.status) ? (
               confirmRebuildId === job.job_id ? (
                 <>
                   <button type="button" style={consoleStyles.action}

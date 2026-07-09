@@ -12,8 +12,8 @@ vi.mock("../diagnostics/appLog", () => ({
 }));
 
 import {
-  burnVideoJob, cancelVideoJob, createYoutubeJob, downloadGpuPack, getGpuStatus,
-  getVideoStorage, listTranslateEngines, listVideoModels, rebuildVideoJob,
+  burnVideoJob, cancelAllVideoJobs, cancelVideoJob, createYoutubeJob, downloadGpuPack,
+  getGpuStatus, getVideoStorage, listTranslateEngines, listVideoModels, rebuildVideoJob,
   setGpuEnabled, uploadVideoJob, videoMediaUrl,
 } from "./videoApi";
 
@@ -162,6 +162,18 @@ describe("videoApi", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(String(url)).toBe("http://localhost:8000/api/v1/video-jobs/j1/cancel");
     expect(init.method).toBe("POST");
+  });
+
+  it("cancelAllVideoJobs POSTs /api/v1/video-jobs/cancel-all", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ cancelled_queued: 2, cancelled_active: 1 }),
+    });
+    const out = await cancelAllVideoJobs();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:8000/api/v1/video-jobs/cancel-all");
+    expect(init.method).toBe("POST");
+    expect(out).toEqual({ cancelled_queued: 2, cancelled_active: 1 });
   });
 
   it("setGpuEnabled POSTs JSON body", async () => {

@@ -191,3 +191,31 @@ def test_burn_progress_parses_out_time_ms(monkeypatch, tmp_path: Path):
     assert "-progress" in captured_cmd
     assert "pipe:1" in captured_cmd
     assert "-nostats" in captured_cmd
+
+
+def test_burn_progress_exception_kills_ffmpeg(monkeypatch, tmp_path: Path):
+    """progress_cb가 예외(취소 신호)를 던지면 ffmpeg 프로세스를 즉시 kill해야 한다 —
+    그대로 두면 취소 후에도 인코딩이 끝까지 돌며 CPU/GPU를 태운다."""
+    monkeypatch.setenv("YESON_BURN_ENCODER", "libx264")
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+
+    killed = {"v": False}
+
+    class KillTrackingPopen(FakePopen):
+        def kill(self):
+            killed["v"] = True
+
+    monkeypatch.setattr(subprocess, "Popen",
+                        lambda cmd, **kw: KillTrackingPopen(cmd, **kw))
+
+    class Cancel(Exception):
+        pass
+
+    def raising_cb(seconds: float) -> None:
+        raise Cancel
+
+    with pytest.raises(Cancel):
+        ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
+                          "Alignment=2,MarginV=40,Fontsize=18", progress_cb=raising_cb)
+    assert killed["v"] is True

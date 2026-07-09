@@ -192,6 +192,13 @@ export async function cancelVideoJob(jobId: string): Promise<void> {
     { method: "POST" });
 }
 
+export type CancelAllResult = { cancelled_queued: number; cancelled_active: number };
+
+export async function cancelAllVideoJobs(): Promise<CancelAllResult> {
+  return request(`${apiBase()}/api/v1/video-jobs/cancel-all`,
+    { method: "POST" });
+}
+
 export function videoUploadUrl(): string {
   // Tauri 네이티브 업로드 커맨드(upload_video_file)에 넘길 엔드포인트 URL.
   return `${apiBase()}/api/v1/video-jobs/upload`;

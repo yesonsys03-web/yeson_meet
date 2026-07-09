@@ -21,6 +21,15 @@ class ModelNotDownloadedError(RuntimeError):
     pass
 
 
+class StaleRunCancelled(Exception):
+    """진행률 콜백이 스테일(취소·재생성된) 실행 세대를 감지했을 때 던진다.
+
+    CPU 집약적 전사/굽기는 asyncio 취소에 반응하지 않는 워커 스레드에서 돌기
+    때문에, task.cancel()이 걸려도 스레드는 끝까지 실행된다. 콜백이 이 예외를
+    던지면 스레드가 남은 작업을 마저 태우지 않고 즉시 빠져나간다. leaf 모듈인
+    여기에 정의해 pipeline↔transcribe 순환 임포트 없이 양쪽에서 쓴다."""
+
+
 def _load_model(model_name: str, device: str = "cpu",
                 compute_type: str = "int8"):  # test seam
     from faster_whisper import WhisperModel
@@ -98,6 +107,8 @@ def transcribe_audio(audio_path: Path, model_name: str,
     device, compute_type = gpu_pack.resolve_device()
     try:
         return _transcribe_on(audio_path, model_name, device, compute_type, progress_cb)
+    except StaleRunCancelled:
+        raise  # 취소 신호 — CUDA 실패가 아니므로 CPU 폴백으로 재전사하지 않는다
     except Exception:
         if device == "cpu":
             raise

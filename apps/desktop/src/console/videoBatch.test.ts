@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { filterVideoFiles, uploadBatch, uploadBatchNative } from "./videoBatch";
+import {
+  abortBatchThenCancelAll, filterVideoFiles, uploadBatch, uploadBatchNative,
+} from "./videoBatch";
 
 function f(name: string): File {
   return new File([new Uint8Array([1, 2, 3])], name, { type: "application/octet-stream" });
@@ -26,8 +28,27 @@ describe("uploadBatch", () => {
       { whisperModel: "small", translateProvider: "claude" },
       upload,
     );
-    expect(res).toEqual({ ok: 2, failed: [] });
+    expect(res).toEqual({ ok: 2, failed: [], skipped: 0 });
     expect(calls).toEqual(["a.mp4|small|a.mp4|claude", "b.mp4|small|b.mp4|claude"]);
+  });
+
+  it("stops uploading remaining files once isCancelled() reports true, and reports skipped count", async () => {
+    const calls: string[] = [];
+    let cancelled = false;
+    const upload = vi.fn(async (file: File) => {
+      calls.push(file.name);
+      if (file.name === "b.mp4") cancelled = true; // 사용자가 두 번째 업로드 중 전체 취소를 누른 상황 시뮬레이션
+      return { job_id: file.name };
+    });
+    const res = await uploadBatch(
+      [f("a.mp4"), f("b.mp4"), f("c.mp4"), f("d.mp4")],
+      { whisperModel: "small" },
+      upload,
+      undefined,
+      { isCancelled: () => cancelled },
+    );
+    expect(calls).toEqual(["a.mp4", "b.mp4"]); // c.mp4/d.mp4는 시작조차 안 됨
+    expect(res).toEqual({ ok: 2, failed: [], skipped: 2 });
   });
 
   it("continues past a failing file and reports it (batch not aborted)", async () => {
@@ -50,6 +71,56 @@ describe("uploadBatch", () => {
       (done, total) => ticks.push([done, total]),
     );
     expect(ticks).toEqual([[0, 2], [1, 2], [2, 2]]);
+  });
+});
+
+describe("abortBatchThenCancelAll", () => {
+  it("waits for the in-flight batch to settle before calling cancel-all (누락 경합 제거)", async () => {
+    const events: string[] = [];
+    let cancelled = false;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const upload = vi.fn(async (file: File) => {
+      events.push(`start:${file.name}`);
+      await gate; // 첫 업로드가 in-flight인 상태를 재현
+      events.push(`end:${file.name}`);
+      return { job_id: file.name };
+    });
+    const batch = uploadBatch(
+      [f("a.mp4"), f("b.mp4")], { whisperModel: "small" }, upload,
+      undefined, { isCancelled: () => cancelled },
+    );
+    const seq = abortBatchThenCancelAll(
+      () => { cancelled = true; events.push("abort"); },
+      batch,
+      async () => { events.push("cancelAll"); },
+    );
+    release();
+    await seq;
+    // cancel-all은 반드시 진행 중이던 업로드가 끝난(배치 settle) 뒤에 호출된다 —
+    // 취소 직후 완료된 업로드가 cancel-all을 비껴가는 누락이 구조적으로 없다.
+    expect(events).toEqual(["start:a.mp4", "abort", "end:a.mp4", "cancelAll"]);
+    expect(await batch).toEqual({ ok: 1, failed: [], skipped: 1 });
+  });
+
+  it("calls cancel-all immediately when no batch is running", async () => {
+    const events: string[] = [];
+    await abortBatchThenCancelAll(
+      () => events.push("abort"),
+      null,
+      async () => { events.push("cancelAll"); },
+    );
+    expect(events).toEqual(["abort", "cancelAll"]);
+  });
+
+  it("still calls cancel-all when the pending batch rejects", async () => {
+    const events: string[] = [];
+    await abortBatchThenCancelAll(
+      () => events.push("abort"),
+      Promise.reject(new Error("boom")),
+      async () => { events.push("cancelAll"); },
+    );
+    expect(events).toEqual(["abort", "cancelAll"]);
   });
 });
 

@@ -139,3 +139,20 @@ def test_transcribe_splits_long_segments_via_word_timestamps(monkeypatch, tmp_pa
     for cue in out:
         assert (cue.end_ms - cue.start_ms) / 1000.0 <= tr.MAX_CUE_SECONDS
     assert [c.seq for c in out] == list(range(1, len(out) + 1))
+
+
+def test_stale_run_cancelled_bypasses_cuda_fallback(monkeypatch, tmp_path):
+    """progress_cb가 던진 StaleRunCancelled(취소 신호)는 'CUDA 실패'가 아니다 —
+    CPU 폴백으로 전체 재전사를 시작하지 말고 그대로 전파해야 한다."""
+    _installed("small", tmp_path)
+    monkeypatch.setattr(tr.gpu_pack, "resolve_device", lambda: ("cuda", "float16"))
+    devices: list[str] = []
+
+    def fake_transcribe_on(path, model, device, compute, cb):
+        devices.append(device)
+        raise tr.StaleRunCancelled("ext")
+
+    monkeypatch.setattr(tr, "_transcribe_on", fake_transcribe_on)
+    with pytest.raises(tr.StaleRunCancelled):
+        tr.transcribe_audio(tmp_path / "audio.wav", "small", lambda f: None)
+    assert devices == ["cuda"]  # CPU 재시도 없음

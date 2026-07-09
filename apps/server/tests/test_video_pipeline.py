@@ -397,7 +397,7 @@ async def test_run_burn_job_uses_stored_duration_without_wav(
 
     progress_pcts: list[int] = []
 
-    async def fake_set_progress(eid, pct):
+    async def fake_set_progress(eid, pct, generation):
         progress_pcts.append(pct)
 
     monkeypatch.setattr(pl, "_set_progress", fake_set_progress)
@@ -420,3 +420,101 @@ async def test_run_burn_job_uses_stored_duration_without_wav(
     loaded = (await db_session.execute(
         select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
     assert loaded.status == "done"
+
+
+async def test_stale_generation_progress_write_is_dropped(
+        db_session, admin_user, tmp_path):
+    """유령 스레드가 지연 스케줄한 진행률 쓰기는, 그 사이 세대가 올라갔으면
+    (취소·재생성) 조용히 버려져야 한다 — 새 실행/대기 상태를 덮어쓰지 않도록."""
+    job = await _make_job(db_session, admin_user, status="transcribing")
+    job.progress = 10
+    await db_session.commit()
+    job_id, ext = job.id, job.external_id
+
+    stale_generation = pl._current_generation(ext)  # 0 (아직 아무 run도 없음)
+    pl._bump_generation(ext)  # 새 run이 시작된 것처럼 세대를 올림 → stale_generation은 이제 낡음
+
+    await pl._set_progress(ext, 77, stale_generation)
+
+    db_session.expire_all()
+    loaded = (await db_session.execute(
+        select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
+    assert loaded.progress == 10  # 77로 덮어쓰이지 않음
+
+    await pl._set_progress(ext, 55, pl._current_generation(ext))
+    db_session.expire_all()
+    loaded = (await db_session.execute(
+        select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
+    assert loaded.progress == 55  # 현재 세대의 쓰기는 정상 반영
+
+
+async def test_status_transition_to_queued_resets_progress(db_session, admin_user):
+    """대기 전환 시 진행률 리셋 — 재생성 직후 목록에 옛 77%가 잠깐이라도 남지
+    않도록 _PROGRESS에 queued:0을 명시한다."""
+    job = await _make_job(db_session, admin_user, status="transcribing")
+    job.progress = 77
+    await db_session.commit()
+    job_id, ext = job.id, job.external_id
+
+    await pl._set_status(ext, "queued")
+
+    db_session.expire_all()
+    loaded = (await db_session.execute(
+        select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
+    assert loaded.progress == 0
+
+
+async def test_cancel_job_task_bumps_generation(db_session, admin_user, tmp_path):
+    """cancel_job_task는 실행 중인 태스크가 없어도(이미 끝났거나 존재하지 않아도)
+    세대를 올려야 한다 — 취소 시점 이후 도착하는 유령 진행률 쓰기를 무효화."""
+    job = await _make_job(db_session, admin_user, status="transcribing")
+    ext = job.external_id
+
+    before = pl._current_generation(ext)
+    pl.cancel_job_task(ext)  # no running task registered — still bumps
+    after = pl._current_generation(ext)
+
+    assert after == before + 1
+
+
+async def test_run_burn_job_stale_generation_stops_and_keeps_cancelled(
+        monkeypatch, db_session, admin_user, tmp_path):
+    """굽기 도중 취소되면(상태 cancelled + 세대 상승) 진행 콜백이 StaleRunCancelled를
+    던져 조기 종료하고, 이미 cancelled로 마킹된 상태를 error로 덮어쓰지 않는다."""
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"v")
+    job = await _make_job(db_session, admin_user, media_path=str(src), status="review")
+    job.duration_ms = 4000
+    await db_session.commit()
+    job_id, ext = job.id, job.external_id
+    db_session.add(VideoSegment(job_id=job_id, seq=1, start_ms=0, end_ms=1000,
+                                text_en="Hello", text_ko="안녕"))
+    await db_session.commit()
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    loop = asyncio.get_running_loop()
+
+    async def _cancel_mid_burn():
+        # 사용자의 취소를 재현: 상태 cancelled 마킹 + 세대 상승(엔드포인트와 동일)
+        async with pl.AsyncSessionLocal() as db:
+            j = await pl._load_job(db, ext)
+            j.status = "cancelled"
+            j.progress = 0
+            await db.commit()
+        pl._bump_generation(ext)
+
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None):
+        assert progress_cb is not None
+        asyncio.run_coroutine_threadsafe(_cancel_mid_burn(), loop).result(timeout=10)
+        progress_cb(2.0)  # stale 세대 감지 → StaleRunCancelled를 기대
+        raise AssertionError("progress_cb must raise StaleRunCancelled on stale run")
+
+    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+
+    await pl.run_burn_job(ext, "bottom", 40, 18)
+
+    db_session.expire_all()
+    loaded = (await db_session.execute(
+        select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
+    assert loaded.status == "cancelled"  # error로 덮어쓰지 않음
+    assert loaded.burned_path is None    # done 처리도 되지 않음

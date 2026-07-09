@@ -31,6 +31,8 @@ from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
                                                         run_burn_job, run_video_job,
                                                         start_job_task, start_task,
                                                         video_jobs_root)
+from apps.server.domain.video_captions.pipeline import \
+    _INFLIGHT_STATUSES as INFLIGHT_STATUSES
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
 from apps.server.domain.video_captions.translate_cli import list_translate_engines
 from apps.server.domain.video_captions.whisper_models import CATALOG, is_downloaded
@@ -246,6 +248,45 @@ async def get_storage_usage(
     return {"total_bytes": total, "job_count": count, "keep": RETENTION_KEEP}
 
 
+_CANCEL_MESSAGE = "사용자가 작업을 취소했습니다."
+
+
+@router.post("/cancel-all")
+async def cancel_all_video_jobs(
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """대기열의 모든 queued 작업을 먼저 취소한 뒤 활성(실행 중) 작업을 취소한다.
+
+    반드시 이 순서로: 활성 작업을 먼저 취소하면 세마포어가 즉시 반납되고,
+    아직 큐잉된 다음 작업이 그 사이 승격돼 취소를 피할 수 있다 — queued를
+    먼저 확정 취소해두면 승격되더라도 이미 취소된 상태라 안전하다.
+    반드시 /{external_id} 동적 라우트보다 먼저 선언 — translate-engines/storage와 동일 이유.
+    """
+    queued_jobs = (await db.execute(
+        select(VideoJob).where(VideoJob.status == "queued")
+    )).scalars().all()
+    for job in queued_jobs:
+        cancel_job_task(job.external_id)
+        job.status = "cancelled"
+        job.progress = 0
+        job.error = _CANCEL_MESSAGE
+    cancelled_queued = len(queued_jobs)
+
+    active_statuses = [s for s in INFLIGHT_STATUSES if s != "queued"]
+    active_jobs = (await db.execute(
+        select(VideoJob).where(VideoJob.status.in_(active_statuses))
+    )).scalars().all()
+    for job in active_jobs:
+        cancel_job_task(job.external_id)
+        job.status = "cancelled"
+        job.progress = 0
+        job.error = _CANCEL_MESSAGE
+    cancelled_active = len(active_jobs)
+
+    await db.commit()
+    return {"cancelled_queued": cancelled_queued, "cancelled_active": cancelled_active}
+
+
 @router.get("/{external_id}")
 async def get_video_job(
     external_id: UUID,
@@ -296,7 +337,9 @@ async def burn_video_job(
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
     job = await _get_job_or_404(db, external_id)
-    if job.status not in ("review", "done", "error"):
+    # cancelled 포함 — 굽기 도중 취소한 작업은 세그먼트가 이미 있으므로
+    # (error에서의 재굽기와 동일하게) 전체 재생성 없이 다시 구울 수 있어야 한다.
+    if job.status not in ("review", "done", "error", "cancelled"):
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"검수 가능한 상태가 아닙니다 (status={job.status})")
     job.status = "burning"
@@ -315,17 +358,17 @@ async def cancel_video_job(
     """진행 중 파이프라인 중단 — 행은 남겨 재생성/삭제 선택지를 준다.
 
     취소는 베스트에포트: 태스크 cancel은 다음 await 지점에서 멎고 세마포어가
-    즉시 반납된다(삭제 경로와 동일 semantics). 상태는 error로 남겨 재생성
-    버튼의 대상이 되게 한다.
+    즉시 반납된다(삭제 경로와 동일 semantics). 상태는 실패(error)와 구분되는
+    'cancelled'로 초기화해 재생성 버튼의 대상이 되게 한다.
     """
     job = await _get_job_or_404(db, external_id)
-    if job.status in ("review", "done", "error"):
+    if job.status in ("review", "done", "error", "cancelled"):
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"이미 종료된 작업입니다 (status={job.status})")
     cancel_job_task(external_id)
-    job.status = "error"
+    job.status = "cancelled"
     job.progress = 0
-    job.error = "사용자가 작업을 취소했습니다."
+    job.error = _CANCEL_MESSAGE
     await db.commit()
     return {"status": "canceled"}
 
@@ -343,7 +386,7 @@ async def rebuild_video_job(
     결과는 폐기된다.
     """
     job = await _get_job_or_404(db, external_id)
-    if job.status not in ("review", "done", "error"):
+    if job.status not in ("review", "done", "error", "cancelled"):
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"진행 중인 작업은 재생성할 수 없습니다 (status={job.status})")
     if job.source_type == "upload" and (

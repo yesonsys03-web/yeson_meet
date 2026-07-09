@@ -365,7 +365,8 @@ async def test_rebuild_rejects_upload_without_source_file(client, db_session,
     assert resp.status_code == 409
 
 
-async def test_cancel_inflight_job_marks_error(client, db_session, admin_user):
+async def test_cancel_inflight_job_marks_cancelled(client, db_session, admin_user):
+    """취소는 실패(error)와 구분되는 '취소됨(cancelled)' 상태로 초기화된다."""
     job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
                    source_type="upload", source_ref="c.mov",
                    whisper_model="base", status="translating", progress=40)
@@ -378,18 +379,118 @@ async def test_cancel_inflight_job_marks_error(client, db_session, admin_user):
     db_session.expire_all()
     row = (await db_session.execute(select(VideoJob).where(
         VideoJob.id == job_id))).scalar_one()
-    assert row.status == "error"
+    assert row.status == "cancelled"
+    assert row.progress == 0
     assert "취소" in (row.error or "")
 
 
 async def test_cancel_rejects_finished_job(client, db_session, admin_user):
+    for status in ("done", "cancelled"):
+        job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                       source_type="upload", source_ref="c.mov",
+                       whisper_model="base", status=status)
+        db_session.add(job)
+        await db_session.commit()
+        resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/cancel")
+        assert resp.status_code == 409
+
+
+async def test_rebuild_from_cancelled_job_requeues(client, db_session, admin_user,
+                                                   monkeypatch, tmp_path):
+    """취소된 작업은 재생성 버튼의 대상 — cancelled에서 rebuild가 동작해야 한다."""
+    started = {}
+    monkeypatch.setattr(api_vj, "_start_pipeline",
+                        lambda eid: started.setdefault("eid", eid))
+    src = tmp_path / "source.mov"
+    src.write_bytes(b"x" * 10)
     job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
                    source_type="upload", source_ref="c.mov",
-                   whisper_model="base", status="done")
+                   whisper_model="base", status="cancelled", progress=0,
+                   media_path=str(src), error="사용자가 작업을 취소했습니다.")
     db_session.add(job)
     await db_session.commit()
-    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/cancel")
-    assert resp.status_code == 409
+    job_id = job.id
+
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/rebuild")
+    assert resp.status_code == 202
+    assert started["eid"] == job.external_id
+    db_session.expire_all()
+    row = (await db_session.execute(select(VideoJob).where(
+        VideoJob.id == job_id))).scalar_one()
+    assert row.status == "queued"
+    assert row.error is None
+
+
+async def test_cancel_all_queued_and_active(client, db_session, admin_user, monkeypatch):
+    """대기열 전체 취소: queued를 먼저 선취소한 뒤 활성 작업을 취소한다(순서
+    보장 — 세마포어가 반납되며 큐잉된 다음 작업이 새치기해서 취소를 피하는
+    것을 막기 위해). cancel_job_task 자체는 pipeline 단위테스트에서 검증되므로
+    여기서는 훅 호출 여부/순서/카운트만 monkeypatch로 확인한다."""
+    calls: list = []
+    monkeypatch.setattr(api_vj, "cancel_job_task", lambda ext: calls.append(ext) or True)
+
+    queued_jobs = []
+    for i in range(3):
+        j = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title=f"q{i}",
+                    source_type="upload", source_ref="c.mp4", whisper_model="base",
+                    status="queued", progress=0)
+        db_session.add(j)
+        queued_jobs.append(j)
+    active_job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="active",
+                          source_type="upload", source_ref="c.mp4", whisper_model="base",
+                          status="transcribing", progress=55)
+    db_session.add(active_job)
+    done_job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="done",
+                        source_type="upload", source_ref="c.mp4", whisper_model="base",
+                        status="done")
+    db_session.add(done_job)
+    await db_session.commit()
+
+    resp = await client.post("/api/v1/video-jobs/cancel-all")
+    assert resp.status_code == 200
+    assert resp.json() == {"cancelled_queued": 3, "cancelled_active": 1}
+
+    # 순서 보장: queued 세 건이 모두 먼저, active는 마지막
+    queued_exts = {j.external_id for j in queued_jobs}
+    assert set(calls[:3]) == queued_exts
+    assert calls[3] == active_job.external_id
+
+    db_session.expire_all()
+    rows = {r.external_id: r for r in (await db_session.execute(
+        select(VideoJob))).scalars()}
+    for j in queued_jobs:
+        row = rows[j.external_id]
+        assert row.status == "cancelled"
+        assert row.progress == 0
+        assert "취소" in (row.error or "")
+    active_row = rows[active_job.external_id]
+    assert active_row.status == "cancelled"
+    assert active_row.progress == 0
+    assert "취소" in (active_row.error or "")
+    assert rows[done_job.external_id].status == "done"  # 종료 상태는 건드리지 않음
+
+
+async def test_cancel_all_when_only_queued(client, db_session, admin_user):
+    for i in range(2):
+        db_session.add(VideoJob(external_id=uuid4(), owner_user_id=admin_user.id,
+                                title=f"q{i}", source_type="upload", source_ref="c.mp4",
+                                whisper_model="base", status="queued"))
+    await db_session.commit()
+
+    resp = await client.post("/api/v1/video-jobs/cancel-all")
+    assert resp.status_code == 200
+    assert resp.json() == {"cancelled_queued": 2, "cancelled_active": 0}
+
+
+async def test_cancel_all_noop_when_nothing_inflight(client, db_session, admin_user):
+    db_session.add(VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="d",
+                            source_type="upload", source_ref="c.mp4", whisper_model="base",
+                            status="done"))
+    await db_session.commit()
+
+    resp = await client.post("/api/v1/video-jobs/cancel-all")
+    assert resp.status_code == 200
+    assert resp.json() == {"cancelled_queued": 0, "cancelled_active": 0}
 
 
 async def test_list_orders_same_second_jobs_by_id_desc(client, db_session, admin_user):
