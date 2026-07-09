@@ -397,7 +397,7 @@ async def test_run_burn_job_uses_stored_duration_without_wav(
 
     progress_pcts: list[int] = []
 
-    async def fake_set_progress(eid, pct):
+    async def fake_set_progress(eid, pct, generation):
         progress_pcts.append(pct)
 
     monkeypatch.setattr(pl, "_set_progress", fake_set_progress)
@@ -420,3 +420,58 @@ async def test_run_burn_job_uses_stored_duration_without_wav(
     loaded = (await db_session.execute(
         select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
     assert loaded.status == "done"
+
+
+async def test_stale_generation_progress_write_is_dropped(
+        db_session, admin_user, tmp_path):
+    """유령 스레드가 지연 스케줄한 진행률 쓰기는, 그 사이 세대가 올라갔으면
+    (취소·재생성) 조용히 버려져야 한다 — 새 실행/대기 상태를 덮어쓰지 않도록."""
+    job = await _make_job(db_session, admin_user, status="transcribing")
+    job.progress = 10
+    await db_session.commit()
+    job_id, ext = job.id, job.external_id
+
+    stale_generation = pl._current_generation(ext)  # 0 (아직 아무 run도 없음)
+    pl._bump_generation(ext)  # 새 run이 시작된 것처럼 세대를 올림 → stale_generation은 이제 낡음
+
+    await pl._set_progress(ext, 77, stale_generation)
+
+    db_session.expire_all()
+    loaded = (await db_session.execute(
+        select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
+    assert loaded.progress == 10  # 77로 덮어쓰이지 않음
+
+    await pl._set_progress(ext, 55, pl._current_generation(ext))
+    db_session.expire_all()
+    loaded = (await db_session.execute(
+        select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
+    assert loaded.progress == 55  # 현재 세대의 쓰기는 정상 반영
+
+
+async def test_status_transition_to_queued_resets_progress(db_session, admin_user):
+    """대기 전환 시 진행률 리셋 — 재생성 직후 목록에 옛 77%가 잠깐이라도 남지
+    않도록 _PROGRESS에 queued:0을 명시한다."""
+    job = await _make_job(db_session, admin_user, status="transcribing")
+    job.progress = 77
+    await db_session.commit()
+    job_id, ext = job.id, job.external_id
+
+    await pl._set_status(ext, "queued")
+
+    db_session.expire_all()
+    loaded = (await db_session.execute(
+        select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
+    assert loaded.progress == 0
+
+
+async def test_cancel_job_task_bumps_generation(db_session, admin_user, tmp_path):
+    """cancel_job_task는 실행 중인 태스크가 없어도(이미 끝났거나 존재하지 않아도)
+    세대를 올려야 한다 — 취소 시점 이후 도착하는 유령 진행률 쓰기를 무효화."""
+    job = await _make_job(db_session, admin_user, status="transcribing")
+    ext = job.external_id
+
+    before = pl._current_generation(ext)
+    pl.cancel_job_task(ext)  # no running task registered — still bumps
+    after = pl._current_generation(ext)
+
+    assert after == before + 1

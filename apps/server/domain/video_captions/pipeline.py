@@ -31,8 +31,18 @@ logger = logging.getLogger("yeson.video.pipeline")
 
 # 계측되는 단계(전사/번역/굽기)는 단계 진입 시 0에서 시작해 단계 내부에서
 # 0→100%로 채워진다 — UI 라벨이 단계명을 보여주므로 절대 % 의미는 없다.
-_PROGRESS = {"ingesting": 5, "extracting": 15, "transcribing": 0,
+# queued: 0 — 재생성(rebuild) 직후 목록에 옛 진행률(예: 77%)이 잠깐이라도
+# 남지 않도록 대기 전환 시 명시적으로 리셋한다.
+_PROGRESS = {"queued": 0, "ingesting": 5, "extracting": 15, "transcribing": 0,
              "translating": 0, "review": 100, "burning": 0, "done": 100}
+
+
+class StaleRunCancelled(Exception):
+    """진행률 콜백이 스테일(취소·재생성된) 세대를 감지했을 때 던진다.
+
+    CPU 집약적 전사는 asyncio 취소에 반응하지 않는 워커 스레드에서 돌기
+    때문에, task.cancel()이 걸려도 스레드는 끝까지 실행된다. 콜백이 이
+    예외를 던지면 스레드가 남은 작업을 마저 태우지 않고 즉시 빠져나간다."""
 
 
 def _another_instance_is_serving() -> bool:
@@ -75,6 +85,23 @@ def start_task(coro) -> None:
 # FileNotFound 에러를 반복하는 좀비 태스크를 없앤다.
 _job_tasks: dict[str, asyncio.Task] = {}
 
+# 작업(external_id)별 "실행 세대" — DB 스키마 변경 없이 메모리에만 둔다. task.cancel()
+# 은 워커 스레드(전사/굽기)에는 닿지 않으므로, 취소·재생성 후에도 유령 스레드가 지연
+# 스케줄한 진행률 쓰기가 도착할 수 있다. 그 쓰기가 캡처한 세대가 현재 세대와 다르면
+# (run 시작·취소·재생성마다 세대가 오른다) 스테일로 간주해 버린다.
+_job_generation: dict[str, int] = {}
+
+
+def _bump_generation(external_id: UUID | str) -> int:
+    key = str(external_id)
+    gen = _job_generation.get(key, 0) + 1
+    _job_generation[key] = gen
+    return gen
+
+
+def _current_generation(external_id: UUID | str) -> int:
+    return _job_generation.get(str(external_id), 0)
+
 
 def start_job_task(external_id: UUID, coro) -> None:
     """external_id로 추적되는 파이프라인 태스크를 시작한다(취소 가능하도록)."""
@@ -96,7 +123,11 @@ def cancel_job_task(external_id: UUID) -> bool:
 
     run_video_job/run_burn_job은 finally에서 세마포어를 반납하므로 취소 시 즉시
     반납된다(대기 중인 다음 작업이 진행). 이미 끝났거나 없으면 False.
+
+    태스크 존재 여부와 무관하게 세대를 올린다 — 이미 끝난(그러나 워커 스레드가
+    아직 진행률을 지연 스케줄 중인) 실행의 유령 쓰기도 무효화해야 하기 때문.
     """
+    _bump_generation(external_id)
     task = _job_tasks.get(str(external_id))
     if task is not None and not task.done():
         task.cancel()
@@ -131,11 +162,15 @@ async def _set_status(external_id: UUID, status: str, *, error: str | None = Non
         await db.commit()
 
 
-async def _set_progress(external_id: UUID, pct: int) -> None:
+async def _set_progress(external_id: UUID, pct: int, generation: int) -> None:
     """단계 내부 진행률(0~100)만 갱신 — status/error는 건드리지 않는다.
 
-    진행률 갱신 실패가 파이프라인 자체를 죽이면 안 되므로 예외는 로그만.
+    generation은 호출자(진행률 콜백)가 자기 run 시작 시점에 캡처해 넘긴 값.
+    현재 세대와 다르면(그 사이 취소·재생성이 있었음) 유령 쓰기이므로 조용히
+    버린다. 진행률 갱신 실패가 파이프라인 자체를 죽이면 안 되므로 예외는 로그만.
     """
+    if generation != _current_generation(external_id):
+        return
     try:
         async with AsyncSessionLocal() as db:
             job = await _load_job(db, external_id)
@@ -157,6 +192,7 @@ async def run_video_job(external_id: UUID) -> None:
     # '대기 중'으로 표시된다(생성 시 큐잉된 상태 그대로). acquire는 try 밖에서
     # 하고 finally에서 반드시 release한다.
     await _JOB_SEMAPHORE.acquire()
+    generation = _bump_generation(external_id)
     try:
         async with AsyncSessionLocal() as db:
             job = await _load_job(db, external_id)
@@ -197,13 +233,25 @@ async def run_video_job(external_id: UUID) -> None:
         last_pct = {"v": -1}
 
         def on_transcribe_progress(frac: float) -> None:
+            # 워커 스레드에서 직접 호출된다(asyncio 취소가 닿지 않음). 그 사이
+            # 취소·재생성으로 세대가 올랐으면 즉시 예외를 던져 스레드가 남은
+            # 전사를 마저 태우지 않고 빠져나가게 한다.
+            if generation != _current_generation(external_id):
+                raise StaleRunCancelled(external_id)
             pct = max(0, min(100, int(frac * 100)))
             if pct != last_pct["v"]:
                 last_pct["v"] = pct
-                asyncio.run_coroutine_threadsafe(_set_progress(external_id, pct), loop)
+                asyncio.run_coroutine_threadsafe(
+                    _set_progress(external_id, pct, generation), loop)
 
-        en_segments = await asyncio.to_thread(
-            transcribe_audio, audio, model_name, on_transcribe_progress)
+        try:
+            en_segments = await asyncio.to_thread(
+                transcribe_audio, audio, model_name, on_transcribe_progress)
+        except StaleRunCancelled:
+            logger.info(
+                "video job %s: stale run (generation %d) abandoned during transcription",
+                external_id, generation)
+            return
         if not en_segments:
             raise RuntimeError("전사 결과가 비어 있습니다 (음성이 감지되지 않음).")
 
@@ -224,7 +272,7 @@ async def run_video_job(external_id: UUID) -> None:
         await _set_status(external_id, "translating")
 
         async def on_translate_progress(frac: float) -> None:
-            await _set_progress(external_id, max(0, min(100, int(frac * 100))))
+            await _set_progress(external_id, max(0, min(100, int(frac * 100))), generation)
 
         translator = create_translator(
             provider=translate_provider, cli_model=translate_cli_model)
@@ -339,6 +387,7 @@ async def prune_old_video_jobs_at_startup() -> int:
 
 async def run_burn_job(external_id: UUID, position: str, margin_v: int,
                        font_size: int, color: str = "#FFFFFF") -> None:
+    generation = _bump_generation(external_id)
     try:
         await _set_status(external_id, "burning")
         async with AsyncSessionLocal() as db:
@@ -385,7 +434,8 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
                 pct = max(0, min(100, int(seconds / _duration * 100)))
                 if pct != last_pct["v"]:
                     last_pct["v"] = pct
-                    asyncio.run_coroutine_threadsafe(_set_progress(external_id, pct), loop)
+                    asyncio.run_coroutine_threadsafe(
+                        _set_progress(external_id, pct, generation), loop)
 
             progress_cb = on_burn_progress
 
