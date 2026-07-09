@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg", "nsis", "msi"],
+    "createUpdaterArtifacts": true,
     "icon": ["icons/icon.icns", "icons/icon.ico", "icons/icon.png"],
     "category": "Business",
     "shortDescription": "yeson-meet server operator console",
@@ -35,6 +36,14 @@
     "resources": ["binaries/yeson-server-*/**/*", "binaries/cloudflared-*/**/*", "binaries/ffmpeg-*/**/*"],
     "macOS": {
       "minimumSystemVersion": "14.2"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZBMjZBNzU2OTJBNTUzQzQKUldURVU2V1NWcWNtYWlHMzdJMm9UMzU3OTNUNEV3d2xRbEVHRU1HMUN5d3ZGN0hlQVAzRmJXTC8K",
+      "endpoints": [
+        "https://github.com/yesonsys03-web/yeson_meet/releases/latest/download/latest-server.json"
+      ]
     }
   }
 }
