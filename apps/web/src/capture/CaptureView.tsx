@@ -1,5 +1,5 @@
 // === ANCHOR: CAPTURE_VIEW_START ===
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { checkCaptureSupport, isChromiumLike } from "./captureSupport";
 import { useCaptureSession } from "./useCaptureSession";
@@ -64,17 +64,40 @@ function ViewerQr({ viewerUrl }: { viewerUrl: string }) {
   );
 }
 
+const QUIET_DBFS = -50;
+const QUIET_WARN_AFTER_MS = 8000;
+
 function LevelMeter({ dbfs }: { dbfs: number }) {
   const pct = Math.round(Math.min(100, Math.max(0, ((dbfs + 60) / 60) * 100)));
-  const quiet = dbfs < -50;
+  // 경고는 8초 이상 "지속" 무음일 때만 표시 — 말 사이 정적으로는 절대 깜빡이지 않음.
+  // 소리가 들어오면 즉시 숨김. 막대 색은 고정(색 깜빡임 제거).
+  const [showWarning, setShowWarning] = useState(false);
+  const warnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (dbfs >= QUIET_DBFS) {
+      if (warnTimerRef.current) {
+        clearTimeout(warnTimerRef.current);
+        warnTimerRef.current = null;
+      }
+      setShowWarning(false);
+    } else if (!warnTimerRef.current) {
+      warnTimerRef.current = setTimeout(() => setShowWarning(true), QUIET_WARN_AFTER_MS);
+    }
+  }, [dbfs]);
+  useEffect(
+    () => () => {
+      if (warnTimerRef.current) clearTimeout(warnTimerRef.current);
+    },
+    [],
+  );
   return (
     <div>
       <div className="h-2 w-full rounded bg-slate-700">
-        <div className={`h-2 rounded ${quiet ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
+        <div className="h-2 rounded bg-emerald-500" style={{ width: `${pct}%` }} />
       </div>
-      {/* 항상 한 줄 공간 확보(표시/숨김만 전환) — 경고가 나타났다 사라져도 아래 레이아웃이 안 움직임 */}
-      <p className={`mt-1 h-4 text-xs text-amber-400 ${quiet ? "" : "invisible"}`}>
-        오디오가 거의 들어오지 않습니다 — 탭 선택 시 '탭 오디오 공유' 체크를 확인하세요.
+      {/* 항상 한 줄 공간 확보(표시/숨김만 전환) — 레이아웃 불변 */}
+      <p className={`mt-1 h-4 text-xs text-amber-400 ${showWarning ? "" : "invisible"}`}>
+        오디오가 들어오지 않습니다 — 탭 선택 시 '탭 오디오 공유' 체크를 확인하세요.
       </p>
     </div>
   );
