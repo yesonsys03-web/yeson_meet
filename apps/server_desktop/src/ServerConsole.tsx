@@ -10,6 +10,8 @@ import DevicePanel from "./DevicePanel";
 import BackupPanel from "./BackupPanel";
 import VideoJobsPanel from "./VideoJobsPanel";
 import ReportsPanel from "./ReportsPanel";
+import { UpdateBanner } from "./UpdateBanner";
+import { useAutoUpdate } from "./updater/useAutoUpdate";
 
 type ServerStatus = {
   running: boolean;
@@ -133,6 +135,8 @@ export default function ServerConsole() {
   const [tunnelBusy, setTunnelBusy] = useState(false);
   const [autoGoLive, setAutoGoLive] = useState<boolean>(loadAutoGoLive);
   const [appVersion, setAppVersion] = useState<string>("");
+  // Background auto-update: silent check/download, restart-to-apply banner.
+  const update = useAutoUpdate();
   const [lanIp, setLanIp] = useState<string | null>(null);
   const [, forceTick] = useState(0);
   const logBodyRef = useRef<HTMLDivElement>(null);
@@ -393,6 +397,7 @@ export default function ServerConsole() {
       <aside style={styles.sidebar}>
         <p style={styles.brand}>yeson server console</p>
         {appVersion ? <span style={styles.version}>v{appVersion}</span> : null}
+        <UpdateBanner status={update.status} onCheckNow={update.checkNow} onApplyNow={update.applyNow} />
         <span style={{ ...styles.badge, ...(running ? styles.badgeOn : styles.badgeOff) }}>
           {running ? "RUNNING" : "STOPPED"}
         </span>

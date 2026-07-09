@@ -16,6 +16,8 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         // Reap leftover cloudflared / yeson-server processes from a prior app
         // instance BEFORE the webview/commands are usable. The RunEvent::Exit
         // handler below misses the dev Ctrl+C path (tauri:dev killed at the

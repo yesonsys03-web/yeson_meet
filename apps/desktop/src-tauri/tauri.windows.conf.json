@@ -2,6 +2,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],
+    "createUpdaterArtifacts": true,
     "icon": ["icons/icon.ico", "icons/icon.png"],
     "externalBin": ["binaries/yeson-win-audio-helper", "binaries/yeson-sidecar"]
   }

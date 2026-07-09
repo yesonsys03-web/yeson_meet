@@ -1,6 +1,7 @@
 // === ANCHOR: APP_START ===
 import { SubtitleView } from "./components/SubtitleView";
 import { AdminAudioStats } from "./components/AdminAudioStats";
+import { CaptureView } from "./capture/CaptureView";
 
 function parseViewerToken(): string | null {
   const m = window.location.pathname.match(/^\/v\/([A-Za-z0-9_-]+)\/?$/);
@@ -17,6 +18,8 @@ function parseAdminAudioStats(): { sessionId: string; token: string } | null {
 }
 
 export default function App() {
+  if (window.location.pathname.replace(/\/$/, "") === "/capture") return <CaptureView />;
+
   const token = parseViewerToken();
   if (token) return <SubtitleView token={token} />;
 

@@ -77,6 +77,9 @@ jobs:
 
       - name: Build Tauri Windows installer
         shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           $iconPath = "apps/desktop/src-tauri/icons/icon.ico"
           if (!(Test-Path $iconPath)) {
@@ -126,7 +129,7 @@ jobs:
 
       # Artifact uploads are best-effort: the 0.5GB Actions artifact-storage pool
       # can be full, which must not fail the build — the installer is delivered
-      # via the prerelease below (release assets use a separate storage pool).
+      # via the versioned release below (release assets use a separate storage pool).
       - name: Upload sidecar executable
         continue-on-error: true
         uses: actions/upload-artifact@v4
@@ -148,9 +151,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # Publish the CLIENT installer to a rolling prerelease (like the server
-      # console), so it can be downloaded from the repo's Releases page without
-      # touching the full Actions artifact-storage quota.
+      # Publish the CLIENT installer to the versioned full release (like the
+      # server console) — with the NSIS updater .sig; the latest-client.json
+      # update manifest is merged in the step after — so it can be downloaded
+      # from the repo's Releases page without touching the full Actions
+      # artifact-storage quota.
       # 릴리스 태그의 단일 출처 = tauri.conf.json 버전 (4개 워크플로 공통 규칙).
       # windows-desktop은 위 빌드 step에서 tauri.conf.json의 .bundle만 덮어쓰므로
       # .version은 보존됨 — 여기서 읽어도 안전.
@@ -158,12 +163,11 @@ jobs:
         shell: bash
         run: echo "VERSION=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)" >> "$GITHUB_ENV"
 
-      - name: Publish client installer to prerelease
+      - name: Publish client installer to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
           name: yeson-meet v${{ env.VERSION }}
-          prerelease: true
           body: |
             ## yeson-meet v1.1.3 — 무엇이 바뀌었나
 
@@ -184,4 +188,17 @@ jobs:
             - 자산: macOS(Apple Silicon·Intel) + Windows, 클라이언트·서버 콘솔.
           files: |
             apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+            apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe.sig
           fail_on_unmatched_files: true
+
+      - name: Merge client entry into update manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ env.VERSION }}
+          REPO: ${{ github.repository }}
+          MANIFEST: latest-client.json
+          PLATFORM_KEY: windows-x86_64
+          ARTIFACT_GLOB: apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+        run: bash .github/scripts/merge-update-manifest.sh
