@@ -1,5 +1,5 @@
 // === ANCHOR: CAPTURE_VIEW_START ===
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import QRCode from "qrcode";
 import { checkCaptureSupport, isChromiumLike } from "./captureSupport";
 import { useCaptureSession } from "./useCaptureSession";
@@ -17,14 +17,136 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
 }
 
-function SubtitleFullscreenOverlay({ latest, onClose }: { latest: UtteranceTranscribed | null; onClose: () => void }) {
-  const paced = usePacedSubtitle(latest);
+// ── 데스크탑 콘솔 F 전체화면과 동일한 렌더링 (LiveSubtitlePreview의 문장 단위 모드) ──
+// 확정(final) 자막만 페이싱해 완성 문장이 통째로 뜨고, 직전 문장을 위에 흐리게 표시.
+// 글자 크기는 80px 목표 고정, 화면(90vw/90vh)을 넘칠 때만 아래로 축소(잘림 방지).
+const FULLSCREEN_SUBTITLE_TARGET_PX = 80;
+const FULLSCREEN_SUBTITLE_MIN_PX = 24;
+
+function useFullscreenSubtitleFit(text: string): { ref: (node: HTMLDivElement | null) => void; style: CSSProperties | null } {
+  const elementRef = useRef<HTMLDivElement | null>(null);
+  const [fontSize, setFontSize] = useState<number | null>(null);
+  const ref = (node: HTMLDivElement | null) => {
+    elementRef.current = node;
+  };
+
+  useEffect(() => {
+    if (!text) {
+      setFontSize(null);
+      return;
+    }
+    const element = elementRef.current;
+    if (!element) return;
+
+    let frame = 0;
+    const fitText = () => {
+      const widthLimit = window.innerWidth * 0.9;
+      const heightLimit = window.innerHeight * 0.9;
+      let low = FULLSCREEN_SUBTITLE_MIN_PX;
+      let high = FULLSCREEN_SUBTITLE_TARGET_PX;
+      let best = low;
+      const previousFontSize = element.style.fontSize;
+      for (let index = 0; index < 9; index += 1) {
+        const next = Math.floor((low + high) / 2);
+        element.style.fontSize = `${next}px`;
+        const fits = element.scrollWidth <= widthLimit + 1 && element.scrollHeight <= heightLimit + 1;
+        if (fits) {
+          best = next;
+          low = next + 1;
+        } else {
+          high = next - 1;
+        }
+      }
+      element.style.fontSize = previousFontSize;
+      setFontSize(best);
+    };
+    const scheduleFit = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(fitText);
+    };
+    scheduleFit();
+    window.addEventListener("resize", scheduleFit);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", scheduleFit);
+    };
+  }, [text]);
+
+  if (fontSize === null) return { ref, style: null };
+  return { ref, style: { fontSize, lineHeight: fontSize >= 72 ? 1.14 : 1.18 } };
+}
+
+function previousSubtitle(finals: UtteranceTranscribed[], latestSeq: number | null): UtteranceTranscribed | null {
+  if (finals.length < 2 || latestSeq === null) return null;
+  for (let index = finals.length - 2; index >= 0; index -= 1) {
+    const item = finals[index];
+    if (item && item.seq !== latestSeq) return item;
+  }
+  return null;
+}
+
+const fullscreenPageStyle: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 50,
+  boxSizing: "border-box",
+  display: "flex",
+  flexDirection: "column",
+  justifyContent: "center",
+  alignItems: "center",
+  padding: "5vh 5vw",
+  background:
+    "radial-gradient(circle at 20% 0%, rgba(56,189,248,.2), transparent 30%), linear-gradient(135deg, #020617, #0f172a 56%, #172554)",
+};
+
+const fullscreenContextStyle: CSSProperties = {
+  width: "86vw",
+  maxWidth: "86vw",
+  margin: "0 auto",
+  color: "#93c5fd",
+  opacity: 0.72,
+  fontSize: 60,
+  fontWeight: 760,
+  lineHeight: 1.28,
+  textAlign: "center",
+  wordBreak: "keep-all",
+  overflowWrap: "break-word",
+};
+
+const fullscreenTextStyle: CSSProperties = {
+  boxSizing: "border-box",
+  width: "90vw",
+  maxWidth: "90vw",
+  maxHeight: "90vh",
+  margin: "0 auto",
+  padding: 0,
+  overflow: "hidden",
+  color: "#f8fafc",
+  fontSize: "clamp(34px, 4.8vw, 76px)",
+  fontWeight: 820,
+  lineHeight: 1.24,
+  letterSpacing: ".005em",
+  textAlign: "center",
+  textWrap: "balance",
+  wordBreak: "keep-all",
+  overflowWrap: "break-word",
+};
+
+function SubtitleFullscreenOverlay({ finals, onClose }: { finals: UtteranceTranscribed[]; onClose: () => void }) {
+  const latestFinal = finals.length > 0 ? finals[finals.length - 1]! : null;
+  const paced = usePacedSubtitle(latestFinal);
+  const previous = previousSubtitle(finals, paced?.seq ?? null);
+  const text = paced?.text_ko || paced?.text_en || "";
+  const previousText = previous?.text_ko || previous?.text_en || "";
+  const fit = useFullscreenSubtitleFit(text);
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 px-12" onClick={onClose}>
+    <div style={fullscreenPageStyle} onClick={onClose}>
       {paced ? (
-        <div className="max-w-6xl text-center space-y-4">
-          <p className="text-xl text-slate-500">{paced.text_en}</p>
-          <p className="text-5xl font-semibold leading-snug text-slate-50">{paced.text_ko}</p>
+        <div style={{ display: "grid", gap: 10 }}>
+          {previousText ? <div style={fullscreenContextStyle}>{previousText}</div> : null}
+          <div ref={fit.ref} style={{ ...fullscreenTextStyle, ...(fit.style ?? {}) }}>
+            {text}
+          </div>
         </div>
       ) : (
         <p className="text-2xl text-slate-600">자막을 기다리는 중…</p>
@@ -164,7 +286,8 @@ export function CaptureView() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullscreen, setFullscreen] = useState<FullscreenMode>(null);
-  const recent = subtitles.utterances.filter((u) => u.is_final).slice(-2);
+  const finals = subtitles.utterances.filter((u) => u.is_final);
+  const recent = finals.slice(-2);
 
   const canSubtitleFullscreen = s.phase === "capturing";
   const canQrFullscreen = !!s.viewerUrl;
@@ -316,7 +439,7 @@ export function CaptureView() {
         )}
       </div>
       {fullscreen === "subtitle" && canSubtitleFullscreen && (
-        <SubtitleFullscreenOverlay latest={subtitles.latest} onClose={closeFullscreen} />
+        <SubtitleFullscreenOverlay finals={finals} onClose={closeFullscreen} />
       )}
       {fullscreen === "qr" && s.viewerUrl && <QrFullscreenOverlay viewerUrl={s.viewerUrl} onClose={closeFullscreen} />}
     </main>
