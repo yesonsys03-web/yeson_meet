@@ -16,15 +16,16 @@
 ## 릴리스 N (업데이터 첫 탑재)
 
 - [ ] 수동 다운로드로 설치·배포 (이 릴리스 자체는 자동 업데이트 대상 아님)
-- [ ] `latest-client.json` / `latest-server.json` 이 릴리스에 첨부되고 각각 `darwin-aarch64` + `windows-x86_64` 항목을 갖는지 확인
+- [ ] `latest-client.json` / `latest-server.json` 이 릴리스에 첨부되고 각각 `darwin-aarch64` + `windows-x86_64` 항목을 갖는지 확인 (CI가 자동 생성)
 - [ ] 릴리스가 정식(prerelease 아님)으로 발행됐는지 확인 (`releases/latest` 조회 조건)
+- [ ] **인텔 Mac 자산 추가 (이 인텔 Mac에서, CI 완료 후):** `scripts/release-intel-macos.sh vN` 실행 → 인텔 dmg 2종 + 인텔 업데이터 아티팩트 업로드 + 두 매니페스트에 `darwin-x86_64` 병합. 실행 후 `latest-*.json`이 3개 플랫폼(darwin-aarch64/x86_64/windows-x86_64)을 모두 갖는지 확인
 
 ## 릴리스 N+1 (자동 업데이트 실증)
 
 - [ ] N을 실행 중인 **Windows 실기기**에서 몇 분 내 "vN+1 준비됨 — 재시작하여 적용" 배너 표시 + 클릭 시 N+1로 재시작 확인
 - [ ] N을 실행 중인 **Apple Silicon Mac**에서 동일 확인
 - [ ] Mac 전용: N→N+1 자동 업데이트 후 화면기록 권한 상태 확인 (풀렸으면 앱의 기존 배너로 재부여)
-- [ ] Intel Mac 사용자(darwin-x86_64)는 자동 업데이트 **대상 아님** — 로컬 빌드 Intel dmg 수동 재설치 안내
+- [ ] **Intel Mac**(darwin-x86_64)도 자동 업데이트 대상(2026-07-09 포함) — N·N+1 모두 `release-intel-macos.sh`로 인텔 자산·매니페스트를 채웠다면 N을 실행 중인 Intel Mac에서도 N+1 배너가 뜨는지 확인. (인텔 자산을 안 채운 릴리스는 그 버전에 한해 인텔이 자동 업데이트를 못 받으니, 릴리스마다 위 스크립트 실행이 필수)
 
 ## 상시 항목
 
