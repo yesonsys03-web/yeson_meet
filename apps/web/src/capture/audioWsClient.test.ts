@@ -31,7 +31,7 @@ class FakeWs {
 }
 
 function lastWs(): FakeWs {
-  return FakeWs.instances[FakeWs.instances.length - 1];
+  return FakeWs.instances[FakeWs.instances.length - 1]!;
 }
 
 describe("AudioWsClient", () => {
@@ -89,6 +89,16 @@ describe("AudioWsClient", () => {
     lastWs().serverOpen();
     expect(JSON.parse(lastWs().sent[0] as string).type).toBe("audio.started");
     expect(statuses.at(-1)).toBe("streaming");
+  });
+
+  it("open 없이 close(연결 실패)만 반복되면 rejected 없이 계속 재시도한다", () => {
+    client.start();
+    for (let i = 0; i < 5; i++) {
+      lastWs().serverClose(1006); // onopen이 한 번도 안 옴 (서버 다운/터널 blip)
+      vi.advanceTimersByTime(30000); // 백오프(최대 30s) 소진 → 다음 시도
+    }
+    expect(statuses).not.toContain("rejected");
+    expect(FakeWs.instances.length).toBe(6); // 6번째 재시도 소켓 생성됨
   });
 
   it("open 직후 닫힘 3연속이면 rejected로 멈춘다", () => {

@@ -89,11 +89,14 @@ export class AudioWsClient {
     ws.onerror = () => {};
     ws.onclose = () => {
       if (this.stopping) return;
-      const openMs = this.openedAt ? Date.now() - this.openedAt : 0;
+      // 거부 판정은 "실제로 open됐다가 2s 내에 닫힌" 경우만. open조차 못 한
+      // close(서버 다운·터널 blip)는 카운트도 리셋도 없이 백오프 재시도만 한다.
+      const hadOpened = this.openedAt > 0;
+      const openMs = hadOpened ? Date.now() - this.openedAt : 0;
       this.openedAt = 0;
-      if (openMs < REJECT_WINDOW_MS) {
+      if (hadOpened && openMs < REJECT_WINDOW_MS) {
         this.consecutiveRejects += 1;
-      } else if (openMs >= REJECT_WINDOW_MS) {
+      } else if (hadOpened) {
         this.consecutiveRejects = 0;
         this.backoffMs = 1000;
       }
