@@ -72,4 +72,7 @@ describe("shouldShowCudaWarning", () => {
   it("stays quiet when the pack isn't installed (other UI already explains)", () => {
     expect(shouldShowCudaWarning({ enabled: true, installed: false, cuda_ok: false })).toBe(false);
   });
+  it("stays quiet when cuda_ok is undefined (older server response — no spurious warning)", () => {
+    expect(shouldShowCudaWarning({ enabled: true, installed: true, cuda_ok: undefined })).toBe(false);
+  });
 });

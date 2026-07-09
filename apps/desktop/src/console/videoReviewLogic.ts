@@ -6,7 +6,9 @@ import type { BurnStyle, GpuStatus } from "./videoApi";
 export function shouldShowCudaWarning(
   gpu: Pick<GpuStatus, "enabled" | "installed" | "cuda_ok">,
 ): boolean {
-  return gpu.enabled && gpu.installed && !gpu.cuda_ok;
+  // cuda_ok가 undefined(구버전 서버 응답 등)면 경고를 띄우지 않는다 — CUDA가 실제로
+  // 실패했다는 신호(cuda_ok === false)일 때만 표시해 스퓨리어스 경고를 막는다.
+  return gpu.enabled && gpu.installed && gpu.cuda_ok === false;
 }
 
 // job.title은 자유 입력(YouTube 제목 등)이라 "Rig/Puppet" 처럼 경로 구분자를
