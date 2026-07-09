@@ -17,6 +17,7 @@ import type { NativeVideoFile } from "./videoBatch";
 import {
   actionableJobIds, canRebuild, captionedFileName, overallProgress, partitionSelection,
 } from "./videoBatchOps";
+import { shouldShowCudaWarning } from "./videoReviewLogic";
 import { VideoReviewView } from "./VideoReviewView";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -756,6 +757,16 @@ function VideoCaptionInner({ active }: { active: boolean }) {
                 </button>
               </>
             )}
+          </div>
+        ) : null}
+        {gpu?.supported && shouldShowCudaWarning(gpu) ? (
+          <div style={{ fontSize: 12, opacity: 0.75, padding: "2px 12px" }}>
+            전사 GPU 사용 불가 ({gpu.cuda_reason ?? "사유 미상"}) — 전사는 CPU로 진행됩니다 (굽기는 GPU 사용)
+          </div>
+        ) : null}
+        {gpu?.supported ? (
+          <div style={{ fontSize: 12, opacity: 0.6, padding: "2px 12px" }}>
+            GPU 가속은 전사·굽기에 적용됩니다. 번역은 외부 AI(Claude/Gemini)라 GPU와 무관합니다.
           </div>
         ) : null}
         </>

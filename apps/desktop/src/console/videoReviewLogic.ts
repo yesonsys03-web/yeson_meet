@@ -1,5 +1,13 @@
 import type { CSSProperties } from "react";
-import type { BurnStyle } from "./videoApi";
+import type { BurnStyle, GpuStatus } from "./videoApi";
+
+// GPU가 켜져 있고 팩도 설치됐는데 CUDA 인식에 실패한 경우에만 경고를 보여준다 —
+// 꺼짐/미설치 상태는 이미 다른 UI(버튼/설치 안내)가 설명하므로 중복 표시하지 않는다.
+export function shouldShowCudaWarning(
+  gpu: Pick<GpuStatus, "enabled" | "installed" | "cuda_ok">,
+): boolean {
+  return gpu.enabled && gpu.installed && !gpu.cuda_ok;
+}
 
 // job.title은 자유 입력(YouTube 제목 등)이라 "Rig/Puppet" 처럼 경로 구분자를
 // 포함할 수 있다. 저장 다이얼로그 defaultPath/브라우저 다운로드 파일명 양쪽에

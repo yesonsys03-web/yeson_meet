@@ -140,6 +140,18 @@ describe("videoApi", () => {
     expect(out).toEqual(status);
   });
 
+  it("getGpuStatus carries cuda_ok/cuda_reason when transcription CUDA is unavailable", async () => {
+    const status = {
+      supported: true, gpu_name: "NVIDIA GeForce RTX 3060", installed: true,
+      downloading: false, progress: null, cuda_available: false, enabled: true,
+      approx_bytes: 1_000_000_000, cuda_ok: false, cuda_reason: "cuDNN 미설치",
+    };
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => status });
+    const out = await getGpuStatus();
+    expect(out.cuda_ok).toBe(false);
+    expect(out.cuda_reason).toBe("cuDNN 미설치");
+  });
+
   it("downloadGpuPack POSTs /api/v1/video-models/gpu/pack", async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 202, json: async () => ({ status: "started" }) });
     await downloadGpuPack();

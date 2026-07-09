@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { activeSegmentIndex, overlayStyleFor, sanitizeFilename } from "./videoReviewLogic";
+import {
+  activeSegmentIndex, overlayStyleFor, sanitizeFilename, shouldShowCudaWarning,
+} from "./videoReviewLogic";
 
 const segs = [
   { start_ms: 0, end_ms: 1000 },
@@ -54,5 +56,20 @@ describe("sanitizeFilename", () => {
   });
   it("keeps Korean/unicode titles as-is (no encoding munging)", () => {
     expect(sanitizeFilename("7월 회의 하이라이트")).toBe("7월 회의 하이라이트");
+  });
+});
+
+describe("shouldShowCudaWarning", () => {
+  it("warns only when enabled+installed but CUDA is not ok", () => {
+    expect(shouldShowCudaWarning({ enabled: true, installed: true, cuda_ok: false })).toBe(true);
+  });
+  it("stays quiet when CUDA is ok", () => {
+    expect(shouldShowCudaWarning({ enabled: true, installed: true, cuda_ok: true })).toBe(false);
+  });
+  it("stays quiet when GPU is disabled (other UI already explains)", () => {
+    expect(shouldShowCudaWarning({ enabled: false, installed: true, cuda_ok: false })).toBe(false);
+  });
+  it("stays quiet when the pack isn't installed (other UI already explains)", () => {
+    expect(shouldShowCudaWarning({ enabled: true, installed: false, cuda_ok: false })).toBe(false);
   });
 });

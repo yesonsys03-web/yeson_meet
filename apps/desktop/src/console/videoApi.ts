@@ -76,6 +76,11 @@ export type GpuStatus = {
   downloading: boolean;
   progress: number | null;
   cuda_available: boolean;
+  // cuda_ok/cuda_reason: 전사 CUDA 인식 성공 여부와 실패 사유(예: "cuDNN 미설치").
+  // enabled+installed인데 cuda_ok=false면 전사는 CPU로 조용히 폴백 중 — UI가
+  // 사유를 보여줄 수 있도록 서버가 표면화한다.
+  cuda_ok: boolean;
+  cuda_reason: string | null;
   enabled: boolean;
   approx_bytes: number;
   last_error?: string | null;
