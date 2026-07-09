@@ -35,10 +35,10 @@ describe("PcmFramer", () => {
     expect(framer.push(new Float32Array(100).fill(0.5))).toEqual([]);
     const chunks = framer.push(new Float32Array(250).fill(0.5));
     expect(chunks.length).toBe(1);
-    expect(chunks[0].byteLength).toBe(CHUNK_BYTES);
+    expect(chunks[0]!.byteLength).toBe(CHUNK_BYTES);
     // 리틀엔디언 검증: 0.5 → 16384 = 0x4000 → LE 바이트 [0x00, 0x40]
-    expect(chunks[0][0]).toBe(0x00);
-    expect(chunks[0][1]).toBe(0x40);
+    expect(chunks[0]![0]).toBe(0x00);
+    expect(chunks[0]![1]).toBe(0x40);
   });
   it("여러 청크를 한 번에 방출한다", () => {
     const framer = new PcmFramer();

@@ -8,7 +8,7 @@ export const CHUNK_BYTES = CHUNK_SAMPLES * 2;
 export function floatTo16le(samples: Float32Array): Int16Array {
   const out = new Int16Array(samples.length);
   for (let i = 0; i < samples.length; i++) {
-    const clamped = Math.max(-1, Math.min(1, samples[i]));
+    const clamped = Math.max(-1, Math.min(1, samples[i] ?? 0));
     out[i] = Math.round(clamped * 32767);
   }
   return out;
@@ -19,7 +19,7 @@ export function pcm16Dbfs(samples: Int16Array): number {
   if (samples.length === 0) return -120;
   let sumSquares = 0;
   for (let i = 0; i < samples.length; i++) {
-    const v = samples[i] / 32768;
+    const v = (samples[i] ?? 0) / 32768;
     sumSquares += v * v;
   }
   const rms = Math.sqrt(sumSquares / samples.length);
@@ -31,13 +31,13 @@ export class PcmFramer {
 
   push(block: Float32Array): Uint8Array[] {
     const converted = floatTo16le(block);
-    for (let i = 0; i < converted.length; i++) this.pending.push(converted[i]);
+    for (let i = 0; i < converted.length; i++) this.pending.push(converted[i] ?? 0);
     const chunks: Uint8Array[] = [];
     while (this.pending.length >= CHUNK_SAMPLES) {
       const frame = this.pending.splice(0, CHUNK_SAMPLES);
       const bytes = new Uint8Array(CHUNK_BYTES);
       const view = new DataView(bytes.buffer);
-      for (let i = 0; i < CHUNK_SAMPLES; i++) view.setInt16(i * 2, frame[i], true);
+      for (let i = 0; i < CHUNK_SAMPLES; i++) view.setInt16(i * 2, frame[i] ?? 0, true);
       chunks.push(bytes);
     }
     return chunks;
