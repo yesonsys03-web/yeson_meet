@@ -101,6 +101,19 @@ describe("AudioWsClient", () => {
     expect(FakeWs.instances.length).toBe(6); // 6번째 재시도 소켓 생성됨
   });
 
+  it("open 없는 close가 5연속되면 unreachable을 표면화하되 재시도는 계속하고, 성공하면 streaming으로 돌아온다", () => {
+    client.start();
+    for (let i = 0; i < 5; i++) {
+      lastWs().serverClose(1006); // onopen이 한 번도 안 옴
+      vi.advanceTimersByTime(30000); // 백오프 소진 → 다음 시도
+    }
+    expect(statuses).toContain("unreachable");
+    expect(statuses).not.toContain("rejected");
+    expect(FakeWs.instances.length).toBe(6); // 재시도는 멈추지 않음
+    lastWs().serverOpen();
+    expect(statuses.at(-1)).toBe("streaming");
+  });
+
   it("open 직후 닫힘 3연속이면 rejected로 멈춘다", () => {
     client.start();
     for (let i = 0; i < 3; i++) {

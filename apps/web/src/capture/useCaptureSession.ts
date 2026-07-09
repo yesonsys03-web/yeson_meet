@@ -107,9 +107,14 @@ export function useCaptureSession(): CaptureSessionState & CaptureSessionActions
       const client = new AudioWsClient(sidecarWsUrl(deviceKey, state.sessionId), (wsStatus) => {
         patch({ wsStatus });
         if (wsStatus === "rejected") {
-          // 거부 시 다음 시도에서 재등록되도록 키를 지운다(폐기된 키 대비).
+          // 거부 시 다음 시도에서 재등록되도록 키를 지운다(폐기된 키 대비). 단, 동일
+          // 세션에 재등록한 새 디바이스 키로도 재접속은 불가(서버가 최초 접속 디바이스에
+          // 세션을 바인딩) — 재시작이 아니라 새 회의 시작을 안내한다.
           store.clearDeviceKey();
-          patch({ error: "서버가 연결을 거부했습니다. 다른 기기가 이미 캡처 중이거나 세션이 종료됐거나 디바이스 키가 무효화됐을 수 있습니다. 잠시 후 다시 시도하세요." });
+          patch({ error: "서버가 연결을 거부했습니다. 다른 기기가 이미 캡처 중이거나 세션이 종료됐거나 디바이스 키가 무효화됐을 수 있습니다. 이 회의는 다른 기기에 묶여 있을 수 있습니다 — 회의를 종료하고 새 회의를 시작하세요." });
+        } else if (wsStatus === "unreachable") {
+          // 서버 다운/접속 불가로 계속 재시도 중(캡처 상태는 유지) — 사용자에게만 표면화.
+          patch({ error: "서버에 연결할 수 없습니다. 서버가 실행 중인지, 주소가 맞는지 확인하세요. 문제가 계속되면 회의를 종료하고 새 회의로 다시 시작하세요." });
         }
       });
       framerRef.current = new PcmFramer();

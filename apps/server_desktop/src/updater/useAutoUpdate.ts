@@ -27,9 +27,13 @@ export function useAutoUpdate(): UseAutoUpdate {
   const [status, dispatch] = useReducer(updateReducer, initialUpdateStatus);
   const pending = useRef<Update | null>(null);
   const busy = useRef(false);
+  const statusRef = useRef(status);
+  statusRef.current = status;
 
   const runCheck = useCallback(async () => {
     if (!hasTauriRuntime() || busy.current) return;
+    // A staged update is ready — don't re-check/re-download; the user just needs to restart.
+    if (statusRef.current.kind === "ready") return;
     busy.current = true;
     dispatch({ type: "check-start" });
     try {
