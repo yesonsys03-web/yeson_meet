@@ -16,6 +16,7 @@ def _isolate(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(gp, "_downloading", False)
     monkeypatch.setattr(gp, "_progress", 0)
     monkeypatch.setattr(gp, "_cuda_checked", None)
+    monkeypatch.setattr(gp, "_cuda_error", None)
     monkeypatch.setattr(gp, "_activated", False)
     monkeypatch.setattr(gp, "_last_error", None)
     yield
@@ -144,11 +145,68 @@ def test_cuda_available_caches_failure(monkeypatch):
     assert len(calls) == 1
 
 
+def test_cuda_available_records_exception_reason(monkeypatch):
+    def fake_count():
+        raise RuntimeError("cuDNN 미설치")
+
+    monkeypatch.setattr(gp, "_cuda_device_count", fake_count)
+    assert gp.cuda_available() is False
+    status = gp.cuda_status()
+    assert status["ok"] is False
+    assert "cuDNN 미설치" in status["reason"]
+
+
+def test_cuda_available_records_zero_device_reason(monkeypatch):
+    monkeypatch.setattr(gp, "_cuda_device_count", lambda: 0)
+    assert gp.cuda_available() is False
+    status = gp.cuda_status()
+    assert status["ok"] is False
+    assert status["reason"]  # "device count 0" 류 사유가 채워짐
+
+
+def test_cuda_status_before_any_check_is_unknown():
+    status = gp.cuda_status()
+    assert status == {"ok": False, "reason": None}
+
+
+def test_set_enabled_true_resets_cuda_cache(monkeypatch):
+    """재활성화 시 이전 실패가 프로세스 수명 캐시로 영구 고정되지 않고 재검사되어야
+    한다 — 예: GPU 팩을 다시 다운로드/드라이버를 고친 뒤 토글을 다시 켤 때."""
+    calls: list[int] = []
+
+    def fake_count():
+        calls.append(1)
+        return 0 if len(calls) == 1 else 1
+
+    monkeypatch.setattr(gp, "_cuda_device_count", fake_count)
+    assert gp.cuda_available() is False
+    assert gp.cuda_status()["reason"] is not None
+
+    gp.set_enabled(True)
+    assert gp._cuda_checked is None
+    assert gp._cuda_error is None
+    assert gp.cuda_available() is True  # 재검사돼 두 번째 호출 결과를 반영
+    assert len(calls) == 2
+
+
+def test_download_pack_resets_cuda_cache(monkeypatch):
+    monkeypatch.setattr(gp, "_cuda_checked", False)
+    monkeypatch.setattr(gp, "_cuda_error", "이전 실패 사유")
+    monkeypatch.setattr(gp, "_wheel_url", lambda pkg: ("u", 1))
+    monkeypatch.setattr(gp, "_download_file", lambda u, d, cb: None)
+    monkeypatch.setattr(gp, "_extract_dlls", lambda w, d: 0)
+    gp.download_pack()
+    assert gp._cuda_checked is None
+    assert gp._cuda_error is None
+
+
 def test_status_shape(monkeypatch):
     monkeypatch.setattr(gp, "gpu_name", lambda: None)
     out = gp.status()
     assert set(out) == {"supported", "gpu_name", "installed", "downloading",
-                        "progress", "cuda_available", "enabled", "approx_bytes",
-                        "last_error"}
+                        "progress", "cuda_available", "cuda_ok", "cuda_reason",
+                        "enabled", "approx_bytes", "last_error"}
     assert out["installed"] is False
     assert out["cuda_available"] is False  # 미설치면 ctranslate2 검사 자체를 안 함
+    assert out["cuda_ok"] is False
+    assert out["cuda_reason"] is None
