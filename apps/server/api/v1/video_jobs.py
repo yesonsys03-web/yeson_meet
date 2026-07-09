@@ -31,6 +31,8 @@ from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
                                                         run_burn_job, run_video_job,
                                                         start_job_task, start_task,
                                                         video_jobs_root)
+from apps.server.domain.video_captions.pipeline import \
+    _INFLIGHT_STATUSES as INFLIGHT_STATUSES
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
 from apps.server.domain.video_captions.translate_cli import list_translate_engines
 from apps.server.domain.video_captions.whisper_models import CATALOG, is_downloaded
@@ -244,6 +246,45 @@ async def get_storage_usage(
     count = (await db.execute(
         select(func.count()).select_from(VideoJob))).scalar_one()
     return {"total_bytes": total, "job_count": count, "keep": RETENTION_KEEP}
+
+
+_CANCEL_MESSAGE = "사용자가 작업을 취소했습니다."
+
+
+@router.post("/cancel-all")
+async def cancel_all_video_jobs(
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """대기열의 모든 queued 작업을 먼저 취소한 뒤 활성(실행 중) 작업을 취소한다.
+
+    반드시 이 순서로: 활성 작업을 먼저 취소하면 세마포어가 즉시 반납되고,
+    아직 큐잉된 다음 작업이 그 사이 승격돼 취소를 피할 수 있다 — queued를
+    먼저 확정 취소해두면 승격되더라도 이미 취소된 상태라 안전하다.
+    반드시 /{external_id} 동적 라우트보다 먼저 선언 — translate-engines/storage와 동일 이유.
+    """
+    queued_jobs = (await db.execute(
+        select(VideoJob).where(VideoJob.status == "queued")
+    )).scalars().all()
+    for job in queued_jobs:
+        cancel_job_task(job.external_id)
+        job.status = "error"
+        job.progress = 0
+        job.error = _CANCEL_MESSAGE
+    cancelled_queued = len(queued_jobs)
+
+    active_statuses = [s for s in INFLIGHT_STATUSES if s != "queued"]
+    active_jobs = (await db.execute(
+        select(VideoJob).where(VideoJob.status.in_(active_statuses))
+    )).scalars().all()
+    for job in active_jobs:
+        cancel_job_task(job.external_id)
+        job.status = "error"
+        job.progress = 0
+        job.error = _CANCEL_MESSAGE
+    cancelled_active = len(active_jobs)
+
+    await db.commit()
+    return {"cancelled_queued": cancelled_queued, "cancelled_active": cancelled_active}
 
 
 @router.get("/{external_id}")
