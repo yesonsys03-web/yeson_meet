@@ -55,7 +55,7 @@ async def test_run_video_job_happy_path(monkeypatch, db_session, admin_user, tmp
 
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(pl, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
+    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
     monkeypatch.setattr(pl, "transcribe_audio",
                         lambda p, m, cb=None: [SubSegment(1, 0, 1000, "Hello")])
 
@@ -92,7 +92,7 @@ async def test_run_video_job_serialized_by_semaphore(
     jobB = await _make_job(db_session, admin_user, media_path=str(srcB))
 
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
+    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
     monkeypatch.setattr(pl, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
 
     concur = {"cur": 0, "max": 0}
@@ -127,7 +127,7 @@ async def test_cancel_job_task_releases_semaphore(
     ext = job.external_id
 
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
+    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
     monkeypatch.setattr(pl, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
     monkeypatch.setattr(pl, "transcribe_audio",
                         lambda p, m, cb=None: [SubSegment(1, 0, 1000, "Hi")])
@@ -355,7 +355,7 @@ async def test_run_video_job_deletes_audio_after_transcribe(
     audio_seen = {}
 
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
+    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
 
     def fake_extract(f, s, d, proc_key=None):
         Path(d).write_bytes(b"a")
@@ -501,7 +501,7 @@ async def test_run_video_job_extract_killed_stays_cancelled_not_error(
     job_id, ext = job.id, job.external_id
 
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
+    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
 
     loop = asyncio.get_running_loop()
 

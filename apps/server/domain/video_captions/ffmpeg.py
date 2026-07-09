@@ -219,10 +219,10 @@ def _burn_once(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
             text=True, encoding="utf-8", errors="replace",
             **_SUBPROCESS_FLAGS,
         )
-        if proc_key is not None:
-            register_proc(proc_key, proc)
         assert proc.stdout is not None
         try:
+            if proc_key is not None:
+                register_proc(proc_key, proc)
             for line in proc.stdout:
                 line = line.strip()
                 if line.startswith("out_time_ms="):
@@ -252,10 +252,16 @@ def wav_duration_seconds(path: Path) -> float:
         return wf.getnframes() / wf.getframerate()
 
 
-def ensure_preview(ffmpeg: str, src: Path, dst: Path) -> Path:
-    """웹뷰 <video> 재생용 사본. mp4는 그대로, 그 외 컨테이너는 H.264 트랜스코드."""
+def ensure_preview(ffmpeg: str, src: Path, dst: Path,
+                   proc_key: str | None = None) -> Path:
+    """웹뷰 <video> 재생용 사본. mp4는 그대로, 그 외 컨테이너는 H.264 트랜스코드.
+
+    proc_key가 주어지면 extract_audio와 동일하게 레지스트리에 등록돼 취소 시
+    즉시 kill 가능하다 — 비-mp4 소스(.mov 등)는 이 트랜스코드 단계가 오래 걸릴
+    수 있어 다음 진행률 라인을 기다리지 않아도 된다."""
     if src.suffix.lower() == ".mp4":
         return src
     _run([ffmpeg, "-y", "-i", str(src), "-c:v", "libx264", "-preset", "veryfast",
-          "-crf", "23", "-c:a", "aac", "-movflags", "+faststart", str(dst)])
+          "-crf", "23", "-c:a", "aac", "-movflags", "+faststart", str(dst)],
+         proc_key=proc_key)
     return dst

@@ -223,7 +223,8 @@ async def run_video_job(external_id: UUID) -> None:
         await _set_status(external_id, "extracting")
         src = Path(media_path)
         preview = await asyncio.to_thread(
-            ensure_preview, ffmpeg, src, workdir / "preview.mp4")
+            ensure_preview, ffmpeg, src, workdir / "preview.mp4",
+            proc_key=str(external_id))
         audio = workdir / "audio.wav"
         await asyncio.to_thread(extract_audio, ffmpeg, src, audio,
                                 proc_key=str(external_id))

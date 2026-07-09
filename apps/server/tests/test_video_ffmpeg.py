@@ -317,3 +317,54 @@ def test_burn_subtitles_skips_cpu_retry_when_gpu_run_was_killed(monkeypatch, tmp
 
     assert len(calls) == 1  # libx264 재시도가 없었다 — 단 한 번의 ffmpeg 호출뿐
     assert "h264_nvenc" in calls[0]
+
+
+class _KillDuringCommunicateProc:
+    """subprocess.Popen 대역 — communicate() 호출 시점에 kill_active(key)가 등록된
+    프로세스를 즉시 죽일 수 있는지 검증한다(ensure_preview의 비-mp4 트랜스코드
+    단계 취소 경로)."""
+
+    def __init__(self, cmd, **kwargs):
+        self.cmd = cmd
+        self.returncode = 0
+
+    def communicate(self):
+        # 취소 엔드포인트(cancel_job_task)가 하는 일을 재현: 등록된 프로세스를
+        # 즉시 kill한다.
+        ff.kill_active("job-preview")
+        return "", "killed"
+
+    def kill(self):
+        self.returncode = -9
+
+    def wait(self):
+        return self.returncode
+
+
+def test_ensure_preview_registers_proc_key_and_is_killable(monkeypatch, tmp_path: Path):
+    """ensure_preview(비-mp4 소스)는 extract_audio와 동일하게 proc_key로 레지스트리에
+    등록돼 kill_active로 즉시 kill 가능해야 한다 — 회귀 시 이 테스트는 Popen 경로를
+    타지 않아(레지스트리 미등록) FfmpegError 대신 다른 예외/성공으로 새며 실패한다."""
+    calls: list[list[str]] = []
+
+    def fake_popen(cmd, **kw):
+        calls.append(cmd)
+        return _KillDuringCommunicateProc(cmd, **kw)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    with pytest.raises(ff.FfmpegError):
+        ff.ensure_preview("ffmpeg", tmp_path / "src.mov", tmp_path / "preview.mp4",
+                          proc_key="job-preview")
+
+    assert calls  # Popen(proc_key 등록 가능한) 경로를 실제로 탔다
+    assert "job-preview" not in ff._ACTIVE  # kill 후 레지스트리 누수 없음
+
+
+def test_ensure_preview_mp4_passthrough_does_not_touch_registry(tmp_path: Path):
+    """mp4 소스는 트랜스코드/Popen을 타지 않으므로 레지스트리에 손대지 않는다."""
+    src = tmp_path / "src.mp4"
+    result = ff.ensure_preview("ffmpeg", src, tmp_path / "preview.mp4",
+                               proc_key="job-passthrough")
+    assert result == src
+    assert "job-passthrough" not in ff._ACTIVE
