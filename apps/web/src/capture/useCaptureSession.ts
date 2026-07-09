@@ -1,7 +1,7 @@
 // === ANCHOR: USE_CAPTURE_SESSION_START ===
 // /capture 페이지 오케스트레이션: 로그인 → 준비 → 캡처 중 → 종료.
 // 디바이스 키는 브라우저 localStorage에 1개(없거나 서버가 거부하면 자가등록).
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { PcmFramer, pcm16Dbfs } from "./pcm";
 import {
   createCaptureSession,
@@ -60,7 +60,7 @@ export function useCaptureSession(): CaptureSessionState & CaptureSessionActions
   const tabRef = useRef<TabCaptureHandle | null>(null);
   const framerRef = useRef<PcmFramer | null>(null);
   const chunkCountRef = useRef(0);
-  const store = credentialStore();
+  const store = useMemo(() => credentialStore(), []);
 
   const patch = useCallback((p: Partial<CaptureSessionState>) => setState((s) => ({ ...s, ...p })), []);
 
