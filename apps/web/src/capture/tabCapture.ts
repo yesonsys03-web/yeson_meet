@@ -91,10 +91,15 @@ export async function startTabCapture(opts: {
   return {
     async attachMic() {
       if (stopped || micSource) return;
-      micStream = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
       });
-      micSource = ctx.createMediaStreamSource(micStream);
+      if (stopped) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      micStream = stream;
+      micSource = ctx.createMediaStreamSource(stream);
       micSource.connect(tap);
     },
     detachMic,
