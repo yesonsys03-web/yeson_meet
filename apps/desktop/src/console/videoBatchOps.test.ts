@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { actionableJobIds, captionedFileName, partitionSelection } from "./videoBatchOps";
+import { actionableJobIds, canRebuild, captionedFileName, partitionSelection } from "./videoBatchOps";
 import type { VideoJobSummary } from "./videoApi";
 
 function job(job_id: string, status: string): VideoJobSummary {
@@ -23,6 +23,20 @@ const JOBS = [
 describe("actionableJobIds", () => {
   it("returns only review/done jobs (excludes in-flight and error)", () => {
     expect(actionableJobIds(JOBS)).toEqual(["a", "b", "d", "f"]);
+  });
+});
+
+describe("canRebuild", () => {
+  it("allows rebuild from terminal states including cancelled (error와 동일 취급)", () => {
+    for (const s of ["review", "done", "error", "cancelled"]) {
+      expect(canRebuild(s)).toBe(true);
+    }
+  });
+
+  it("rejects in-flight states", () => {
+    for (const s of ["queued", "ingesting", "extracting", "transcribing", "translating", "burning"]) {
+      expect(canRebuild(s)).toBe(false);
+    }
   });
 });
 

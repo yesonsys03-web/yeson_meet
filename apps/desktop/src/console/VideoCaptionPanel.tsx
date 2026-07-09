@@ -12,13 +12,13 @@ import type {
 } from "./videoApi";
 import { filterVideoFiles, uploadBatch, uploadBatchNative } from "./videoBatch";
 import type { NativeVideoFile } from "./videoBatch";
-import { actionableJobIds, captionedFileName, partitionSelection } from "./videoBatchOps";
+import { actionableJobIds, canRebuild, captionedFileName, partitionSelection } from "./videoBatchOps";
 import { VideoReviewView } from "./VideoReviewView";
 
 const STATUS_LABEL: Record<string, string> = {
   queued: "대기 중", ingesting: "영상 가져오는 중", extracting: "오디오 추출 중",
   transcribing: "전사 중", translating: "번역 중", review: "검수 대기",
-  burning: "영상 굽는 중", done: "완료", error: "오류",
+  burning: "영상 굽는 중", done: "완료", error: "오류", cancelled: "취소됨",
 };
 
 const INFLIGHT_STATUSES = ["queued", "ingesting", "extracting", "transcribing",
@@ -605,7 +605,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
                 취소
               </button>
             ) : null}
-            {["review", "done", "error"].includes(job.status) ? (
+            {canRebuild(job.status) ? (
               confirmRebuildId === job.job_id ? (
                 <>
                   <button type="button" style={consoleStyles.action}

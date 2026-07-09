@@ -15,6 +15,14 @@ export function captionedFileName(title: string): string {
 export const BURNABLE_STATUS = "review";
 export const DOWNLOADABLE_STATUS = "done";
 
+// 재생성(rebuild) 가능한 터미널 상태 — cancelled(취소됨)는 실패가 아니라
+// 초기화된 상태이지만, 복구 동작(재생성) 관점에서는 error와 동일 취급한다.
+const REBUILDABLE_STATUSES = new Set(["review", "done", "error", "cancelled"]);
+
+export function canRebuild(status: string): boolean {
+  return REBUILDABLE_STATUSES.has(status);
+}
+
 // 체크박스로 고를 수 있는(=일괄 동작 대상이 될 수 있는) 작업 id. 진행 중/오류는 제외.
 export function actionableJobIds(jobs: VideoJobSummary[]): string[] {
   return jobs

@@ -365,7 +365,8 @@ async def test_rebuild_rejects_upload_without_source_file(client, db_session,
     assert resp.status_code == 409
 
 
-async def test_cancel_inflight_job_marks_error(client, db_session, admin_user):
+async def test_cancel_inflight_job_marks_cancelled(client, db_session, admin_user):
+    """취소는 실패(error)와 구분되는 '취소됨(cancelled)' 상태로 초기화된다."""
     job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
                    source_type="upload", source_ref="c.mov",
                    whisper_model="base", status="translating", progress=40)
@@ -378,18 +379,46 @@ async def test_cancel_inflight_job_marks_error(client, db_session, admin_user):
     db_session.expire_all()
     row = (await db_session.execute(select(VideoJob).where(
         VideoJob.id == job_id))).scalar_one()
-    assert row.status == "error"
+    assert row.status == "cancelled"
+    assert row.progress == 0
     assert "취소" in (row.error or "")
 
 
 async def test_cancel_rejects_finished_job(client, db_session, admin_user):
+    for status in ("done", "cancelled"):
+        job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                       source_type="upload", source_ref="c.mov",
+                       whisper_model="base", status=status)
+        db_session.add(job)
+        await db_session.commit()
+        resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/cancel")
+        assert resp.status_code == 409
+
+
+async def test_rebuild_from_cancelled_job_requeues(client, db_session, admin_user,
+                                                   monkeypatch, tmp_path):
+    """취소된 작업은 재생성 버튼의 대상 — cancelled에서 rebuild가 동작해야 한다."""
+    started = {}
+    monkeypatch.setattr(api_vj, "_start_pipeline",
+                        lambda eid: started.setdefault("eid", eid))
+    src = tmp_path / "source.mov"
+    src.write_bytes(b"x" * 10)
     job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
                    source_type="upload", source_ref="c.mov",
-                   whisper_model="base", status="done")
+                   whisper_model="base", status="cancelled", progress=0,
+                   media_path=str(src), error="사용자가 작업을 취소했습니다.")
     db_session.add(job)
     await db_session.commit()
-    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/cancel")
-    assert resp.status_code == 409
+    job_id = job.id
+
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/rebuild")
+    assert resp.status_code == 202
+    assert started["eid"] == job.external_id
+    db_session.expire_all()
+    row = (await db_session.execute(select(VideoJob).where(
+        VideoJob.id == job_id))).scalar_one()
+    assert row.status == "queued"
+    assert row.error is None
 
 
 async def test_cancel_all_queued_and_active(client, db_session, admin_user, monkeypatch):
@@ -431,11 +460,11 @@ async def test_cancel_all_queued_and_active(client, db_session, admin_user, monk
         select(VideoJob))).scalars()}
     for j in queued_jobs:
         row = rows[j.external_id]
-        assert row.status == "error"
+        assert row.status == "cancelled"
         assert row.progress == 0
         assert "취소" in (row.error or "")
     active_row = rows[active_job.external_id]
-    assert active_row.status == "error"
+    assert active_row.status == "cancelled"
     assert active_row.progress == 0
     assert "취소" in (active_row.error or "")
     assert rows[done_job.external_id].status == "done"  # 종료 상태는 건드리지 않음
