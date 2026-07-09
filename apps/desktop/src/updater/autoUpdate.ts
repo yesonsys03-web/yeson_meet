@@ -8,6 +8,7 @@ export type UpdateStatus =
   | { kind: "checking" }
   | { kind: "downloading"; version: string; percent: number | null }
   | { kind: "ready"; version: string }
+  | { kind: "up-to-date" }
   | { kind: "error"; message: string };
 
 export type UpdateAction =
@@ -29,7 +30,7 @@ export function updateReducer(state: UpdateStatus, action: UpdateAction): Update
     case "up-to-date":
       // A background poll that finds nothing must not erase a ready banner.
       if (state.kind === "ready" || state.kind === "downloading") return state;
-      return { kind: "idle" };
+      return { kind: "up-to-date" };
     case "download-start":
       return { kind: "downloading", version: action.version, percent: null };
     case "download-progress":

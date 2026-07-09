@@ -12,6 +12,7 @@ describe("updateReducer (server)", () => {
     const ready: UpdateStatus = { kind: "ready", version: "1.2.0" };
     expect(updateReducer(ready, { type: "check-start" })).toEqual(ready);
     expect(updateReducer(ready, { type: "up-to-date" })).toEqual(ready);
+    expect(updateReducer({ kind: "checking" }, { type: "up-to-date" })).toEqual({ kind: "up-to-date" });
   });
 
   it("tracks download progress", () => {

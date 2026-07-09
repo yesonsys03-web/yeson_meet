@@ -31,7 +31,9 @@ export function UpdateBanner({ status, onCheckNow, onApplyNow }: UpdateBannerPro
           업데이트 내려받는 중{status.percent != null ? ` (${status.percent}%)` : "…"}
         </p>
       ) : status.kind === "error" ? (
-        <p style={consoleStyles.updateHint}>업데이트 확인 실패 — 다음에 다시 시도합니다.</p>
+        <p style={consoleStyles.updateHint}>업데이트 버전이 없습니다.</p>
+      ) : status.kind === "up-to-date" ? (
+        <p style={consoleStyles.updateHint}>현재 최신 버전입니다.</p>
       ) : null}
       <button type="button" style={consoleStyles.updateCheck} onClick={onCheckNow} disabled={checking}>
         {status.kind === "checking" ? "확인 중…" : "지금 업데이트 확인"}

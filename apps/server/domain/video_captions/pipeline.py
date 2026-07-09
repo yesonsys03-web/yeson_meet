@@ -18,7 +18,7 @@ from sqlalchemy import delete, select, update
 from apps.server.db.models import VideoJob, VideoSegment
 from apps.server.db.session import AsyncSessionLocal
 from .ffmpeg import (
-    burn_subtitles, ensure_preview, extract_audio, locate_ffmpeg,
+    burn_subtitles, ensure_preview, extract_audio, kill_active, locate_ffmpeg,
     wav_duration_seconds,
 )
 from .ingest import download_youtube
@@ -121,8 +121,14 @@ def cancel_job_task(external_id: UUID) -> bool:
 
     태스크 존재 여부와 무관하게 세대를 올린다 — 이미 끝난(그러나 워커 스레드가
     아직 진행률을 지연 스케줄 중인) 실행의 유령 쓰기도 무효화해야 하기 때문.
+
+    세대를 올린 직후 활성 ffmpeg 프로세스(추출·굽기)를 즉시 kill한다 — task.cancel()
+    은 워커 스레드에 닿지 않고, 다음 진행률 라인이 올 때까지(수 초) 기다리지 않기
+    위함. run_video_job/run_burn_job은 이 kill로 발생하는 예외를 세대 확인 후
+    조용히 삼켜 'cancelled' 상태를 'error'로 덮어쓰지 않는다.
     """
     _bump_generation(external_id)
+    kill_active(str(external_id))
     task = _job_tasks.get(str(external_id))
     if task is not None and not task.done():
         task.cancel()
@@ -217,9 +223,11 @@ async def run_video_job(external_id: UUID) -> None:
         await _set_status(external_id, "extracting")
         src = Path(media_path)
         preview = await asyncio.to_thread(
-            ensure_preview, ffmpeg, src, workdir / "preview.mp4")
+            ensure_preview, ffmpeg, src, workdir / "preview.mp4",
+            proc_key=str(external_id))
         audio = workdir / "audio.wav"
-        await asyncio.to_thread(extract_audio, ffmpeg, src, audio)
+        await asyncio.to_thread(extract_audio, ffmpeg, src, audio,
+                                proc_key=str(external_id))
         await _set_status(external_id, "extracting",
                           preview_path=str(preview), audio_path=str(audio))
 
@@ -286,6 +294,14 @@ async def run_video_job(external_id: UUID) -> None:
         logger.info("video job %s ready for review (%d segments)",
                     external_id, len(en_segments))
     except Exception as exc:  # noqa: BLE001 — 파이프라인 최종 방어선
+        if generation != _current_generation(external_id):
+            # 취소·재생성으로 세대가 올라간 뒤(예: kill_active로 죽은 추출 ffmpeg)
+            # 발생한 예외 — 이미 다른 상태(cancelled 등)로 정리됐으므로 error로
+            # 덮어쓰지 않는다.
+            logger.info(
+                "video job %s: stale run (generation %d) failed after cancel — ignoring",
+                external_id, generation)
+            return
         logger.exception("video job %s failed", external_id)
         await _try_set_error(external_id, str(exc)[:1000])
     finally:
@@ -441,7 +457,7 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
         try:
             await asyncio.to_thread(
                 burn_subtitles, ffmpeg, Path(media_path), srt_path, burned, style,
-                progress_cb)
+                progress_cb, proc_key=str(external_id))
         except StaleRunCancelled:
             # 취소된 실행 — 이미 cancelled로 마킹된 상태를 error로 덮어쓰지 않는다.
             logger.info("burn job %s: stale run (generation %d) cancelled early",
@@ -449,5 +465,13 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
             return
         await _set_status(external_id, "done", burned_path=str(burned))
     except Exception as exc:  # noqa: BLE001
+        if generation != _current_generation(external_id):
+            # kill_active로 죽은 ffmpeg가 FfmpegError로 표면화된 경우 등 — 세대가
+            # 이미 넘어갔으면(취소·재생성) 이미 다른 상태로 정리됐으므로 error로
+            # 덮어쓰지 않는다.
+            logger.info(
+                "burn job %s: stale run (generation %d) failed after cancel — ignoring",
+                external_id, generation)
+            return
         logger.exception("burn job %s failed", external_id)
         await _try_set_error(external_id, str(exc)[:1000])
