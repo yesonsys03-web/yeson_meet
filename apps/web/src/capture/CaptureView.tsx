@@ -72,7 +72,10 @@ function LevelMeter({ dbfs }: { dbfs: number }) {
       <div className="h-2 w-full rounded bg-slate-700">
         <div className={`h-2 rounded ${quiet ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
       </div>
-      {quiet && <p className="mt-1 text-xs text-amber-400">오디오가 거의 들어오지 않습니다 — 탭 선택 시 '탭 오디오 공유' 체크를 확인하세요.</p>}
+      {/* 항상 한 줄 공간 확보(표시/숨김만 전환) — 경고가 나타났다 사라져도 아래 레이아웃이 안 움직임 */}
+      <p className={`mt-1 h-4 text-xs text-amber-400 ${quiet ? "" : "invisible"}`}>
+        오디오가 거의 들어오지 않습니다 — 탭 선택 시 '탭 오디오 공유' 체크를 확인하세요.
+      </p>
     </div>
   );
 }
@@ -86,7 +89,7 @@ export function CaptureView() {
 
   return (
     <main className="min-h-screen bg-slate-900 text-slate-100 flex justify-center p-6">
-      <div className="w-full max-w-2xl space-y-6">
+      <div className={`w-full space-y-6 ${s.phase === "capturing" ? "max-w-5xl" : "max-w-2xl"}`}>
         <header>
           <h1 className="text-2xl font-bold">웹 캡처 — 실시간 자막</h1>
           <p className="text-sm text-slate-400">구글밋 탭의 소리를 잡아 자막을 만듭니다. 앱 설치가 필요 없습니다.</p>
