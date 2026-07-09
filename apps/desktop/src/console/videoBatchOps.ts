@@ -23,6 +23,28 @@ export function canRebuild(status: string): boolean {
   return REBUILDABLE_STATUSES.has(status);
 }
 
+// 서버는 단계별 원시 진행률(전사/번역/굽기 각 0→100)을 보내고, 고정 단계는
+// 베이스라인(ingesting=5, extracting=15)만 갖는다. 그대로 그리면 단계 전환 때
+// 바가 뒤로 간다(전사 100% → 번역 0%). 각 단계를 전체 구간의 밴드로 환산해
+// 표시용 전체 진행률(단조 증가)을 만든다: 전사 15~60, 번역 60~80, 굽기 80~100.
+const STAGE_BANDS: Record<string, { base: number; span: number }> = {
+  queued: { base: 0, span: 0 },
+  ingesting: { base: 5, span: 0 },
+  extracting: { base: 15, span: 0 },
+  transcribing: { base: 15, span: 45 },
+  translating: { base: 60, span: 20 },
+  burning: { base: 80, span: 20 },
+  review: { base: 100, span: 0 },
+  done: { base: 100, span: 0 },
+};
+
+export function overallProgress(status: string, progress: number): number {
+  const band = STAGE_BANDS[status];
+  if (!band) return 0; // error/cancelled/미지 상태 — 바는 어차피 숨김
+  const p = Math.min(100, Math.max(0, progress));
+  return Math.min(100, Math.max(0, Math.round(band.base + (band.span * p) / 100)));
+}
+
 // 체크박스로 고를 수 있는(=일괄 동작 대상이 될 수 있는) 작업 id. 진행 중/오류는 제외.
 export function actionableJobIds(jobs: VideoJobSummary[]): string[] {
   return jobs

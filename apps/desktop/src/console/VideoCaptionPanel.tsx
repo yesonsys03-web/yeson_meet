@@ -12,7 +12,9 @@ import type {
 } from "./videoApi";
 import { filterVideoFiles, uploadBatch, uploadBatchNative } from "./videoBatch";
 import type { NativeVideoFile } from "./videoBatch";
-import { actionableJobIds, canRebuild, captionedFileName, partitionSelection } from "./videoBatchOps";
+import {
+  actionableJobIds, canRebuild, captionedFileName, overallProgress, partitionSelection,
+} from "./videoBatchOps";
 import { VideoReviewView } from "./VideoReviewView";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -584,14 +586,16 @@ function VideoCaptionInner({ active }: { active: boolean }) {
               {INFLIGHT_STATUSES.includes(job.status) ? (
                 <div style={{ height: 4, borderRadius: 2, background: "rgba(255,255,255,0.12)",
                              marginTop: 6 }}>
-                  <div style={{ height: 4, borderRadius: 2, width: `${job.progress}%`,
+                  <div style={{ height: 4, borderRadius: 2,
+                               width: `${overallProgress(job.status, job.progress)}%`,
                                background: "#4a9eda", transition: "width 0.5s" }} />
                 </div>
               ) : null}
             </div>
             <span style={{ fontSize: 13, whiteSpace: "nowrap" }}>
               {STATUS_LABEL[job.status] ?? job.status}
-              {INFLIGHT_STATUSES.includes(job.status) ? ` ${job.progress}%` : ""}
+              {INFLIGHT_STATUSES.includes(job.status)
+                ? ` ${overallProgress(job.status, job.progress)}%` : ""}
             </span>
             {["review", "done"].includes(job.status) ? (
               <button type="button" style={consoleStyles.mutedAction}
