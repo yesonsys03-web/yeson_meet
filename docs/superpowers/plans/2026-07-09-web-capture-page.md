@@ -183,7 +183,7 @@ export class PcmFramer {
 cd apps/web && pnpm test
 ```
 
-Expected: PASS (테스트 6개).
+Expected: PASS (테스트 5개).
 
 - [ ] **Step 6: 커밋**
 
