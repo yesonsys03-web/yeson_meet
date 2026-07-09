@@ -111,21 +111,32 @@ jobs:
           tag_name: v${{ env.VERSION }}
           name: yeson-meet v${{ env.VERSION }}
           body: |
-            ## yeson-server-console v1.2.0 — 무엇이 바뀌었나
+            ## ⬇️ 무엇을 받아야 하나요?
 
-            ### 웹에서 실시간 자막 서빙 (신기능) 🌐
-            - 서버가 웹 캡처 페이지(`/capture`)를 직접 서빙합니다. 진행자가 **앱 설치 없이** 브라우저(Chrome/Edge)로 실시간 자막을 켤 수 있어요. Go Live 공유 주소 뒤에 `/capture`만 붙이면 됩니다.
+            앱은 두 가지입니다 — **클라이언트**(회의 진행·자막, 각 직원 PC)와 **서버 콘솔**(담당자 1명). 본인 OS에 맞는 것 **하나만** 받으세요. 목록의 나머지 파일(`.sig`, `.app.tar.gz`, `latest-*.json`)은 **자동 업데이트용**이라 직접 받지 않습니다.
 
-            ### 자동 업데이트 (첫 탑재) 🔄
-            - 이번 버전을 설치하면, **다음 버전부터는 재설치가 필요 없습니다.** 새 버전이 나오면 콘솔이 알아서 받아 두고 "재시작하여 적용" 한 번이면 끝나요.
+            | | Windows | Mac (Apple Silicon · M1 이상) | Mac (Intel) |
+            |---|---|---|---|
+            | **클라이언트** (직원) | `yeson-meet_${{ env.VERSION }}_x64-setup.exe` | `yeson-meet_${{ env.VERSION }}_aarch64.dmg` | `yeson-meet_${{ env.VERSION }}_x64.dmg` |
+            | **서버 콘솔** (담당자) | `yeson-server-console_${{ env.VERSION }}_x64-setup.exe` | `yeson-server-console_${{ env.VERSION }}_aarch64.dmg` | `yeson-server-console_${{ env.VERSION }}_x64.dmg` |
 
-            ### 자막 메이커: 취소가 진짜 취소됩니다 🛑
-            - 취소 시 즉시 '취소됨' + 진행률 초기화, 백그라운드 변환(ffmpeg)·전사도 즉시/조기 종료. 전체 취소 API 추가.
-            - 취소·재생성 후 남은 작업이 진행률을 덮어쓰던 문제(대기 중 77% 등)를 근본 수정했습니다.
+            > - **Mac 칩 확인**: 애플 메뉴 → 이 Mac에 관하여 → "Apple M…"이면 Apple Silicon, "Intel"이면 Intel.
+            > - **Windows**: `-setup.exe`(권장) 또는 `_en-US.msi` 중 하나.
+            > - **v1.2.0을 이미 설치했다면** 이 버전은 앱이 **자동으로** 받습니다("재시작하여 적용" 배너). 아래는 처음 설치·재설치용 링크입니다.
+
+            ---
+
+            ## yeson-server-console v1.2.1 — 무엇이 바뀌었나
+
+            ### 자막 메이커 GPU 개선 🎮
+            - **GPU 켜기/끄기가 전사·굽기에 함께 적용**됩니다(끄면 둘 다 CPU). 이전엔 꺼도 굽기가 GPU를 계속 쓰던 문제 수정.
+            - **전사가 GPU를 못 쓸 때 사유를 콘솔에 표시**하고 CPU로 진행. (번역은 외부 AI라 GPU 무관)
+
+            ### 자동 업데이트 ✅
+            - v1.2.0을 설치하셨다면 이 버전은 자동으로 받게 됩니다(자동 업데이트 배포 첫 버전).
 
             ### 참고
-            - 이번 버전은 **마지막 수동 설치**입니다(자동 업데이트는 이번 버전 설치 후부터 동작).
-            - 기존 데이터(회의 기록·설정)를 그대로 유지한 채 업데이트됩니다.
+            - 기존 데이터를 그대로 유지한 채 업데이트됩니다.
           files: |
             apps/server_desktop/src-tauri/target/release/bundle/nsis/*.exe
             apps/server_desktop/src-tauri/target/release/bundle/nsis/*-setup.exe.sig
