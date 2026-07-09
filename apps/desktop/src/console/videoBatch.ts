@@ -89,6 +89,22 @@ export async function uploadBatch(
 }
 
 /**
+ * 전체 취소 시퀀스: ①abort 플래그 set → ②진행 중 배치가 있으면 settle까지 대기
+ * (abort 플래그 덕에 현재 파일 업로드만 끝나면 루프가 멈춤) → ③서버 전체 취소.
+ * 이 순서면 cancel-all 호출 시점에 업로드가 in-flight일 수 없어, 취소 직후
+ * 완료된 업로드가 cancel-all을 비껴가는 누락 경합이 구조적으로 사라진다.
+ */
+export async function abortBatchThenCancelAll(
+  abort: () => void,
+  pending: Promise<unknown> | null,
+  cancelAll: () => Promise<unknown>,
+): Promise<void> {
+  abort();
+  if (pending) await pending.catch(() => undefined);
+  await cancelAll();
+}
+
+/**
  * 네이티브 폴더 선택 경로용 배치 — 파일 내용을 웹뷰가 못 읽으므로 업로드는
  * Rust 커맨드(upload_video_file)가 경로에서 직접 스트리밍한다. 실패 무중단
  * 순차 처리 semantics는 uploadBatch와 동일.

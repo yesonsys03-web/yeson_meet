@@ -10,7 +10,9 @@ import type {
   BurnStyle, GpuStatus, TranslateEngineInfo, VideoJobSummary, VideoModelInfo,
   VideoStorageInfo,
 } from "./videoApi";
-import { filterVideoFiles, uploadBatch, uploadBatchNative } from "./videoBatch";
+import {
+  abortBatchThenCancelAll, filterVideoFiles, uploadBatch, uploadBatchNative,
+} from "./videoBatch";
 import type { NativeVideoFile } from "./videoBatch";
 import {
   actionableJobIds, canRebuild, captionedFileName, overallProgress, partitionSelection,
@@ -100,6 +102,9 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   // "전체 취소" 클릭 시 true — 진행 중인 업로드 루프가 다음 파일 시작 전에 확인해
   // 멈춘다(이미 시작한 업로드는 끝까지 둔다). 각 배치 시작 시 false로 리셋.
   const batchCancelRef = useRef(false);
+  // 진행 중인 배치의 promise — 전체 취소가 cancel-all 호출 전에 이 promise의
+  // settle을 기다려, 취소 직후 완료된 업로드가 취소를 비껴가는 누락을 막는다.
+  const batchPromiseRef = useRef<Promise<unknown> | null>(null);
   const [batchStatus, setBatchStatus] = useState<string | null>(null);
   const [modelMgmtOpen, setModelMgmtOpen] = useState(false);
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
@@ -188,9 +193,11 @@ function VideoCaptionInner({ active }: { active: boolean }) {
       translateCliModel: translateProvider === "opencode" ? cliModel : undefined,
     };
     try {
-      const res = await uploadBatch(files, cfg, uploadVideoJob, (done, total, current) => {
+      const batch = uploadBatch(files, cfg, uploadVideoJob, (done, total, current) => {
         setBatchStatus(done < total ? `업로드 중 ${done + 1}/${total} — ${current}` : null);
       }, { isCancelled: () => batchCancelRef.current });
+      batchPromiseRef.current = batch;
+      const res = await batch;
       const parts = [`${res.ok}개 작업이 시작됐습니다 (순차 처리)`];
       if (res.skipped) parts.push(`${res.skipped}개 취소로 건너뜀`);
       if (res.failed.length) {
@@ -201,6 +208,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      batchPromiseRef.current = null;
       setBusy(false);
     }
   };
@@ -233,7 +241,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
         translateProvider: translateProvider || undefined,
         translateCliModel: translateProvider === "opencode" ? cliModel : undefined,
       };
-      const res = await uploadBatchNative(entries, cfg, (entry, c) =>
+      const batch = uploadBatchNative(entries, cfg, (entry, c) =>
         invoke("upload_video_file", {
           uploadUrl: videoUploadUrl(),
           path: entry.path,
@@ -244,6 +252,8 @@ function VideoCaptionInner({ active }: { active: boolean }) {
         }), (done, total, current) => {
           setBatchStatus(done < total ? `업로드 중 ${done + 1}/${total} — ${current}` : null);
         }, { isCancelled: () => batchCancelRef.current });
+      batchPromiseRef.current = batch;
+      const res = await batch;
       const parts = [`${res.ok}개 작업이 시작됐습니다 (순차 처리)`];
       if (res.skipped) parts.push(`${res.skipped}개 취소로 건너뜀`);
       if (res.failed.length) {
@@ -254,6 +264,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      batchPromiseRef.current = null;
       setBusy(false);
     }
   };
@@ -360,13 +371,18 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     }
   }, [jobs, selectedJobs]);
 
-  // 전체 취소 — 진행 중인 로컬 업로드 루프를 다음 파일 전에 멈추고, 서버에
-  // 큐잉/실행 중인 모든 작업도 함께 취소한다(대기열 선취소 후 활성 작업 취소).
+  // 전체 취소 — ①업로드 루프 abort 플래그 → ②진행 중 배치의 settle 대기 →
+  // ③서버 전체 취소(대기열 선취소 후 활성 작업 취소). 이 순서라 cancel-all
+  // 시점에 업로드가 in-flight일 수 없어, 방금 완료된 업로드가 취소를 비껴가는
+  // 누락이 없다.
   const cancelAllBatch = useCallback(async () => {
-    batchCancelRef.current = true;
     setError(null);
     try {
-      await cancelAllVideoJobs();
+      await abortBatchThenCancelAll(
+        () => { batchCancelRef.current = true; },
+        batchPromiseRef.current,
+        cancelAllVideoJobs,
+      );
       setBatchStatus("전체 취소를 요청했습니다.");
       await refresh();
     } catch (err) {

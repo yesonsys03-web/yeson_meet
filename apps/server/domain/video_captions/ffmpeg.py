@@ -154,6 +154,12 @@ def _burn_once(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
                         progress_cb(int(line.split("=", 1)[1]) / 1_000_000.0)
                     except ValueError:
                         pass
+        except BaseException:
+            # progress_cb가 예외(취소 신호: StaleRunCancelled 등)를 던지면 ffmpeg을
+            # 즉시 종료한다 — 그대로 두면 인코딩이 끝까지 돌며 CPU/GPU를 태운다.
+            proc.kill()
+            proc.wait()
+            raise
         finally:
             proc.stdout.close()
         returncode = proc.wait()

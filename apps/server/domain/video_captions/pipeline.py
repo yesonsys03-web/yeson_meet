@@ -23,7 +23,7 @@ from .ffmpeg import (
 )
 from .ingest import download_youtube
 from .srt import SubSegment, build_force_style, segments_to_srt
-from .transcribe import transcribe_audio
+from .transcribe import StaleRunCancelled, transcribe_audio
 from .translate import translate_segments
 from .translate_cli import create_translator
 
@@ -36,13 +36,8 @@ logger = logging.getLogger("yeson.video.pipeline")
 _PROGRESS = {"queued": 0, "ingesting": 5, "extracting": 15, "transcribing": 0,
              "translating": 0, "review": 100, "burning": 0, "done": 100}
 
-
-class StaleRunCancelled(Exception):
-    """진행률 콜백이 스테일(취소·재생성된) 세대를 감지했을 때 던진다.
-
-    CPU 집약적 전사는 asyncio 취소에 반응하지 않는 워커 스레드에서 돌기
-    때문에, task.cancel()이 걸려도 스레드는 끝까지 실행된다. 콜백이 이
-    예외를 던지면 스레드가 남은 작업을 마저 태우지 않고 즉시 빠져나간다."""
+# StaleRunCancelled(취소·재생성 감지용 예외)는 pipeline↔transcribe 순환 임포트를
+# 피해 transcribe.py에 정의돼 있고, 전사·굽기 진행 콜백이 공용으로 던진다.
 
 
 def _another_instance_is_serving() -> bool:
@@ -431,6 +426,10 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
             last_pct = {"v": -1}
 
             def on_burn_progress(seconds: float, _duration: float = duration) -> None:
+                # 워커 스레드에서 직접 호출된다. 취소·재생성으로 세대가 올랐으면
+                # 예외를 던져 ffmpeg을 조기 종료시킨다(_burn_once가 kill 처리).
+                if generation != _current_generation(external_id):
+                    raise StaleRunCancelled(external_id)
                 pct = max(0, min(100, int(seconds / _duration * 100)))
                 if pct != last_pct["v"]:
                     last_pct["v"] = pct
@@ -439,8 +438,15 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
 
             progress_cb = on_burn_progress
 
-        await asyncio.to_thread(
-            burn_subtitles, ffmpeg, Path(media_path), srt_path, burned, style, progress_cb)
+        try:
+            await asyncio.to_thread(
+                burn_subtitles, ffmpeg, Path(media_path), srt_path, burned, style,
+                progress_cb)
+        except StaleRunCancelled:
+            # 취소된 실행 — 이미 cancelled로 마킹된 상태를 error로 덮어쓰지 않는다.
+            logger.info("burn job %s: stale run (generation %d) cancelled early",
+                        external_id, generation)
+            return
         await _set_status(external_id, "done", burned_path=str(burned))
     except Exception as exc:  # noqa: BLE001
         logger.exception("burn job %s failed", external_id)

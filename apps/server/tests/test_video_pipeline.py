@@ -475,3 +475,46 @@ async def test_cancel_job_task_bumps_generation(db_session, admin_user, tmp_path
     after = pl._current_generation(ext)
 
     assert after == before + 1
+
+
+async def test_run_burn_job_stale_generation_stops_and_keeps_cancelled(
+        monkeypatch, db_session, admin_user, tmp_path):
+    """굽기 도중 취소되면(상태 cancelled + 세대 상승) 진행 콜백이 StaleRunCancelled를
+    던져 조기 종료하고, 이미 cancelled로 마킹된 상태를 error로 덮어쓰지 않는다."""
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"v")
+    job = await _make_job(db_session, admin_user, media_path=str(src), status="review")
+    job.duration_ms = 4000
+    await db_session.commit()
+    job_id, ext = job.id, job.external_id
+    db_session.add(VideoSegment(job_id=job_id, seq=1, start_ms=0, end_ms=1000,
+                                text_en="Hello", text_ko="안녕"))
+    await db_session.commit()
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    loop = asyncio.get_running_loop()
+
+    async def _cancel_mid_burn():
+        # 사용자의 취소를 재현: 상태 cancelled 마킹 + 세대 상승(엔드포인트와 동일)
+        async with pl.AsyncSessionLocal() as db:
+            j = await pl._load_job(db, ext)
+            j.status = "cancelled"
+            j.progress = 0
+            await db.commit()
+        pl._bump_generation(ext)
+
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None):
+        assert progress_cb is not None
+        asyncio.run_coroutine_threadsafe(_cancel_mid_burn(), loop).result(timeout=10)
+        progress_cb(2.0)  # stale 세대 감지 → StaleRunCancelled를 기대
+        raise AssertionError("progress_cb must raise StaleRunCancelled on stale run")
+
+    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+
+    await pl.run_burn_job(ext, "bottom", 40, 18)
+
+    db_session.expire_all()
+    loaded = (await db_session.execute(
+        select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
+    assert loaded.status == "cancelled"  # error로 덮어쓰지 않음
+    assert loaded.burned_path is None    # done 처리도 되지 않음
