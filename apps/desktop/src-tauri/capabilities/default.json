@@ -5,6 +5,8 @@
   "windows": ["main", "subtitle-fullscreen", "qr-fullscreen"],
   "permissions": [
     "core:default",
+    "updater:default",
+    "process:allow-restart",
     "core:webview:allow-create-webview-window",
     "core:window:allow-close",
     "core:window:allow-set-focus",

@@ -17,6 +17,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(sidecar::SidecarState::default())
         .setup(|_app| {
             orphan_reaper::reap_orphans(|line| eprintln!("[orphan-reaper] {line}"));
