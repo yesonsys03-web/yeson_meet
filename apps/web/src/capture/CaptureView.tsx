@@ -4,6 +4,61 @@ import QRCode from "qrcode";
 import { checkCaptureSupport, isChromiumLike } from "./captureSupport";
 import { useCaptureSession } from "./useCaptureSession";
 import { useOperatorSubtitles } from "./useOperatorSubtitles";
+import { usePacedSubtitle } from "../hooks/usePacedSubtitle";
+import type { UtteranceTranscribed } from "../types/events";
+
+// 데스크탑 콘솔과 동일한 단축키: F(ㄹ)=자막 전체화면, Q(ㅂ)=QR 전체화면.
+// event.code 기준이라 한글 자판에서도 같은 물리 키로 동작. Esc로 닫기.
+type FullscreenMode = "subtitle" | "qr" | null;
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName.toLowerCase();
+  return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
+}
+
+function SubtitleFullscreenOverlay({ latest, onClose }: { latest: UtteranceTranscribed | null; onClose: () => void }) {
+  const paced = usePacedSubtitle(latest);
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 px-12" onClick={onClose}>
+      {paced ? (
+        <div className="max-w-6xl text-center space-y-4">
+          <p className="text-xl text-slate-500">{paced.text_en}</p>
+          <p className="text-5xl font-semibold leading-snug text-slate-50">{paced.text_ko}</p>
+        </div>
+      ) : (
+        <p className="text-2xl text-slate-600">자막을 기다리는 중…</p>
+      )}
+      <p className="absolute bottom-6 text-sm text-slate-600">F 또는 Esc — 닫기</p>
+    </div>
+  );
+}
+
+function QrFullscreenOverlay({ viewerUrl, onClose }: { viewerUrl: string; onClose: () => void }) {
+  const [qrSvg, setQrSvg] = useState("");
+  useEffect(() => {
+    let active = true;
+    QRCode.toString(viewerUrl, {
+      type: "svg",
+      errorCorrectionLevel: "M",
+      margin: 2,
+      width: 480,
+      color: { dark: "#020617", light: "#ffffff" },
+    }).then((svg) => {
+      if (active) setQrSvg(svg);
+    });
+    return () => {
+      active = false;
+    };
+  }, [viewerUrl]);
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-6 bg-slate-950 px-8" onClick={onClose}>
+      <div className="rounded-2xl bg-white p-4" dangerouslySetInnerHTML={{ __html: qrSvg }} />
+      <p className="max-w-3xl break-all text-center text-lg text-slate-300">{viewerUrl}</p>
+      <p className="absolute bottom-6 text-sm text-slate-600">Q 또는 Esc — 닫기</p>
+    </div>
+  );
+}
 
 function SupportBanners() {
   const support = checkCaptureSupport();
@@ -108,7 +163,31 @@ export function CaptureView() {
   const subtitles = useOperatorSubtitles(s.phase === "capturing" ? s.sessionId : null, s.operatorToken);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [fullscreen, setFullscreen] = useState<FullscreenMode>(null);
   const recent = subtitles.utterances.filter((u) => u.is_final).slice(-2);
+
+  const canSubtitleFullscreen = s.phase === "capturing";
+  const canQrFullscreen = !!s.viewerUrl;
+  useEffect(() => {
+    if (!canSubtitleFullscreen && !canQrFullscreen) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setFullscreen(null);
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.repeat || isEditableTarget(event.target)) return;
+      if (event.code === "KeyF" && canSubtitleFullscreen) {
+        event.preventDefault();
+        setFullscreen((m) => (m === "subtitle" ? null : "subtitle"));
+      } else if (event.code === "KeyQ" && canQrFullscreen) {
+        event.preventDefault();
+        setFullscreen((m) => (m === "qr" ? null : "qr"));
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [canSubtitleFullscreen, canQrFullscreen]);
 
   return (
     <main className="min-h-screen bg-slate-900 text-slate-100 flex justify-center p-6">
@@ -194,6 +273,9 @@ export function CaptureView() {
               ))}
             </div>
             {s.viewerUrl && <ViewerQr viewerUrl={s.viewerUrl} />}
+            <p className="text-xs text-slate-500">
+              단축키: <b>F</b>(ㄹ) 자막 전체화면 · <b>Q</b>(ㅂ) QR 전체화면 · Esc 닫기
+            </p>
             <button className="w-full rounded bg-rose-700 py-2 font-semibold hover:bg-rose-600 disabled:opacity-50" disabled={s.busy} onClick={() => void s.stopCaptureAndEnd()}>
               캡처 중지 + 회의 종료
             </button>
@@ -210,6 +292,10 @@ export function CaptureView() {
           </div>
         )}
       </div>
+      {fullscreen === "subtitle" && canSubtitleFullscreen && (
+        <SubtitleFullscreenOverlay latest={subtitles.latest} onClose={() => setFullscreen(null)} />
+      )}
+      {fullscreen === "qr" && s.viewerUrl && <QrFullscreenOverlay viewerUrl={s.viewerUrl} onClose={() => setFullscreen(null)} />}
     </main>
   );
 }
