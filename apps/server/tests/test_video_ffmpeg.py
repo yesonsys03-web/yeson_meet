@@ -22,6 +22,15 @@ def _clear_encoder_cache():
     ff._encoder_cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _clear_proc_registry():
+    ff._ACTIVE.clear()
+    ff._KILLED.clear()
+    yield
+    ff._ACTIVE.clear()
+    ff._KILLED.clear()
+
+
 def test_locate_ffmpeg_env_override(monkeypatch, tmp_path: Path):
     fake = tmp_path / "ffmpeg"
     fake.write_text("")
@@ -219,3 +228,92 @@ def test_burn_progress_exception_kills_ffmpeg(monkeypatch, tmp_path: Path):
         ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
                           "Alignment=2,MarginV=40,Fontsize=18", progress_cb=raising_cb)
     assert killed["v"] is True
+
+
+class _KillTrackingProc:
+    """subprocess.Popen 대역 — kill_active가 잡고 즉시 kill할 수 있도록 kill()을
+    추적한다. wait()는 kill 후 실제 ffmpeg처럼 nonzero(음수) 종료 코드를 낸다."""
+
+    def __init__(self, cmd, **kwargs):
+        self.cmd = cmd
+        self.kwargs = kwargs
+        self.killed = False
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self):
+        return -9 if self.killed else 0
+
+
+def test_kill_active_kills_registered_proc(monkeypatch):
+    """kill_active(key)는 등록된 프로세스를 즉시 kill/wait하고, 등록된 게 있었으면
+    True를 반환한다."""
+    proc = _KillTrackingProc([])
+    ff.register_proc("job-1", proc)
+
+    assert ff.kill_active("job-1") is True
+    assert proc.killed is True
+    # 이미 pop됐으므로 재호출은 아무 것도 못 찾고 False
+    assert ff.kill_active("job-1") is False
+
+
+def test_kill_active_noop_when_nothing_registered():
+    assert ff.kill_active("no-such-job") is False
+
+
+class _FakeStdoutOneLine:
+    def __init__(self, lines):
+        self._lines = lines
+
+    def __iter__(self):
+        return iter(self._lines)
+
+    def close(self):
+        pass
+
+
+class _KilledDuringBurnPopen:
+    """progress_cb 도중 kill_active(proc_key)가 호출되는 상황을 재현하는 Popen 대역
+    — 실제로는 kill()이 프로세스를 죽여 다음 wait()가 nonzero를 반환한다."""
+
+    def __init__(self, cmd, **kwargs):
+        self.cmd = cmd
+        self.stdout = _FakeStdoutOneLine(["out_time_ms=1000000\n"])
+        self.killed = False
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self):
+        return -9 if self.killed else 0
+
+
+def test_burn_subtitles_skips_cpu_retry_when_gpu_run_was_killed(monkeypatch, tmp_path):
+    """kill_active로 죽은 GPU 인코딩이 FfmpegError로 표면화돼도 libx264로 재시도하면
+    안 된다 — 취소 후에도 새 CPU 인코딩이 시작되는 낭비를 막기 위함."""
+    monkeypatch.delenv("YESON_BURN_ENCODER", raising=False)
+    monkeypatch.setattr(ff, "detect_burn_encoder", lambda f: "h264_nvenc")
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+
+    proc_key = "job-killed"
+    calls: list[list[str]] = []
+
+    def fake_popen(cmd, **kw):
+        calls.append(cmd)
+        return _KilledDuringBurnPopen(cmd, **kw)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    def progress_cb(seconds: float) -> None:
+        # 취소 엔드포인트가 cancel_job_task를 통해 하는 일을 재현: 활성 프로세스를
+        # 즉시 kill한다(진행률 콜백 자체는 예외를 던지지 않음).
+        ff.kill_active(proc_key)
+
+    with pytest.raises(ff.FfmpegError):
+        ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
+                          "Alignment=2", progress_cb=progress_cb, proc_key=proc_key)
+
+    assert len(calls) == 1  # libx264 재시도가 없었다 — 단 한 번의 ffmpeg 호출뿐
+    assert "h264_nvenc" in calls[0]

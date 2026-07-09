@@ -48,6 +48,49 @@ class FfmpegError(RuntimeError):
     pass
 
 
+# 활성 ffmpeg 프로세스 레지스트리 — 취소 시 다음 진행률 라인을 기다리지 않고
+# 즉시 kill한다. dict/set 단일 연산은 GIL 원자성으로 충분히 스레드 안전하다.
+# kill_active로 죽은 proc_key는 _KILLED에 표식이 남아, GPU 인코딩이 kill로
+# 죽어 FfmpegError로 보여도 burn_subtitles가 libx264 재시도를 타지 않게 한다 —
+# 새 프로세스가 등록되면(register_proc) 그 키의 표식은 지워져 다음 실행에는
+# 영향을 주지 않는다.
+_ACTIVE: dict[str, subprocess.Popen] = {}
+_KILLED: set[str] = set()
+
+
+def register_proc(key: str, proc: subprocess.Popen) -> None:
+    _KILLED.discard(key)
+    _ACTIVE[key] = proc
+
+
+def unregister_proc(key: str) -> None:
+    _ACTIVE.pop(key, None)
+
+
+def kill_active(key: str) -> bool:
+    """등록된 활성 프로세스가 있으면 즉시 kill한다.
+
+    Windows에서도 동일하게 동작하도록 proc.kill()/proc.wait()만 사용한다
+    (kill()은 Windows에서 TerminateProcess로 매핑된다) — os.killpg, 시그널,
+    프로세스 그룹 등 POSIX 전용 API는 쓰지 않는다. 예외는 삼킨다(이미 죽은
+    프로세스 등). 등록된 프로세스가 있었으면 True.
+    """
+    proc = _ACTIVE.pop(key, None)
+    if proc is None:
+        return False
+    _KILLED.add(key)
+    try:
+        proc.kill()
+        proc.wait()
+    except Exception:  # noqa: BLE001 — 이미 종료된 프로세스 등은 무시
+        pass
+    return True
+
+
+def _was_killed(key: str | None) -> bool:
+    return key is not None and key in _KILLED
+
+
 def locate_ffmpeg() -> str | None:
     override = os.environ.get(FFMPEG_BIN_ENV)
     if override:
@@ -55,21 +98,41 @@ def locate_ffmpeg() -> str | None:
     return shutil.which("ffmpeg")
 
 
-def _run(cmd: list[str], *, cwd: str | None = None) -> None:
-    result = subprocess.run(
-        cmd, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", cwd=cwd,
+def _run(cmd: list[str], *, cwd: str | None = None,
+        proc_key: str | None = None) -> None:
+    if proc_key is None:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", cwd=cwd,
+            **_SUBPROCESS_FLAGS,
+        )
+        if result.returncode != 0:
+            tail = (result.stderr or "")[-500:]
+            raise FfmpegError(f"ffmpeg failed (code={result.returncode}): {tail}")
+        return
+
+    # proc_key가 있으면 취소 시 즉시 kill 가능하도록 Popen으로 실행하고 레지스트리에
+    # 등록한다 — 동작(인자·에러 처리)은 위 subprocess.run 경로와 동일하게 유지.
+    proc = subprocess.Popen(
+        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
         **_SUBPROCESS_FLAGS,
     )
-    if result.returncode != 0:
-        tail = (result.stderr or "")[-500:]
-        raise FfmpegError(f"ffmpeg failed (code={result.returncode}): {tail}")
+    register_proc(proc_key, proc)
+    try:
+        _, stderr = proc.communicate()
+    finally:
+        unregister_proc(proc_key)
+    if proc.returncode != 0:
+        tail = (stderr or "")[-500:]
+        raise FfmpegError(f"ffmpeg failed (code={proc.returncode}): {tail}")
 
 
-def extract_audio(ffmpeg: str, src: Path, dst: Path) -> None:
+def extract_audio(ffmpeg: str, src: Path, dst: Path,
+                  proc_key: str | None = None) -> None:
     """16 kHz mono s16 wav — whisper 입력 포맷."""
     _run([ffmpeg, "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000",
-          "-f", "wav", str(dst)])
+          "-f", "wav", str(dst)], proc_key=proc_key)
 
 
 def _probe_encoder(ffmpeg: str, encoder: str) -> bool:
@@ -105,27 +168,38 @@ def detect_burn_encoder(ffmpeg: str) -> str:
 
 def burn_subtitles(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
                    force_style: str,
-                   progress_cb: Callable[[float], None] | None = None) -> None:
-    """자막 굽기. GPU 인코더가 감지되면 사용하고, 도중 실패하면 libx264로 1회 재시도."""
+                   progress_cb: Callable[[float], None] | None = None,
+                   proc_key: str | None = None) -> None:
+    """자막 굽기. GPU 인코더가 감지되면 사용하고, 도중 실패하면 libx264로 1회 재시도.
+
+    단, kill_active로 취소돼 죽은 실행은 재시도하지 않고 그대로 전파한다 —
+    취소 후에도 CPU 인코딩이 새로 시작되는 낭비를 막기 위함.
+    """
     encoder = detect_burn_encoder(ffmpeg)
     try:
-        _burn_once(ffmpeg, src, srt_path, dst, force_style, encoder, progress_cb)
+        _burn_once(ffmpeg, src, srt_path, dst, force_style, encoder, progress_cb,
+                   proc_key)
     except FfmpegError:
-        if encoder == "libx264":
+        if encoder == "libx264" or _was_killed(proc_key):
             raise
         logger.warning("burn: %s 인코딩 실패 — libx264로 재시도", encoder)
         _encoder_cache[ffmpeg] = "libx264"  # 이후 작업도 CPU로
-        _burn_once(ffmpeg, src, srt_path, dst, force_style, "libx264", progress_cb)
+        _burn_once(ffmpeg, src, srt_path, dst, force_style, "libx264", progress_cb,
+                   proc_key)
 
 
 def _burn_once(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
                force_style: str, encoder: str,
-               progress_cb: Callable[[float], None] | None = None) -> None:
+               progress_cb: Callable[[float], None] | None = None,
+               proc_key: str | None = None) -> None:
     """subtitles 필터는 경로 이스케이프가 취약 → cwd를 srt 디렉터리로 두고 상대 파일명 사용.
 
     progress_cb가 주어지면 ``-progress pipe:1 -nostats``로 stdout을 스트리밍해
     ``out_time_ms=``(마이크로초) 라인을 초 단위로 변환해 전달한다. stderr는
     데드락 방지를 위해 PIPE로 받지 않고 임시 파일로 받는다.
+
+    proc_key가 주어지면 Popen 직후 레지스트리에 등록해, 취소 시 다음 진행률
+    라인을 기다리지 않고 kill_active로 즉시 kill할 수 있게 한다.
     """
     vf = f"subtitles={srt_path.name}:force_style='{force_style}'"
     cmd = [ffmpeg, "-y", "-i", str(src), "-vf", vf,
@@ -136,7 +210,7 @@ def _burn_once(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
     cwd = str(srt_path.parent)
 
     if progress_cb is None:
-        _run(cmd, cwd=cwd)
+        _run(cmd, cwd=cwd, proc_key=proc_key)
         return
 
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as stderr_f:
@@ -145,6 +219,8 @@ def _burn_once(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
             text=True, encoding="utf-8", errors="replace",
             **_SUBPROCESS_FLAGS,
         )
+        if proc_key is not None:
+            register_proc(proc_key, proc)
         assert proc.stdout is not None
         try:
             for line in proc.stdout:
@@ -162,6 +238,8 @@ def _burn_once(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
             raise
         finally:
             proc.stdout.close()
+            if proc_key is not None:
+                unregister_proc(proc_key)
         returncode = proc.wait()
         if returncode != 0:
             stderr_f.seek(0)

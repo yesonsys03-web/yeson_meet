@@ -11,6 +11,7 @@ from sqlalchemy import select
 from apps.server.db import session as session_mod
 from apps.server.db.models import AppUser, VideoJob, VideoSegment
 from apps.server.domain.video_captions import pipeline as pl
+from apps.server.domain.video_captions.ffmpeg import FfmpegError
 from apps.server.domain.video_captions.srt import SubSegment
 
 
@@ -53,7 +54,7 @@ async def test_run_video_job_happy_path(monkeypatch, db_session, admin_user, tmp
     job_id, external_id = job.id, job.external_id
 
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d: Path(d).write_bytes(b"a"))
+    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
     monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
     monkeypatch.setattr(pl, "transcribe_audio",
                         lambda p, m, cb=None: [SubSegment(1, 0, 1000, "Hello")])
@@ -92,7 +93,7 @@ async def test_run_video_job_serialized_by_semaphore(
 
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
-    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d: Path(d).write_bytes(b"a"))
+    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
 
     concur = {"cur": 0, "max": 0}
 
@@ -127,7 +128,7 @@ async def test_cancel_job_task_releases_semaphore(
 
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
-    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d: Path(d).write_bytes(b"a"))
+    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
     monkeypatch.setattr(pl, "transcribe_audio",
                         lambda p, m, cb=None: [SubSegment(1, 0, 1000, "Hi")])
 
@@ -179,7 +180,7 @@ async def test_run_burn_job(monkeypatch, db_session, admin_user, tmp_path):
     burned = {}
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
 
-    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None):
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None):
         burned["style"] = style
         Path(dst).write_bytes(b"out")
 
@@ -356,7 +357,7 @@ async def test_run_video_job_deletes_audio_after_transcribe(
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
 
-    def fake_extract(f, s, d):
+    def fake_extract(f, s, d, proc_key=None):
         Path(d).write_bytes(b"a")
 
     def fake_transcribe(p, m, cb=None):
@@ -403,7 +404,7 @@ async def test_run_burn_job_uses_stored_duration_without_wav(
     monkeypatch.setattr(pl, "_set_progress", fake_set_progress)
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
 
-    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None):
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None):
         # duration must come from duration_ms (4.0s), NOT the segment max (1.0s),
         # so a progress callback at 2s maps to 50% (would be 100%-capped otherwise).
         assert progress_cb is not None
@@ -477,6 +478,98 @@ async def test_cancel_job_task_bumps_generation(db_session, admin_user, tmp_path
     assert after == before + 1
 
 
+async def test_cancel_job_task_kills_active_ffmpeg_proc(db_session, admin_user, monkeypatch):
+    """취소 시 다음 진행률 라인을 기다리지 않고 활성 ffmpeg 프로세스를 즉시
+    kill해야 한다 — task.cancel()은 워커 스레드에 닿지 않기 때문."""
+    job = await _make_job(db_session, admin_user, status="burning")
+    ext = job.external_id
+    killed: list[str] = []
+    monkeypatch.setattr(pl, "kill_active", lambda key: killed.append(key) or True)
+
+    pl.cancel_job_task(ext)
+
+    assert killed == [str(ext)]
+
+
+async def test_run_video_job_extract_killed_stays_cancelled_not_error(
+        monkeypatch, db_session, admin_user, tmp_path):
+    """추출(extract_audio) 도중 취소되면(kill_active로 ffmpeg가 비정상 종료) error가
+    아니라 cancelled 상태를 유지해야 한다."""
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"v")
+    job = await _make_job(db_session, admin_user, media_path=str(src))
+    job_id, ext = job.id, job.external_id
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d: s)
+
+    loop = asyncio.get_running_loop()
+
+    async def _cancel_mid_extract():
+        # 사용자의 취소를 재현: 상태 cancelled 마킹 + 세대 상승(cancel_job_task와 동일)
+        async with pl.AsyncSessionLocal() as db:
+            j = await pl._load_job(db, ext)
+            j.status = "cancelled"
+            j.progress = 0
+            await db.commit()
+        pl._bump_generation(ext)
+
+    def fake_extract(f, s, d, proc_key=None):
+        asyncio.run_coroutine_threadsafe(_cancel_mid_extract(), loop).result(timeout=10)
+        # kill_active로 죽은 ffmpeg는 이렇게 FfmpegError로 표면화된다
+        raise FfmpegError("ffmpeg failed (code=-9): killed")
+
+    monkeypatch.setattr(pl, "extract_audio", fake_extract)
+
+    await pl.run_video_job(ext)
+
+    db_session.expire_all()
+    loaded = (await db_session.execute(
+        select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
+    assert loaded.status == "cancelled"  # error로 덮어쓰지 않음
+    assert loaded.error is None
+
+
+async def test_run_burn_job_killed_ffmpeg_error_stays_cancelled(
+        monkeypatch, db_session, admin_user, tmp_path):
+    """굽기 도중 kill_active로 ffmpeg가 죽어 FfmpegError(StaleRunCancelled 아님)로
+    표면화돼도, 이미 cancelled로 마킹된 상태를 error로 덮어쓰지 않는다."""
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"v")
+    job = await _make_job(db_session, admin_user, media_path=str(src), status="review")
+    job.duration_ms = 4000
+    await db_session.commit()
+    job_id, ext = job.id, job.external_id
+    db_session.add(VideoSegment(job_id=job_id, seq=1, start_ms=0, end_ms=1000,
+                                text_en="Hello", text_ko="안녕"))
+    await db_session.commit()
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    loop = asyncio.get_running_loop()
+
+    async def _cancel_mid_burn():
+        async with pl.AsyncSessionLocal() as db:
+            j = await pl._load_job(db, ext)
+            j.status = "cancelled"
+            j.progress = 0
+            await db.commit()
+        pl._bump_generation(ext)
+
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None):
+        asyncio.run_coroutine_threadsafe(_cancel_mid_burn(), loop).result(timeout=10)
+        raise FfmpegError("ffmpeg failed (code=-9): killed")
+
+    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+
+    await pl.run_burn_job(ext, "bottom", 40, 18)
+
+    db_session.expire_all()
+    loaded = (await db_session.execute(
+        select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
+    assert loaded.status == "cancelled"  # error로 덮어쓰지 않음
+    assert loaded.burned_path is None
+
+
 async def test_run_burn_job_stale_generation_stops_and_keeps_cancelled(
         monkeypatch, db_session, admin_user, tmp_path):
     """굽기 도중 취소되면(상태 cancelled + 세대 상승) 진행 콜백이 StaleRunCancelled를
@@ -503,7 +596,7 @@ async def test_run_burn_job_stale_generation_stops_and_keeps_cancelled(
             await db.commit()
         pl._bump_generation(ext)
 
-    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None):
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None):
         assert progress_cb is not None
         asyncio.run_coroutine_threadsafe(_cancel_mid_burn(), loop).result(timeout=10)
         progress_cb(2.0)  # stale 세대 감지 → StaleRunCancelled를 기대
