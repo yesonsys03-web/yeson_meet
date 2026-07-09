@@ -32,6 +32,7 @@ _progress = 0  # 0-99, 다운로드 중일 때만 의미
 _last_error: str | None = None  # 마지막 다운로드 실패 사유 — UI 표면화용
 _state_lock = threading.Lock()
 _cuda_checked: bool | None = None  # cuda_available() 결과 캐시(프로세스 수명)
+_cuda_error: str | None = None  # cuda_available() 실패 사유 — UI 표면화용(cuda_status())
 _activated = False
 
 
@@ -63,10 +64,15 @@ def is_enabled() -> bool:
 
 
 def set_enabled(enabled: bool) -> None:
+    global _cuda_checked, _cuda_error
     flag = pack_root() / "enabled"
     if enabled:
         flag.parent.mkdir(parents=True, exist_ok=True)
         flag.write_text("1", encoding="utf-8")
+        # 재활성화 시 CUDA를 재검사 — 이전 실패(예: 드라이버 업데이트 전)가
+        # 프로세스 수명 캐시로 영구 고정되지 않게 한다.
+        _cuda_checked = None
+        _cuda_error = None
     else:
         flag.unlink(missing_ok=True)
 
@@ -105,16 +111,29 @@ def _cuda_device_count() -> int:  # test seam
 
 
 def cuda_available() -> bool:
-    """실제 CUDA 디바이스 인식 여부. 무거운 검사라 첫 성공/실패를 프로세스 수명 캐시."""
-    global _cuda_checked
+    """실제 CUDA 디바이스 인식 여부. 무거운 검사라 첫 성공/실패를 프로세스 수명 캐시.
+
+    실패 사유(예외 클래스+메시지, 또는 디바이스 0개)는 _cuda_error에 남겨
+    cuda_status()로 조회할 수 있다 — 이전엔 bare False로 삼켜져 "GPU 켜져
+    있는데 왜 CPU로 도나" 문의에 답할 방법이 없었다.
+    """
+    global _cuda_checked, _cuda_error
     if _cuda_checked is None:
         try:
             activate()
-            _cuda_checked = _cuda_device_count() > 0
-        except Exception:
+            count = _cuda_device_count()
+            _cuda_checked = count > 0
+            _cuda_error = None if _cuda_checked else "CUDA 디바이스를 찾지 못했습니다 (device count 0)"
+        except Exception as exc:  # noqa: BLE001 — 사유를 표면화하기 위해 잡고 기록
             logger.warning("cuda_available: ctranslate2 CUDA 검사 실패", exc_info=True)
             _cuda_checked = False
+            _cuda_error = f"{type(exc).__name__}: {exc}"[:300]
     return _cuda_checked
+
+
+def cuda_status() -> dict:
+    """cuda_available()의 최근 결과와 실패 사유. 아직 검사 전이면 ok=False, reason=None."""
+    return {"ok": bool(_cuda_checked), "reason": _cuda_error}
 
 
 def resolve_device() -> tuple[str, str]:
@@ -179,7 +198,7 @@ def download_pack() -> None:
 
     실패는 삼키지 않고 _last_error에 남긴다 — 워커 스레드 예외는 UI에 안 보여서
     "버튼 눌러도 반응 없음"이 되기 때문(2026-07-08 Windows 실기기 증상)."""
-    global _downloading, _progress, _cuda_checked, _last_error
+    global _downloading, _progress, _cuda_checked, _cuda_error, _last_error
     with _state_lock:
         if _downloading:
             logger.info("download_pack: already downloading — skip")
@@ -209,6 +228,7 @@ def download_pack() -> None:
                 logger.info("download_pack: %s → DLL %d개 추출", pkg, n)
                 wheel.unlink(missing_ok=True)
         _cuda_checked = None  # 설치 후 CUDA 재검사 허용
+        _cuda_error = None
         logger.info("download_pack: 완료 (%s)", dest)
     except Exception as exc:  # noqa: BLE001 — 워커 스레드 최종 방어선
         logger.exception("download_pack: 실패")
@@ -219,13 +239,17 @@ def download_pack() -> None:
 
 def status() -> dict:
     installed = is_installed()
+    cuda_ok = cuda_available() if installed else False
+    reason = cuda_status()["reason"] if installed else None
     return {
         "supported": is_supported(),
         "gpu_name": gpu_name(),
         "installed": installed,
         "downloading": _downloading,
         "progress": _progress if _downloading else None,
-        "cuda_available": cuda_available() if installed else False,
+        "cuda_available": cuda_ok,
+        "cuda_ok": cuda_ok,
+        "cuda_reason": reason,
         "enabled": is_enabled(),
         "approx_bytes": APPROX_PACK_BYTES,
         "last_error": _last_error,

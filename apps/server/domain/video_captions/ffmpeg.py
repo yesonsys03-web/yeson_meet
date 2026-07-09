@@ -35,7 +35,7 @@ _HW_CANDIDATES: tuple[str, ...] = (
     else ()
 )
 
-_encoder_cache: dict[str, str] = {}
+_encoder_cache: dict[tuple[str, bool], str] = {}
 
 # Windows에서 ffmpeg 콘솔 창이 번쩍이지 않도록 — CREATE_NO_WINDOW는 Windows 전용
 # 상수라 os.name == "nt"가 아닌 분기에서는 절대 참조하지 않는다 (mac/Linux AttributeError 방지).
@@ -149,33 +149,47 @@ def _probe_encoder(ffmpeg: str, encoder: str) -> bool:
     return result.returncode == 0
 
 
-def detect_burn_encoder(ffmpeg: str) -> str:
+def detect_burn_encoder(ffmpeg: str, use_gpu: bool) -> str:
     """굽기용 비디오 인코더 선택 — GPU 후보를 프로브해 첫 성공을 쓰고, 없으면
-    libx264. 결과는 프로세스 수명 동안 캐시. YESON_BURN_ENCODER로 강제 지정 가능."""
+    libx264. 결과는 (ffmpeg, use_gpu) 조합으로 프로세스 수명 동안 캐시.
+    YESON_BURN_ENCODER로 강제 지정 가능(운영자 명시 오버라이드는 use_gpu보다 우선).
+
+    use_gpu=False면 GPU 토글이 꺼져 있다는 뜻 — 프로브를 아예 하지 않고
+    즉시 libx264를 반환한다(순수 함수 유지 — 전역 상태는 호출자가 결정해
+    넘긴다, gpu_pack.is_enabled() 등).
+    """
     override = os.environ.get(BURN_ENCODER_ENV)
     if override:
         return override if override in _ENCODER_ARGS else "libx264"
-    if ffmpeg not in _encoder_cache:
+    if not use_gpu:
+        return "libx264"
+    key = (ffmpeg, use_gpu)
+    if key not in _encoder_cache:
         chosen = "libx264"
         for cand in _HW_CANDIDATES:
             if _probe_encoder(ffmpeg, cand):
                 chosen = cand
                 break
-        logger.info("burn encoder: %s", chosen)
-        _encoder_cache[ffmpeg] = chosen
-    return _encoder_cache[ffmpeg]
+        logger.info("burn encoder: %s (gpu=%s)", chosen, use_gpu)
+        _encoder_cache[key] = chosen
+    return _encoder_cache[key]
 
 
 def burn_subtitles(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
                    force_style: str,
                    progress_cb: Callable[[float], None] | None = None,
-                   proc_key: str | None = None) -> None:
+                   proc_key: str | None = None,
+                   use_gpu: bool = True) -> None:
     """자막 굽기. GPU 인코더가 감지되면 사용하고, 도중 실패하면 libx264로 1회 재시도.
 
     단, kill_active로 취소돼 죽은 실행은 재시도하지 않고 그대로 전파한다 —
     취소 후에도 CPU 인코딩이 새로 시작되는 낭비를 막기 위함.
+
+    use_gpu는 GPU 팩 토글을 그대로 반영한다(기본 True는 하위호환 — 실제 배선은
+    pipeline.py가 gpu_pack.is_enabled()를 명시적으로 넘긴다). False면 GPU
+    프로브 자체를 건너뛰고 libx264로 굽는다.
     """
-    encoder = detect_burn_encoder(ffmpeg)
+    encoder = detect_burn_encoder(ffmpeg, use_gpu)
     try:
         _burn_once(ffmpeg, src, srt_path, dst, force_style, encoder, progress_cb,
                    proc_key)
@@ -183,7 +197,7 @@ def burn_subtitles(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
         if encoder == "libx264" or _was_killed(proc_key):
             raise
         logger.warning("burn: %s 인코딩 실패 — libx264로 재시도", encoder)
-        _encoder_cache[ffmpeg] = "libx264"  # 이후 작업도 CPU로
+        _encoder_cache[(ffmpeg, use_gpu)] = "libx264"  # 이후 작업도 CPU로
         _burn_once(ffmpeg, src, srt_path, dst, force_style, "libx264", progress_cb,
                    proc_key)
 

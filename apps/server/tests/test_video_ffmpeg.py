@@ -78,14 +78,14 @@ def test_detect_burn_encoder_picks_first_probe_success(monkeypatch):
     monkeypatch.delenv("YESON_BURN_ENCODER", raising=False)
     monkeypatch.setattr(ff, "_HW_CANDIDATES", ("h264_nvenc", "h264_amf"))
     monkeypatch.setattr(ff, "_probe_encoder", lambda f, e: e == "h264_amf")
-    assert ff.detect_burn_encoder("ffmpeg") == "h264_amf"
+    assert ff.detect_burn_encoder("ffmpeg", True) == "h264_amf"
 
 
 def test_detect_burn_encoder_all_probes_fail_falls_back(monkeypatch):
     monkeypatch.delenv("YESON_BURN_ENCODER", raising=False)
     monkeypatch.setattr(ff, "_HW_CANDIDATES", ("h264_nvenc",))
     monkeypatch.setattr(ff, "_probe_encoder", lambda f, e: False)
-    assert ff.detect_burn_encoder("ffmpeg") == "libx264"
+    assert ff.detect_burn_encoder("ffmpeg", True) == "libx264"
 
 
 def test_detect_burn_encoder_env_override_skips_probe(monkeypatch):
@@ -94,9 +94,32 @@ def test_detect_burn_encoder_env_override_skips_probe(monkeypatch):
 
     monkeypatch.setattr(ff, "_probe_encoder", boom)
     monkeypatch.setenv("YESON_BURN_ENCODER", "h264_nvenc")
-    assert ff.detect_burn_encoder("ffmpeg") == "h264_nvenc"
+    assert ff.detect_burn_encoder("ffmpeg", True) == "h264_nvenc"
     monkeypatch.setenv("YESON_BURN_ENCODER", "definitely_not_an_encoder")
-    assert ff.detect_burn_encoder("ffmpeg") == "libx264"
+    assert ff.detect_burn_encoder("ffmpeg", True) == "libx264"
+
+
+def test_detect_burn_encoder_env_override_wins_even_when_gpu_off(monkeypatch):
+    """운영자가 YESON_BURN_ENCODER를 명시하면 GPU 토글이 꺼져 있어도 그 값을 쓴다
+    (명시적 오버라이드가 use_gpu보다 우선)."""
+    def boom(*a):
+        raise AssertionError("probe must not run with env override")
+
+    monkeypatch.setattr(ff, "_probe_encoder", boom)
+    monkeypatch.setenv("YESON_BURN_ENCODER", "h264_nvenc")
+    assert ff.detect_burn_encoder("ffmpeg", False) == "h264_nvenc"
+
+
+def test_detect_burn_encoder_use_gpu_false_skips_probe_returns_cpu(monkeypatch):
+    """GPU 토글이 꺼져 있으면(use_gpu=False) HW 후보를 아예 프로브하지 않고
+    즉시 libx264를 반환한다 — 이전엔 토글과 무관하게 항상 프로브했다(버그)."""
+    monkeypatch.delenv("YESON_BURN_ENCODER", raising=False)
+
+    def boom(*a):
+        raise AssertionError("probe must not run when use_gpu=False")
+
+    monkeypatch.setattr(ff, "_probe_encoder", boom)
+    assert ff.detect_burn_encoder("ffmpeg", False) == "libx264"
 
 
 def test_detect_burn_encoder_result_is_cached(monkeypatch):
@@ -105,14 +128,30 @@ def test_detect_burn_encoder_result_is_cached(monkeypatch):
     probes: list[str] = []
     monkeypatch.setattr(ff, "_probe_encoder",
                         lambda f, e: probes.append(e) or True)
-    assert ff.detect_burn_encoder("ffmpeg") == "h264_nvenc"
-    assert ff.detect_burn_encoder("ffmpeg") == "h264_nvenc"
+    assert ff.detect_burn_encoder("ffmpeg", True) == "h264_nvenc"
+    assert ff.detect_burn_encoder("ffmpeg", True) == "h264_nvenc"
     assert probes == ["h264_nvenc"]
+
+
+def test_detect_burn_encoder_cache_keyed_by_use_gpu(monkeypatch):
+    """toggling off→on→off는 off 쪽 프로브 캐시에 의존하지 않는다 — off는 매번
+    프로브 없이 즉시 libx264를 반환하고, on 쪽 캐시만 (ffmpeg, True)로 쌓인다."""
+    monkeypatch.delenv("YESON_BURN_ENCODER", raising=False)
+    monkeypatch.setattr(ff, "_HW_CANDIDATES", ("h264_nvenc",))
+    probes: list[str] = []
+    monkeypatch.setattr(ff, "_probe_encoder",
+                        lambda f, e: probes.append(e) or True)
+
+    assert ff.detect_burn_encoder("ffmpeg", False) == "libx264"
+    assert ff.detect_burn_encoder("ffmpeg", True) == "h264_nvenc"
+    assert ff.detect_burn_encoder("ffmpeg", False) == "libx264"
+    assert probes == ["h264_nvenc"]  # off 경로는 절대 프로브하지 않았다
+    assert ff._encoder_cache == {("ffmpeg", True): "h264_nvenc"}
 
 
 def test_burn_gpu_failure_falls_back_to_libx264(monkeypatch, tmp_path: Path):
     monkeypatch.delenv("YESON_BURN_ENCODER", raising=False)
-    monkeypatch.setattr(ff, "detect_burn_encoder", lambda f: "h264_nvenc")
+    monkeypatch.setattr(ff, "detect_burn_encoder", lambda f, use_gpu: "h264_nvenc")
     cmds: list[list[str]] = []
 
     def fake_run(cmd, **kw):
@@ -127,7 +166,25 @@ def test_burn_gpu_failure_falls_back_to_libx264(monkeypatch, tmp_path: Path):
     assert "h264_nvenc" in cmds[0]
     assert "libx264" in cmds[1]
     # 실패한 GPU 인코더는 이후 작업에서도 재시도하지 않도록 캐시를 CPU로 고정
-    assert ff._encoder_cache["ffmpeg"] == "libx264"
+    assert ff._encoder_cache[("ffmpeg", True)] == "libx264"
+
+
+def test_burn_subtitles_use_gpu_false_uses_libx264_without_probe(monkeypatch, tmp_path: Path):
+    monkeypatch.delenv("YESON_BURN_ENCODER", raising=False)
+
+    def boom(*a):
+        raise AssertionError("probe must not run when GPU toggle is off")
+
+    monkeypatch.setattr(ff, "_probe_encoder", boom)
+    calls: list[dict] = []
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: calls.append({"cmd": cmd, "kwargs": kw}) or _Result())
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+    ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
+                      "Alignment=2", use_gpu=False)
+    assert "libx264" in calls[0]["cmd"]
+    assert calls[0]["cmd"].count("-c:v") == 1  # 재시도 없이 단 한 번의 호출
 
 
 def test_nonzero_returncode_raises(monkeypatch, tmp_path: Path):
@@ -293,7 +350,7 @@ def test_burn_subtitles_skips_cpu_retry_when_gpu_run_was_killed(monkeypatch, tmp
     """kill_active로 죽은 GPU 인코딩이 FfmpegError로 표면화돼도 libx264로 재시도하면
     안 된다 — 취소 후에도 새 CPU 인코딩이 시작되는 낭비를 막기 위함."""
     monkeypatch.delenv("YESON_BURN_ENCODER", raising=False)
-    monkeypatch.setattr(ff, "detect_burn_encoder", lambda f: "h264_nvenc")
+    monkeypatch.setattr(ff, "detect_burn_encoder", lambda f, use_gpu: "h264_nvenc")
     srt = tmp_path / "subs.srt"
     srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
 

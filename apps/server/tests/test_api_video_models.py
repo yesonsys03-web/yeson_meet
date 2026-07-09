@@ -71,7 +71,7 @@ async def test_gpu_status_shape(client, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     for key in ("supported", "installed", "enabled", "cuda_available",
-                "downloading", "approx_bytes"):
+                "cuda_ok", "cuda_reason", "downloading", "approx_bytes"):
         assert key in body
 
 
