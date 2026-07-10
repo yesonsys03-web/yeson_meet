@@ -69,6 +69,12 @@ _tasks: set[asyncio.Task] = set()
 # 느려진다 — 세마포어(1)로 순차 처리해 배치 순서를 보장하고 자원 경합을 없앤다.
 _JOB_SEMAPHORE = asyncio.Semaphore(1)
 
+# 굽기 직렬화: '선택 굽기 (N개)'는 클라이언트가 burn POST를 연달아 쏘고 엔드포인트는
+# 즉시 반환하므로, 세마포어가 없으면 ffmpeg 인코딩 N개가 동시에 돌아 CPU/GPU를
+# 포화시킨다. 전사 세마포어와 분리한 이유: 공유하면 재생성/재굽기 1건이 긴 배치
+# 전사 뒤에 줄을 서는 UX 퇴행이 생긴다 — 동시 상한은 "전사 1 + 굽기 1"로 고정된다.
+_BURN_SEMAPHORE = asyncio.Semaphore(1)
+
 
 def start_task(coro) -> None:
     task = asyncio.create_task(coro)
@@ -399,6 +405,7 @@ async def prune_old_video_jobs_at_startup() -> int:
 
 async def run_burn_job(external_id: UUID, position: str, margin_v: int,
                        font_size: int, color: str = "#FFFFFF") -> None:
+    await _BURN_SEMAPHORE.acquire()
     generation = _bump_generation(external_id)
     try:
         await _set_status(external_id, "burning")
@@ -480,3 +487,5 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
             return
         logger.exception("burn job %s failed", external_id)
         await _try_set_error(external_id, str(exc)[:1000])
+    finally:
+        _BURN_SEMAPHORE.release()
