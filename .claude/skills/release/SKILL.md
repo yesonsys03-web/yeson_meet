@@ -8,37 +8,38 @@ description: Use when cutting a yeson-meet release (vX.Y.Z) — bumping the app 
 ## 개요
 
 릴리스 태그의 단일 출처는 두 `tauri.conf.json`의 `.version`이다(4개 워크플로 공통 규칙).
-릴리스 PR을 main에 머지하면 Windows 2개 워크플로가 자동 빌드하고, macOS 2개는 수동 dispatch, Intel 자산은 이 Intel Mac에서 로컬 스크립트로 채운다. **자산 20개 + 매니페스트 3플랫폼 확인 전에는 완료 선언 금지.**
+릴리스 커밋이 **4개 워크플로 파일 전부**의 릴리스 노트(`body:`)를 수정하고, 그 수정이 곧 push 트리거라서 PR 머지 한 번에 4개가 전부 자동 빌드된다(v1.2.0~v1.2.3 전부 push 트리거 실측). Intel 자산은 이 Intel Mac에서 로컬 스크립트로 채운다. **자산 20개 + 매니페스트 3플랫폼 확인 전에는 완료 선언 금지.**
 
 ## 순서
 
-1. **선행 확인**: main 클린·릴리스 대상 변경 전부 머지됨(`git log`로 확인).
+1. **선행 확인**: 로컬 main이 origin/main 최신이고 릴리스 대상 변경 전부 머지됨(`git log`로 확인).
    `apps/server` 소스가 바뀐 릴리스라면 재동결(`apps/server_desktop/scripts/build-server.sh`) 후 E2E가 이미 끝났는지 확인 — 동결 안 된 번들은 새 라우트가 404/405.
-2. **릴리스 브랜치** `release/vX.Y.Z` 생성. main 직접 push는 가드가 차단.
+2. **릴리스 브랜치** `release/vX.Y.Z` 생성. main 직접 push 금지 — **차단 장치는 없음(정책)**, 실수로 push하면 그대로 워크플로가 발화하므로 반드시 브랜치+PR.
 3. **버전 범프 — 반드시 2곳 모두** (두 앱은 항상 같은 버전으로 함께 릴리스 — 한쪽만 변경돼도 둘 다 범프, v1.2.3 클라가 그 사례):
    - `apps/desktop/src-tauri/tauri.conf.json` → `.version`
    - `apps/server_desktop/src-tauri/tauri.conf.json` → `.version`
-4. **릴리스 노트 = 워크플로 본문 수정**: `.github/workflows/windows-desktop.yml`과 `.github/workflows/server-desktop-windows.yml`의 `body:` 릴리스 노트를 새 버전 내용으로 갱신.
-   이 수정이 곧 자동 빌드 트리거다(push paths 필터가 워크플로 파일 자신만 매치). 안 고치면 머지해도 빌드가 안 돈다.
-5. **PR 생성 → 머지**: 머지 즉시 Windows 클라+서버 2개가 정확히 1회씩 자동 실행되고 릴리스(vX.Y.Z)를 생성한다.
-6. **macOS 2개 수동 dispatch**(10x 과금이라 자동 아님):
-   `gh workflow run macos-desktop.yml` + `gh workflow run server-desktop-macos.yml`
+4. **릴리스 노트 = 워크플로 4개 전부의 `body:` 갱신**: `windows-desktop.yml`, `server-desktop-windows.yml`, `macos-desktop.yml`, `server-desktop-macos.yml` 모두 새 버전 내용으로 수정.
+   각 워크플로의 push paths 필터가 자기 파일만 매치하므로, 이 수정이 곧 4개 전부의 자동 빌드 트리거다. macOS 쪽을 빼먹으면 ①macOS 빌드가 안 돌고 ②나중에 실행될 때 **옛 버전 노트로 릴리스 본문을 덮어쓴다**(softprops가 body를 교체, append 아님).
+5. **PR 생성 → 머지**: 머지 push로 4개 워크플로가 각 1회씩 자동 실행되고 릴리스(vX.Y.Z)에 자산을 올린다.
+6. **4개 런 성공 확인**: `gh run list --limit 8` — macOS 2개도 머지 push로 자동 실행된다(macOS 러너는 10x 과금이라 불필요한 재실행 금지). macOS body를 빼먹어 안 돌았다면 dispatch가 아니라 **body를 고치는 후속 PR 머지**로 트리거할 것 — 릴리스가 이미 존재하는 상태의 dispatch는 옛 노트로 본문을 덮어쓸 수 있다.
 7. **Intel 자산(이 Intel Mac에서만)**: CI 릴리스가 존재하게 된 뒤
    `scripts/release-intel-macos.sh vX.Y.Z`
    → Intel dmg 2종 + `_x64` 업데이터 아티팩트 업로드 + `latest-*.json`에 darwin-x86_64 병합.
-   전제: `~/.tauri/yeson_meet_updater.key` 존재, `gh` 로그인, x86_64 Mac.
+   전제: `~/.tauri/yeson_meet_updater.key` 존재, `gh` 로그인, x86_64 Mac, `jq`·`python3`.
 8. **검증 → 완료 선언**:
    `gh release view vX.Y.Z --json assets --jq '.assets[].name'`
-   - 자산 **20개** = 매니페스트 2(`latest-client.json`/`latest-server.json`) + 앱별 9파일 × 2앱.
+   - 자산 **20개** = 매니페스트 2(`latest-client.json`/`latest-server.json`) + 앱별 9파일 × 2앱. CI 4개만 끝난 시점엔 14개, Intel 단계(7) 후 20개.
      앱별 9파일: `aarch64.dmg`, `x64.dmg`, `x64_en-US.msi`, `x64-setup.exe`+`.sig`, `app.tar.gz`+`.sig`, `x64.app.tar.gz`+`.sig` (설치본 4 + 업데이터 아티팩트 5)
-   - 두 매니페스트에 `darwin-aarch64`·`darwin-x86_64`·`windows-x86_64` 플랫폼이 모두 있는지 확인.
+   - 두 매니페스트에 3플랫폼이 모두 있는지 확인 (`darwin-aarch64`·`darwin-x86_64`·`windows-x86_64`):
+     `for f in latest-client.json latest-server.json; do gh release download vX.Y.Z -p "$f" -O - | jq -c '.platforms | keys'; done`
      매니페스트는 CI 워크플로들이 생성·병합하고, Intel 스크립트가 마지막에 `darwin-x86_64`를 병합한다.
+   - 릴리스 페이지 본문이 **새 버전의** "무엇이 바뀌었나"인지 확인 — 옛 노트면 4단계에서 어느 워크플로 body를 빼먹은 것.
 
 ## 함정 (전부 실사고)
 
 | 함정 | 현실 |
 |---|---|
-| 릴리스 후 main HEAD에서 Windows 워크플로 새 dispatch | 릴리스 자산을 미릴리스 빌드로 **덮어씀** — v1.2.2에서 매니페스트/설치본 서명 불일치로 자동업데이트 파손. 단, **빌드 실패 복구는 안전**: Actions의 "Re-run"은 같은 릴리스 커밋 SHA로 재실행되므로 실패한 런의 Re-run으로 복구할 것 |
+| 릴리스 후 main HEAD에서 워크플로 새 dispatch (4개 모두 해당) | 릴리스 자산·노트를 미릴리스 상태로 **덮어씀** — v1.2.2에서 매니페스트/설치본 서명 불일치로 자동업데이트 파손. 복구는 dispatch가 아니라 **실패한 런의 Re-run**(같은 릴리스 커밋 SHA라 안전) |
 | 버전 범프 누락(한쪽만 올림 포함) | 이전 태그 릴리스에 자산이 덮어써짐 |
 | 서버 번들 재동결 누락 | 새 라우트 404 (QR viewer-url 실사고) — 릴리스 전에 재동결+E2E |
 | Intel dmg를 일반 `tauri build --bundles dmg`로 시도 | Kaspersky가 bundle_dmg.sh를 "Resource busy"로 실패시킴 — 스크립트가 쓰는 makehybrid 경로 유지 |
