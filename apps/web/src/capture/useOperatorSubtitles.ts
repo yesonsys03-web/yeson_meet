@@ -1,8 +1,12 @@
 // === ANCHOR: USE_OPERATOR_SUBTITLES_START ===
+// 진행자 자막 미리보기 — REST 폴링(2.5s). 이전 /ws/operator는 JWT가 URL 쿼리에
+// 실려 터널 노출에 부적합해 제거했다(참석자 뷰어 WS는 무변경·실시간).
 import { useEffect, useRef, useState } from "react";
 import type { UtteranceTranscribed } from "../types/events";
 import { latestUtterance, upsertUtterance } from "../lib/utterances";
-import { fetchOperatorBackfill, operatorWsUrl } from "./captureApi";
+import { fetchOperatorBackfill } from "./captureApi";
+
+const POLL_INTERVAL_MS = 2500;
 
 export type OperatorSubtitles = {
   utterances: UtteranceTranscribed[];
@@ -12,72 +16,41 @@ export type OperatorSubtitles = {
 
 export function useOperatorSubtitles(sessionId: string | null, operatorToken: string | null): OperatorSubtitles {
   const [state, setState] = useState<OperatorSubtitles>({ utterances: [], latest: null, connected: false });
-  const lastSeqRef = useRef(0);
+  const endedRef = useRef(false);
 
   useEffect(() => {
     if (!sessionId || !operatorToken) {
       setState({ utterances: [], latest: null, connected: false });
       return;
     }
-    lastSeqRef.current = 0;
+    endedRef.current = false;
     let active = true;
-    let ws: WebSocket | null = null;
-    let backoff = 1000;
-    let ended = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
-    async function start() {
+    async function poll() {
+      if (!active || endedRef.current) return;
       try {
         const backfill = await fetchOperatorBackfill(operatorToken!, sessionId!);
         if (!active) return;
-        const sorted = [...backfill.utterances].sort((a, b) => a.seq - b.seq).reduce<UtteranceTranscribed[]>(upsertUtterance, []);
-        const last = latestUtterance(sorted);
-        if (last) lastSeqRef.current = last.seq;
-        setState((s) => ({ ...s, utterances: sorted, latest: last }));
+        const sorted = [...backfill.utterances]
+          .sort((a, b) => a.seq - b.seq)
+          .reduce<UtteranceTranscribed[]>(upsertUtterance, []);
+        setState({ utterances: sorted, latest: latestUtterance(sorted), connected: true });
         if (backfill.session_status === "ended") {
-          ended = true;
+          endedRef.current = true;
+          setState((s) => ({ ...s, connected: false }));
           return;
         }
-      } catch {}
-      connect();
+      } catch {
+        if (active) setState((s) => ({ ...s, connected: false }));
+      }
+      timer = setTimeout(poll, POLL_INTERVAL_MS);
     }
 
-    function connect() {
-      if (!active) return;
-      ws = new WebSocket(operatorWsUrl(sessionId!, operatorToken!));
-      ws.onopen = () => {
-        backoff = 1000;
-        setState((s) => ({ ...s, connected: true }));
-      };
-      ws.onmessage = (e) => {
-        try {
-          const evt = JSON.parse(e.data) as { type: string } & UtteranceTranscribed;
-          if ((evt.type as string) === "session.ended") {
-            ended = true;
-            setState((s) => ({ ...s, connected: false }));
-            ws?.close();
-            return;
-          }
-          if (evt.type !== "utterance.transcribed") return;
-          if (evt.seq < lastSeqRef.current) return;
-          lastSeqRef.current = Math.max(lastSeqRef.current, evt.seq);
-          setState((s) => {
-            const utterances = upsertUtterance(s.utterances, evt);
-            return { ...s, utterances, latest: latestUtterance(utterances) };
-          });
-        } catch {}
-      };
-      ws.onclose = () => {
-        setState((s) => ({ ...s, connected: false }));
-        if (!active || ended) return;
-        setTimeout(connect, backoff);
-        backoff = Math.min(backoff * 2, 30000);
-      };
-    }
-
-    start();
+    void poll();
     return () => {
       active = false;
-      ws?.close();
+      if (timer) clearTimeout(timer);
     };
   }, [sessionId, operatorToken]);
 

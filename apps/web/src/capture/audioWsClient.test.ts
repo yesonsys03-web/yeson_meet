@@ -9,6 +9,7 @@ class FakeWs {
   onopen: (() => void) | null = null;
   onclose: ((e: { code: number }) => void) | null = null;
   onerror: (() => void) | null = null;
+  onmessage: ((e: { data: string }) => void) | null = null;
   constructor(public url: string) {
     FakeWs.instances.push(this);
   }
@@ -28,6 +29,9 @@ class FakeWs {
     this.readyState = 3;
     this.onclose?.({ code });
   }
+  serverMessage(data: unknown) {
+    this.onmessage?.({ data: JSON.stringify(data) });
+  }
 }
 
 function lastWs(): FakeWs {
@@ -42,25 +46,52 @@ describe("AudioWsClient", () => {
     vi.useFakeTimers();
     FakeWs.instances = [];
     statuses = [];
-    client = new AudioWsClient("ws://x/ws/sidecar?key=k&session=s", (s) => statuses.push(s), (url) => new FakeWs(url) as never);
+    client = new AudioWsClient(
+      "ws://x/ws/capture",
+      { token: "T", session: "S" },
+      (s) => statuses.push(s),
+      (url) => new FakeWs(url) as never,
+    );
   });
   afterEach(() => vi.useRealTimers());
 
-  it("open 시 audio.started가 첫 메시지, 이후 바이너리", () => {
+  it("open 시 auth를 먼저 보내고 auth.ok 수신 후에만 audio.started·streaming", () => {
     client.start();
-    client.sendChunk(new Uint8Array(640)); // 연결 전 → 드롭
     lastWs().serverOpen();
-    client.sendChunk(new Uint8Array(640));
+    const sentBeforeAuthOk = lastWs().sent;
+    expect(sentBeforeAuthOk.length).toBe(1);
+    expect(JSON.parse(sentBeforeAuthOk[0] as string)).toEqual({ type: "auth", token: "T", session: "S" });
+    expect(statuses.at(-1)).not.toBe("streaming");
+
+    client.sendChunk(new Uint8Array(640)); // auth.ok 전 → 드롭
+    expect(lastWs().sent.length).toBe(1);
+
+    lastWs().serverMessage({ type: "auth.ok" });
     const sent = lastWs().sent;
-    expect(JSON.parse(sent[0] as string).type).toBe("audio.started");
-    expect(JSON.parse(sent[0] as string).sample_rate).toBe(16000);
-    expect(sent[1]).toBeInstanceOf(Uint8Array);
-    expect(sent.length).toBe(2); // 연결 전 청크는 드롭됨
+    expect(sent.length).toBe(2);
+    expect(JSON.parse(sent[1] as string).type).toBe("audio.started");
+    expect(JSON.parse(sent[1] as string).sample_rate).toBe(16000);
+    expect(statuses.at(-1)).toBe("streaming");
+
+    client.sendChunk(new Uint8Array(640));
+    expect(lastWs().sent[2]).toBeInstanceOf(Uint8Array);
+  });
+
+  it("auth.ok 전에 서버가 닫으면(잘못된 토큰) 기존 reject 경로를 탄다", () => {
+    client.start();
+    for (let i = 0; i < 3; i++) {
+      lastWs().serverOpen(); // auth 전송
+      lastWs().serverClose(1008); // 서버가 accept 후 즉시 거부
+      vi.advanceTimersByTime(30000);
+    }
+    expect(statuses.at(-1)).toBe("rejected");
+    expect(FakeWs.instances.length).toBe(3); // 더 이상 재시도 없음
   });
 
   it("청크 50개마다 chunk_meta", () => {
     client.start();
     lastWs().serverOpen();
+    lastWs().serverMessage({ type: "auth.ok" });
     for (let i = 0; i < 50; i++) client.sendChunk(new Uint8Array(640));
     const texts = lastWs().sent.filter((d): d is string => typeof d === "string");
     const meta = texts.map((t) => JSON.parse(t)).filter((m) => m.type === "chunk_meta");
@@ -71,6 +102,7 @@ describe("AudioWsClient", () => {
   it("stop은 audio.stopped를 보내고 닫는다", () => {
     client.start();
     lastWs().serverOpen();
+    lastWs().serverMessage({ type: "auth.ok" });
     client.stop("user stop");
     const texts = lastWs().sent.filter((d): d is string => typeof d === "string");
     const stopped = texts.map((t) => JSON.parse(t)).find((m) => m.type === "audio.stopped");
@@ -78,16 +110,19 @@ describe("AudioWsClient", () => {
     expect(statuses.at(-1)).toBe("stopped");
   });
 
-  it("끊기면 백오프 재접속하고 audio.started 재전송", () => {
+  it("끊기면 백오프 재접속하고 auth·audio.started 재전송", () => {
     client.start();
     lastWs().serverOpen();
+    lastWs().serverMessage({ type: "auth.ok" });
     vi.advanceTimersByTime(5000); // 안정 연결로 인정된 후
     lastWs().serverClose(1006);
     expect(statuses.at(-1)).toBe("reconnecting");
     vi.advanceTimersByTime(1000); // backoff 1s
     expect(FakeWs.instances.length).toBe(2);
     lastWs().serverOpen();
-    expect(JSON.parse(lastWs().sent[0] as string).type).toBe("audio.started");
+    expect(JSON.parse(lastWs().sent[0] as string).type).toBe("auth");
+    lastWs().serverMessage({ type: "auth.ok" });
+    expect(JSON.parse(lastWs().sent[1] as string).type).toBe("audio.started");
     expect(statuses.at(-1)).toBe("streaming");
   });
 
@@ -111,6 +146,7 @@ describe("AudioWsClient", () => {
     expect(statuses).not.toContain("rejected");
     expect(FakeWs.instances.length).toBe(6); // 재시도는 멈추지 않음
     lastWs().serverOpen();
+    lastWs().serverMessage({ type: "auth.ok" });
     expect(statuses.at(-1)).toBe("streaming");
   });
 

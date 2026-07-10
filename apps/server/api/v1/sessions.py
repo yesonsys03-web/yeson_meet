@@ -17,6 +17,7 @@ from sqlalchemy import func, select, text as sql_text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.server.auth.capture_tokens import capture_tokens
 from apps.server.auth.deps import require_operator
 from apps.server.db.models import AppUser, Session, SessionToken, Utterance
 from apps.server.db.search import fts5_available, reindex_session_fts
@@ -102,6 +103,11 @@ class SessionEndOut(BaseModel):
             value = value.replace(tzinfo=timezone.utc)
         return value.isoformat()
 # === ANCHOR: SESSIONS_SESSIONENDOUT_END ===
+
+
+class CaptureTokenOut(BaseModel):
+    token: str
+    expires_at: datetime
 
 
 # === ANCHOR: SESSIONS_SESSIONLISTITEM_START ===
@@ -355,10 +361,12 @@ async def end_session(
         meeting.ended_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(meeting)
+        capture_tokens.revoke_session(external_id)
     elif meeting.ended_at is None:
         meeting.ended_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(meeting)
+        capture_tokens.revoke_session(external_id)
 
     utterances = await _session_utterances(db, meeting.id)
 
@@ -400,6 +408,19 @@ async def end_session(
         ended_at=meeting.ended_at,
         report_path=str(path),
     )
+
+
+@router.post("/{external_id}/capture-token", response_model=CaptureTokenOut)
+async def issue_capture_token(
+    external_id: UUID,
+    _operator: Annotated[AppUser, Depends(require_operator)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> CaptureTokenOut:
+    meeting = await _get_operator_session_or_404(db, external_id)
+    if meeting.status == "ended":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Session already ended")
+    token, expires_at = capture_tokens.issue(external_id)
+    return CaptureTokenOut(token=token, expires_at=expires_at)
 
 
 # === ANCHOR: SESSIONS_LIST__SNIPPETS_PER_SESSION_START ===

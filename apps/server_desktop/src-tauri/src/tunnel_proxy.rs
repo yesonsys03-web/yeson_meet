@@ -127,7 +127,7 @@ fn hex_val(b: u8) -> Option<u8> {
 /// the viewer surface is allowed through. This is the single security gate and
 /// is exhaustively unit-tested (including the bypass attempts).
 ///
-/// ALLOW (viewer surface):
+/// ALLOW (viewer surface, method-agnostic — preserves prior behavior):
 ///   - `/`                      -> SPA shell
 ///   - `/v` and `/v/<...>`      -> viewer client route
 ///   - `/index.html`            -> SPA shell file
@@ -136,13 +136,24 @@ fn hex_val(b: u8) -> Option<u8> {
 ///   - `/api/v1/viewer/<...>`   -> viewer REST (list_viewer_utterances)
 ///   - `/ws/viewer`             -> viewer WebSocket
 ///
-/// Everything else (incl. `/ws/sidecar`, `/ws/operator`, `/api/v1/auth/*`,
-/// `/api/v1/devices*`, `/api/v1/sessions*`, `/api/v1/operator/*`,
-/// `/api/v1/audio_stats*`) -> DENY.
-pub fn decide(normalized_path: &str) -> PathDecision {
+/// ALLOW (capture surface, method pinned — new for remote capture support):
+///   - `GET  /capture`                                  -> capture SPA route
+///   - `POST /api/v1/auth/login`                        -> operator login
+///   - `POST /api/v1/sessions`                          -> create session
+///   - `GET  /ws/capture`                                -> capture WebSocket
+///   - `POST /api/v1/sessions/<id>/end`                  -> end session
+///   - `POST /api/v1/sessions/<id>/capture-token`        -> capture token
+///   - `GET  /api/v1/sessions/<id>/utterances`            -> preview polling
+///     (`<id>` is a single, non-empty path segment — no nesting, no empty slot)
+///
+/// Everything else (incl. `/ws/sidecar`, `/ws/operator`, `/api/v1/auth/*`
+/// with the wrong method, `/api/v1/devices*`, `/api/v1/sessions*` outside the
+/// pinned shapes above, `/api/v1/operator/*`, `/api/v1/audio_stats*`) -> DENY.
+pub fn decide(method: &str, normalized_path: &str) -> PathDecision {
     let p = normalized_path;
+    let m = method.to_ascii_uppercase();
 
-    // Exact viewer surfaces.
+    // --- 기존 뷰어 표면 (메서드 무관 — 기존 동작 보존) ---
     if p == "/" || p == "/index.html" || p == "/v" || p == "/ws/viewer" {
         return PathDecision::Allow;
     }
@@ -163,13 +174,44 @@ pub fn decide(normalized_path: &str) -> PathDecision {
         return PathDecision::Allow;
     }
 
+    // --- 캡처 표면 (메서드 못박음) ---
+    if p == "/capture" && m == "GET" {
+        return PathDecision::Allow;
+    }
+    if p == "/api/v1/auth/login" && m == "POST" {
+        return PathDecision::Allow;
+    }
+    if p == "/api/v1/sessions" && m == "POST" {
+        return PathDecision::Allow;
+    }
+    if p == "/ws/capture" && m == "GET" {
+        return PathDecision::Allow;
+    }
+    // /api/v1/sessions/<id>/{end|capture-token|utterances} — <id>는 단일 비어있지 않은 세그먼트
+    if let Some(rest) = p.strip_prefix("/api/v1/sessions/") {
+        let mut parts = rest.split('/');
+        let (id, tail, extra) = (parts.next(), parts.next(), parts.next());
+        if extra.is_none() {
+            if let (Some(id), Some(tail)) = (id, tail) {
+                if !id.is_empty() {
+                    match (tail, m.as_str()) {
+                        ("end", "POST") | ("capture-token", "POST") | ("utterances", "GET") => {
+                            return PathDecision::Allow;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
     PathDecision::Deny
 }
 
 /// Convenience: normalize THEN decide. The proxy uses this; tests exercise both
 /// `normalize_path`+`decide` and this combined entrypoint with raw paths.
-pub fn viewer_allows(raw_path: &str) -> PathDecision {
-    decide(&normalize_path(raw_path))
+pub fn viewer_allows(method: &str, raw_path: &str) -> PathDecision {
+    decide(method, &normalize_path(raw_path))
 }
 // === ANCHOR: TUNNEL_PROXY_DECIDE_END ===
 
@@ -252,7 +294,8 @@ async fn proxy_request(
     upstream: Arc<String>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let raw_path = req.uri().path().to_string();
-    if viewer_allows(&raw_path) == PathDecision::Deny {
+    let method = req.method().as_str().to_string();
+    if viewer_allows(&method, &raw_path) == PathDecision::Deny {
         return Ok(not_found());
     }
 
@@ -439,86 +482,128 @@ async fn relay_bidirectional(client: Upgraded, server: Upgraded) {
 mod tests {
     use super::*;
 
-    fn allows(raw: &str) -> bool {
-        viewer_allows(raw) == PathDecision::Allow
+    fn allows(method: &str, raw: &str) -> bool {
+        viewer_allows(method, raw) == PathDecision::Allow
     }
 
     // --- ALLOW: the viewer surface ---
     #[test]
     fn allows_viewer_surface() {
-        assert!(allows("/"), "SPA shell");
-        assert!(allows("/index.html"), "SPA shell file");
-        assert!(allows("/v/abc"), "viewer client route");
-        assert!(allows("/v/some-long-token-XYZ"), "viewer token route");
-        assert!(allows("/assets/index-CXOkeCk3.js"), "built JS asset");
-        assert!(allows("/assets/index-Bn5esT6U.css"), "built CSS asset");
-        assert!(allows("/favicon.ico"), "favicon");
-        assert!(allows("/api/v1/viewer/utterances"), "viewer REST");
-        assert!(allows("/api/v1/viewer/utterances?token=x&since=1"), "viewer REST w/ query");
-        assert!(allows("/ws/viewer"), "viewer websocket");
-        assert!(allows("/ws/viewer?token=abc"), "viewer websocket w/ token");
+        assert!(allows("GET", "/"), "SPA shell");
+        assert!(allows("GET", "/index.html"), "SPA shell file");
+        assert!(allows("GET", "/v/abc"), "viewer client route");
+        assert!(allows("GET", "/v/some-long-token-XYZ"), "viewer token route");
+        assert!(allows("GET", "/assets/index-CXOkeCk3.js"), "built JS asset");
+        assert!(allows("GET", "/assets/index-Bn5esT6U.css"), "built CSS asset");
+        assert!(allows("GET", "/favicon.ico"), "favicon");
+        assert!(allows("GET", "/api/v1/viewer/utterances"), "viewer REST");
+        assert!(allows("GET", "/api/v1/viewer/utterances?token=x&since=1"), "viewer REST w/ query");
+        assert!(allows("GET", "/ws/viewer"), "viewer websocket");
+        assert!(allows("GET", "/ws/viewer?token=abc"), "viewer websocket w/ token");
+    }
+
+    #[test]
+    fn allows_capture_surface() {
+        assert!(allows("GET", "/capture"), "capture SPA route");
+        assert!(allows("POST", "/api/v1/auth/login"), "operator login");
+        assert!(allows("POST", "/api/v1/sessions"), "create session");
+        assert!(allows("POST", "/api/v1/sessions/abc-123/end"), "end session");
+        assert!(allows("GET", "/api/v1/sessions/abc-123/utterances"), "preview polling");
+        assert!(allows("POST", "/api/v1/sessions/abc-123/capture-token"), "capture token");
+        assert!(allows("GET", "/ws/capture"), "capture websocket (upgrade is GET)");
+    }
+
+    #[test]
+    fn denies_capture_adjacent_surface() {
+        // 메서드 불일치
+        assert!(!allows("GET", "/api/v1/auth/login"));
+        assert!(!allows("GET", "/api/v1/sessions"), "회의기록 목록은 계속 차단");
+        assert!(!allows("POST", "/api/v1/sessions/abc/utterances"));
+        // 세션 상세·타 REST
+        assert!(!allows("GET", "/api/v1/sessions/abc-123"), "세션 상세 차단");
+        assert!(!allows("POST", "/api/v1/devices/self-enroll"), "영구키 발급 창구 차단");
+        assert!(!allows("GET", "/ws/sidecar"), "영구키 WS 계속 차단");
+        assert!(!allows("GET", "/ws/operator"), "operator WS 계속 차단");
+        // <id> 와일드카드 경계
+        assert!(!allows("POST", "/api/v1/sessions//end"), "빈 세그먼트 불가");
+        assert!(!allows("POST", "/api/v1/sessions/a/b/end"), "중첩 세그먼트 불가");
+        assert!(!allows("GET", "/api/v1/sessions/abc/utterances/extra"), "뒤 추가 세그먼트 불가");
+        assert!(!allows("GET", "/capture/anything"), "capture는 정확 일치만");
+    }
+
+    #[test]
+    fn capture_surface_defeats_smuggling() {
+        // ".."가 <id> 자리로 들어오면 정규화가 세그먼트를 pop해 다른 경로가 된다 → deny
+        assert_eq!(normalize_path("/api/v1/sessions/%2e%2e/end"), "/api/v1/end");
+        assert!(!allows("POST", "/api/v1/sessions/%2e%2e/end"));
+        // 대소문자는 정규화(소문자화)로 흡수된다
+        assert!(allows("POST", "/API/V1/AUTH/LOGIN"));
+        assert!(allows("GET", "/CAPTURE"));
+        // 인코딩 슬래시 스머글링
+        assert!(!allows("GET", "/ws%2fcapture/../sidecar"));
+        assert!(!allows("GET", "/v/../ws/sidecar"));
     }
 
     // --- DENY: the operator / sidecar / auth surface (deny-by-default) ---
     #[test]
     fn denies_non_viewer_surface() {
-        assert!(!allows("/ws/sidecar"), "durable device-key socket MUST be denied");
-        assert!(!allows("/ws/sidecar?key=SECRET"), "device key never over tunnel");
-        assert!(!allows("/ws/operator"), "operator socket denied");
-        assert!(!allows("/api/v1/devices"), "devices REST denied");
-        assert!(!allows("/api/v1/auth/login"), "auth login denied");
-        assert!(!allows("/api/v1/sessions"), "operator sessions denied");
-        assert!(!allows("/api/v1/operator/anything"), "operator REST denied");
-        assert!(!allows("/api/v1/audio_stats"), "audio_stats denied");
-        assert!(!allows("/api/v1/health"), "health denied (not viewer)");
-        assert!(!allows("/api/v1/viewer"), "/api/v1/viewer (no trailing) denied");
-        assert!(!allows("/api/v1/viewerX/utterances"), "prefix-confusion denied");
+        assert!(!allows("GET", "/ws/sidecar"), "durable device-key socket MUST be denied");
+        assert!(!allows("GET", "/ws/sidecar?key=SECRET"), "device key never over tunnel");
+        assert!(!allows("GET", "/ws/operator"), "operator socket denied");
+        assert!(!allows("GET", "/api/v1/devices"), "devices REST denied");
+        assert!(!allows("GET", "/api/v1/auth/login"), "auth login denied");
+        assert!(!allows("GET", "/api/v1/sessions"), "operator sessions denied");
+        assert!(!allows("GET", "/api/v1/operator/anything"), "operator REST denied");
+        assert!(!allows("GET", "/api/v1/audio_stats"), "audio_stats denied");
+        assert!(!allows("GET", "/api/v1/health"), "health denied (not viewer)");
+        assert!(!allows("GET", "/api/v1/viewer"), "/api/v1/viewer (no trailing) denied");
+        assert!(!allows("GET", "/api/v1/viewerX/utterances"), "prefix-confusion denied");
     }
 
     // --- DENY: bypass / smuggling attempts ---
     #[test]
     fn defeats_dotdot_traversal() {
         // `/api/v1/../devices` canonicalizes to `/api/devices` -> deny.
-        assert!(!allows("/api/v1/../devices"));
+        assert!(!allows("GET", "/api/v1/../devices"));
         // `/api/v1/viewer/../../devices` -> `/api/devices` -> deny.
-        assert!(!allows("/api/v1/viewer/../../devices"));
+        assert!(!allows("GET", "/api/v1/viewer/../../devices"));
         // `/v/../ws/sidecar` -> `/ws/sidecar` -> deny.
-        assert!(!allows("/v/../ws/sidecar"));
-        assert!(!allows("/assets/../ws/sidecar"));
+        assert!(!allows("GET", "/v/../ws/sidecar"));
+        assert!(!allows("GET", "/assets/../ws/sidecar"));
     }
 
     #[test]
     fn defeats_percent_encoding() {
         // `%2e%2e` == `..` ; `/api/v1/%2e%2e/devices` -> `/api/devices` -> deny.
-        assert!(!allows("/api/v1/%2e%2e/devices"));
+        assert!(!allows("GET", "/api/v1/%2e%2e/devices"));
         // double-encoded `%252e%252e` -> `%2e%2e` -> `..`
-        assert!(!allows("/api/v1/%252e%252e/devices"));
+        assert!(!allows("GET", "/api/v1/%252e%252e/devices"));
         // `/%2e%2e/ws/sidecar` -> `/ws/sidecar` -> deny.
-        assert!(!allows("/%2e%2e/ws/sidecar"));
+        assert!(!allows("GET", "/%2e%2e/ws/sidecar"));
         // encoded slash `%2f` joining a denied path.
-        assert!(!allows("/ws%2fsidecar"));
+        assert!(!allows("GET", "/ws%2fsidecar"));
     }
 
     #[test]
     fn defeats_case_games() {
-        assert!(!allows("/WS/SIDECAR"));
-        assert!(!allows("/API/V1/DEVICES"));
-        assert!(!allows("/Ws/Sidecar"));
+        assert!(!allows("GET", "/WS/SIDECAR"));
+        assert!(!allows("GET", "/API/V1/DEVICES"));
+        assert!(!allows("GET", "/Ws/Sidecar"));
         // `/V/../ws/sidecar` (upper V) -> `/ws/sidecar` -> deny.
-        assert!(!allows("/V/../ws/sidecar"));
+        assert!(!allows("GET", "/V/../ws/sidecar"));
         // case must NOT break a legit allow either.
-        assert!(allows("/V/abc"), "viewer route is case-insensitive on prefix");
+        assert!(allows("GET", "/V/abc"), "viewer route is case-insensitive on prefix");
     }
 
     #[test]
     fn defeats_slash_games() {
-        assert!(!allows("//ws/sidecar"), "leading double slash");
-        assert!(!allows("/ws//sidecar"), "embedded double slash");
-        assert!(!allows("/./ws/sidecar"), "dot segment");
-        assert!(!allows("/ws/sidecar/"), "trailing slash variant");
-        assert!(!allows("/ws/sidecar."), "trailing dot (distinct path) denied");
+        assert!(!allows("GET", "//ws/sidecar"), "leading double slash");
+        assert!(!allows("GET", "/ws//sidecar"), "embedded double slash");
+        assert!(!allows("GET", "/./ws/sidecar"), "dot segment");
+        assert!(!allows("GET", "/ws/sidecar/"), "trailing slash variant");
+        assert!(!allows("GET", "/ws/sidecar."), "trailing dot (distinct path) denied");
         // backslash separator smuggling
-        assert!(!allows("/ws\\sidecar"));
+        assert!(!allows("GET", "/ws\\sidecar"));
     }
 
     // Nit 3 (off-by-one): a `%XX` occupying the FINAL three bytes must decode.
@@ -536,7 +621,7 @@ mod tests {
         // `/v/x/%2e%2e` -> `/v` (NOT a literal `%2e%2e` left dangling).
         assert_eq!(normalize_path("/v/x/%2e%2e"), "/v");
         // and a denied target reached via a trailing-escape `..` stays denied.
-        assert!(!allows("/v/%2e%2e/ws/sidecar"));
+        assert!(!allows("GET", "/v/%2e%2e/ws/sidecar"));
     }
 
     // Nit 2 (hop-by-hop): the HTTP forwarder must drop hop-by-hop / connection /
