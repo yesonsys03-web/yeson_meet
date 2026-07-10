@@ -36,6 +36,7 @@ from apps.server.ops.session_safety_scheduler import (
     safety_poll_interval,
 )
 from apps.server.db.session import AsyncSessionLocal
+from apps.server.ws.capture import router as ws_capture_router
 from apps.server.ws.operator import router as ws_operator_router
 from apps.server.ws.sidecar import router as ws_sidecar_router
 from apps.server.ws.viewer import router as ws_viewer_router
@@ -187,6 +188,7 @@ app.include_router(video_jobs_router, prefix="/api/v1")
 app.include_router(reports_router, prefix="/api/v1")
 app.include_router(ws_operator_router)
 app.include_router(ws_sidecar_router)
+app.include_router(ws_capture_router)
 app.include_router(ws_viewer_router)
 
 
