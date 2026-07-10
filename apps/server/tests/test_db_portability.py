@@ -424,7 +424,8 @@ async def test_ac1_7_wipe_then_relaunch_reseeds_cleanly(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Pragmas — foreign_keys + journal_mode=wal ON for SQLite; PG connect is no-op.
+# Pragmas — foreign_keys + journal_mode=wal + busy_timeout ON for SQLite;
+# PG connect is no-op.
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_sqlite_pragmas_applied(
@@ -434,7 +435,10 @@ async def test_sqlite_pragmas_applied(
     from sqlalchemy import event
 
     url = f"sqlite+aiosqlite:///{tmp_path / 'pragma.db'}"
-    engine = create_async_engine(url, echo=False)
+    # timeout=0 disables the sqlite3 driver's implicit 5s busy wait, so the
+    # busy_timeout assertion below proves OUR pragma sets it — not the driver
+    # default (concurrent meetings must not depend on an implicit default).
+    engine = create_async_engine(url, echo=False, connect_args={"timeout": 0})
     # Re-attach the production pragma listener (engine is created per-test here).
     event.listen(
         engine.sync_engine, "connect", session_mod._apply_sqlite_pragmas
@@ -442,8 +446,10 @@ async def test_sqlite_pragmas_applied(
     async with engine.connect() as conn:
         fk = (await conn.exec_driver_sql("PRAGMA foreign_keys")).scalar()
         jm = (await conn.exec_driver_sql("PRAGMA journal_mode")).scalar()
+        bt = (await conn.exec_driver_sql("PRAGMA busy_timeout")).scalar()
     assert fk == 1, "foreign_keys pragma not ON"
     assert str(jm).lower() == "wal", f"journal_mode is {jm!r}, expected wal"
+    assert bt == 5000, f"busy_timeout is {bt!r}, expected 5000ms"
     await engine.dispose()
 
 

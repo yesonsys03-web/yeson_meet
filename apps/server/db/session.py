@@ -18,7 +18,8 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=As
 
 
 def _apply_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
-    """Enable FK enforcement + WAL on every SQLite connection (packaged app).
+    """Enable FK enforcement + WAL + busy wait on every SQLite connection
+    (packaged app).
 
     On the Postgres deploy this connect listener is never registered, so the PG
     path stays identical (``pool_pre_ping=True`` etc. unchanged).
@@ -27,6 +28,10 @@ def _apply_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
     try:
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA journal_mode=WAL")
+        # Concurrent meetings persist utterances from independent connections;
+        # pin the busy wait explicitly instead of relying on the sqlite3
+        # driver's implicit 5s default (WAL still has a single writer).
+        cursor.execute("PRAGMA busy_timeout=5000")
     finally:
         cursor.close()
 
