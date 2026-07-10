@@ -250,69 +250,17 @@ async def _last_utterance_seq(session_pk: int) -> int:
     return int(value or 0)
 
 
-@router.websocket("/ws/sidecar")
-async def ws_sidecar(ws: WebSocket) -> None:
-    key = ws.query_params.get("key")
-    session_str = ws.query_params.get("session")
-    if not key or not session_str:
-        await ws.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-    try:
-        session_uuid = UUID(session_str)
-    except ValueError:
-        await ws.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
+async def run_capture_stream(
+    ws: WebSocket,
+    session_pk: int,
+    session_uuid: UUID,
+    meeting_started_at: datetime,
+) -> None:
+    """인증·accept가 끝난 캡처 소켓의 공용 스트림 루프.
 
-    # Authenticate device by hash + resolve session
-    async with AsyncSessionLocal() as db:
-        hashed = hash_api_key(key)
-        device = (
-            await db.execute(
-                select(Device).where(
-                    Device.api_key_hash == hashed,
-                    Device.is_active == True,  # noqa: E712
-                )
-            )
-        ).scalar_one_or_none()
-        if device is None:
-            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-        meeting = (
-            await db.execute(select(Session).where(Session.external_id == session_uuid))
-        ).scalar_one_or_none()
-        if meeting is None or meeting.status == "ended":
-            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-        if meeting.device_id is not None and meeting.device_id != device.id:
-            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-        active_for_device = (
-            await db.execute(
-                select(Session).where(
-                    Session.device_id == device.id,
-                    Session.status == "live",
-                    Session.id != meeting.id,
-                )
-            )
-        ).scalar_one_or_none()
-        if active_for_device is not None:
-            if not _mark_stale_device_session_ended(active_for_device, meeting):
-                await ws.close(code=status.WS_1008_POLICY_VIOLATION)
-                return
-            await db.commit()
-        if meeting.device_id is None:
-            meeting.device_id = device.id
-            await db.commit()
-        if meeting.disconnected_at is not None:
-            meeting.disconnected_at = None
-            await db.commit()
-        if await enforce_meeting_duration_limit(db, meeting):
-            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-        session_pk = meeting.id
-        meeting_started_at = meeting.started_at
-
-    await ws.accept()
+    /ws/sidecar(디바이스키)와 /ws/capture(세션 캡처토큰)가 동일 오디오 계약을
+    공유한다 — 본문은 기존 ws_sidecar의 accept 이후와 문자 그대로 동일(이동만).
+    """
     # Stop any AI session left over by a prior sidecar that didn't cleanly
     # disconnect — prevents two AudioLiveSessions publishing in parallel.
     stale_ai_session = _active_ai_sessions.pop(session_uuid, None)
@@ -471,4 +419,70 @@ async def ws_sidecar(ws: WebSocket) -> None:
     # NOTE(s4-session-lifecycle): do not audio_stats.discard() here — admin
     # view + tests rely on snapshot surviving sidecar disconnect to show final
     # totals. Session-end eviction is owned by S4 /api/v1/sessions/{id}/end.
+
+
+@router.websocket("/ws/sidecar")
+async def ws_sidecar(ws: WebSocket) -> None:
+    key = ws.query_params.get("key")
+    session_str = ws.query_params.get("session")
+    if not key or not session_str:
+        await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    try:
+        session_uuid = UUID(session_str)
+    except ValueError:
+        await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    # Authenticate device by hash + resolve session
+    async with AsyncSessionLocal() as db:
+        hashed = hash_api_key(key)
+        device = (
+            await db.execute(
+                select(Device).where(
+                    Device.api_key_hash == hashed,
+                    Device.is_active == True,  # noqa: E712
+                )
+            )
+        ).scalar_one_or_none()
+        if device is None:
+            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        meeting = (
+            await db.execute(select(Session).where(Session.external_id == session_uuid))
+        ).scalar_one_or_none()
+        if meeting is None or meeting.status == "ended":
+            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        if meeting.device_id is not None and meeting.device_id != device.id:
+            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        active_for_device = (
+            await db.execute(
+                select(Session).where(
+                    Session.device_id == device.id,
+                    Session.status == "live",
+                    Session.id != meeting.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if active_for_device is not None:
+            if not _mark_stale_device_session_ended(active_for_device, meeting):
+                await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+            await db.commit()
+        if meeting.device_id is None:
+            meeting.device_id = device.id
+            await db.commit()
+        if meeting.disconnected_at is not None:
+            meeting.disconnected_at = None
+            await db.commit()
+        if await enforce_meeting_duration_limit(db, meeting):
+            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        session_pk = meeting.id
+        meeting_started_at = meeting.started_at
+
+    await ws.accept()
+    await run_capture_stream(ws, session_pk, session_uuid, meeting_started_at)
 # === ANCHOR: SIDECAR_END ===
