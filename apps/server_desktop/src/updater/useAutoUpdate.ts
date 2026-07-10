@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
 
 import { initialUpdateStatus, updateReducer, type UpdateStatus } from "./autoUpdate";
 
@@ -32,8 +33,8 @@ export function useAutoUpdate(): UseAutoUpdate {
 
   const runCheck = useCallback(async () => {
     if (!hasTauriRuntime() || busy.current) return;
-    // A staged update is ready — don't re-check/re-download; the user just needs to restart.
-    if (statusRef.current.kind === "ready") return;
+    // A staged update is ready (or being applied) — don't re-check/re-download.
+    if (statusRef.current.kind === "ready" || statusRef.current.kind === "applying") return;
     busy.current = true;
     dispatch({ type: "check-start" });
     try {
@@ -69,12 +70,33 @@ export function useAutoUpdate(): UseAutoUpdate {
     void (async () => {
       const update = pending.current;
       if (!update) return;
+      dispatch({ type: "apply-start", version: update.version });
+      // Stop the bundled server + tunnel BEFORE swapping the bundle/exe. Unlike
+      // the client, the console always has live children (server + tunnel)
+      // holding the app bundle/exe open, which makes macOS installs slow and
+      // Windows installs fail outright (locked binaries). Stopping first
+      // mirrors the client's idle-at-update-time state. Best-effort: a stop
+      // failure must not block the update, since the app is restarting anyway.
+      try {
+        await invoke("stop_tunnel_cmd");
+      } catch (e) {
+        console.warn("[auto-update] stop tunnel:", e);
+      }
+      try {
+        await invoke("stop_server");
+      } catch (e) {
+        console.warn("[auto-update] stop server:", e);
+      }
       try {
         await update.install();
         await relaunch();
       } catch (err) {
         console.warn("[auto-update] install/relaunch failed:", err);
-        dispatch({ type: "fail", message: err instanceof Error ? err.message : String(err) });
+        dispatch({
+          type: "apply-fail",
+          version: update.version,
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
     })();
   }, []);

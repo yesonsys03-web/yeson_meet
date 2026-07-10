@@ -9,7 +9,9 @@ export type UpdateStatus =
   | { kind: "downloading"; version: string; percent: number | null }
   | { kind: "ready"; version: string }
   | { kind: "up-to-date" }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | { kind: "applying"; version: string }
+  | { kind: "apply-error"; version: string; message: string };
 
 export type UpdateAction =
   | { type: "check-start" }
@@ -17,17 +19,19 @@ export type UpdateAction =
   | { type: "download-start"; version: string }
   | { type: "download-progress"; percent: number }
   | { type: "download-done"; version: string }
-  | { type: "fail"; message: string };
+  | { type: "fail"; message: string }
+  | { type: "apply-start"; version: string }
+  | { type: "apply-fail"; version: string; message: string };
 
 export const initialUpdateStatus: UpdateStatus = { kind: "idle" };
 
 export function updateReducer(state: UpdateStatus, action: UpdateAction): UpdateStatus {
   switch (action.type) {
     case "check-start":
-      if (state.kind === "ready" || state.kind === "downloading") return state;
+      if (state.kind === "ready" || state.kind === "downloading" || state.kind === "applying") return state;
       return { kind: "checking" };
     case "up-to-date":
-      if (state.kind === "ready" || state.kind === "downloading") return state;
+      if (state.kind === "ready" || state.kind === "downloading" || state.kind === "applying") return state;
       return { kind: "up-to-date" };
     case "download-start":
       return { kind: "downloading", version: action.version, percent: null };
@@ -37,8 +41,15 @@ export function updateReducer(state: UpdateStatus, action: UpdateAction): Update
     case "download-done":
       return { kind: "ready", version: action.version };
     case "fail":
-      if (state.kind === "ready") return state;
+      if (state.kind === "ready" || state.kind === "applying") return state;
       return { kind: "error", message: action.message };
+    // Apply (install + relaunch) failures render distinctly from check/download
+    // failures — the update IS staged, install just failed — so the banner
+    // doesn't wrongly say "no update available".
+    case "apply-start":
+      return { kind: "applying", version: action.version };
+    case "apply-fail":
+      return { kind: "apply-error", version: action.version, message: action.message };
     default:
       return state;
   }
