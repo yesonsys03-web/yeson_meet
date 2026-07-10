@@ -5,7 +5,16 @@ import pytest
 from httpx import AsyncClient
 
 from apps.server.auth.jwt import decode_token
+from apps.server.auth.login_rate_limit import login_rate_limiter
 from apps.server.db.models import AppUser
+
+
+@pytest.fixture(autouse=True)
+def _reset_login_rate_limiter() -> None:
+    """전역 login_rate_limiter를 테스트마다 리셋 — 테스트 순서 의존 제거."""
+    login_rate_limiter.reset()
+    yield
+    login_rate_limiter.reset()
 
 
 @pytest.mark.asyncio

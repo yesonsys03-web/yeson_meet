@@ -6,7 +6,7 @@ import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,8 +22,8 @@ _LOGIN_FAIL_DELAY_SECONDS = 0.3
 
 # === ANCHOR: AUTH_LOGININ_START ===
 class LoginIn(BaseModel):
-    email: str
-    password: str
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=128)
 # === ANCHOR: AUTH_LOGININ_END ===
 
 

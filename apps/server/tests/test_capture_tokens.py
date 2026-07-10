@@ -1,7 +1,10 @@
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from apps.server.auth.capture_tokens import CaptureTokenStore
+import pytest
+from httpx import AsyncClient
+
+from apps.server.auth.capture_tokens import CaptureTokenStore, capture_tokens
 
 
 class FakeNow:
@@ -59,12 +62,6 @@ def test_revoke_session():
     assert store.validate(token, sid) is False
 
 
-import pytest
-from httpx import AsyncClient
-
-from apps.server.auth.capture_tokens import capture_tokens
-
-
 @pytest.fixture(autouse=True)
 def _reset_capture_tokens():
     capture_tokens.reset()
@@ -93,6 +90,4 @@ async def test_capture_token_endpoint(admin_token: str, client: AsyncClient) -> 
     assert ended.status_code in (200, 204)
     r3 = await client.post(f"/api/v1/sessions/{sid}/capture-token", headers=headers)
     assert r3.status_code == 409
-    from uuid import UUID
-
     assert capture_tokens.validate(body["token"], UUID(sid)) is False
