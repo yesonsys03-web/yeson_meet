@@ -1,12 +1,14 @@
 // === ANCHOR: AUDIO_WS_CLIENT_START ===
-// /ws/sidecar 전송 계약 구현 (apps/client_sidecar/transport/audio_ws.py의 웹 포팅).
-// 계약: audio.started가 항상 첫 메시지 → 바이너리 PCM → 50청크마다 chunk_meta →
-// 종료 시 audio.stopped. 접속 시점 거부(키 무효/세션 종료/타 디바이스 점유)는
-// 핸드셰이크 거부(HTTP 403)라 open 이벤트 없이 close만 관측된다 — 브라우저에는
-// "open 직후 닫힘"으로 보이지 않는다. open 후 짧게 닫히는 것은 스트림 중 정책
-// 종료(최대 회의시간 등)에서만 발생하므로 "open 직후(2s 내) 닫힘 3연속"을 거부로
-// 해석한다. "unreachable"은 서버 다운과 접속 거부(핸드셰이크 실패)를 구분할 수
-// 없으므로 재시도는 유지한 채 경고만 표면화한다(open 없는 close가 5회 연속되면 진입).
+// /ws/capture 전송 계약 구현. 쿼리 없는 WS: 연결 후 첫 텍스트 메시지로
+// {"type":"auth","token","session"}을 보내고 서버의 {"type":"auth.ok"} 응답을
+// 받은 뒤에야 audio.started → 바이너리 PCM → 50청크마다 chunk_meta → 종료 시
+// audio.stopped 순으로 기존 사이드카 계약을 따른다. 인증 실패 시 서버는 일단
+// accept한 뒤 close(1008)하므로 브라우저에는 "open 직후 닫힘"으로 관측된다 —
+// "open 직후(2s 내) 닫힘 3연속"을 거부로 해석하는 기존 REJECT_WINDOW 로직이
+// 그대로 이 경로를 잡는다. open 후 짧게 닫히는 것이 스트림 중 정책 종료(최대
+// 회의시간 등)에서도 발생할 수 있어 3연속을 기준으로 삼는다. "unreachable"은
+// 서버 다운과 접속 거부를 구분할 수 없으므로 재시도는 유지한 채 경고만
+// 표면화한다(open 없는 close가 5회 연속되면 진입).
 export type AudioWsStatus =
   | "idle"
   | "connecting"
@@ -23,6 +25,7 @@ export type WebSocketLike = {
   onopen: (() => void) | null;
   onclose: ((e: { code: number }) => void) | null;
   onerror: (() => void) | null;
+  onmessage: ((e: { data: string }) => void) | null;
 };
 
 const CHUNK_META_INTERVAL = 50;
@@ -45,6 +48,7 @@ export class AudioWsClient {
 
   constructor(
     private readonly url: string,
+    private readonly auth: { token: string; session: string },
     private readonly onStatus: (status: AudioWsStatus) => void,
     private readonly wsFactory: (url: string) => WebSocketLike = (u) => new WebSocket(u) as unknown as WebSocketLike,
   ) {}
@@ -89,16 +93,25 @@ export class AudioWsClient {
     ws.onopen = () => {
       this.openedAt = Date.now();
       this.consecutiveOpenlessCloses = 0;
-      ws.send(
-        JSON.stringify({
-          type: "audio.started",
-          sample_rate: 16000,
-          channels: 1,
-          format: "pcm_s16le",
-          started_at: new Date().toISOString(),
-        }),
-      );
-      this.setStatus("streaming");
+      ws.send(JSON.stringify({ type: "auth", token: this.auth.token, session: this.auth.session }));
+      // auth.ok가 오기 전에는 streaming으로 전이하지 않는다(sendChunk 드롭 유지).
+    };
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data) as { type?: string };
+        if (msg.type === "auth.ok" && this.status !== "streaming") {
+          ws.send(
+            JSON.stringify({
+              type: "audio.started",
+              sample_rate: 16000,
+              channels: 1,
+              format: "pcm_s16le",
+              started_at: new Date().toISOString(),
+            }),
+          );
+          this.setStatus("streaming");
+        }
+      } catch {}
     };
     ws.onerror = () => {};
     ws.onclose = () => {

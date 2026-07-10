@@ -1,16 +1,10 @@
 // === ANCHOR: USE_CAPTURE_SESSION_START ===
 // /capture 페이지 오케스트레이션: 로그인 → 준비 → 캡처 중 → 종료.
-// 디바이스 키는 브라우저 localStorage에 1개(없거나 서버가 거부하면 자가등록).
-import { useCallback, useMemo, useRef, useState } from "react";
+// 캡처 세션마다 만료되는 캡처 토큰을 발급받아 /ws/capture 인증에 사용한다
+// (영구 디바이스 키 자가등록 방식은 폐기).
+import { useCallback, useRef, useState } from "react";
 import { PcmFramer, pcm16Dbfs } from "./pcm";
-import {
-  createCaptureSession,
-  credentialStore,
-  endCaptureSession,
-  loginOperator,
-  selfEnrollDevice,
-  sidecarWsUrl,
-} from "./captureApi";
+import { captureWsUrl, createCaptureSession, endCaptureSession, fetchCaptureToken, loginOperator } from "./captureApi";
 import { AudioWsClient, type AudioWsStatus } from "./audioWsClient";
 import { NoTabAudioError, startTabCapture, type TabCaptureHandle } from "./tabCapture";
 
@@ -60,7 +54,6 @@ export function useCaptureSession(): CaptureSessionState & CaptureSessionActions
   const tabRef = useRef<TabCaptureHandle | null>(null);
   const framerRef = useRef<PcmFramer | null>(null);
   const chunkCountRef = useRef(0);
-  const store = useMemo(() => credentialStore(), []);
 
   const patch = useCallback((p: Partial<CaptureSessionState>) => setState((s) => ({ ...s, ...p })), []);
 
@@ -90,33 +83,24 @@ export function useCaptureSession(): CaptureSessionState & CaptureSessionActions
     }
   }, [patch, state.operatorToken, state.title]);
 
-  const ensureDeviceKey = useCallback(async (): Promise<string> => {
-    const existing = store.loadDeviceKey();
-    if (existing) return existing;
-    const name = `web-capture-${Math.random().toString(36).slice(2, 6)}`;
-    const key = await selfEnrollDevice(state.operatorToken!, name);
-    store.saveDeviceKey(key);
-    return key;
-  }, [state.operatorToken, store]);
-
   const startCapture = useCallback(async () => {
     if (!state.sessionId || !state.operatorToken) return;
     patch({ busy: true, error: null, captureLost: false });
     try {
-      const deviceKey = await ensureDeviceKey();
-      const client = new AudioWsClient(sidecarWsUrl(deviceKey, state.sessionId), (wsStatus) => {
-        patch({ wsStatus });
-        if (wsStatus === "rejected") {
-          // 거부 시 다음 시도에서 재등록되도록 키를 지운다(폐기된 키 대비). 단, 동일
-          // 세션에 재등록한 새 디바이스 키로도 재접속은 불가(서버가 최초 접속 디바이스에
-          // 세션을 바인딩) — 재시작이 아니라 새 회의 시작을 안내한다.
-          store.clearDeviceKey();
-          patch({ error: "서버가 연결을 거부했습니다. 다른 기기가 이미 캡처 중이거나 세션이 종료됐거나 디바이스 키가 무효화됐을 수 있습니다. 이 회의는 다른 기기에 묶여 있을 수 있습니다 — 회의를 종료하고 새 회의를 시작하세요." });
-        } else if (wsStatus === "unreachable") {
-          // 서버 다운/접속 불가로 계속 재시도 중(캡처 상태는 유지) — 사용자에게만 표면화.
-          patch({ error: "서버에 연결할 수 없습니다. 서버가 실행 중인지, 주소가 맞는지 확인하세요. 문제가 계속되면 회의를 종료하고 새 회의로 다시 시작하세요." });
-        }
-      });
+      const captureToken = await fetchCaptureToken(state.operatorToken, state.sessionId);
+      const client = new AudioWsClient(
+        captureWsUrl(),
+        { token: captureToken, session: state.sessionId },
+        (wsStatus) => {
+          patch({ wsStatus });
+          if (wsStatus === "rejected") {
+            patch({ error: "서버가 연결을 거부했습니다. 세션이 종료됐거나 캡처 토큰이 만료됐을 수 있습니다. 회의를 종료하고 새 회의를 시작하세요." });
+          } else if (wsStatus === "unreachable") {
+            // 서버 다운/접속 불가로 계속 재시도 중(캡처 상태는 유지) — 사용자에게만 표면화.
+            patch({ error: "서버에 연결할 수 없습니다. 서버가 실행 중인지, 주소가 맞는지 확인하세요. 문제가 계속되면 회의를 종료하고 새 회의로 다시 시작하세요." });
+          }
+        },
+      );
       framerRef.current = new PcmFramer();
       chunkCountRef.current = 0;
       const tab = await startTabCapture({
@@ -147,7 +131,7 @@ export function useCaptureSession(): CaptureSessionState & CaptureSessionActions
         patch({ busy: false, error: `캡처 시작 실패: ${e instanceof Error ? e.message : String(e)}` });
       }
     }
-  }, [ensureDeviceKey, patch, state.operatorToken, state.sessionId, store]);
+  }, [patch, state.operatorToken, state.sessionId]);
 
   const toggleMic = useCallback(async () => {
     const tab = tabRef.current;
