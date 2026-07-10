@@ -270,10 +270,12 @@ async def test_cancel_burn_task_releases_burn_semaphore(
 
 
 @pytest.mark.parametrize("enabled", [True, False])
-async def test_run_burn_job_passes_gpu_pack_is_enabled_as_use_gpu(
+async def test_run_burn_job_always_burns_on_cpu(
         monkeypatch, db_session, admin_user, tmp_path, enabled):
-    """굽기는 전사와 같은 토글을 따라야 한다 — gpu_pack.is_enabled()가 그대로
-    burn_subtitles(use_gpu=...)로 전달되는지 확인 (버그: 이전엔 배선이 없었다)."""
+    """굽기는 GPU 토글과 무관하게 항상 CPU(libx264)여야 한다 — RTX 2080 실측
+    (2026-07-10)에서 NVENC p5보다 x264 veryfast가 더 빨랐다. 병목이 CPU쪽
+    디코드+libass 자막 렌더링이라 GPU 인코더 이득이 없고 복사 오버헤드만 붙는다.
+    GPU 토글은 전사 전용."""
     src = tmp_path / "clip.mp4"
     src.write_bytes(b"v")
     job = await _make_job(db_session, admin_user, media_path=str(src), status="review")
@@ -295,7 +297,7 @@ async def test_run_burn_job_passes_gpu_pack_is_enabled_as_use_gpu(
 
     await pl.run_burn_job(external_id, "top", 20, 24)
 
-    assert seen_use_gpu["v"] is enabled
+    assert seen_use_gpu["v"] is False  # GPU 토글 값과 무관하게 항상 CPU
 
 
 async def test_run_video_job_survives_missing_job(db_session):
