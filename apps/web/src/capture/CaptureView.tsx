@@ -282,6 +282,7 @@ function LevelMeter({ dbfs }: { dbfs: number }) {
 
 export function CaptureView() {
   const s = useCaptureSession();
+  const support = checkCaptureSupport();
   const subtitles = useOperatorSubtitles(s.phase === "capturing" ? s.sessionId : null, s.operatorToken);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -381,8 +382,13 @@ export function CaptureView() {
                 <div className="rounded-lg bg-slate-900/60 px-4 py-3 text-sm text-slate-300">
                   다음 화면에서 <b>구글밋이 열린 탭</b>을 선택하고 왼쪽 아래 <b>'탭 오디오 공유'를 반드시 체크</b>하세요.
                 </div>
-                <button className="w-full rounded bg-emerald-600 py-2 font-semibold hover:bg-emerald-500 disabled:opacity-50" disabled={s.busy} onClick={() => void s.startCapture()}>
-                  {s.busy ? "준비 중…" : "탭 선택하고 캡처 시작"}
+                <button
+                  className="w-full rounded bg-emerald-600 py-2 font-semibold hover:bg-emerald-500 disabled:opacity-50"
+                  disabled={s.busy || !support.ok}
+                  title={support.ok ? undefined : "이 주소/브라우저에서는 탭 캡처를 쓸 수 없습니다 — 상단 안내를 확인하세요"}
+                  onClick={() => void s.startCapture()}
+                >
+                  {s.busy ? "준비 중…" : support.ok ? "탭 선택하고 캡처 시작" : "탭 캡처 불가 (상단 안내 참조)"}
                 </button>
               </>
             )}
