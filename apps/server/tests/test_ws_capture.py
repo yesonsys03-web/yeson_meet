@@ -9,6 +9,7 @@ from uuid import UUID
 import psycopg
 import pytest
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from apps.server.auth.capture_tokens import capture_tokens
 from apps.server.auth.password import hash_password
@@ -93,10 +94,11 @@ def _auth_msg(token: str, session_id: str) -> str:
 def test_capture_ws_rejects_bad_token() -> None:
     with TestClient(app, raise_server_exceptions=True) as tc:
         _headers, sid = _login_and_create_session(tc)
-        with pytest.raises(Exception):  # 서버가 close 1008 → 클라이언트 측 예외
+        with pytest.raises(WebSocketDisconnect) as exc_info:
             with tc.websocket_connect("/ws/capture") as ws:
                 ws.send_text(_auth_msg("wrong-token", sid))
                 ws.receive_text()  # auth.ok 대신 close → 예외
+        assert exc_info.value.code == 1008
 
 
 def test_capture_ws_rejects_non_auth_first_message() -> None:
@@ -104,10 +106,11 @@ def test_capture_ws_rejects_non_auth_first_message() -> None:
         _headers, sid = _login_and_create_session(tc)
         token, _ = capture_tokens.issue(UUID(sid))
         assert token
-        with pytest.raises(Exception):
+        with pytest.raises(WebSocketDisconnect) as exc_info:
             with tc.websocket_connect("/ws/capture") as ws:
                 ws.send_text(json.dumps({"type": "audio.started", "sample_rate": 16000}))
                 ws.receive_text()
+        assert exc_info.value.code == 1008
 
 
 def test_capture_ws_rejects_ended_session() -> None:
@@ -116,10 +119,11 @@ def test_capture_ws_rejects_ended_session() -> None:
         token, _ = capture_tokens.issue(UUID(sid))
         tc.post(f"/api/v1/sessions/{sid}/end", headers=headers)
         # end가 capture_tokens.revoke_session을 호출하므로 validate부터 실패한다
-        with pytest.raises(Exception):
+        with pytest.raises(WebSocketDisconnect) as exc_info:
             with tc.websocket_connect("/ws/capture") as ws:
                 ws.send_text(_auth_msg(token, sid))
                 ws.receive_text()
+        assert exc_info.value.code == 1008
 
 
 def test_capture_ws_happy_path_streams_utterance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

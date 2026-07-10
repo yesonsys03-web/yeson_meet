@@ -34,8 +34,10 @@ async def ws_capture(ws: WebSocket) -> None:
     await ws.accept()
     try:
         raw = await asyncio.wait_for(ws.receive_text(), timeout=AUTH_TIMEOUT_SECONDS)
-    except (asyncio.TimeoutError, WebSocketDisconnect):
+    except asyncio.TimeoutError:
         await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    except WebSocketDisconnect:
         return
     try:
         msg = json.loads(raw)
