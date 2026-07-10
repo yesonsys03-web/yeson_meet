@@ -19,20 +19,16 @@ name: Server console Windows installer
 # it from the repo's Releases.
 on:
   workflow_dispatch:
+  # Release-only auto-run: every release commit edits this workflow's body, so
+  # merging a release PR triggers exactly one build. Plain code merges used to
+  # match apps/** paths and silently OVERWRITE the released vX.Y.Z assets with
+  # unreleased builds — on v1.2.2 this actually corrupted latest-server.json
+  # (manifest/installer signature mismatch). On-demand builds for feature
+  # branches remain available via workflow_dispatch. Mirrors windows-desktop.yml.
   push:
-    # Heavy installer build: auto-run only on main; feature branches build on
-    # demand via the Actions tab (workflow_dispatch). Mirrors windows-desktop.yml.
     branches: [main, server_add]
     paths:
       - ".github/workflows/server-desktop-windows.yml"
-      - "apps/server_desktop/**"
-      # The P0 teardown-spike harness does not affect the installer — exclude it
-      # so a harness-only change re-runs the spike without a full installer rebuild.
-      - "!apps/server_desktop/scripts/win-freeze-spike.ps1"
-      - "apps/server/**"
-      - "apps/web/**"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
 
 permissions:
   contents: write   # publish the installer as a release asset
@@ -126,14 +122,18 @@ jobs:
 
             ---
 
-            ## yeson-server-console v1.2.2 — 무엇이 바뀌었나
+            ## yeson-server-console v1.2.3 — 무엇이 바뀌었나
 
-            ### 업데이트 적용 안정화 🔄
-            - **"재시작하여 적용"을 눌러도 한참 반응이 없던 문제 수정** — 적용 전에 실행 중인 서버·터널을 먼저 정지한 뒤 설치. (Windows 실행 중 파일 잠금으로 실패할 수 있던 위험 제거)
-            - 적용 중 **"적용 중…" 표시**와 버튼 잠금, 실패 시 **"적용 실패"로 정확히 표시**되고 재시도 가능.
+            ### 웹 캡처 원격 지원 🌐
+            - **다른 컴퓨터·외부에서도 설치 없이** 브라우저(Chrome/Edge)로 회의 진행 — Go Live 공개 주소 뒤에 `/capture` 접속 → 로그인 → 회의 만들기 → 탭 캡처.
+            - 전제: 서버 콘솔 공개(Go Live) 상태 필요, 공개 주소는 서버 재시작 시 변경.
+
+            ### 보안 강화 🔒
+            - 로그인 연속 5회 실패 시 5분 잠금. 웹 캡처는 **회의 1회용 접속 토큰**으로 전환(평생 키 제거, 주소창에 비밀정보 미노출).
 
             ### 자동 업데이트 ✅
             - v1.2.0 이상을 설치하셨다면 이 버전은 자동으로 받게 됩니다.
+            - v1.2.1 Windows에서 v1.2.2 업데이트가 실패했다면 이 버전으로 바로 올라가면 됩니다.
 
             ### 참고
             - 기존 데이터를 그대로 유지한 채 업데이트됩니다.
