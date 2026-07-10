@@ -416,11 +416,7 @@ async def issue_capture_token(
     _operator: Annotated[AppUser, Depends(require_operator)],
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> CaptureTokenOut:
-    meeting = (
-        await db.execute(select(Session).where(Session.external_id == external_id))
-    ).scalar_one_or_none()
-    if meeting is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    meeting = await _get_operator_session_or_404(db, external_id)
     if meeting.status == "ended":
         raise HTTPException(status.HTTP_409_CONFLICT, "Session already ended")
     token, expires_at = capture_tokens.issue(external_id)
