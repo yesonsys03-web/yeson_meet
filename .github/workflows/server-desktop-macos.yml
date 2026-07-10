@@ -9,9 +9,14 @@ name: Server console macOS installer
 # via System Settings > Privacy & Security > "Open Anyway" (see docs/INSTALL.md).
 on:
   workflow_dispatch:
-  # Runs when THIS workflow file changes (registers it for dispatch + builds once);
-  # plain code pushes never trigger it, so the 10x macOS cost stays opt-in.
+  # Runs when THIS workflow file changes on main/server_add (registers it for
+  # dispatch + builds once); plain code pushes never trigger it, so the 10x macOS
+  # cost stays opt-in. The branches filter keeps release-branch pushes (which edit
+  # the release body below) from double-triggering before the merge.
   push:
+    branches:
+      - main
+      - server_add
     paths:
       - ".github/workflows/server-desktop-macos.yml"
 
@@ -93,18 +98,18 @@ jobs:
 
             > - **Mac 칩 확인**: 애플 메뉴 → 이 Mac에 관하여 → "Apple M…"이면 Apple Silicon, "Intel"이면 Intel.
             > - **Windows**: `-setup.exe`(권장) 또는 `_en-US.msi` 중 하나.
-            > - **v1.2.0을 이미 설치했다면** 이 버전은 앱이 **자동으로** 받습니다("재시작하여 적용" 배너). 아래는 처음 설치·재설치용 링크입니다.
+            > - **v1.2.0 이상을 이미 설치했다면** 이 버전은 앱이 **자동으로** 받습니다("재시작하여 적용" 배너). 아래는 처음 설치·재설치용 링크입니다.
 
             ---
 
-            ## yeson-server-console v1.2.1 — 무엇이 바뀌었나
+            ## yeson-server-console v1.2.2 — 무엇이 바뀌었나
 
-            ### 자막 메이커 GPU 개선 🎮
-            - **GPU 켜기/끄기가 전사·굽기에 함께 적용**됩니다(끄면 둘 다 CPU). 이전엔 꺼도 굽기가 GPU를 계속 쓰던 문제 수정.
-            - **전사가 GPU를 못 쓸 때 사유를 콘솔에 표시**하고 CPU로 진행. (번역은 외부 AI라 GPU 무관)
+            ### 업데이트 적용 안정화 🔄
+            - **"재시작하여 적용"을 눌러도 한참 반응이 없던 문제 수정** — 적용 전에 실행 중인 서버·터널을 먼저 정지한 뒤 설치. (Windows 실행 중 파일 잠금으로 실패할 수 있던 위험 제거)
+            - 적용 중 **"적용 중…" 표시**와 버튼 잠금, 실패 시 **"적용 실패"로 정확히 표시**되고 재시도 가능.
 
             ### 자동 업데이트 ✅
-            - v1.2.0을 설치하셨다면 이 버전은 자동으로 받게 됩니다(자동 업데이트 배포 첫 버전).
+            - v1.2.0 이상을 설치하셨다면 이 버전은 자동으로 받게 됩니다.
 
             ### 참고
             - 기존 데이터를 그대로 유지한 채 업데이트됩니다.
