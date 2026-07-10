@@ -462,10 +462,12 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
 
             progress_cb = on_burn_progress
 
-        # 굽기도 전사와 같은 GPU 토글을 따른다 — 꺼져 있으면 GPU 인코더 프로브
-        # 자체를 건너뛰고 libx264로 굽는다(2026-07-09 버그: 이전엔 토글과
-        # 무관하게 항상 GPU 후보를 프로브했다).
-        use_gpu = gpu_pack.is_enabled()
+        # 굽기는 GPU 토글과 무관하게 항상 CPU(libx264) — RTX 2080 실측(2026-07-10)
+        # 에서 NVENC(p5, GPU 100% 포화)보다 x264 veryfast가 더 빨랐다. 병목이
+        # CPU쪽 디코드+libass 자막 렌더링이라 GPU 인코더 이득이 없고 프레임 복사
+        # 오버헤드만 붙는다. GPU 토글은 전사(CUDA) 전용. (이전엔 토글을 공유해
+        # "전사 GPU + 굽기 CPU" 최적 조합을 선택할 수 없었다.)
+        use_gpu = False
         try:
             await asyncio.to_thread(
                 burn_subtitles, ffmpeg, Path(media_path), srt_path, burned, style,
