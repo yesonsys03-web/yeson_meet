@@ -196,6 +196,79 @@ async def test_run_burn_job(monkeypatch, db_session, admin_user, tmp_path):
     assert loaded.burned_path and Path(loaded.burned_path).exists()
 
 
+async def test_run_burn_job_serialized_by_semaphore(
+        monkeypatch, db_session, admin_user, tmp_path):
+    """굽기도 한 번에 하나씩만 돌아야 한다. '선택 굽기 (N개)'는 클라이언트가
+    burn POST를 연달아 쏘고 엔드포인트는 즉시 반환하므로, 직렬화가 없으면
+    ffmpeg 인코딩 N개가 동시에 돌아 CPU/GPU를 포화시킨다."""
+    import time as _time
+
+    jobs = []
+    for name in ("a.mp4", "b.mp4"):
+        src = tmp_path / name
+        src.write_bytes(b"v")
+        job = await _make_job(db_session, admin_user,
+                              media_path=str(src), status="review")
+        db_session.add(VideoSegment(job_id=job.id, seq=1, start_ms=0,
+                                    end_ms=1000, text_en="Hi", text_ko="안녕"))
+        jobs.append(job)
+    await db_session.commit()
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    concur = {"cur": 0, "max": 0}
+
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None,
+                  use_gpu=None):
+        concur["cur"] += 1
+        concur["max"] = max(concur["max"], concur["cur"])
+        _time.sleep(0.2)  # hold the stage so an overlap is observable if not serial
+        concur["cur"] -= 1
+        Path(dst).write_bytes(b"out")
+
+    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+
+    await asyncio.gather(
+        pl.run_burn_job(jobs[0].external_id, "top", 20, 24),
+        pl.run_burn_job(jobs[1].external_id, "top", 20, 24))
+
+    assert concur["max"] == 1  # never two burns running at once
+
+
+async def test_cancel_burn_task_releases_burn_semaphore(
+        monkeypatch, db_session, admin_user, tmp_path):
+    """굽는 중 취소하면 굽기 세마포어가 즉시 반납되어 다음 굽기가 진행돼야 한다
+    (전사 세마포어의 test_cancel_job_task_releases_semaphore와 동일한 보장)."""
+    import threading
+
+    src = tmp_path / "a.mp4"; src.write_bytes(b"v")
+    job = await _make_job(db_session, admin_user,
+                          media_path=str(src), status="review")
+    db_session.add(VideoSegment(job_id=job.id, seq=1, start_ms=0,
+                                end_ms=1000, text_en="Hi", text_ko="안녕"))
+    await db_session.commit()
+    ext = job.external_id
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    reached = threading.Event()
+    blocking = threading.Event()
+
+    def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None,
+                  use_gpu=None):
+        reached.set()
+        blocking.wait(5)  # hold the burn in its worker thread until released
+
+    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+
+    pl.start_job_task(ext, pl.run_burn_job(ext, "top", 20, 24))
+    await asyncio.to_thread(reached.wait, 5)
+    assert pl._BURN_SEMAPHORE.locked()  # burn is mid-flight holding the semaphore
+
+    assert pl.cancel_job_task(ext) is True
+    await asyncio.sleep(0.1)  # let CancelledError propagate through the finally
+    assert not pl._BURN_SEMAPHORE.locked()  # released even though thread lingers
+    blocking.set()  # let the detached worker thread exit
+
+
 @pytest.mark.parametrize("enabled", [True, False])
 async def test_run_burn_job_passes_gpu_pack_is_enabled_as_use_gpu(
         monkeypatch, db_session, admin_user, tmp_path, enabled):
