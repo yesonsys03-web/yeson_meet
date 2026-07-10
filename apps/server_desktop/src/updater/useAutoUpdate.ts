@@ -33,8 +33,14 @@ export function useAutoUpdate(): UseAutoUpdate {
 
   const runCheck = useCallback(async () => {
     if (!hasTauriRuntime() || busy.current) return;
-    // A staged update is ready (or being applied) — don't re-check/re-download.
-    if (statusRef.current.kind === "ready" || statusRef.current.kind === "applying") return;
+    // A staged update is ready, being applied, or failed to apply — don't
+    // re-check/re-download (that would silently erase the apply-error banner).
+    if (
+      statusRef.current.kind === "ready" ||
+      statusRef.current.kind === "applying" ||
+      statusRef.current.kind === "apply-error"
+    )
+      return;
     busy.current = true;
     dispatch({ type: "check-start" });
     try {

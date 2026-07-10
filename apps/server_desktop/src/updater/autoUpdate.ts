@@ -28,10 +28,12 @@ export const initialUpdateStatus: UpdateStatus = { kind: "idle" };
 export function updateReducer(state: UpdateStatus, action: UpdateAction): UpdateStatus {
   switch (action.type) {
     case "check-start":
-      if (state.kind === "ready" || state.kind === "downloading" || state.kind === "applying") return state;
+      if (state.kind === "ready" || state.kind === "downloading" || state.kind === "applying" || state.kind === "apply-error")
+        return state;
       return { kind: "checking" };
     case "up-to-date":
-      if (state.kind === "ready" || state.kind === "downloading" || state.kind === "applying") return state;
+      if (state.kind === "ready" || state.kind === "downloading" || state.kind === "applying" || state.kind === "apply-error")
+        return state;
       return { kind: "up-to-date" };
     case "download-start":
       return { kind: "downloading", version: action.version, percent: null };

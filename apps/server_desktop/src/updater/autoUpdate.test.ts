@@ -69,5 +69,19 @@ describe("updateReducer (server)", () => {
       message: "locked",
     });
   });
+
+  it("keeps an apply-error banner across a later background/manual check", () => {
+    const applyError: UpdateStatus = { kind: "apply-error", version: "1.2.0", message: "locked" };
+    expect(updateReducer(applyError, { type: "check-start" })).toEqual(applyError);
+    expect(updateReducer(applyError, { type: "up-to-date" })).toEqual(applyError);
+  });
+
+  it("retries from apply-error → applying on apply-start", () => {
+    const applyError: UpdateStatus = { kind: "apply-error", version: "1.2.0", message: "locked" };
+    expect(updateReducer(applyError, { type: "apply-start", version: "1.2.0" })).toEqual({
+      kind: "applying",
+      version: "1.2.0",
+    });
+  });
 });
 // === ANCHOR: AUTO_UPDATE_TEST_END ===

@@ -11,7 +11,10 @@ type UpdateBannerProps = {
 
 export function UpdateBanner({ status, onCheckNow, onApplyNow }: UpdateBannerProps) {
   const checking =
-    status.kind === "checking" || status.kind === "downloading" || status.kind === "applying";
+    status.kind === "checking" ||
+    status.kind === "downloading" ||
+    status.kind === "applying" ||
+    status.kind === "apply-error";
   return (
     <div style={styles.box}>
       {status.kind === "ready" ? (
