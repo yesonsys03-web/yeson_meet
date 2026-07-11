@@ -75,3 +75,6 @@ generated/
 # Tauri build output (extra safety)
 apps/desktop/src-tauri/gen/
 apps/server_desktop/src-tauri/gen/
+
+# 스파이크 스크래치 (커밋 금지)
+apps/native_helper_mac/scratch/
