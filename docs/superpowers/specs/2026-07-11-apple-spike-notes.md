@@ -298,3 +298,120 @@ if let request = try await AssetInventory.assetInstallationRequest(supporting: [
 3. **Swift 언어 모드:** 새 프로덕션 타깃은 **Swift 5 언어 모드** 권장(Sendable strict-concurrency 마찰 회피). Swift 6 모드로 갈 경우 `@MainActor` 격리와 `@unchecked Sendable` 래핑 추가 필요.
 4. **첫 번역 워밍업:** 첫 `translations` 호출에 수 초 지연. 프로세스 시작 시 더미 문장으로 워밍업 권장.
 ```
+
+---
+
+## 실기 종단 검증 (Task 11)
+
+- 날짜: 2026-07-11 / 커밋: `6a8d92b`
+- 머신: Apple Silicon(arm64), macOS 26.4.1 (25E253)
+- 사용 바이너리: 릴리스 빌드 `apps/server_desktop/.../apple-translate-aarch64-apple-darwin/apple-live-translate` (Mach-O arm64)
+- **달성 레벨(중요):** 자막메이커는 **실제 서버 REST API 종단**(로컬 Postgres + `uvicorn`,
+  `POST /api/v1/video-jobs/upload`, `whisper_model=apple`)으로, 라이브는 **컴포넌트 종단**
+  (실 바이너리 `live` + 실제 `AppleLiveTranslateProvider`·`AudioLiveSession`·
+  `AISequenceNormalizer`·`is_permanent_provider_error`)으로 검증했다. 라이브의 WS
+  sidecar/디바이스 인증 전송 계층은 구동하지 않았다(브리프의 fallback 허용 범위) —
+  단, provider→orchestration 경계의 실제 프로덕션 클래스는 전부 실물로 돌렸다.
+
+### 결론 요약
+
+| 항목 | 결과 |
+|---|---|
+| 자막메이커 전사(Apple STT) | ✅ 10.3s 영상 → **~0.40s** (≈26x 실시간), 세그먼트 정확 |
+| 자막메이커 번역(Apple MT) | ✅ 2 세그먼트 배치 **~2.2s** (서브프로세스당 NSApplication+세션 워밍업 포함) |
+| 자막메이커 굽기(burn) | ⚠️ 이 환경에서 **측정 불가** — 시스템 ffmpeg 8.1에 libass 미포함(`subtitles` 필터 없음). **제품 버그 아님**(배포 앱은 libass 포함 ffmpeg 번들). |
+| 라이브 메커니즘 | ✅ volatile 파셜 + 파이널(seq·EN·KO·t0/t1)이 실 바이너리·실 프로바이더로 정상 흐름 |
+| 라이브 콜드스타트 | ~5.0s (프로세스 기동→첫 자막; STT 모델+TranslationSession 워밍업, 스파이크 ~3.4s 관측과 일치) |
+| 라이브 phrase-end→final (정상상태) | P50 **~2.1–2.8s** — Gemini 실측 P50 1419.8ms보다 **느림** |
+| 엣지(a) 영구에러 | ✅ `unsupported_os`→`AppleProviderUnavailable`→영구 분류→운영자 provider_error 1회→3s창 스폰 1회(재접속 스팸 없음) |
+| 엣지(b) kill -9 재접속 | ✅ 재접속(provider_segment 1→2) + normalizer가 seq 단조 유지(1,2,3→4,5,6) |
+
+### 1. 자막메이커 (REST API 종단)
+
+- 절차: 스크래치 Postgres DB + `create_schema()`/`seed()`(운영자 계정) →
+  `python -m apps.server.main`(port 8787) → 10.3s 테스트 mp4(`say`+ffmpeg 생성)를
+  `POST /video-jobs/upload`로 업로드(`whisper_model=apple`). 번역 엔진 Apple은
+  API의 `translate_provider` 정규식(`^(gemini|claude|codex|agy|opencode)$`)이
+  "apple"을 받지 않으므로 서버 env `YESON_VIDEO_TRANSLATE_PROVIDER=apple`로 선택
+  (파이프라인 `create_translator(provider=None)`가 env 폴백 → `AppleTranslator`).
+  `GET /video-jobs/translate-engines`는 `apple: available=true` 노출 확인.
+- 단계별 실측(고빈도 폴링, `rebuild`로 재실행한 **웜** 값):
+
+  | 단계 | 상태 | 소요 |
+  |---|---|---:|
+  | 추출(extracting: preview+audio.wav) | | ~0.06s |
+  | 전사(transcribing, Apple STT) | 0→100% | **~0.40s** |
+  | 번역(translating, Apple MT 2세그먼트) | | **~2.20s** |
+  | **합계(→review)** | | **~2.7s** |
+
+  - 최초 업로드(콜드, 바이너리·모델 웜업 포함)는 review까지 **~12.0s**. 재실행(웜) ~2.7s.
+  - 산출 세그먼트 예: `seq=1 0–3780ms "Hello, everybody. Welcome to today's meeting." / 안녕하세요, 여러분. 오늘 회의에 오신 것을 환영합니다.`
+- **whisper/Gemini 비교는 브리프 지침에 따라 생략**: `STORAGE_ROOT/whisper_models/` 아래
+  다운로드된 whisper 모델이 없어(수 GB 다운로드 금지) 전사 비교 불가 → Apple-only 기록.
+  (`GEMINI_API_KEY`는 env에 존재했으나 비교 조건은 whisper 모델 존재를 함께 요구.)
+- 굽기: `POST /video-jobs/{id}/burn`이 `ffmpeg ... -vf "subtitles=subs.srt:force_style='...'"`에서
+  실패(`code=234, "Error parsing filterchain 'subtitles=...'"`). 원인은 **시스템 ffmpeg 8.1의
+  libass 미탑재**(필터 문자열 자체는 유효). 배포 Tauri 앱은 libass 포함 ffmpeg를 번들하므로
+  제품 결함이 아니라 검증 환경 제약. → 굽기 실측 보류.
+
+### 2. 라이브 종단 (컴포넌트 레벨)
+
+- 절차: 실 바이너리 `live`에 16kHz mono Int16 PCM을 **실시간 페이스**(100ms 청크)로
+  주입, stdout JSONL을 벽시계 타임스탬프와 함께 파싱. 오디오는 `say`+ffmpeg 합성
+  (영어 다문장, 800~900ms 무음 구분). phrase-end 기준은 각 final의 `t1`(오디오 시각),
+  지연 = `수신벽시계 − (feed_start + t1)`.
+- **콜드스타트**: 프로세스 기동 후 첫 파셜까지 **~5.0s**(STT 모델 로드 + TranslationSession
+  워밍업). 실제 회의에선 세션 시작 시 1회성. 스파이크의 "첫 번역 ~3.4s 워밍업" 관측과 정합.
+- **정상상태 phrase-end→final**: 프로세스를 선(先)워밍한 뒤 측정 시 **P50 ~2.1–2.8s**,
+  min ~0.95s(입력 EOF로 강제 finalize된 마지막 발화), max ~3.3s. 즉 완결(구두점·번역·
+  용어보정 포함) **final 지연이 Gemini의 phrase-end→first-subtitle P50 1419.8ms보다 크다**.
+  - Apple은 발화 도중 volatile 파셜을 계속 방출하므로 "무언가 보이기까지"는 더 빠르나,
+    `isFinal` 확정에 후행 오디오(무음) 확인 창이 필요해 final이 ~2–3s 지연된다. 마지막
+    발화가 EOF 강제 finalize로 <1s에 나온 점이 이를 뒷받침(버퍼링 아님).
+- **⚠️ 신뢰도 단서:** 측정 오디오가 `say` 합성음이라 STT 인식·세그먼테이션 품질이 낮고
+  (스파이크가 이미 경고한 리스크) 이것이 finalization 타이밍을 왜곡한다. **실제 회의
+  오디오로 재측정해야 확정 수치**가 된다. 위 수치는 지표(indicative)로 해석할 것.
+- **트레이드오프:** Apple = 네트워크/과금 0·오프라인·배치 처리량 압도(파일 전사 26x 실시간,
+  번역 배치 초 단위). 반면 라이브 **final 지연은 Gemini보다 큼**. → 최저 라이브 지연이
+  최우선이면 Gemini, 비용/오프라인/자막메이커 처리량이 우선이면 Apple.
+
+### 3. 엣지 케이스
+
+**(a) 영구 에러(언어팩/OS 미지원 계열) — provider_error + 백오프.** (지침에 따라 시스템
+언어팩은 건드리지 않고) `YESON_APPLE_TRANSLATE_BIN`을 `{"type":"status","state":"error",
+"reason":"unsupported_os"}` 방출 후 exit 3 하는 가짜 스크립트로 지정하고 라이브 세션 구동:
+
+```
+is_permanent_provider_error(unsupported_os) = True   (msg: "apple provider unavailable: unsupported_os")
+AI live session provider rejected request (permanent)      ← 로그
+fake-binary spawns in 3s window = 1   (재접속 스팸 없음; PERMANENT_ERROR_BACKOFF_SECONDS=300)
+on_permanent_error invocations = 1    ← sidecar가 _publish_provider_error(운영자 provider_error)로 연결
+utterances emitted = 0
+```
+
+→ 영구 에러로 분류되어 운영자에게 provider_error 1회 표출 + 5분 백오프, 3초 관측창에
+스폰 1회뿐이라 **짧은 백오프 재접속 스팸 없음** 확인. PASS.
+
+**(b) 라이브 중 `kill -9` → 자동 재접속 + seq 연속성.** 실 바이너리 세션 구동 중
+세그먼트1이 파이널 몇 개를 낸 뒤(t≈9s) `pkill -9 -f "apple-live-translate live"`:
+
+```
+RuntimeError: apple live exited rc=-9   → AudioLiveSession 재접속 루프
+provider_segments observed = [1, 2]                       (재접속 발생)
+finals (norm_seq, provider_segment): (1,1)(2,1)(3,1)(4,2)(5,2)(6,2)
+normalized final seqs strictly-increasing = True
+```
+
+→ 프로바이더는 재접속(segment2)에서 내부 seq를 1,2,3으로 다시 시작하지만
+`AISequenceNormalizer`가 직전 세그먼트 마지막 seq(3)만큼 오프셋해 4,5,6으로 재배치 →
+**재접속 경계를 넘어 자막 seq가 단조 증가 유지**. PASS.
+
+### 4. 검증 방법 메모(재현용)
+
+- 서버 기동: `DATABASE_URL=postgresql+asyncpg://…/yeson_meet_e2e JWT_SECRET=… STORAGE_ROOT=<scratch>
+  YESON_AI_PROVIDER=apple_live_translate YESON_APPLE_TRANSLATE_BIN=<릴리스 바이너리>
+  YESON_VIDEO_TRANSLATE_PROVIDER=apple PORT=8787 uv run --project apps/server python -m apps.server.main`
+  (테이블은 `apps.server.db.seed.create_schema()`, 운영자 계정은 `seed()`로 사전 생성).
+- 오디오 생성: `say`(+`[[slnc N]]` 무음)→`ffmpeg -ar 16000 -ac 1`로 wav(전사) / `-f s16le` raw PCM(라이브).
+- 콜드/웜 구분: 각 서브프로세스는 매 호출 새로 뜨므로 STT/MT 워밍업 비용을 매번 지불한다
+  → 프로세스 재사용/사전 워밍업(더미 입력)으로 완화 권장(§미해결 4와 동일 결론, 라이브에도 적용).
