@@ -25,6 +25,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from apps.server.auth.device import hash_api_key
+from apps.server.ai.apple_live_translate import AppleLiveTranslateProvider
 from apps.server.ai.gemini_live import GeminiLiveProvider
 from apps.server.ai.gemini_live_translate import GeminiLiveTranslateProvider
 from apps.server.ai.google_stt_translate import GoogleSttTranslateProvider
@@ -127,6 +128,12 @@ def create_ai_provider(trace_extra: Mapping[str, object] | None = None) -> STTPr
         ):
             return None
         return GoogleSttTranslateProvider()
+    if provider_name in {"apple_live_translate", "apple"}:
+        from apps.server.ai.apple_native import resolve_apple_bin
+
+        if resolve_apple_bin() is None:
+            return None  # 미지원 환경 — S2 count-only 모드 유지
+        return AppleLiveTranslateProvider()
     if provider_name in {"gemini_live_translate", "live_translate", "gemini_translate"}:
         if not os.environ.get("GEMINI_API_KEY"):
             return None
