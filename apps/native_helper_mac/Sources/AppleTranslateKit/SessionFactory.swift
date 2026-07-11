@@ -66,6 +66,7 @@ public func makeTranslationSession(
             let highStatus = await LanguageAvailability(preferredStrategy: .highFidelity)
                 .status(from: source, to: target)
             if highStatus == .installed {
+                // 명시적 .highFidelity가 plain init의 암묵 기본값 의존보다 결정적이라 의도적으로 선택 (리뷰 조율 완료)
                 return TranslationSession(
                     installedSource: source, target: target, preferredStrategy: .highFidelity)
             }

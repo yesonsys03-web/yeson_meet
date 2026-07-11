@@ -46,7 +46,7 @@ public func runLive() async -> Int32 {
         session = try await makeTranslationSession(
             source: .init(identifier: "en"), target: .init(identifier: "ko"))
     } catch {
-        emit(.status(state: "error", reason: "missing_mt_asset: \(error)"))
+        emit(.status(state: "error", reason: "\(error)"))
         return 1
     }
 
