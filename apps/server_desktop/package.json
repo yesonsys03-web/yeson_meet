@@ -8,6 +8,8 @@
     "build:vite": "tsc --noEmit && vite build",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "tauri:dev:mac-arm": "tauri dev --config src-tauri/tauri.macos-arm.conf.json",
+    "tauri:build:mac-arm": "tauri build --config src-tauri/tauri.macos-arm.conf.json",
     "test": "vitest run"
   },
   "dependencies": {
