@@ -1193,6 +1193,33 @@ fn advertise_mdns(port: u16) -> Option<ServiceDaemon> {
     Some(daemon)
 }
 
+/// 저지연(lowLatency) EN→KO 번역 모델을 UI 프롬프트로 1회 설치한다(성능 후속).
+/// 번들된 `apple-live-translate`를 `prepare-translation` 서브커맨드로 실행하면 그
+/// 서브커맨드가 포커스를 갖는 작은 창을 띄워 시스템 다운로드 확인창을 유도한다.
+/// 완료(exit 0)면 Ok, 실패면 출력 꼬리(stdout+stderr 마지막 ~300자)를 Err로 반환한다.
+/// 실리콘맥 번들에만 바이너리가 존재하므로 그 외 환경에서는 즉시 Err.
+#[tauri::command]
+pub fn install_fast_translation() -> Result<String, String> {
+    let bin = locate_bundled_apple_translate()
+        .ok_or_else(|| "apple-live-translate 바이너리를 찾을 수 없습니다 (실리콘맥 전용)".to_string())?;
+    let output = Command::new(&bin)
+        .arg("prepare-translation")
+        .output()
+        .map_err(|error| format!("고속 번역 모델 설치 실행 실패: {error}"))?;
+    if output.status.success() {
+        Ok("고속 번역 모델 설치 완료".to_string())
+    } else {
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let n = combined.chars().count();
+        let tail: String = combined.chars().skip(n.saturating_sub(300)).collect();
+        Err(format!("고속 번역 모델 설치 실패: {tail}"))
+    }
+}
+
 #[tauri::command]
 pub fn detect_lan_ip() -> Result<String, String> {
     local_ip_address::local_ip()

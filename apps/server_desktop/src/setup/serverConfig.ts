@@ -74,6 +74,12 @@ export async function bootstrapAdmin(email: string, password: string): Promise<B
   return invoke<BootstrapAdminResult>("bootstrap_admin", { request: { email, password } });
 }
 
+// 저지연 EN→KO 번역 모델 1회 설치(성능 후속). apple_live_translate provider 전용.
+// 실리콘맥 번들에서만 성공하고, 그 외에서는 Rust가 Err(문자열)를 던진다.
+export async function installFastTranslation(): Promise<string> {
+  return invoke<string>("install_fast_translation");
+}
+
 // Minimum password strength for the first-run operator account. A small,
 // explicit floor — not a policy engine — so the console never comes up with a
 // trivially-guessable operator credential exposed over the Slice 5 tunnel.

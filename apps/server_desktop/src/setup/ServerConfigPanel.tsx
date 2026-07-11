@@ -7,6 +7,7 @@ import {
   type ServerConfigMeta,
   bootstrapAdmin,
   clearServerConfig,
+  installFastTranslation,
   loadServerConfigMeta,
   passwordStrengthError,
   saveServerConfig,
@@ -45,6 +46,10 @@ export default function ServerConfigPanel() {
   // First-run operator account form.
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
+
+  // 고속(저지연) 번역 모델 설치 — apple_live_translate provider 전용 인라인 상태.
+  const [installingFast, setInstallingFast] = useState(false);
+  const [fastInstallMsg, setFastInstallMsg] = useState<string | null>(null);
 
   const syncMeta = useCallback((next: ServerConfigMeta) => {
     setMeta(next);
@@ -144,6 +149,22 @@ export default function ServerConfigPanel() {
     }
   }, [adminEmail, adminPassword]);
 
+  const onInstallFastTranslation = useCallback(async () => {
+    setFastInstallMsg(null);
+    setInstallingFast(true);
+    try {
+      const detail = await installFastTranslation();
+      setFastInstallMsg(detail);
+      append({ level: "info", source: "config", message: `fast translation install: ${detail}` });
+    } catch (err) {
+      const text = errorToText(err);
+      setFastInstallMsg(text);
+      append({ level: "error", source: "config", message: `fast translation install: ${text}` });
+    } finally {
+      setInstallingFast(false);
+    }
+  }, []);
+
   return (
     <section style={styles.panel}>
       <h2 style={styles.heading}>server configuration</h2>
@@ -178,6 +199,15 @@ export default function ServerConfigPanel() {
           ))}
         </select>
       </Field>
+
+      {provider === "apple_live_translate" ? (
+        <div style={{ marginTop: -4, marginBottom: 10 }}>
+          <button style={styles.button} onClick={onInstallFastTranslation} disabled={installingFast || busy}>
+            {installingFast ? "설치 중…" : "고속 번역 모델 설치"}
+          </button>
+          {fastInstallMsg ? <p style={{ ...styles.sub, margin: "6px 0 0" }}>{fastInstallMsg}</p> : null}
+        </div>
+      ) : null}
 
       <Field label="요약 백엔드 (summary backend)">
         <select value={summaryBackend} onChange={(e) => setSummaryBackend(e.target.value)} style={styles.input}>
