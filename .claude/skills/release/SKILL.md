@@ -35,6 +35,32 @@ description: Use when cutting a yeson-meet release (vX.Y.Z) — bumping the app 
      매니페스트는 CI 워크플로들이 생성·병합하고, Intel 스크립트가 마지막에 `darwin-x86_64`를 병합한다.
    - 릴리스 페이지 본문이 **새 버전의** "무엇이 바뀌었나"인지 확인 — 옛 노트면 4단계에서 어느 워크플로 body를 빼먹은 것.
 
+## mac 콘솔(server_desktop) 릴리스 — apple-live-translate 스테이징 (필수 선행)
+
+> **tauri build 전에** 반드시 `apps/native_helper_mac/scripts/build_apple_translate.sh`로
+> apple-live-translate를 release 빌드해 번들 위치(`apps/server_desktop/src-tauri/binaries/apple-translate-aarch64-apple-darwin/`)에
+> 스테이징해야 한다. `tauri.macos.conf.json`의 `bundle.resources` 글롭
+> `binaries/apple-translate-*/**/*`가 이 파일을 번들에 포함시킨다. 스테이징을
+> 빼먹으면 프로바이더가 바이너리를 못 찾아 **count-only로 조용히 강등**된다
+> (라이브 자막 번역이 사라짐).
+
+**CI 러너 제약 (미확인)**: apple-live-translate는 macOS 26 SDK(Xcode 26)로만
+빌드된다. GitHub Actions macOS 러너의 Xcode가 macOS 26 SDK를 지원하는지 아직
+미확인이다. 미지원이면 CI에서 이 스텝이 실패하므로 다음 중 하나를 **의식적으로**
+결정해야 한다:
+- (a) 이 실리콘맥에서 로컬 빌드한 아티팩트를 CI 잡에 업로드해 스테이징, 또는
+- (b) 바이너리 없이 릴리스 — 프로바이더는 count-only로 강등되며 라이브 번역
+  기능이 빠진 릴리스임을 릴리스 노트에 명시.
+
+**글롭 미스매치 동작 (실험 검증 — fail-loud)**: 2026-07-11 실측 —
+`apple-translate-aarch64-apple-darwin/`를 치우고 `pnpm tauri build --debug
+--bundles app`을 돌리면 Tauri v2가 빌드를 **명시적으로 실패**시킨다:
+`glob pattern binaries/apple-translate-*/**/* path not found or didn't match
+any files` → `failed to build app`. 즉 스테이징을 빼먹은 릴리스는 tauri build
+단계에서 눈에 띄게 실패하므로(silent-skip 아님) 바이너리 없이 조용히 배포될
+위험은 없다. 단, CI Xcode가 macOS 26 SDK를 지원하지 않아 빌드 자체가 아예 안
+되는 경우는 위 (a)/(b) 결정으로 별도 처리해야 한다.
+
 ## 함정 (전부 실사고)
 
 | 함정 | 현실 |
