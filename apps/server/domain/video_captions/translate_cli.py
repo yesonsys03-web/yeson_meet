@@ -16,6 +16,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from apps.server.ai.apple_native import apple_mt_available
+
 from .translate import (
     GeminiFlashTranslator,
     TranslationError,
@@ -102,6 +104,8 @@ def list_translate_engines() -> list[dict]:
          "available": resolve_cli("agy") is not None},
         {"value": "opencode", "label": "OpenCode (딥시크 등)",
          "available": resolve_cli("opencode") is not None},
+        {"value": "apple", "label": "Apple 온디바이스 (실리콘맥, 초고속)",
+         "available": apple_mt_available()},
     ]
 
 
@@ -253,6 +257,10 @@ def create_translator(
 
     if provider in ("", "gemini"):
         return GeminiFlashTranslator()
+
+    if provider == "apple":
+        from .translate_apple import AppleTranslator
+        return AppleTranslator()
 
     if provider in _BACKENDS:
         backend = _BACKENDS[provider]

@@ -276,7 +276,7 @@ def test_list_translate_engines_reports_availability(monkeypatch):
     engines = tc.list_translate_engines()
     by_value = {e["value"]: e for e in engines}
 
-    assert set(by_value) == {"gemini", "claude", "codex", "agy", "opencode"}
+    assert set(by_value) == {"gemini", "claude", "codex", "agy", "opencode", "apple"}
     assert by_value["gemini"]["available"] is True
     assert by_value["claude"]["available"] is True
     assert by_value["opencode"]["available"] is True
