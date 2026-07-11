@@ -24,5 +24,20 @@ let package = Package(
             dependencies: ["YesonMacAudioHelperKit"],
             path: "Tests/YesonMacAudioHelperTests"
         ),
+        .target(
+            name: "AppleTranslateKit",
+            path: "Sources/AppleTranslateKit"
+        ),
+        .executableTarget(
+            // 제품 바이너리명은 타깃명을 따르므로 실행 파일명을 타깃명으로 고정
+            name: "apple-live-translate",
+            dependencies: ["AppleTranslateKit"],
+            path: "Sources/AppleTranslate"
+        ),
+        .testTarget(
+            name: "AppleTranslateKitTests",
+            dependencies: ["AppleTranslateKit"],
+            path: "Tests/AppleTranslateKitTests"
+        ),
     ]
 )
