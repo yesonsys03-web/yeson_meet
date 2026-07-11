@@ -62,7 +62,7 @@ class VideoJobCreateIn(BaseModel):
     whisper_model: str
     title: str | None = None
     translate_provider: str | None = Field(
-        default=None, pattern="^(gemini|claude|codex|agy|opencode)$")
+        default=None, pattern="^(gemini|claude|codex|agy|opencode|apple)$")
     translate_cli_model: str | None = None
 
 
@@ -163,7 +163,7 @@ async def create_upload_job(
     whisper_model: Annotated[str, Form()],
     title: Annotated[str | None, Form()] = None,
     translate_provider: Annotated[
-        str | None, Form(pattern="^(gemini|claude|codex|agy|opencode)$")] = None,
+        str | None, Form(pattern="^(gemini|claude|codex|agy|opencode|apple)$")] = None,
     translate_cli_model: Annotated[str | None, Form()] = None,
 ) -> dict:
     _require_model(whisper_model)
