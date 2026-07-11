@@ -38,13 +38,39 @@ public func runLive() async -> Int32 {
     }
     let analyzer = SpeechAnalyzer(modules: [transcriber])
 
-    // 전략(low/high) 선택 + 미설치 폴백은 SessionFactory가 담당. 에셋이 하나도 없으면
-    // AppleMTMissingAsset를 던지므로 ready 이전에 잡아 missing_mt_asset로 표면화한다
-    // (Python 접두사 분류기에 영구 에러로 도달 — 5회 연속 실패 경로와 동일 계약).
-    let session: TranslationSession
+    // 라이브 경로 세션: 파셜/파이널 전략을 각각 env로 고른다(기본 둘 다 high — 사용자
+    // 결정: 라이브 자막 품질 평가 우선, 화면 지속 문장 품질 > 파셜 스냅성). 두 전략이
+    // 같으면 세션 하나만 만든다(동일 세션 2개 스폰 방지). 미설치 폴백/26.4 미만 단일
+    // 세션은 SessionFactory가 담당. 에셋이 하나도 없으면 AppleMTMissingAsset를 던지므로
+    // ready 이전에 잡아 missing_mt_asset로 표면화한다(Python 접두사 분류기 → 영구 에러).
+    let env = ProcessInfo.processInfo.environment
+    let partialStrategy = AppleMTStrategy.from(
+        env["YESON_APPLE_LIVE_PARTIAL_STRATEGY"], defaultTo: .high)
+    let finalStrategy = AppleMTStrategy.from(
+        env["YESON_APPLE_LIVE_FINAL_STRATEGY"], defaultTo: .high)
+    let source = Locale.Language(identifier: "en")
+    let target = Locale.Language(identifier: "ko")
+    let partialSession: TranslationSession
+    let finalSession: TranslationSession
     do {
-        session = try await makeTranslationSession(
-            source: .init(identifier: "en"), target: .init(identifier: "ko"))
+        if partialStrategy == finalStrategy {
+            let single = try await makeTranslationSession(
+                source: source, target: target, strategy: finalStrategy)
+            partialSession = single
+            finalSession = single
+        } else if #available(macOS 26.4, *) {
+            // 전략이 다르고 전략 API가 있는 26.4+에서만 두 세션을 만든다.
+            finalSession = try await makeTranslationSession(
+                source: source, target: target, strategy: finalStrategy)
+            partialSession = try await makeTranslationSession(
+                source: source, target: target, strategy: partialStrategy)
+        } else {
+            // 26.4 미만: 전략 구분 불가 → 오늘과 동일하게 단일 세션(파이널 전략 기준).
+            let single = try await makeTranslationSession(
+                source: source, target: target, strategy: finalStrategy)
+            partialSession = single
+            finalSession = single
+        }
     } catch {
         emit(.status(state: "error", reason: "\(error)"))
         return 1
@@ -103,7 +129,7 @@ public func runLive() async -> Int32 {
     let maxTranslateFailures = 5
     var translateFailures = 0
     var mtAssetError: String?
-    func translateTracked(_ text: String) async -> String {
+    func translateTracked(_ text: String, session: TranslationSession) async -> String {
         do {
             let ko = try await session.translations(
                 from: [.init(sourceText: text)]).first?.targetText ?? text
@@ -124,7 +150,33 @@ public func runLive() async -> Int32 {
     // 결과 순회 Task를 analyzer.start(inputSequence:) 호출 **전**에 시작해 둔다 — 스파이크
     // 노트(검증 3) 경고 및 FileTranscribe의 collector 패턴과 동일. 번역 호출(translateTracked)은
     // @MainActor 격리를 유지해야 하므로 명시적으로 @MainActor 클로저로 감싼다.
+    // 문장 단위 분절기: 볼래틸 스냅샷을 문장 경계/백스톱/idle로 잘라 강제 파이널을
+    // 만든다(SentenceSegmenter — Gemini TranscriptAssembler 의미론 이식). 파셜은 분절기가
+    // 남긴 미소비 suffix만 보여줘 이미 확정한 문장이 파셜 라인에 재노출되지 않게 한다.
     let collector = Task { @MainActor in
+        var segmenter = SentenceSegmenter()
+
+        // 강제 컷/진짜 파이널 공통 방출: finalSession으로 번역 후 .final emit + seq 증가.
+        // 반환 false = 5회 연속 번역 실패(mtAssetError) → 순회 중단 신호.
+        // t0/t1: 기존 finite-guard 유지하되 t0는 항상 utteranceStart(단조 보장), t1은
+        // 가용한 audioTimeRange 끝(강제 컷은 근사 — 볼래틸 결과의 현재 오디오 위치)로.
+        func emitFinal(text: String, result: SpeechTranscriber.Result, now: Double) async -> Bool {
+            let ko = await translateTracked(text, session: finalSession)
+            if mtAssetError != nil { return false }
+            let t0 = utteranceStart
+            var t1 = lastGoodT1
+            if let range = finalizedAudioTimeRange(of: result) {
+                let candidateT1 = range.end.seconds
+                if candidateT1.isFinite, candidateT1 > t0 { t1 = candidateT1 }
+            }
+            if !(t1 > t0) { t1 = t0 }  // 최후 방어: 역행/동일값이면 0폭
+            emit(.final(seq: policy.seq, en: text, ko: ko, t0: t0, t1: t1))
+            policy.onFinal(now: now)
+            utteranceStart = t1
+            lastGoodT1 = t1
+            return true
+        }
+
         do {
             for try await result in transcriber.results {
                 let en = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -132,29 +184,31 @@ public func runLive() async -> Int32 {
                 let now = ProcessInfo.processInfo.systemUptime
 
                 if result.isFinal {
-                    let ko = await translateTracked(en)
-                    if mtAssetError != nil { break }  // 5회 연속 번역 실패 → 세션 종료
-                    // audioTimeRange 사용 가능하면 그 값, 아니면 마지막으로 알려진 정상값으로 폴백.
-                    // NaN/Infinity/역행 구간은 절대 emit에 도달하지 않게 한다 (jsonLine는 try! 사용).
-                    var t0 = utteranceStart
-                    var t1 = lastGoodT1
-                    if let range = finalizedAudioTimeRange(of: result) {
-                        let candidateT0 = range.start.seconds
-                        let candidateT1 = range.end.seconds
-                        if candidateT0.isFinite, candidateT1.isFinite, candidateT1 > candidateT0 {
-                            t0 = candidateT0
-                            t1 = candidateT1
+                    // 진짜 isFinal: 분절기 잔여 suffix를 파이널로 flush(발화 종료 → 내부 reset).
+                    var stop = false
+                    for sgmt in segmenter.onFinal(en: en, now: now) {
+                        if !(await emitFinal(text: sgmt.text, result: result, now: now)) {
+                            stop = true; break
                         }
                     }
-                    if !(t1 > t0) { t1 = t0 }  // 최후 방어: 역행/동일값이면 구간을 0폭으로 강제
-                    emit(.final(seq: policy.seq, en: en, ko: ko, t0: t0, t1: t1))
-                    policy.onFinal(now: now)
-                    utteranceStart = t1
-                    lastGoodT1 = t1
-                } else if let snapshot = policy.onVolatile(en: en, now: now) {
-                    let ko = await translateTracked(snapshot)
-                    if mtAssetError != nil { break }  // 5회 연속 번역 실패 → 세션 종료
-                    emit(.partial(seq: policy.seq, en: snapshot, ko: ko))
+                    if stop { break }
+                } else {
+                    // 볼래틸 스냅샷: 문장 단위 강제 컷들을 먼저 방출.
+                    var stop = false
+                    for sgmt in segmenter.onSnapshot(en: en, now: now) {
+                        if !(await emitFinal(text: sgmt.text, result: result, now: now)) {
+                            stop = true; break
+                        }
+                    }
+                    if stop { break }
+                    // 파셜: 미소비 suffix만 스로틀 후 partialSession으로 번역·방출.
+                    let suffix = segmenter.currentSuffix
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !suffix.isEmpty, let snapshot = policy.onVolatile(en: suffix, now: now) {
+                        let ko = await translateTracked(snapshot, session: partialSession)
+                        if mtAssetError != nil { break }  // 5회 연속 번역 실패 → 세션 종료
+                        emit(.partial(seq: policy.seq, en: snapshot, ko: ko))
+                    }
                 }
             }
         } catch {

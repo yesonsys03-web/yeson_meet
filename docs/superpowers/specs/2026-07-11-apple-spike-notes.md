@@ -468,6 +468,58 @@ init(highFidelity), 15..<26.0은 기존 브리지.
 - `YESON_APPLE_MT_STRATEGY` = `low`(기본) | `high` — 번역 전략 스위치.
 - `YESON_BURN_PRESET` = `veryfast`(기본) | `superfast` | `ultrafast` — libx264 굽기 프리셋.
 
+## 라이브 문장 분절 + 듀얼-세션 전략 (2026-07-11)
+
+SpeechTranscriber 자체 발화 확정(`isFinal`)에만 의존하면 연속 회의 발화에서 파이널이
+몰렸다가(3s에 6개) 한 볼래틸 발화가 자라는 동안 15~25s씩 비는 문제가 있다. 검증된
+Gemini 경로(`gemini_live_translate.py`의 `TranscriptAssembler`) 의미론을 볼래틸 EN 스냅샷
+스트림에 이식해 **문장 단위 강제 파이널**을 만든다.
+
+### SentenceSegmenter (`Sources/AppleTranslateKit/SentenceSegmenter.swift`)
+
+순수 struct(시계는 `now` 주입). Gemini는 프래그먼트를 버퍼에 누적하지만 SpeechTranscriber는
+현재 발화의 **전체 텍스트 스냅샷**을 갱신하므로, 이미 확정 방출한 접두사(`consumedPrefix`)를
+추적하고 그 뒤 미소비 suffix에만 판단을 적용한다. 컷 규칙(우선순위 순):
+
+1. **문장 경계**(`. ` `? ` `! ` `…`) — 소수점 가드(숫자.숫자, 예 "1.5"는 경계 아님, Gemini
+   규칙 미러). 완결 판정: 구두점 뒤 공백이 오거나 suffix 끝+성장정지 grace(0.8s). `min_final`
+   (12자) 미만이면 컷하지 않고 다음 경계까지 병합(마지막 완결 경계에서 컷 → 짧은 앞 문장 병합).
+2. **길이 백스톱**(>120자) → 마지막 단어 경계에서 컷.
+3. **나이 백스톱**(미소비 텍스트 >12s) → 통째로 컷.
+4. **idle flush**(성장 정지 >2s) → 통째로 컷(min_final 무시).
+
+`isForced` 플래그로 강제 컷 vs 진짜 `isFinal` flush 구분. 실제 transcriber `isFinal`은
+잔여 suffix를 비강제 파이널로 flush 후 내부 reset(새 발화). 모든 임계값은 생성자 파라미터
+(테스트 용이성). 단위 테스트 11종(`Tests/…/SentenceSegmenterTests.swift`) 전부 GREEN.
+
+### 듀얼-세션 전략 (runLive)
+
+파셜/파이널 번역을 각각 별도 전략 세션으로 처리 가능. **사용자 결정(품질 평가 우선):
+라이브 기본은 파셜·파이널 모두 highFidelity**(화면 지속 문장 품질 > 파셜 스냅성). 두 전략이
+같으면 세션 하나만 만든다(동일 세션 2개 스폰 방지). 26.4 미만은 오늘과 동일 단일 세션.
+
+- `YESON_APPLE_LIVE_FINAL_STRATEGY` = `high`(기본) | `low`
+- `YESON_APPLE_LIVE_PARTIAL_STRATEGY` = `high`(기본) | `low` — `low`로 두면 빠른 러프 파셜 복원
+- 배치(`translate-batch`)는 그대로 `YESON_APPLE_MT_STRATEGY` 기본 `low`.
+
+> ⚠️ **트레이드오프:** highFidelity 파셜은 스로틀 틱마다 ~0.4~0.9s를 더한다(highFidelity ≈
+> 113 chars/s vs lowLatency ≈ 1,925 chars/s). 실사용에서 파셜이 느리면 파셜 노브를 `low`로
+> 뒤집는다.
+
+### 파셜은 미소비 suffix만 노출
+
+파셜 라인은 분절기가 남긴 **현재 문장 suffix만** 번역·방출한다(이미 확정한 문장이 파셜에
+재노출되지 않게). 강제 컷 시 `LiveEmitPolicy.onFinal`이 스로틀을 리셋해 줄어든 파셜이 즉시
+표시된다. Python(`apple_live_translate.py`)은 변경 불필요: seq는 세그먼트별 단조(정책 제공),
+partial/final 이벤트 shape 불변.
+
+### 실기 스모크 (say 합성음)
+
+- 다문장 클립: 문장 경계 컷으로 파이널 다수(문장 단위), seq 단조(1,2,3), 파셜은 suffix만, exit 0.
+- 30.8s 구두점-없는 런온(실시간 페이스): 백스톱이 발화 도중 컷 → 파이널 3개(giant final 아님),
+  seq 단조, t0/t1 단조. (say 합성음 특성상 STT 텍스트 품질은 낮으나 분절 메커니즘은 정상 — 스파이크
+  §미해결 1과 동일, 실회의 오디오 재확인 권장.)
+
 ### 굽기(자막 번인) 실측 — GPU 인코더 기각
 
 60s·1080p60 기준 프리셋별: veryfast **10.8s/8.6MB**, superfast **6.8s/18.6MB**,

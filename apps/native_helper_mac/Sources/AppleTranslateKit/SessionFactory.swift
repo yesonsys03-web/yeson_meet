@@ -13,9 +13,17 @@ public enum AppleMTStrategy: Equatable {
     public static func fromEnv(
         _ env: [String: String] = ProcessInfo.processInfo.environment
     ) -> AppleMTStrategy {
-        switch env["YESON_APPLE_MT_STRATEGY"]?.lowercased() {
+        // 배치(translate-batch) 기본은 low — YESON_APPLE_MT_STRATEGY.
+        from(env["YESON_APPLE_MT_STRATEGY"], defaultTo: .low)
+    }
+
+    /// 임의 env 값(문자열) → 전략. "high"/"low" 명시, 그 외/미설정은 `defaultTo`.
+    /// 라이브 경로는 기본 high(YESON_APPLE_LIVE_*_STRATEGY)로, 배치는 기본 low로 쓴다.
+    public static func from(_ raw: String?, defaultTo fallback: AppleMTStrategy) -> AppleMTStrategy {
+        switch raw?.lowercased() {
         case "high": return .high
-        default: return .low   // "low" 및 미설정/기타 → 기본 low
+        case "low": return .low
+        default: return fallback
         }
     }
 }
