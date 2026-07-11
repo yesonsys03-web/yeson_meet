@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,26 @@ FAILS = """\
     sys.exit(1)
 """
 
+STATUS_ERROR_HANGS = """\
+    import json, sys, time
+    print(json.dumps({"type": "status", "state": "error", "reason": "missing_stt_asset"}))
+    sys.stdout.flush()
+    time.sleep(10)
+"""
+
+MALFORMED_TOKEN = """\
+    import json
+    events = [
+        {"type": "status", "state": "ready"},
+        {"type": "token", "t0": 0.0, "t1": 0.4, "text": "Hello"},
+        {"type": "token", "t0": 1.0, "text": "bad"},
+        {"type": "token", "t0": 2.0, "t1": 2.4, "text": "world."},
+        {"type": "done"},
+    ]
+    for e in events:
+        print(json.dumps(e))
+"""
+
 
 class TestTranscribeAudioApple:
     def test_tokens_become_cues_via_words_to_cues(self, tmp_path):
@@ -67,6 +88,20 @@ class TestTranscribeAudioApple:
         with pytest.raises(RuntimeError, match="missing_stt_asset"):
             transcribe_audio_apple(Path("unused.wav"), None,
                                    argv=_fake_bin(tmp_path, FAILS))
+
+    def test_status_error_with_open_stdout_raises_promptly(self, tmp_path):
+        start = time.monotonic()
+        with pytest.raises(RuntimeError, match="missing_stt_asset"):
+            transcribe_audio_apple(Path("unused.wav"), None,
+                                   argv=_fake_bin(tmp_path, STATUS_ERROR_HANGS))
+        elapsed = time.monotonic() - start
+        assert elapsed < 5.0
+
+    def test_malformed_token_skipped(self, tmp_path):
+        cues = transcribe_audio_apple(Path("unused.wav"), None,
+                                      argv=_fake_bin(tmp_path, MALFORMED_TOKEN))
+        assert len(cues) == 1
+        assert cues[0].text == "Hello world."
 
 
 class TestWiring:
