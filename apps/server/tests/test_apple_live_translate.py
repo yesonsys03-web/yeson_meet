@@ -1,11 +1,15 @@
 # === ANCHOR: TEST_APPLE_LIVE_TRANSLATE_START ===
 from __future__ import annotations
 
+import asyncio
 import sys
 import textwrap
 import time
 
-from apps.server.ai.apple_live_translate import AppleLiveTranslateProvider
+from apps.server.ai.apple_live_translate import (
+    AppleLiveTranslateProvider,
+    AppleProviderUnavailable,
+)
 from apps.server.ai.live_session import is_permanent_provider_error
 
 
@@ -131,6 +135,39 @@ class TestAppleLiveTranslateProvider:
         assert len(out) == 1
         assert out[0].seq == 1
         assert out[0].is_final is False
+
+    async def test_eof_during_inflight_readline_is_guarded(self, tmp_path):
+        # TOCTOU 레이스 재현: pump.done()을 확인한 시점엔 아직 안 끝났지만,
+        # 그 직후에 건 readline()이 응답 없이 떠 있는 동안 pump가 끝나버리는
+        # 경우. 오디오 청크를 하나 보낸 뒤 0.3초를 쉬어(pump가 끝나기 전에
+        # readline이 이미 in-flight 상태가 되도록) 스트림을 종료한다. 사전
+        # 점검만으로 가드하는 옛 구현이면 이 readline은 무제한으로 걸려
+        # 있었을 것 — race를 없앤 구현이어야 eof_timeout 안에 정리된다.
+        async def _one_chunk_then_wait():
+            yield b"\x00" * 640
+            await asyncio.sleep(0.3)
+
+        provider = AppleLiveTranslateProvider(
+            argv=_fake_bin(tmp_path, HANGS_AFTER_EOF), eof_timeout=0.5)
+        start = time.monotonic()
+        out = [u async for u in provider.stream(_one_chunk_then_wait(), "en")]
+        elapsed = time.monotonic() - start
+        assert elapsed < 3.0
+        assert len(out) == 1
+        assert out[0].seq == 1
+        assert out[0].is_final is False
+
+    async def test_binary_not_found_is_permanent_unavailable(self, monkeypatch):
+        import apps.server.ai.apple_live_translate as apple_live_translate_mod
+
+        monkeypatch.setattr(
+            apple_live_translate_mod, "resolve_apple_bin", lambda: None)
+        provider = AppleLiveTranslateProvider(argv=None)
+        try:
+            await _collect(provider)
+            assert False, "expected AppleProviderUnavailable"
+        except AppleProviderUnavailable as exc:
+            assert is_permanent_provider_error(exc)
 
 
 class TestCreateProvider:

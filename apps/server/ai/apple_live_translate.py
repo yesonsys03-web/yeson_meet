@@ -27,6 +27,7 @@ import contextlib
 import json
 import logging
 import os
+import tempfile
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
@@ -70,6 +71,9 @@ class AppleLiveTranslateProvider:
     def __init__(
         self,
         argv: list[str] | None = None,
+        # None → env YESON_APPLE_LIVE_EOF_TIMEOUT(기본 10.0)을 인스턴스 생성
+        # 시점에 매번 해석한다. 리터럴 기본값으로 되돌리지 말 것 — 테스트/운영
+        # 환경별 오버라이드가 이 지연 평가에 의존한다.
         eof_timeout: float | None = None,
     ):
         self._argv = argv  # 테스트 심; None이면 스폰 시점에 해석
@@ -94,84 +98,102 @@ class AppleLiveTranslateProvider:
         self._segment += 1
         segment = self._segment
         argv = self._resolved_argv()
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE)
-        assert proc.stdin is not None and proc.stdout is not None
+        # 회의 길이만큼 이어지는 스트림이라 stderr=PIPE로 두면(파이프 버퍼가
+        # 다 차도록 아무도 안 읽는) 데드락 위험이 있다 — transcribe_apple.py의
+        # 동일 수정과 같은 방식으로 실제 파일에 흘려보내고 크래시 시에만 tail을
+        # 읽는다.
+        with tempfile.TemporaryFile() as stderr_file:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=stderr_file)
+            assert proc.stdin is not None and proc.stdout is not None
 
-        async def _pump_audio() -> None:
-            try:
-                async for chunk in audio:
-                    proc.stdin.write(chunk)
-                    await proc.stdin.drain()
-            except (BrokenPipeError, ConnectionResetError):
-                pass  # 프로세스 사망은 stdout EOF 쪽에서 처리
-            finally:
-                with contextlib.suppress(Exception):
-                    proc.stdin.close()
-
-        pump = asyncio.create_task(_pump_audio())
-        timed_out = False
-        try:
-            while True:
-                if pump.done():
-                    # 오디오 pump가 끝난(=stdin EOF) 뒤에도 바이너리가 결과를
-                    # 계속 보내지 않으면 finalize가 멈춘 것으로 보고 정리한다.
-                    try:
-                        line = await asyncio.wait_for(
-                            proc.stdout.readline(), timeout=self._eof_timeout)
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "apple live: no output within eof_timeout=%.1fs "
-                            "after stdin EOF; ending stream",
-                            self._eof_timeout,
-                        )
-                        timed_out = True
-                        break
-                else:
-                    line = await proc.stdout.readline()
-                if not line:
-                    break  # EOF — 프로세스 종료
+            async def _pump_audio() -> None:
                 try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    logger.warning("apple live: non-JSON line: %r", line[:120])
-                    continue
-                etype = event.get("type")
-                if etype == "status":
-                    if event.get("state") == "error":
-                        reason = str(event.get("reason", "unknown"))
-                        if reason.startswith(_PERMANENT_REASON_PREFIXES):
-                            raise AppleProviderUnavailable(reason)
-                        raise RuntimeError(f"apple live status error: {reason}")
-                    continue
-                if etype not in ("partial", "final"):
-                    continue
-                now = datetime.now(timezone.utc)
-                yield TranslatedUtterance(
-                    seq=int(event["seq"]),
-                    text_en=str(event.get("en", "")),
-                    text_ko=apply_ko_corrections(str(event.get("ko", "")).strip()),
-                    started_at=now,
-                    ended_at=now,
-                    is_final=(etype == "final"),
-                    provider_segment=segment,
-                )
-            if not timed_out:
-                rc = await proc.wait()
-                if rc != 0:
-                    stderr_tail = (await proc.stderr.read()).decode(
-                        "utf-8", errors="replace")[-300:]
-                    raise RuntimeError(f"apple live exited rc={rc}: {stderr_tail}")
-        finally:
-            pump.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await pump
-            if proc.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-                with contextlib.suppress(Exception):
-                    await proc.wait()
+                    async for chunk in audio:
+                        proc.stdin.write(chunk)
+                        await proc.stdin.drain()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass  # 프로세스 사망은 stdout EOF 쪽에서 처리
+                finally:
+                    with contextlib.suppress(Exception):
+                        proc.stdin.close()
+
+            pump = asyncio.create_task(_pump_audio())
+            timed_out = False
+            read_t: asyncio.Future | None = None
+            try:
+                while True:
+                    # pump.done()을 먼저 확인하고 나서 readline()을 무제한으로
+                    # 거는 것(TOCTOU)이 아니라, readline()을 항상 먼저 걸어두고
+                    # pump와 경합시킨다 — 그 사이 pump가 끝나버려도 이미 진행
+                    # 중인 readline을 eof_timeout으로 다시 감쌀 수 있다.
+                    read_t = asyncio.ensure_future(proc.stdout.readline())
+                    if not pump.done():
+                        await asyncio.wait(
+                            {read_t, pump}, return_when=asyncio.FIRST_COMPLETED)
+                    if read_t.done():
+                        line = read_t.result()
+                    else:
+                        # 펌프 종료됨(오디오 끝) — 이후 줄은 eof_timeout 안에 와야 한다
+                        try:
+                            line = await asyncio.wait_for(
+                                read_t, timeout=self._eof_timeout)
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                "apple live: no output within eof_timeout=%.1fs "
+                                "after stdin EOF; ending stream",
+                                self._eof_timeout,
+                            )
+                            timed_out = True
+                            break
+                    if not line:
+                        break  # EOF — 프로세스 종료
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        logger.warning("apple live: non-JSON line: %r", line[:120])
+                        continue
+                    etype = event.get("type")
+                    if etype == "status":
+                        if event.get("state") == "error":
+                            reason = str(event.get("reason", "unknown"))
+                            if reason.startswith(_PERMANENT_REASON_PREFIXES):
+                                raise AppleProviderUnavailable(reason)
+                            raise RuntimeError(f"apple live status error: {reason}")
+                        continue
+                    if etype not in ("partial", "final"):
+                        continue
+                    now = datetime.now(timezone.utc)
+                    yield TranslatedUtterance(
+                        seq=int(event["seq"]),
+                        text_en=str(event.get("en", "")),
+                        text_ko=apply_ko_corrections(str(event.get("ko", "")).strip()),
+                        started_at=now,
+                        ended_at=now,
+                        is_final=(etype == "final"),
+                        provider_segment=segment,
+                    )
+                if not timed_out:
+                    rc = await proc.wait()
+                    if rc != 0:
+                        stderr_file.seek(0)
+                        stderr_tail = stderr_file.read().decode(
+                            "utf-8", errors="replace")[-300:]
+                        raise RuntimeError(f"apple live exited rc={rc}: {stderr_tail}")
+            finally:
+                if read_t is not None and not read_t.done():
+                    read_t.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await read_t
+                pump.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await pump
+                if proc.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        proc.kill()
+                    with contextlib.suppress(Exception):
+                        await proc.wait()
 # === ANCHOR: APPLE_LIVE_TRANSLATE_END ===
