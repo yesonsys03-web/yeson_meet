@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.server.ai.apple_native import APPLE_TRANSCRIBE_MODEL, apple_stt_available
 from apps.server.db.models import AppUser, VideoJob, VideoSegment
 from apps.server.db.session import get_session
 from apps.server.domain.video_captions.ingest import save_upload
@@ -61,7 +62,7 @@ class VideoJobCreateIn(BaseModel):
     whisper_model: str
     title: str | None = None
     translate_provider: str | None = Field(
-        default=None, pattern="^(gemini|claude|codex|agy|opencode)$")
+        default=None, pattern="^(gemini|claude|codex|agy|opencode|apple|apple_hifi)$")
     translate_cli_model: str | None = None
 
 
@@ -98,6 +99,12 @@ def _job_out(job: VideoJob) -> dict:
 
 
 def _require_model(name: str) -> None:
+    if name == APPLE_TRANSCRIBE_MODEL:
+        if not apple_stt_available():
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Apple 온디바이스 전사는 실리콘맥(macOS 26+) 서버에서만 사용할 수 있습니다.")
+        return
     if name not in CATALOG:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown whisper model")
     if not is_downloaded(name):
@@ -156,7 +163,7 @@ async def create_upload_job(
     whisper_model: Annotated[str, Form()],
     title: Annotated[str | None, Form()] = None,
     translate_provider: Annotated[
-        str | None, Form(pattern="^(gemini|claude|codex|agy|opencode)$")] = None,
+        str | None, Form(pattern="^(gemini|claude|codex|agy|opencode|apple|apple_hifi)$")] = None,
     translate_cli_model: Annotated[str | None, Form()] = None,
 ) -> dict:
     _require_model(whisper_model)

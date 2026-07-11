@@ -327,6 +327,14 @@ pub fn start_server_inner(
     if let Some(ffmpeg) = locate_bundled_ffmpeg() {
         command.env("YESON_FFMPEG_BIN", ffmpeg);
     }
+    // Task 10: Apple 온디바이스 번역 바이너리 (실리콘맥 번들에만 존재; dev runs
+    // or non-mac builds have no `apple-translate-*` resource dir, so this is
+    // None there and the env is simply not injected — the server's
+    // apple_native.resolve_apple_bin() then falls back to PATH, and
+    // create_ai_provider() gates to count-only mode if that also misses).
+    if let Some(apple_translate) = locate_bundled_apple_translate() {
+        command.env("YESON_APPLE_TRANSLATE_BIN", apple_translate);
+    }
     augment_path_for_summary_cli(&mut command);
     set_process_group(&mut command);
     set_no_window(&mut command);
@@ -601,6 +609,51 @@ fn locate_bundled_ffmpeg() -> Option<PathBuf> {
     let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
     let dir_name = format!("ffmpeg-{triple}");
     let bin_name = format!("ffmpeg{suffix}");
+
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            roots.push(dir.to_path_buf());
+            roots.push(dir.join("binaries"));
+            if let Some(contents) = dir.parent() {
+                roots.push(contents.join("Resources"));
+                roots.push(contents.join("Resources").join("binaries"));
+            }
+        }
+    }
+    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
+
+    roots
+        .into_iter()
+        .map(|root| root.join(&dir_name).join(&bin_name))
+        .find(|path| path.is_file())
+}
+
+/// Locate the staged `apple-translate-<triple>/apple-live-translate[.exe]`
+/// binary built by `apps/native_helper_mac/scripts/build_apple_translate.sh`
+/// (Task 10). Mirrors `locate_bundled_ffmpeg` above: same bundled-resource +
+/// dev `binaries/` candidate roots. In practice this only ever resolves on
+/// `aarch64-apple-darwin` — the Apple Translation framework the binary wraps
+/// is Apple Silicon only, so no other triple's resource dir is ever staged —
+/// but the full triple match mirrors the existing helpers rather than
+/// special-casing one platform. Returns `None` when missing (dev runs without
+/// a local build, or any non-mac bundle), in which case the caller does not
+/// inject `YESON_APPLE_TRANSLATE_BIN` and the server falls back to PATH.
+fn locate_bundled_apple_translate() -> Option<PathBuf> {
+    let triple: &str = if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        "x86_64-pc-windows-msvc"
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "aarch64-apple-darwin"
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "x86_64-apple-darwin"
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "x86_64-unknown-linux-gnu"
+    } else {
+        return None;
+    };
+    let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    let dir_name = format!("apple-translate-{triple}");
+    let bin_name = format!("apple-live-translate{suffix}");
 
     let mut roots: Vec<PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
@@ -1138,6 +1191,33 @@ fn advertise_mdns(port: u16) -> Option<ServiceDaemon> {
     .ok()?;
     daemon.register(info).ok()?;
     Some(daemon)
+}
+
+/// 저지연(lowLatency) EN→KO 번역 모델을 UI 프롬프트로 1회 설치한다(성능 후속).
+/// 번들된 `apple-live-translate`를 `prepare-translation` 서브커맨드로 실행하면 그
+/// 서브커맨드가 포커스를 갖는 작은 창을 띄워 시스템 다운로드 확인창을 유도한다.
+/// 완료(exit 0)면 Ok, 실패면 출력 꼬리(stdout+stderr 마지막 ~300자)를 Err로 반환한다.
+/// 실리콘맥 번들에만 바이너리가 존재하므로 그 외 환경에서는 즉시 Err.
+#[tauri::command]
+pub fn install_fast_translation() -> Result<String, String> {
+    let bin = locate_bundled_apple_translate()
+        .ok_or_else(|| "apple-live-translate 바이너리를 찾을 수 없습니다 (실리콘맥 전용)".to_string())?;
+    let output = Command::new(&bin)
+        .arg("prepare-translation")
+        .output()
+        .map_err(|error| format!("고속 번역 모델 설치 실행 실패: {error}"))?;
+    if output.status.success() {
+        Ok("고속 번역 모델 설치 완료".to_string())
+    } else {
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let n = combined.chars().count();
+        let tail: String = combined.chars().skip(n.saturating_sub(300)).collect();
+        Err(format!("고속 번역 모델 설치 실패: {tail}"))
+    }
 }
 
 #[tauri::command]

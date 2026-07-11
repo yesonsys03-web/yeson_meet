@@ -16,6 +16,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from apps.server.ai.apple_native import apple_mt_available
+
 from .translate import (
     GeminiFlashTranslator,
     TranslationError,
@@ -94,7 +96,7 @@ def list_translate_engines() -> list[dict]:
     return [
         {"value": "gemini", "label": "Gemini",
          "available": bool(os.environ.get("GEMINI_API_KEY"))},
-        {"value": "claude", "label": "Claude 구독 (기본)",
+        {"value": "claude", "label": "Claude 구독",
          "available": resolve_cli("claude") is not None},
         {"value": "codex", "label": "Codex 구독",
          "available": resolve_cli("codex") is not None},
@@ -102,6 +104,10 @@ def list_translate_engines() -> list[dict]:
          "available": resolve_cli("agy") is not None},
         {"value": "opencode", "label": "OpenCode (딥시크 등)",
          "available": resolve_cli("opencode") is not None},
+        {"value": "apple", "label": "Apple 온디바이스 (고속)",
+         "available": apple_mt_available()},
+        {"value": "apple_hifi", "label": "Apple 온디바이스 (고품질·느림)",
+         "available": apple_mt_available()},
     ]
 
 
@@ -253,6 +259,14 @@ def create_translator(
 
     if provider in ("", "gemini"):
         return GeminiFlashTranslator()
+
+    if provider == "apple":
+        from .translate_apple import AppleTranslator
+        return AppleTranslator(strategy="low")
+
+    if provider == "apple_hifi":
+        from .translate_apple import AppleTranslator
+        return AppleTranslator(strategy="high")
 
     if provider in _BACKENDS:
         backend = _BACKENDS[provider]

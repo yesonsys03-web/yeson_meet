@@ -1,0 +1,39 @@
+import Foundation
+import Translation
+
+public func parseBatchInput(_ data: Data) throws -> [String] {
+    guard let arr = try JSONSerialization.jsonObject(with: data) as? [Any] else {
+        throw NSError(domain: "apple-translate", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "input must be a JSON array"])
+    }
+    return arr.map { "\($0)" }
+}
+
+public func encodeBatchOutput(_ texts: [String]) throws -> String {
+    let data = try JSONSerialization.data(withJSONObject: texts, options: [.withoutEscapingSlashes])
+    return String(data: data, encoding: .utf8)!
+}
+
+@available(macOS 15.0, *)
+@MainActor
+public func runBatchTranslate() async -> Int32 {
+    do {
+        let input = FileHandle.standardInput.readDataToEndOfFile()
+        let texts = try parseBatchInput(input)
+        // 전략(low/high) 선택 + 미설치 시 폴백은 SessionFactory가 담당. 아무것도 설치돼
+        // 있지 않으면 AppleMTMissingAsset를 던져 아래 catch가 "translate-batch failed:
+        // missing_mt_asset: ..." 를 stderr로 남기고 nonzero 종료 → translate_apple.py가
+        // returncode!=0로 감지(오늘과 동일 계약).
+        let session = try await makeTranslationSession(
+            source: .init(identifier: "en"), target: .init(identifier: "ko"))
+        // Translation framework 배치 API — 순서 보존됨
+        let requests = texts.map { TranslationSession.Request(sourceText: $0) }
+        let responses = try await session.translations(from: requests)
+        let out = try encodeBatchOutput(responses.map(\.targetText))
+        FileHandle.standardOutput.write((out + "\n").data(using: .utf8)!)
+        return 0
+    } catch {
+        FileHandle.standardError.write("translate-batch failed: \(error)\n".data(using: .utf8)!)
+        return 1
+    }
+}

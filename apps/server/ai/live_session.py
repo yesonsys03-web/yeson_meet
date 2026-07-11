@@ -41,6 +41,7 @@ _PERMANENT_ERROR_SIGNATURES: tuple[str, ...] = (
     "invalid api key",
     "invalid_api_key",
     "api key not valid",
+    "provider unavailable",
 )
 
 

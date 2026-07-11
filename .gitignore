@@ -31,6 +31,7 @@ apps/desktop/src-tauri/binaries/
 apps/server_desktop/src-tauri/binaries/yeson-server-*/
 apps/server_desktop/src-tauri/binaries/cloudflared-*/
 apps/server_desktop/src-tauri/binaries/ffmpeg-*/
+apps/server_desktop/src-tauri/binaries/apple-translate-*/
 
 # Compose volumes
 deploy/data/
@@ -75,3 +76,6 @@ generated/
 # Tauri build output (extra safety)
 apps/desktop/src-tauri/gen/
 apps/server_desktop/src-tauri/gen/
+
+# 스파이크 스크래치 (커밋 금지)
+apps/native_helper_mac/scratch/

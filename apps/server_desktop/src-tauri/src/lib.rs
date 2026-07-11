@@ -50,6 +50,7 @@ pub fn run() {
             tunnel::live_session_count_cmd,
             tunnel::lan_viewer_base_cmd,
             server_process::detect_lan_ip,
+            server_process::install_fast_translation,
             restore::inspect_backup,
             restore::restore_backup,
             restore::list_dir,
