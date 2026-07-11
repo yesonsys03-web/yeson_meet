@@ -44,7 +44,7 @@ type EngineOption = { value: string; label: string; available: boolean };
 // 서버 응답이 오기 전 첫 렌더용 폴백 — 깜빡임 방지 (서버 미설치 상태를 알기 전이므로 전부 available)
 const DEFAULT_ENGINE_OPTIONS: EngineOption[] = [
   { value: "", label: "번역: Gemini", available: true },
-  { value: "claude", label: "번역: Claude 구독 (기본)", available: true },
+  { value: "claude", label: "번역: Claude 구독", available: true },
   { value: "codex", label: "번역: Codex 구독", available: true },
   { value: "agy", label: "번역: Antigravity", available: true },
   { value: "opencode", label: "번역: OpenCode (딥시크 등)", available: true },
@@ -88,8 +88,10 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const [storage, setStorage] = useState<VideoStorageInfo | null>(null);
   const [engineOptions, setEngineOptions] = useState<EngineOption[]>(DEFAULT_ENGINE_OPTIONS);
   const [selectedModel, setSelectedModel] = useState("base");
-  // 번역 기본값=Claude 구독(사용자 결정 2026-07-08). 서버에 claude CLI가 없으면
-  // 아래 effect가 Gemini("")로 폴백한다.
+  // 번역 기본값=Claude 구독(사용자 결정 2026-07-08) — 최초 렌더 시 폴백.
+  // 서버에서 apple_hifi(Apple 온디바이스 고품질)를 쓸 수 있으면 첫 refresh 때
+  // 품질 우선 기본값으로 전환한다(사용자 결정 2026-07-11, 고속은 opt-in).
+  // claude CLI도 없으면 아래 effect가 Gemini("")로 폴백한다.
   const [translateProvider, setTranslateProvider] = useState("claude");
   const [cliModel, setCliModel] = useState(DEFAULT_OPENCODE_MODEL);
   const [youtubeUrl, setYoutubeUrl] = useState("");
@@ -111,6 +113,9 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(0);
   const [confirmBatchBurn, setConfirmBatchBurn] = useState(false);
+  // 최초 엔진 목록 응답에서 apple_hifi 기본 전환을 1회만 시도(사용자가 이후
+  // 직접 고른 선택을 다시 덮어쓰지 않기 위함 — 재조회 폴링마다 재실행 방지).
+  const appleHifiDefaultTriedRef = useRef(false);
 
   // webkitdirectory는 표준 타입에 없어 JSX 속성으로 못 준다 — 폴더 선택 input에
   // 직접 붙인다(WKWebView/WebView2 모두 지원). 폴더 안 모든 파일을 넘겨준다.
@@ -131,7 +136,13 @@ function VideoCaptionInner({ active }: { active: boolean }) {
       ]);
       setModels(m);
       setJobs(j);
-      setEngineOptions(toEngineOptions(e));
+      const options = toEngineOptions(e);
+      setEngineOptions(options);
+      if (!appleHifiDefaultTriedRef.current) {
+        appleHifiDefaultTriedRef.current = true;
+        const appleHifi = options.find((o) => o.value === "apple_hifi");
+        if (appleHifi?.available) setTranslateProvider("apple_hifi");
+      }
       setStorage(s);
       setGpu(g);
     } catch (err) {

@@ -96,7 +96,7 @@ def list_translate_engines() -> list[dict]:
     return [
         {"value": "gemini", "label": "Gemini",
          "available": bool(os.environ.get("GEMINI_API_KEY"))},
-        {"value": "claude", "label": "Claude 구독 (기본)",
+        {"value": "claude", "label": "Claude 구독",
          "available": resolve_cli("claude") is not None},
         {"value": "codex", "label": "Codex 구독",
          "available": resolve_cli("codex") is not None},
