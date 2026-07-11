@@ -122,6 +122,15 @@ public func runLive() async -> Int32 {
     var lastGoodT1 = 0.0
     var streamError: Error?
 
+    // 문장 단위 분절기 + idle-flush 백스톱 상태. emitFinal과 idle 틱 태스크가 함께
+    // 참조하므로 runLive 스코프(= collector/idleTick과 동일한 @MainActor 컨텍스트)에 둔다.
+    var segmenter = SentenceSegmenter()
+    // idle 틱이 강제 컷을 만들 때 오디오 시간 범위 근사용으로 재사용할 최신 volatile 결과.
+    var lastResult: SpeechTranscriber.Result?
+    // 스트림 종료/취소와 idle 틱의 emitFinal 호출 사이 레이스를 막는 가드(취소 신호와
+    // 별개로 명시적으로 검사한다 — cancel() 직후에도 이미 진행 중인 틱 반복은 멈추지 않음).
+    var streamActive = true
+
     // 번역 실패 추적: 단발 실패는 EN-as-ko로 폴백하되(회의 중 일시적 blip이 세션을
     // 죽이면 안 됨), 5회 **연속** 실패하면 언어팩(EN→KO) 미설치로 판단해
     // missing_mt_asset를 emit하고 세션을 nonzero로 종료한다 — 이는 Python
@@ -147,6 +156,60 @@ public func runLive() async -> Int32 {
         }
     }
 
+    // 강제 컷/진짜 파이널 공통 방출: finalSession으로 번역 후 .final emit + seq 증가.
+    // 반환 false = 5회 연속 번역 실패(mtAssetError) → 순회 중단 신호. collector와 idle 틱
+    // 태스크가 공유하므로 runLive 스코프로 끌어올렸다(원래 collector 내부 로컬 함수였음).
+    // t0/t1: 기존 finite-guard 유지하되 t0는 항상 utteranceStart(단조 보장), t1은
+    // 가용한 audioTimeRange 끝(강제 컷은 근사 — 볼래틸 결과의 현재 오디오 위치)로.
+    //
+    // NOTE(멀티컷 zero-width 한계): 한 스냅샷이 문장 여러 개를 한꺼번에 담아 drain()이
+    // Segment를 2개 이상 반환하면, 그 컷들은 모두 동일한 `result`(그 스냅샷의 volatile
+    // 결과 하나)의 finalizedAudioTimeRange를 재사용한다 — 즉 두 번째 이후 컷은 t1 후보가
+    // 첫 번째 컷과 동일해져 `!(t1 > t0)` 가드에 걸려 t1=t0(0폭)로 방출된다. 오디오 run이
+    // 세그먼트 텍스트 단위로 쪼개져 있지 않아 실측 불가능하기 때문(스파이크 노트 한계).
+    // 개선하려면 세그먼트 문자 길이 비례로 range를 분할해야 하는데, 두 컷 사이 실제
+    // 발화 속도를 반영하지 못해 근사치일 뿐이라 비용 대비 효용이 낮다고 판단해 보류.
+    // idle 틱이 만든 컷(아래 idleTickTask)도 동일 로직 재사용이라 같은 한계를 공유한다.
+    func emitFinal(text: String, result: SpeechTranscriber.Result, now: Double) async -> Bool {
+        let ko = await translateTracked(text, session: finalSession)
+        if mtAssetError != nil { return false }
+        let t0 = utteranceStart
+        var t1 = lastGoodT1
+        if let range = finalizedAudioTimeRange(of: result) {
+            let candidateT1 = range.end.seconds
+            if candidateT1.isFinite, candidateT1 > t0 { t1 = candidateT1 }
+        }
+        if !(t1 > t0) { t1 = t0 }  // 최후 방어: 역행/동일값이면 0폭
+        emit(.final(seq: policy.seq, en: text, ko: ko, t0: t0, t1: t1))
+        policy.onFinal(now: now)
+        utteranceStart = t1
+        lastGoodT1 = t1
+        return true
+    }
+
+    // idle-flush 백스톱: SentenceSegmenter.onIdleCheck는 순수 로직이라 시계 틱을 스스로
+    // 만들지 못한다 — 실제 발화 정지(새 volatile 스냅샷이 오지 않는 상태) 중에는 runLive의
+    // 결과 순회 루프가 전혀 돌지 않으므로 onSnapshot이 호출될 일이 없고, 이 틱 태스크가
+    // 없으면 idleFlushSec(2.0s) 약속이 죽은 코드가 된다. 500ms마다 깨어나 onIdleCheck를
+    // 찔러보고, 강제 컷이 나오면 emitFinal로 동일 경로 방출한다. collector와 마찬가지로
+    // @MainActor로 명시해 segmenter/emitFinal/policy 등 공유 상태에 데이터 레이스 없이
+    // 접근한다(둘 다 MainActor라 실제로는 서로 인터리브만 되고 동시 실행되지 않는다).
+    let idleTickTask = Task { @MainActor in
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if Task.isCancelled || !streamActive { break }
+            guard let result = lastResult else { continue }
+            let now = ProcessInfo.processInfo.systemUptime
+            for sgmt in segmenter.onIdleCheck(now: now) {
+                if !streamActive || Task.isCancelled { break }  // 스트림 종료 후 방출 금지
+                if !(await emitFinal(text: sgmt.text, result: result, now: now)) {
+                    streamActive = false
+                    break
+                }
+            }
+        }
+    }
+
     // 결과 순회 Task를 analyzer.start(inputSequence:) 호출 **전**에 시작해 둔다 — 스파이크
     // 노트(검증 3) 경고 및 FileTranscribe의 collector 패턴과 동일. 번역 호출(translateTracked)은
     // @MainActor 격리를 유지해야 하므로 명시적으로 @MainActor 클로저로 감싼다.
@@ -154,33 +217,16 @@ public func runLive() async -> Int32 {
     // 만든다(SentenceSegmenter — Gemini TranscriptAssembler 의미론 이식). 파셜은 분절기가
     // 남긴 미소비 suffix만 보여줘 이미 확정한 문장이 파셜 라인에 재노출되지 않게 한다.
     let collector = Task { @MainActor in
-        var segmenter = SentenceSegmenter()
-
-        // 강제 컷/진짜 파이널 공통 방출: finalSession으로 번역 후 .final emit + seq 증가.
-        // 반환 false = 5회 연속 번역 실패(mtAssetError) → 순회 중단 신호.
-        // t0/t1: 기존 finite-guard 유지하되 t0는 항상 utteranceStart(단조 보장), t1은
-        // 가용한 audioTimeRange 끝(강제 컷은 근사 — 볼래틸 결과의 현재 오디오 위치)로.
-        func emitFinal(text: String, result: SpeechTranscriber.Result, now: Double) async -> Bool {
-            let ko = await translateTracked(text, session: finalSession)
-            if mtAssetError != nil { return false }
-            let t0 = utteranceStart
-            var t1 = lastGoodT1
-            if let range = finalizedAudioTimeRange(of: result) {
-                let candidateT1 = range.end.seconds
-                if candidateT1.isFinite, candidateT1 > t0 { t1 = candidateT1 }
-            }
-            if !(t1 > t0) { t1 = t0 }  // 최후 방어: 역행/동일값이면 0폭
-            emit(.final(seq: policy.seq, en: text, ko: ko, t0: t0, t1: t1))
-            policy.onFinal(now: now)
-            utteranceStart = t1
-            lastGoodT1 = t1
-            return true
-        }
-
         do {
             for try await result in transcriber.results {
                 let en = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
-                if en.isEmpty { continue }
+                lastResult = result  // idle 틱이 audioTimeRange 근사에 재사용할 최신 결과
+                if en.isEmpty {
+                    // 빈 텍스트의 진짜 isFinal도 발화 종료 신호다 — 분절기 상태(consumedPrefix
+                    // 등)가 다음 발화로 새지 않도록 방어적으로 리셋한다.
+                    if result.isFinal { segmenter.reset() }
+                    continue
+                }
                 let now = ProcessInfo.processInfo.systemUptime
 
                 if result.isFinal {
@@ -214,6 +260,16 @@ public func runLive() async -> Int32 {
         } catch {
             streamError = error
         }
+        // 결과 순회가 끝났다(정상 종료든 catch든) — idle 틱이 스트림 종료 이후 emitFinal을
+        // 호출하지 않도록 먼저 비활성화 플래그를 내리고 취소한다(취소 신호 관측 전에도
+        // streamActive 가드가 즉시 신규 방출을 막는다). 다만 취소는 협조적이므로, 틱이
+        // 이미 emitFinal(번역 await 포함) 도중이면 cancel()만으로는 그 호출이 즉시 멈추지
+        // 않는다 — await로 실제로 감겨 끝나길 기다려야 이미 시작된 idle 컷 방출이 프로세스
+        // 종료(exit())에 유실되지 않는다(실측: 미대기 시 idle 컷이 stderr 트레이스로는
+        // 확인되지만 stdout final로는 유실됨).
+        streamActive = false
+        idleTickTask.cancel()
+        await idleTickTask.value
     }
 
     do {
@@ -223,8 +279,10 @@ public func runLive() async -> Int32 {
         // stdin을 닫을 때까지 블로킹될 수 있으므로(파인딩 1) 절대 여기서 await하지 않는다.
         // cancel()은 best-effort로만 남기고, 실제 프로세스 종료는 main.swift의 exit()가
         // 담당한다 — exit()는 남아있는 detached task를 포함해 전부 reap하므로 안전하다.
+        streamActive = false
         inputTask.cancel()
         collector.cancel()
+        idleTickTask.cancel()  // collector.cancel()은 이 별도 unstructured task까지 취소하지 않음
         emit(.status(state: "error", reason: "live_failed: \(error)"))
         return 1
     }

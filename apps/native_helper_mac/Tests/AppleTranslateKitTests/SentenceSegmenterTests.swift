@@ -123,4 +123,27 @@ final class SentenceSegmenterTests: XCTestCase {
         let out = s.onFinal(en: "Hello everyone.", now: 1.0)
         XCTAssertEqual(out, [])
     }
+
+    // 10) 스냅샷 수축(shrink)/발산(divergence) 회귀: 볼래틸 결과가 접두사를 앞부분까지
+    // 수정(짧아짐)해도 크래시 없이 commonPrefix로 후퇴해야 한다(onSnapshot 내부 가드).
+    func testShrunkAndDivergedSnapshotReconcileViaCommonPrefix() {
+        var s = seg()
+        // "Hello everyone. " 컷 소비, 캐리 "Today"
+        _ = s.onSnapshot(en: "Hello everyone. Today", now: 0.0)
+        XCTAssertEqual(s.consumedPrefix, "Hello everyone. ")
+        XCTAssertEqual(s.currentSuffix, "Today")
+
+        // 스냅샷이 수축(더 짧아짐) — 크래시 없이 commonPrefix("Hello", consumedPrefix)로
+        // 후퇴해야 한다. commonPrefix("Hello", "Hello everyone. ") == "Hello".
+        let shrunkOut = s.onSnapshot(en: "Hello", now: 0.5)
+        XCTAssertEqual(shrunkOut, [])
+        XCTAssertEqual(s.consumedPrefix, "Hello")
+        XCTAssertEqual(s.currentSuffix, "")
+
+        // 완전히 발산한 스냅샷도 안전해야 한다: commonPrefix("Hi there friends.", "Hello") == "H"
+        let divergedOut = s.onSnapshot(en: "Hi there friends.", now: 1.0)
+        XCTAssertEqual(divergedOut, [])
+        XCTAssertEqual(s.consumedPrefix, "H")
+        XCTAssertEqual(s.currentSuffix, "i there friends.")
+    }
 }
