@@ -30,8 +30,14 @@ case "transcribe-file":
     Task { exit(await runTranscribeFile(path: path)) }
     RunLoop.main.run()
 case "live":
-    emit(.status(state: "error", reason: "not_implemented"))
-    exit(1)
+    guard #available(macOS 26.0, *) else {
+        emit(.status(state: "error", reason: "unsupported_os"))
+        exit(3)
+    }
+    let app = NSApplication.shared
+    app.setActivationPolicy(.prohibited)
+    Task { exit(await runLive()) }
+    app.run()
 default:
     emit(.status(state: "error", reason: "unknown_subcommand"))
     exit(2)
