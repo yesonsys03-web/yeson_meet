@@ -17,7 +17,19 @@ case "translate-batch":
     app.setActivationPolicy(.prohibited)
     Task { exit(await runBatchTranslate()) }
     app.run()
-case "live", "transcribe-file":
+case "transcribe-file":
+    guard #available(macOS 26.0, *) else {
+        emit(.status(state: "error", reason: "unsupported_os"))
+        exit(3)
+    }
+    guard args.count >= 4, args[2] == "--input" else {
+        emit(.status(state: "error", reason: "usage: transcribe-file --input <wav>"))
+        exit(2)
+    }
+    let path = args[3]
+    Task { exit(await runTranscribeFile(path: path)) }
+    RunLoop.main.run()
+case "live":
     emit(.status(state: "error", reason: "not_implemented"))
     exit(1)
 default:
