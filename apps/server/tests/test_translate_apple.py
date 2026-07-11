@@ -35,6 +35,11 @@ CRASH = """\
     sys.exit(1)
 """
 
+SLEEPY = """\
+    import time
+    time.sleep(5)
+"""
+
 
 class TestAppleTranslator:
     async def test_translates_batch_in_order(self, tmp_path):
@@ -55,6 +60,11 @@ class TestAppleTranslator:
     async def test_empty_input_short_circuits(self, tmp_path):
         tr = AppleTranslator(argv=[sys.executable, "/nonexistent.py"])
         assert await tr.translate_batch([]) == []
+
+    async def test_timeout_kills_and_raises(self, tmp_path):
+        tr = AppleTranslator(argv=_fake_bin(tmp_path, SLEEPY), timeout=0.3)
+        with pytest.raises(TranslationError, match="시간 초과"):
+            await tr.translate_batch(["a"])
 # === ANCHOR: TEST_TRANSLATE_APPLE_END ===
 
 

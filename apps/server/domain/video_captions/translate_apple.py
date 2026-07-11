@@ -53,9 +53,11 @@ class AppleTranslator:
                 proc.communicate(payload), timeout=self._timeout)
         except asyncio.TimeoutError as exc:
             proc.kill()
+            await proc.wait()
             raise TranslationError(f"Apple 번역 시간 초과({self._timeout}s)") from exc
         if proc.returncode != 0:
             tail = stderr.decode("utf-8", errors="replace")[-300:]
+            logger.warning("Apple 번역 실패 (returncode=%s): %s", proc.returncode, tail)
             raise TranslationError(
                 f"Apple 번역 실패 (returncode={proc.returncode}): {tail}")
         try:
