@@ -8,6 +8,9 @@ export type VideoModelInfo = {
   disk_bytes: number;
   downloading: boolean;
   progress: number | null;
+  // 서버 내장 모델(예: Apple 온디바이스): 다운로드/삭제 대상이 아님 — 클라는
+  // 삭제 버튼을 숨기고 크기 대신 "내장"을 표시한다.
+  builtin?: boolean;
 };
 
 export type VideoJobSummary = {

@@ -697,10 +697,12 @@ function VideoCaptionInner({ active }: { active: boolean }) {
             <div style={{ flex: 1 }}>
               <strong>{m.name}</strong>
               <span style={{ fontSize: 12, opacity: 0.7, marginLeft: 8 }}>
-                {formatBytes(m.approx_bytes)} · {m.label}
+                {m.builtin ? "내장" : formatBytes(m.approx_bytes)} · {m.label}
               </span>
             </div>
-            {m.downloading ? (
+            {m.builtin ? (
+              <span style={{ fontSize: 13, color: "#30a46c" }}>내장</span>
+            ) : m.downloading ? (
               <span style={{ fontSize: 13 }}>다운로드 중… {m.progress ?? 0}%</span>
             ) : m.downloaded ? (
               <>
