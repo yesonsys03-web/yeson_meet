@@ -88,8 +88,33 @@ public func runLive() async -> Int32 {
     var lastGoodT1 = 0.0
     var streamError: Error?
 
+    // 번역 실패 추적: 단발 실패는 EN-as-ko로 폴백하되(회의 중 일시적 blip이 세션을
+    // 죽이면 안 됨), 5회 **연속** 실패하면 언어팩(EN→KO) 미설치로 판단해
+    // missing_mt_asset를 emit하고 세션을 nonzero로 종료한다 — 이는 Python
+    // 접두사 분류기(missing_mt_asset)에 영구 에러로 도달한다. 성공 시 카운터 리셋.
+    let maxTranslateFailures = 5
+    var translateFailures = 0
+    var mtAssetError: String?
+    func translateTracked(_ text: String) async -> String {
+        do {
+            let ko = try await session.translations(
+                from: [.init(sourceText: text)]).first?.targetText ?? text
+            translateFailures = 0
+            return ko
+        } catch {
+            translateFailures += 1
+            FileHandle.standardError.write(
+                ("live: translate failed (\(translateFailures)/\(maxTranslateFailures)), "
+                 + "falling back to en: \(error)\n").data(using: .utf8)!)
+            if translateFailures >= maxTranslateFailures {
+                mtAssetError = "\(error)"
+            }
+            return text  // EN-as-ko 폴백 (첫 실패들은 세션을 죽이지 않음)
+        }
+    }
+
     // 결과 순회 Task를 analyzer.start(inputSequence:) 호출 **전**에 시작해 둔다 — 스파이크
-    // 노트(검증 3) 경고 및 FileTranscribe의 collector 패턴과 동일. 번역 호출(translateOrFallback)은
+    // 노트(검증 3) 경고 및 FileTranscribe의 collector 패턴과 동일. 번역 호출(translateTracked)은
     // @MainActor 격리를 유지해야 하므로 명시적으로 @MainActor 클로저로 감싼다.
     let collector = Task { @MainActor in
         do {
@@ -99,7 +124,8 @@ public func runLive() async -> Int32 {
                 let now = ProcessInfo.processInfo.systemUptime
 
                 if result.isFinal {
-                    let ko = await translateOrFallback(session, en)
+                    let ko = await translateTracked(en)
+                    if mtAssetError != nil { break }  // 5회 연속 번역 실패 → 세션 종료
                     // audioTimeRange 사용 가능하면 그 값, 아니면 마지막으로 알려진 정상값으로 폴백.
                     // NaN/Infinity/역행 구간은 절대 emit에 도달하지 않게 한다 (jsonLine는 try! 사용).
                     var t0 = utteranceStart
@@ -118,7 +144,8 @@ public func runLive() async -> Int32 {
                     utteranceStart = t1
                     lastGoodT1 = t1
                 } else if let snapshot = policy.onVolatile(en: en, now: now) {
-                    let ko = await translateOrFallback(session, snapshot)
+                    let ko = await translateTracked(snapshot)
+                    if mtAssetError != nil { break }  // 5회 연속 번역 실패 → 세션 종료
                     emit(.partial(seq: policy.seq, en: snapshot, ko: ko))
                 }
             }
@@ -141,6 +168,14 @@ public func runLive() async -> Int32 {
     }
 
     await collector.value
+
+    if let mtAssetError {
+        // 5회 연속 번역 실패 = 언어팩(EN→KO) 미설치로 판단 — Python 접두사 분류기에
+        // missing_mt_asset(영구 에러)로 도달한다. inputTask는 이 프로세스 exit()와 함께 정리.
+        inputTask.cancel()
+        emit(.status(state: "error", reason: "missing_mt_asset: \(mtAssetError)"))
+        return 1
+    }
 
     if let streamError {
         // 결과 순회 도중 발생한 에러도 동일하게: inputTask.value를 기다리지 않고 즉시 보고한다.
@@ -175,17 +210,3 @@ private func finalizedAudioTimeRange(of result: SpeechTranscriber.Result) -> CMT
     return CMTimeRange(start: s, end: e)
 }
 
-/// 단발 번역 실패가 스트림 전체를 죽이지 않도록 폴백: 실패 시 EN 텍스트를 그대로
-/// ko로 사용하고 stderr에 로그만 남긴다. 세션 자체가 죽는 경우(예: 언어팩 미설치로
-/// 매 호출 실패)는 상위에서 반복 실패로 드러나며, 여기서는 프로세스를 끝내지 않는다
-/// — brief 지시대로 단일 실패가 라이브 세션을 중단시키지 않게 하기 위함.
-@available(macOS 15.0, *)
-@MainActor
-private func translateOrFallback(_ session: TranslationSession, _ text: String) async -> String {
-    do {
-        return try await session.translations(from: [.init(sourceText: text)]).first?.targetText ?? text
-    } catch {
-        FileHandle.standardError.write("live: translate failed, falling back to en: \(error)\n".data(using: .utf8)!)
-        return text
-    }
-}
