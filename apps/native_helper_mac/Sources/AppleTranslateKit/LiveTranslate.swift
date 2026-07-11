@@ -51,6 +51,10 @@ public func runLive() async -> Int32 {
     let inputTask = Task.detached {
         let stdin = FileHandle.standardInput
         while true {
+            // 매 반복 취소 여부 확인: readData 자체는 청크 하나만큼 블로킹될 수 있지만,
+            // 취소 신호가 readData 호출 사이에서라도 관측되도록 루프 최상단에서 체크한다
+            // (에러 경로에서 inputTask.cancel()이 실제로 루프를 끊게 하기 위함).
+            if Task.isCancelled { break }
             let data = stdin.readData(ofLength: 3200)   // 100ms @ 16kHz s16le mono
             if data.isEmpty { break }                    // EOF — 오디오 종료
             let frames = AVAudioFrameCount(data.count / 2)
@@ -66,11 +70,17 @@ public func runLive() async -> Int32 {
             inputContinuation.yield(AnalyzerInput(buffer: buf))
         }
         inputContinuation.finish()
-        // 입력 종료를 analyzer에도 알려야 results AsyncSequence가 끝난다 (스파이크 노트
-        // 검증 3: cont.finish() 만으로는 부족 — finalizeAndFinishThroughEndOfInput() 필수).
-        // 스트리밍 입력은 이 detached task에서 계속 도착하므로, EOF를 확인한 이 지점에서
-        // 바로 호출해야 메인 루프의 `for try await result in transcriber.results`가 종료된다.
-        try? await analyzer.finalizeAndFinishThroughEndOfInput()
+        // 입력 종료(또는 취소)를 analyzer에도 알려야 results AsyncSequence가 끝난다 (스파이크
+        // 노트 검증 3: cont.finish() 만으로는 부족 — finalizeAndFinishThroughEndOfInput() 필수).
+        // 스트리밍 입력은 이 detached task에서 계속 도착하므로, 루프를 벗어난 이 지점에서
+        // 바로 호출해야 결과 수집 Task의 `for try await result in transcriber.results`가
+        // 종료된다. 실패해도 치명적이지 않지만(에러 무시 시 진단 불가) stderr에 로그는 남긴다.
+        do {
+            try await analyzer.finalizeAndFinishThroughEndOfInput()
+        } catch {
+            FileHandle.standardError.write(
+                "live: finalizeAndFinishThroughEndOfInput failed: \(error)\n".data(using: .utf8)!)
+        }
     }
 
     var policy = LiveEmitPolicy(throttleMs: 500, minDeltaChars: 4)
@@ -78,52 +88,74 @@ public func runLive() async -> Int32 {
     var lastGoodT1 = 0.0
     var streamError: Error?
 
-    do {
-        try await analyzer.start(inputSequence: inputStream)
+    // 결과 순회 Task를 analyzer.start(inputSequence:) 호출 **전**에 시작해 둔다 — 스파이크
+    // 노트(검증 3) 경고 및 FileTranscribe의 collector 패턴과 동일. 번역 호출(translateOrFallback)은
+    // @MainActor 격리를 유지해야 하므로 명시적으로 @MainActor 클로저로 감싼다.
+    let collector = Task { @MainActor in
+        do {
+            for try await result in transcriber.results {
+                let en = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
+                if en.isEmpty { continue }
+                let now = ProcessInfo.processInfo.systemUptime
 
-        for try await result in transcriber.results {
-            let en = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
-            if en.isEmpty { continue }
-            let now = ProcessInfo.processInfo.systemUptime
-
-            if result.isFinal {
-                let ko = await translateOrFallback(session, en)
-                // audioTimeRange 사용 가능하면 그 값, 아니면 마지막으로 알려진 정상값으로 폴백.
-                // NaN/Infinity/역행 구간은 절대 emit에 도달하지 않게 한다 (jsonLine는 try! 사용).
-                var t0 = utteranceStart
-                var t1 = lastGoodT1
-                if let range = finalizedAudioTimeRange(of: result) {
-                    let candidateT0 = range.start.seconds
-                    let candidateT1 = range.end.seconds
-                    if candidateT0.isFinite, candidateT1.isFinite, candidateT1 > candidateT0 {
-                        t0 = candidateT0
-                        t1 = candidateT1
+                if result.isFinal {
+                    let ko = await translateOrFallback(session, en)
+                    // audioTimeRange 사용 가능하면 그 값, 아니면 마지막으로 알려진 정상값으로 폴백.
+                    // NaN/Infinity/역행 구간은 절대 emit에 도달하지 않게 한다 (jsonLine는 try! 사용).
+                    var t0 = utteranceStart
+                    var t1 = lastGoodT1
+                    if let range = finalizedAudioTimeRange(of: result) {
+                        let candidateT0 = range.start.seconds
+                        let candidateT1 = range.end.seconds
+                        if candidateT0.isFinite, candidateT1.isFinite, candidateT1 > candidateT0 {
+                            t0 = candidateT0
+                            t1 = candidateT1
+                        }
                     }
+                    if !(t1 > t0) { t1 = t0 }  // 최후 방어: 역행/동일값이면 구간을 0폭으로 강제
+                    emit(.final(seq: policy.seq, en: en, ko: ko, t0: t0, t1: t1))
+                    policy.onFinal(now: now)
+                    utteranceStart = t1
+                    lastGoodT1 = t1
+                } else if let snapshot = policy.onVolatile(en: en, now: now) {
+                    let ko = await translateOrFallback(session, snapshot)
+                    emit(.partial(seq: policy.seq, en: snapshot, ko: ko))
                 }
-                if !(t1 > t0) { t1 = t0 }  // 최후 방어: 역행/동일값이면 구간을 0폭으로 강제
-                emit(.final(seq: policy.seq, en: en, ko: ko, t0: t0, t1: t1))
-                policy.onFinal(now: now)
-                utteranceStart = t1
-                lastGoodT1 = t1
-            } else if let snapshot = policy.onVolatile(en: en, now: now) {
-                let ko = await translateOrFallback(session, snapshot)
-                emit(.partial(seq: policy.seq, en: snapshot, ko: ko))
             }
+        } catch {
+            streamError = error
         }
-    } catch {
-        streamError = error
     }
 
-    // 정상 종료 시 inputTask는 이미 EOF에서 finish 후 완료돼 있음; 에러 경로에서는
-    // 아직 stdin을 읽고 있을 수 있으므로 명시적으로 취소해 프로세스가 stdin 대기로
-    // 멈춰있지 않게 한다.
-    inputTask.cancel()
-    await inputTask.value
+    do {
+        try await analyzer.start(inputSequence: inputStream)
+    } catch {
+        // analyzer.start 자체가 실패한 에러 경로: inputTask.value를 먼저 기다리면 부모가
+        // stdin을 닫을 때까지 블로킹될 수 있으므로(파인딩 1) 절대 여기서 await하지 않는다.
+        // cancel()은 best-effort로만 남기고, 실제 프로세스 종료는 main.swift의 exit()가
+        // 담당한다 — exit()는 남아있는 detached task를 포함해 전부 reap하므로 안전하다.
+        inputTask.cancel()
+        collector.cancel()
+        emit(.status(state: "error", reason: "live_failed: \(error)"))
+        return 1
+    }
+
+    await collector.value
 
     if let streamError {
+        // 결과 순회 도중 발생한 에러도 동일하게: inputTask.value를 기다리지 않고 즉시 보고한다.
+        // 스트림 에러 시점에 stdin이 아직 열려 있어도(부모가 더 보낼 데이터가 있어도)
+        // inputTask는 이 프로세스 종료(exit())와 함께 정리된다.
+        inputTask.cancel()
         emit(.status(state: "error", reason: "live_failed: \(streamError)"))
         return 1
     }
+
+    // 정상 종료 경로: collector가 에러 없이 끝났다는 것은 transcriber.results가 정상
+    // 종료됐다는 뜻이고, 이는 inputTask가 이미 EOF를 확인하고 finalizeAndFinishThroughEndOfInput()
+    // 호출까지 마쳤다는 뜻이므로(그 호출이 results 종료를 유발) 아래 await는 즉시 반환된다.
+    inputTask.cancel()
+    await inputTask.value
 
     return 0
 }
