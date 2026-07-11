@@ -100,6 +100,13 @@ def transcribe_audio(audio_path: Path, model_name: str,
     CUDA는 로드/전사 어느 지점에서든 실패할 수 있어(드라이버·VRAM 등)
     실패 시 CPU int8로 1회 폴백한다.
     """
+    if model_name == "apple":
+        # 모듈 단위 로컬 import (순환 방지) — 함수 직접 import 금지: 모듈 경유
+        # 호출이어야 테스트에서 monkeypatch(transcribe_apple.transcribe_audio_apple)가 먹는다
+        from . import transcribe_apple
+
+        return transcribe_apple.transcribe_audio_apple(audio_path, progress_cb)
+
     if not is_downloaded(model_name):
         raise ModelNotDownloadedError(
             f"whisper 모델 '{model_name}'이 설치되어 있지 않습니다. 먼저 다운로드하세요."

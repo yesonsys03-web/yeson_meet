@@ -11,6 +11,7 @@ import threading
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
+from apps.server.ai.apple_native import APPLE_TRANSCRIBE_MODEL, apple_stt_available
 from apps.server.domain.video_captions import gpu_pack
 from apps.server.domain.video_captions import whisper_models as wm
 
@@ -27,7 +28,16 @@ def _spawn_gpu_pack_download() -> None:  # test seam
 
 @router.get("")
 async def list_video_models() -> dict:
-    return {"models": wm.list_models()}
+    models = wm.list_models()
+    if apple_stt_available():
+        models.insert(0, {
+            "name": APPLE_TRANSCRIBE_MODEL,
+            "label": "Apple 온디바이스 (실리콘맥, 초고속)",
+            "approx_bytes": 0, "downloaded": True, "disk_bytes": 0,
+            "downloading": False, "progress": None,
+            "builtin": True,  # 클라: 다운로드/삭제 버튼 숨김 플래그
+        })
+    return {"models": models}
 
 
 # GPU 라우트는 /{name} 계열 동적 라우트보다 먼저 선언 — 선언 순서 매칭 규약
