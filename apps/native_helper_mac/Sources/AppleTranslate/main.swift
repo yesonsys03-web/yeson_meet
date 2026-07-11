@@ -4,7 +4,7 @@ import Foundation
 
 let args = CommandLine.arguments
 guard args.count >= 2 else {
-    emit(.status(state: "error", reason: "usage: apple-live-translate <live|transcribe-file|translate-batch>"))
+    emit(.status(state: "error", reason: "usage: apple-live-translate <live|transcribe-file|translate-batch|prepare-translation>"))
     exit(2)
 }
 switch args[1] {
@@ -29,6 +29,13 @@ case "transcribe-file":
     let path = args[3]
     Task { exit(await runTranscribeFile(path: path)) }
     RunLoop.main.run()
+case "prepare-translation":
+    // 저지연 번역 팩 1회 다운로드 — 유일하게 포커스를 갖는 보이는 창을 띄운다.
+    guard #available(macOS 15.0, *) else {
+        emit(.status(state: "error", reason: "unsupported_os"))
+        exit(3)
+    }
+    runPrepareTranslation()   // app.run() 블로킹 — 종료는 View 안에서 exit()
 case "live":
     guard #available(macOS 26.0, *) else {
         emit(.status(state: "error", reason: "unsupported_os"))

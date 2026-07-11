@@ -20,8 +20,11 @@ public func runBatchTranslate() async -> Int32 {
     do {
         let input = FileHandle.standardInput.readDataToEndOfFile()
         let texts = try parseBatchInput(input)
-        let bridge = TranslatorBridge()
-        let session = await bridge.acquireSession(
+        // 전략(low/high) 선택 + 미설치 시 폴백은 SessionFactory가 담당. 아무것도 설치돼
+        // 있지 않으면 AppleMTMissingAsset를 던져 아래 catch가 "translate-batch failed:
+        // missing_mt_asset: ..." 를 stderr로 남기고 nonzero 종료 → translate_apple.py가
+        // returncode!=0로 감지(오늘과 동일 계약).
+        let session = try await makeTranslationSession(
             source: .init(identifier: "en"), target: .init(identifier: "ko"))
         // Translation framework 배치 API — 순서 보존됨
         let requests = texts.map { TranslationSession.Request(sourceText: $0) }

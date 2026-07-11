@@ -38,9 +38,17 @@ public func runLive() async -> Int32 {
     }
     let analyzer = SpeechAnalyzer(modules: [transcriber])
 
-    let bridge = TranslatorBridge()
-    let session = await bridge.acquireSession(
-        source: .init(identifier: "en"), target: .init(identifier: "ko"))
+    // 전략(low/high) 선택 + 미설치 폴백은 SessionFactory가 담당. 에셋이 하나도 없으면
+    // AppleMTMissingAsset를 던지므로 ready 이전에 잡아 missing_mt_asset로 표면화한다
+    // (Python 접두사 분류기에 영구 에러로 도달 — 5회 연속 실패 경로와 동일 계약).
+    let session: TranslationSession
+    do {
+        session = try await makeTranslationSession(
+            source: .init(identifier: "en"), target: .init(identifier: "ko"))
+    } catch {
+        emit(.status(state: "error", reason: "missing_mt_asset: \(error)"))
+        return 1
+    }
 
     emit(.status(state: "ready", reason: nil))
 
