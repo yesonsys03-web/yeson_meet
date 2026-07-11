@@ -15,6 +15,12 @@ logger = logging.getLogger("yeson.video.ffmpeg")
 
 FFMPEG_BIN_ENV = "YESON_FFMPEG_BIN"
 BURN_ENCODER_ENV = "YESON_BURN_ENCODER"
+BURN_PRESET_ENV = "YESON_BURN_PRESET"
+
+# libx264 굽기 프리셋 opt-in. 60s·1080p60 실측(2026-07-11): veryfast 10.8s/8.6MB,
+# superfast 6.8s/18.6MB, ultrafast 4.8s/35.3MB — 빠를수록 크고 품질↓라 기본은
+# veryfast, 급할 때만 운영자가 올린다. 목록 밖 값은 veryfast로 안전 폴백.
+_BURN_PRESETS: tuple[str, ...] = ("veryfast", "superfast", "ultrafast")
 
 # 굽기 인코더별 품질 인자. libx264 veryfast는 medium 대비 -35% 시간에
 # VMAF -1.3점(실측 2026-07-08, docs/video-caption-gpu-plan-2026-07-08.md)이라
@@ -26,6 +32,20 @@ _ENCODER_ARGS: dict[str, list[str]] = {
     "h264_qsv": ["-preset", "veryfast", "-global_quality", "23"],
     "h264_videotoolbox": ["-q:v", "55"],
 }
+
+
+def _burn_preset() -> str:
+    """libx264 굽기 프리셋 — YESON_BURN_PRESET opt-in. 목록 밖/미설정은 veryfast."""
+    preset = os.environ.get(BURN_PRESET_ENV, "veryfast")
+    return preset if preset in _BURN_PRESETS else "veryfast"
+
+
+def _encoder_args(encoder: str) -> list[str]:
+    """인코더별 ffmpeg 인자. libx264는 YESON_BURN_PRESET로 프리셋을 오버라이드할 수
+    있게 매 호출 계산한다(GPU 인코더는 정적)."""
+    if encoder == "libx264":
+        return ["-preset", _burn_preset(), "-crf", "23"]
+    return _ENCODER_ARGS[encoder]
 
 # 플랫폼별 GPU 인코더 후보(우선순위순). Linux 번들 ffmpeg(정적 빌드)는 HW 인코더가
 # 없어 후보 없음. Windows 번들(BtbN GPL)은 NVENC/AMF/QSV 포함.
@@ -140,7 +160,7 @@ def _probe_encoder(ffmpeg: str, encoder: str) -> bool:
     1초짜리 실제 인코딩으로 검증한다."""
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
            "-i", "testsrc2=size=640x360:rate=30:duration=1",
-           "-c:v", encoder, *_ENCODER_ARGS[encoder], "-f", "null", "-"]
+           "-c:v", encoder, *_encoder_args(encoder), "-f", "null", "-"]
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=30,
                                 **_SUBPROCESS_FLAGS)
@@ -217,7 +237,7 @@ def _burn_once(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
     """
     vf = f"subtitles={srt_path.name}:force_style='{force_style}'"
     cmd = [ffmpeg, "-y", "-i", str(src), "-vf", vf,
-           "-c:v", encoder, *_ENCODER_ARGS[encoder], "-c:a", "copy"]
+           "-c:v", encoder, *_encoder_args(encoder), "-c:a", "copy"]
     if progress_cb is not None:
         cmd += ["-progress", "pipe:1", "-nostats"]
     cmd.append(str(dst))

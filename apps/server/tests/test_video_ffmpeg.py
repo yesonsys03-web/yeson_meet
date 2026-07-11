@@ -74,6 +74,39 @@ def test_burn_runs_with_relative_srt_and_cwd(monkeypatch, tmp_path: Path):
         assert flag in cmd
 
 
+def test_burn_preset_env_override_applies_to_libx264(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("YESON_BURN_ENCODER", "libx264")
+    monkeypatch.setenv("YESON_BURN_PRESET", "ultrafast")
+    calls: list[dict] = []
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: calls.append({"cmd": cmd, "kwargs": kw}) or _Result())
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+    ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
+                      "Alignment=2")
+    cmd = calls[0]["cmd"]
+    assert cmd[cmd.index("-preset") + 1] == "ultrafast"
+
+
+def test_burn_preset_invalid_falls_back_to_veryfast(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("YESON_BURN_ENCODER", "libx264")
+    monkeypatch.setenv("YESON_BURN_PRESET", "definitely_not_a_preset")
+    calls: list[dict] = []
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: calls.append({"cmd": cmd, "kwargs": kw}) or _Result())
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+    ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
+                      "Alignment=2")
+    cmd = calls[0]["cmd"]
+    assert cmd[cmd.index("-preset") + 1] == "veryfast"
+
+
+def test_burn_preset_default_is_veryfast(monkeypatch):
+    monkeypatch.delenv("YESON_BURN_PRESET", raising=False)
+    assert ff._burn_preset() == "veryfast"
+
+
 def test_detect_burn_encoder_picks_first_probe_success(monkeypatch):
     monkeypatch.delenv("YESON_BURN_ENCODER", raising=False)
     monkeypatch.setattr(ff, "_HW_CANDIDATES", ("h264_nvenc", "h264_amf"))
