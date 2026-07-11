@@ -526,3 +526,22 @@ partial/final 이벤트 shape 불변.
 ultrafast **4.8s/35.3MB**(빠를수록 파일 큼·품질↓). VideoToolbox(GPU) 굽기는 실측
 **3.3배** 가속에 그쳐 x264 프리셋의 **6~7.5배**보다 느려 GPU 번인은 기각. 대신 CPU
 libx264 프리셋 opt-in으로 급할 때 속도를 확보한다.
+
+## 라이브 프로바이더 판정 (2026-07-11 실회의 평가)
+
+**(a) 실회의 2회 평가 결과** — SpeechTranscriber는 volatile(비확정) 텍스트를 소급 수정하는
+특성이 있어, 자막 리듬이 불규칙하게 흔들림(이미 표시된 파셜이 뒤늦게 바뀜). 번역 품질도
+`lowLatency`·`highFidelity` 두 전략 모두 `gemini_live_translate` 대비 열세로 확인.
+
+**(b) 결정** — `apple_live_translate`는 **실험적(experimental) / 오프라인 백업**으로만
+유지한다. 회의 기본 프로바이더는 계속 `gemini_live_translate`. UI에도 실험적 표기와 경고
+툴팁을 추가함(`ServerConfigPanel.tsx`).
+
+**(c) 향후 후보** — 하이브리드 구성: 전사는 Apple 온디바이스(SpeechTranscriber) + 번역은
+Gemini Flash를 문장 단위로 호출. 이번 스파이크에서 만든 문장분절기(`SentenceSegmenter`)를
+그대로 재사용할 수 있음. 단, STT의 소급 수정(volatile→final 재작성) 문제는 이 구성에서도
+별도로 해결해야 함(분절기가 소급 수정을 얼마나 흡수하는지 별도 검증 필요).
+
+**(d) 자막메이커는 반대 결론** — 오프라인 배치(자막메이커) 용도로는 Apple이 확실한 승자.
+전사 54배속(실측), 번역은 고속(22초)·고품질 선택 가능한 피커 제공(기본값은 고품질). 실시간
+경로와 배치 경로의 트레이드오프가 다르므로 프로바이더 선택은 용도별로 분리 유지한다.

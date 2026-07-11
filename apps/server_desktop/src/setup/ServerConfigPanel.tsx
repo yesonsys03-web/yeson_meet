@@ -193,8 +193,8 @@ export default function ServerConfigPanel() {
       <Field label="provider">
         <select value={provider} onChange={(e) => setProvider(e.target.value)} style={styles.input}>
           {PROVIDERS.map((p) => (
-            <option key={p} value={p} title={p === "apple_live_translate" ? "실리콘맥 전용 — 다른 서버에서 선택하면 count-only 모드로 시작됩니다" : undefined}>
-              {p}
+            <option key={p} value={p} title={p === "apple_live_translate" ? "실험적 — 실리콘맥 전용. 자막 리듬·품질이 gemini_live_translate보다 낮음. 회의에는 gemini_live_translate 권장" : undefined}>
+              {p === "apple_live_translate" ? `${p} (실험적)` : p}
             </option>
           ))}
         </select>
