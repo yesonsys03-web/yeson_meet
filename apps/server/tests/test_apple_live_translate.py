@@ -62,6 +62,12 @@ HANGS_AFTER_EOF = """\
     time.sleep(120)
 """
 
+# ready를 내보내기 전에 아무 것도 출력하지 않고 멈춘다(언어팩 미설치 시 의심 동작).
+NEVER_READY = """\
+    import time
+    time.sleep(120)
+"""
+
 
 async def _empty_audio():
     yield b"\x00" * 640
@@ -156,6 +162,20 @@ class TestAppleLiveTranslateProvider:
         assert len(out) == 1
         assert out[0].seq == 1
         assert out[0].is_final is False
+
+    async def test_ready_timeout_is_permanent_unavailable(self, tmp_path):
+        # 바이너리가 status ready 이전에 조용히 멈추면(언어팩 미설치 의심) ready_timeout
+        # 안에 프로세스를 죽이고 영구 에러를 던져야 한다 — 무한 대기 금지.
+        provider = AppleLiveTranslateProvider(
+            argv=_fake_bin(tmp_path, NEVER_READY), ready_timeout=0.5)
+        start = time.monotonic()
+        try:
+            await _collect(provider)
+            assert False, "expected AppleProviderUnavailable"
+        except AppleProviderUnavailable as exc:
+            assert is_permanent_provider_error(exc)
+        elapsed = time.monotonic() - start
+        assert elapsed < 2.0
 
     async def test_binary_not_found_is_permanent_unavailable(self, monkeypatch):
         import apps.server.ai.apple_live_translate as apple_live_translate_mod

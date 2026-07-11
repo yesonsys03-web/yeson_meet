@@ -14,6 +14,13 @@ missing_mt_asset, no_compatible_audio_format)은 재시도해도 소용없는 �
 "live_failed: <err>")은 일시적 오류로 취급해 plain RuntimeError를 던지고
 live_session의 짧은 백오프 reconnect 루프에 맡긴다.
 
+Pre-ready hang guard: 스폰 직후 첫 기대 이벤트는 `status ready`다. 바이너리가
+ready를 내보내기 전에 멈추면(스파이크 노트: EN→KO 언어팩 미설치 시 의심되는
+동작 — 미검증) 세션이 무한히 조용히 대기한다. saw_ready 이전에는 stdout 첫
+라인을 ready_timeout 안에 못 받으면 프로세스를 죽이고 AppleProviderUnavailable을
+던진다(영구 에러 → 5분 백오프 + 운영자 알림, reconnect 스팸 방지). ready_timeout은
+첫 실행 STT 에셋 자동 다운로드(~20s)를 감안해 넉넉하게 잡는다(기본 60s).
+
 Post-EOF hang guard: 오디오 pump가 끝나(stdin EOF) 바이너리가 finalize를
 못 하고 멈추면 결과 스트림이 영원히 끝나지 않을 수 있다. pump task가
 끝난 뒤부터는 다음 stdout 라인을 eof_timeout 안에 못 받으면 프로세스를
@@ -39,6 +46,10 @@ logger = logging.getLogger("yeson.ai.apple_live_translate")
 
 DEFAULT_EOF_TIMEOUT_SECONDS = 10.0
 _EOF_TIMEOUT_ENV = "YESON_APPLE_LIVE_EOF_TIMEOUT"
+
+# 첫 실행 STT 에셋 자동 다운로드가 ~20s 걸리므로(스파이크 노트) 넉넉하게 60s.
+DEFAULT_READY_TIMEOUT_SECONDS = 60.0
+_READY_TIMEOUT_ENV = "YESON_APPLE_LIVE_READY_TIMEOUT"
 
 # status:error reason 접두사 중 재시도해도 회복 불가능한 것들 (OS/에셋 미지원).
 # 그 외 reason(예: "live_failed: ...")은 일시적 오류로 취급한다.
@@ -67,6 +78,16 @@ def _default_eof_timeout() -> float:
         return DEFAULT_EOF_TIMEOUT_SECONDS
 
 
+def _default_ready_timeout() -> float:
+    raw = os.environ.get(_READY_TIMEOUT_ENV)
+    if not raw:
+        return DEFAULT_READY_TIMEOUT_SECONDS
+    try:
+        return float(raw)
+    except ValueError:
+        return DEFAULT_READY_TIMEOUT_SECONDS
+
+
 class AppleLiveTranslateProvider:
     def __init__(
         self,
@@ -75,11 +96,17 @@ class AppleLiveTranslateProvider:
         # 시점에 매번 해석한다. 리터럴 기본값으로 되돌리지 말 것 — 테스트/운영
         # 환경별 오버라이드가 이 지연 평가에 의존한다.
         eof_timeout: float | None = None,
+        # None → env YESON_APPLE_LIVE_READY_TIMEOUT(기본 60.0). eof_timeout과
+        # 동일하게 인스턴스 생성 시점에 지연 해석한다.
+        ready_timeout: float | None = None,
     ):
         self._argv = argv  # 테스트 심; None이면 스폰 시점에 해석
         self._segment = 0
         self._eof_timeout = (
             eof_timeout if eof_timeout is not None else _default_eof_timeout()
+        )
+        self._ready_timeout = (
+            ready_timeout if ready_timeout is not None else _default_ready_timeout()
         )
 
     def _resolved_argv(self) -> list[str]:
@@ -123,32 +150,53 @@ class AppleLiveTranslateProvider:
 
             pump = asyncio.create_task(_pump_audio())
             timed_out = False
+            saw_ready = False
             read_t: asyncio.Future | None = None
             try:
                 while True:
-                    # pump.done()을 먼저 확인하고 나서 readline()을 무제한으로
-                    # 거는 것(TOCTOU)이 아니라, readline()을 항상 먼저 걸어두고
-                    # pump와 경합시킨다 — 그 사이 pump가 끝나버려도 이미 진행
-                    # 중인 readline을 eof_timeout으로 다시 감쌀 수 있다.
                     read_t = asyncio.ensure_future(proc.stdout.readline())
-                    if not pump.done():
-                        await asyncio.wait(
-                            {read_t, pump}, return_when=asyncio.FIRST_COMPLETED)
-                    if read_t.done():
-                        line = read_t.result()
-                    else:
-                        # 펌프 종료됨(오디오 끝) — 이후 줄은 eof_timeout 안에 와야 한다
+                    if not saw_ready:
+                        # 스폰 직후: 첫 status 이벤트(보통 ready)가 오기 전엔 pump가
+                        # 아직 오디오를 무한히 흘리는 중이라 pump-race가 무의미하다.
+                        # 첫 stdout 라인을 ready_timeout으로 직접 제한 — 못 받으면
+                        # 언어팩(EN→KO) 미설치 등으로 바이너리가 조용히 멈춘 것으로
+                        # 보고 영구 에러를 던진다.
                         try:
                             line = await asyncio.wait_for(
-                                read_t, timeout=self._eof_timeout)
+                                read_t, timeout=self._ready_timeout)
                         except asyncio.TimeoutError:
-                            logger.warning(
-                                "apple live: no output within eof_timeout=%.1fs "
-                                "after stdin EOF; ending stream",
-                                self._eof_timeout,
+                            logger.error(
+                                "apple live: no output within ready_timeout=%.1fs "
+                                "after spawn; killing (EN→KO 언어팩 미설치 의심)",
+                                self._ready_timeout,
                             )
-                            timed_out = True
-                            break
+                            raise AppleProviderUnavailable(
+                                f"ready timeout after {self._ready_timeout}s — "
+                                "언어팩(EN→KO) 미설치 가능성, 시스템 설정에서 번역 "
+                                "언어 다운로드 확인")
+                    else:
+                        # ready 이후: pump.done()을 먼저 확인하고 나서 readline()을
+                        # 무제한으로 거는 것(TOCTOU)이 아니라, readline()을 항상 먼저
+                        # 걸어두고 pump와 경합시킨다 — 그 사이 pump가 끝나버려도 이미
+                        # 진행 중인 readline을 eof_timeout으로 다시 감쌀 수 있다.
+                        if not pump.done():
+                            await asyncio.wait(
+                                {read_t, pump}, return_when=asyncio.FIRST_COMPLETED)
+                        if read_t.done():
+                            line = read_t.result()
+                        else:
+                            # 펌프 종료됨(오디오 끝) — 이후 줄은 eof_timeout 안에 와야 한다
+                            try:
+                                line = await asyncio.wait_for(
+                                    read_t, timeout=self._eof_timeout)
+                            except asyncio.TimeoutError:
+                                logger.warning(
+                                    "apple live: no output within eof_timeout=%.1fs "
+                                    "after stdin EOF; ending stream",
+                                    self._eof_timeout,
+                                )
+                                timed_out = True
+                                break
                     if not line:
                         break  # EOF — 프로세스 종료
                     try:
@@ -158,6 +206,7 @@ class AppleLiveTranslateProvider:
                         continue
                     etype = event.get("type")
                     if etype == "status":
+                        saw_ready = True  # 첫 status 관측 → ready_timeout 가드 해제
                         if event.get("state") == "error":
                             reason = str(event.get("reason", "unknown"))
                             if reason.startswith(_PERMANENT_REASON_PREFIXES):
