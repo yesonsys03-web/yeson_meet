@@ -40,6 +40,12 @@ SLEEPY = """\
     time.sleep(5)
 """
 
+ECHO_STRATEGY = """\
+    import json, os, sys
+    json.load(sys.stdin)
+    print(json.dumps([os.environ.get("YESON_APPLE_MT_STRATEGY")]))
+"""
+
 
 class TestAppleTranslator:
     async def test_translates_batch_in_order(self, tmp_path):
@@ -65,13 +71,36 @@ class TestAppleTranslator:
         tr = AppleTranslator(argv=_fake_bin(tmp_path, SLEEPY), timeout=0.3)
         with pytest.raises(TranslationError, match="시간 초과"):
             await tr.translate_batch(["a"])
+
+    async def test_strategy_env_passed_to_subprocess_low(self, tmp_path):
+        tr = AppleTranslator(argv=_fake_bin(tmp_path, ECHO_STRATEGY), strategy="low")
+        out = await tr.translate_batch(["a"])
+        assert out == ["low"]
+
+    async def test_strategy_env_passed_to_subprocess_high(self, tmp_path):
+        tr = AppleTranslator(argv=_fake_bin(tmp_path, ECHO_STRATEGY), strategy="high")
+        out = await tr.translate_batch(["a"])
+        assert out == ["high"]
+
+    async def test_invalid_strategy_falls_back_to_low(self, tmp_path):
+        tr = AppleTranslator(argv=_fake_bin(tmp_path, ECHO_STRATEGY), strategy="bogus")
+        out = await tr.translate_batch(["a"])
+        assert out == ["low"]
 # === ANCHOR: TEST_TRANSLATE_APPLE_END ===
 
 
 class TestWiring:
     def test_create_translator_apple(self):
         from apps.server.domain.video_captions.translate_cli import create_translator
-        assert type(create_translator(provider="apple")).__name__ == "AppleTranslator"
+        translator = create_translator(provider="apple")
+        assert type(translator).__name__ == "AppleTranslator"
+        assert translator._strategy == "low"
+
+    def test_create_translator_apple_hifi(self):
+        from apps.server.domain.video_captions.translate_cli import create_translator
+        translator = create_translator(provider="apple_hifi")
+        assert type(translator).__name__ == "AppleTranslator"
+        assert translator._strategy == "high"
 
     def test_engine_listed(self, monkeypatch):
         from apps.server.domain.video_captions import translate_cli
@@ -79,3 +108,5 @@ class TestWiring:
         engines = translate_cli.list_translate_engines()
         apple = [e for e in engines if e["value"] == "apple"]
         assert apple and apple[0]["available"] is True
+        apple_hifi = [e for e in engines if e["value"] == "apple_hifi"]
+        assert apple_hifi and apple_hifi[0]["available"] is True

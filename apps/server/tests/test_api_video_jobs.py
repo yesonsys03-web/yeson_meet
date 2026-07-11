@@ -255,13 +255,27 @@ async def test_create_youtube_job_accepts_apple_translate_provider(client, admin
     assert row.translate_provider == "apple"
 
 
+async def test_create_youtube_job_accepts_apple_hifi_translate_provider(client, admin_user, db_session):
+    # apple_hifi (Apple 고품질·느림 전략)도 apple과 같은 배선 회귀 가드가 필요하다.
+    await _install_model()
+    resp = await client.post("/api/v1/video-jobs",
+                             json={"youtube_url": "https://youtu.be/abc",
+                                   "whisper_model": "small",
+                                   "translate_provider": "apple_hifi"})
+    assert resp.status_code == 201
+    job_id = resp.json()["job_id"]
+    row = (await db_session.execute(
+        select(VideoJob).where(VideoJob.external_id == job_id))).scalar_one()
+    assert row.translate_provider == "apple_hifi"
+
+
 async def test_translate_engines_endpoint(client, admin_user):
     resp = await client.get("/api/v1/video-jobs/translate-engines")
     assert resp.status_code == 200
     engines = resp.json()["engines"]
-    assert len(engines) == 6
+    assert len(engines) == 7
     assert {e["value"] for e in engines} == {
-        "gemini", "claude", "codex", "agy", "opencode", "apple"}
+        "gemini", "claude", "codex", "agy", "opencode", "apple", "apple_hifi"}
     for engine in engines:
         assert "label" in engine
         assert isinstance(engine["available"], bool)

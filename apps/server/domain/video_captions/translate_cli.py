@@ -104,7 +104,9 @@ def list_translate_engines() -> list[dict]:
          "available": resolve_cli("agy") is not None},
         {"value": "opencode", "label": "OpenCode (딥시크 등)",
          "available": resolve_cli("opencode") is not None},
-        {"value": "apple", "label": "Apple 온디바이스 (실리콘맥, 초고속)",
+        {"value": "apple", "label": "Apple 온디바이스 (고속)",
+         "available": apple_mt_available()},
+        {"value": "apple_hifi", "label": "Apple 온디바이스 (고품질·느림)",
          "available": apple_mt_available()},
     ]
 
@@ -260,7 +262,11 @@ def create_translator(
 
     if provider == "apple":
         from .translate_apple import AppleTranslator
-        return AppleTranslator()
+        return AppleTranslator(strategy="low")
+
+    if provider == "apple_hifi":
+        from .translate_apple import AppleTranslator
+        return AppleTranslator(strategy="high")
 
     if provider in _BACKENDS:
         backend = _BACKENDS[provider]

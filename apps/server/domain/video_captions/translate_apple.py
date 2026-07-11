@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 
 from apps.server.ai.apple_native import resolve_apple_bin
 from .translate import TranslationError
@@ -18,15 +19,19 @@ from .translate import TranslationError
 logger = logging.getLogger("yeson.video.translate_apple")
 
 DEFAULT_TIMEOUT = 120.0
+_STRATEGY_ENV = "YESON_APPLE_MT_STRATEGY"
+_VALID_STRATEGIES = {"low", "high"}
 
 
 class AppleTranslator:
     """TranslationProvider backed by the on-device Apple Translation framework."""
 
-    def __init__(self, argv: list[str] | None = None, timeout: float = DEFAULT_TIMEOUT):
+    def __init__(self, argv: list[str] | None = None, timeout: float = DEFAULT_TIMEOUT,
+                strategy: str = "low"):
         # argv는 테스트 심 — 운영에서는 resolve_apple_bin()으로 지연 해석
         self._argv = argv
         self._timeout = timeout
+        self._strategy = strategy if strategy in _VALID_STRATEGIES else "low"
 
     def _resolved_argv(self) -> list[str]:
         if self._argv is not None:
@@ -46,7 +51,8 @@ class AppleTranslator:
             *argv,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE)
+            stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, _STRATEGY_ENV: self._strategy})
         payload = json.dumps(texts, ensure_ascii=False).encode("utf-8")
         try:
             stdout, stderr = await asyncio.wait_for(
