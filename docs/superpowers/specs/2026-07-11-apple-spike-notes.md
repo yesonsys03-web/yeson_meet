@@ -425,3 +425,52 @@ normalized final seqs strictly-increasing = True
 - 오디오 생성: `say`(+`[[slnc N]]` 무음)→`ffmpeg -ar 16000 -ac 1`로 wav(전사) / `-f s16le` raw PCM(라이브).
 - 콜드/웜 구분: 각 서브프로세스는 매 호출 새로 뜨므로 STT/MT 워밍업 비용을 매번 지불한다
   → 프로세스 재사용/사전 워밍업(더미 입력)으로 완화 권장(§미해결 4와 동일 결론, 라이브에도 적용).
+
+## 두-모델 시스템 (성능 후속, 2026-07-11)
+
+macOS 26.4의 Translation 프레임워크는 **두 개의 NMT 모델**을 노출한다:
+`TranslationSession.Strategy.highFidelity`(기본, 고품질)와 `.lowLatency`(저지연). 자막
+용도로는 lowLatency 품질이 충분하면서 훨씬 빠르다.
+
+### API 계층 (swiftinterface 실측)
+
+- `TranslationSession(installedSource:target:)` — **macOS 26.0+**. SwiftUI 숨김 윈도우
+  브리지 없이 세션을 직결 생성. 26.0 미만은 여전히 `.translationTask` 브리지 필요.
+- `TranslationSession(installedSource:target:preferredStrategy:)` — **macOS 26.4+**. 전략 지정.
+- `LanguageAvailability(preferredStrategy:).status(from:to:)` — **macOS 26.4+**. 전략별
+  설치 상태(`.installed`/`.supported`/`.unsupported`)를 개별 보고.
+- `TranslationSession.Strategy` / `Configuration.preferredStrategy` — **macOS 26.4+**.
+
+### 실측 성능 (검증 머신, M2 Pro)
+
+- 453큐/42KB 전체: highFidelity **113 chars/s** vs lowLatency **1,925 chars/s = 17배**.
+- 50큐 배치(scratch 픽스처, 실 바이너리): `YESON_APPLE_MT_STRATEGY=low` **3.06s** vs
+  `high` **41.94s** (약 13.7배). low가 기본이며 품질은 자막용으로 충분.
+
+### lowLatency 팩은 별도 UI-프롬프트 다운로드
+
+lowLatency EN→KO 언어팩은 highFidelity와 **별개 에셋**으로, `prepareTranslation()`을
+**보이는 창의 `.translationTask` 안**에서 호출해 시스템 다운로드 확인창을 유도해야 한다
+(비-UI 컨텍스트는 `notInstalled` throw). 이를 위해 `apple-live-translate prepare-translation`
+서브커맨드를 추가했다 — 유일하게 regular 활성화 정책으로 작은 창을 띄운다. server_desktop의
+"고속 번역 모델 설치" 버튼(`install_fast_translation` command)이 이를 실행한다.
+
+### 세션 팩토리 + 폴백
+
+`SessionFactory.makeTranslationSession(...)`이 batch/live 공용 진입점. 26.4+에서
+`LanguageAvailability(preferredStrategy:)`로 요청 전략 설치 여부를 확인해:
+low 요청·설치 → lowLatency, low 요청·미설치 → stderr 경고 1회 후 highFidelity 폴백,
+아무것도 미설치 → `AppleMTMissingAsset`(→ `missing_mt_asset` 계약). 26.0..<26.4는 직결
+init(highFidelity), 15..<26.0은 기존 브리지.
+
+### 환경변수
+
+- `YESON_APPLE_MT_STRATEGY` = `low`(기본) | `high` — 번역 전략 스위치.
+- `YESON_BURN_PRESET` = `veryfast`(기본) | `superfast` | `ultrafast` — libx264 굽기 프리셋.
+
+### 굽기(자막 번인) 실측 — GPU 인코더 기각
+
+60s·1080p60 기준 프리셋별: veryfast **10.8s/8.6MB**, superfast **6.8s/18.6MB**,
+ultrafast **4.8s/35.3MB**(빠를수록 파일 큼·품질↓). VideoToolbox(GPU) 굽기는 실측
+**3.3배** 가속에 그쳐 x264 프리셋의 **6~7.5배**보다 느려 GPU 번인은 기각. 대신 CPU
+libx264 프리셋 opt-in으로 급할 때 속도를 확보한다.
