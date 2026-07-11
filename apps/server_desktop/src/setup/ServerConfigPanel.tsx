@@ -20,7 +20,7 @@ function presence(label: string, configured: boolean): string {
   return configured ? `${label}: configured` : `${label}: not set`;
 }
 
-const PROVIDERS = ["gemini_live_translate", "gemini_live", "google_stt_translate"] as const;
+const PROVIDERS = ["gemini_live_translate", "gemini_live", "google_stt_translate", "apple_live_translate"] as const;
 const SUMMARY_BACKENDS = ["auto", "claude", "codex"] as const;
 
 export default function ServerConfigPanel() {
@@ -172,7 +172,7 @@ export default function ServerConfigPanel() {
       <Field label="provider">
         <select value={provider} onChange={(e) => setProvider(e.target.value)} style={styles.input}>
           {PROVIDERS.map((p) => (
-            <option key={p} value={p}>
+            <option key={p} value={p} title={p === "apple_live_translate" ? "실리콘맥 전용 — 다른 서버에서 선택하면 count-only 모드로 시작됩니다" : undefined}>
               {p}
             </option>
           ))}

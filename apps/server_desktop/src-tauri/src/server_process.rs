@@ -327,6 +327,14 @@ pub fn start_server_inner(
     if let Some(ffmpeg) = locate_bundled_ffmpeg() {
         command.env("YESON_FFMPEG_BIN", ffmpeg);
     }
+    // Task 10: Apple 온디바이스 번역 바이너리 (실리콘맥 번들에만 존재; dev runs
+    // or non-mac builds have no `apple-translate-*` resource dir, so this is
+    // None there and the env is simply not injected — the server's
+    // apple_native.resolve_apple_bin() then falls back to PATH, and
+    // create_ai_provider() gates to count-only mode if that also misses).
+    if let Some(apple_translate) = locate_bundled_apple_translate() {
+        command.env("YESON_APPLE_TRANSLATE_BIN", apple_translate);
+    }
     augment_path_for_summary_cli(&mut command);
     set_process_group(&mut command);
     set_no_window(&mut command);
@@ -601,6 +609,51 @@ fn locate_bundled_ffmpeg() -> Option<PathBuf> {
     let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
     let dir_name = format!("ffmpeg-{triple}");
     let bin_name = format!("ffmpeg{suffix}");
+
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            roots.push(dir.to_path_buf());
+            roots.push(dir.join("binaries"));
+            if let Some(contents) = dir.parent() {
+                roots.push(contents.join("Resources"));
+                roots.push(contents.join("Resources").join("binaries"));
+            }
+        }
+    }
+    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
+
+    roots
+        .into_iter()
+        .map(|root| root.join(&dir_name).join(&bin_name))
+        .find(|path| path.is_file())
+}
+
+/// Locate the staged `apple-translate-<triple>/apple-live-translate[.exe]`
+/// binary built by `apps/native_helper_mac/scripts/build_apple_translate.sh`
+/// (Task 10). Mirrors `locate_bundled_ffmpeg` above: same bundled-resource +
+/// dev `binaries/` candidate roots. In practice this only ever resolves on
+/// `aarch64-apple-darwin` — the Apple Translation framework the binary wraps
+/// is Apple Silicon only, so no other triple's resource dir is ever staged —
+/// but the full triple match mirrors the existing helpers rather than
+/// special-casing one platform. Returns `None` when missing (dev runs without
+/// a local build, or any non-mac bundle), in which case the caller does not
+/// inject `YESON_APPLE_TRANSLATE_BIN` and the server falls back to PATH.
+fn locate_bundled_apple_translate() -> Option<PathBuf> {
+    let triple: &str = if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        "x86_64-pc-windows-msvc"
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "aarch64-apple-darwin"
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "x86_64-apple-darwin"
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "x86_64-unknown-linux-gnu"
+    } else {
+        return None;
+    };
+    let suffix = if cfg!(target_os = "windows") { ".exe" } else { "" };
+    let dir_name = format!("apple-translate-{triple}");
+    let bin_name = format!("apple-live-translate{suffix}");
 
     let mut roots: Vec<PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe() {

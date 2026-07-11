@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "resources": [
+      "binaries/yeson-server-*/**/*",
+      "binaries/cloudflared-*/**/*",
+      "binaries/ffmpeg-*/**/*",
+      "binaries/apple-translate-*/**/*"
+    ]
+  }
+}
