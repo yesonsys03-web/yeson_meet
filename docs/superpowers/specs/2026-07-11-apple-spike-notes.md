@@ -173,6 +173,7 @@ for run in result.text.runs {
 
 ### 확정 코드 (파일 전사)
 ```swift
+// 주의: 아래 심볼은 macOS 26+ 전용 — 배포 타깃이 낮은 바이너리에서는 @available(macOS 26.0, *) 가드 필수
 let transcriber = SpeechTranscriber(locale: Locale(identifier: "en-US"),
                                     transcriptionOptions: [], reportingOptions: [],
                                     attributeOptions: [.audioTimeRange])
@@ -233,6 +234,7 @@ static func SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [any SpeechM
 
 ### 확정 코드 (스트리밍 핵심)
 ```swift
+// 주의: 아래 심볼은 macOS 26+ 전용 — 배포 타깃이 낮은 바이너리에서는 @available(macOS 26.0, *) 가드 필수
 let transcriber = SpeechTranscriber(locale: Locale(identifier: "en-US"),
     transcriptionOptions: [], reportingOptions: [.volatileResults],
     attributeOptions: [.audioTimeRange])
@@ -269,12 +271,13 @@ if let request = try await AssetInventory.assetInstallationRequest(supporting: [
 // 상태 조회: await AssetInventory.status(forModules: [transcriber]) -> AssetInventory.Status
 ```
 - `AssetInstallationRequest`는 `ProgressReporting` + `Sendable`. 진행률 노출 가능.
-- 에러 타입: `SFSpeechError`(코드 예: `.unexpectedAudioFormat`, `.incompatibleAudioFormats`). 스파이크에선 다운로드 에러 미발생.
+- 에러 타입: (미검증 — 오디오 포맷 에러 코드이며 에셋 누락 에러 타입으로 확인된 것 아님) `SFSpeechError`(코드 예: `.unexpectedAudioFormat`, `.incompatibleAudioFormats`). 스파이크에선 다운로드 에러 미발생.
 
 ### MT 팩 (Translation)
 - 검증 머신에 EN→KO **이미 설치**돼 있어 다운로드 경로 미검증. 프로덕션에서 미설치 대비:
   - `TranslationSession.prepareTranslation()`으로 사전 다운로드 트리거 가능(문서상). 미검증.
   - 미설치 시 `translations(from:)`가 throw → 에러 잡아 `status:error reason:missing_mt_asset` 방출. **에러 타입은 스파이크에서 실측 못 함**(팩이 이미 있어서). Task 3 구현 시 미설치 머신에서 실제 던지는 에러 타입 확인 필요. → **미해결 관심사.**
+  - > ⚠️ **Task 3 인계**: MT 언어팩 미설치 시 `translations(from:)`이 던지는 에러 타입은 미검증. Task 3 구현자는 이 노트가 그 케이스를 답한다고 가정하지 말 것 — 미설치 상태를 만들어 실측하거나, 임의 에러를 `status:error reason:missing_mt_asset`으로 매핑하는 방어적 처리를 할 것.
   - 사용자 지시: 시스템 설정 UI를 코드로 열지 말 것. 미설치이고 프로그램적 설치 불가하면 `status:error`로 보고.
 
 ---
