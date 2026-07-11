@@ -319,10 +319,10 @@ if let request = try await AssetInventory.assetInstallationRequest(supporting: [
 |---|---|
 | 자막메이커 전사(Apple STT) | ✅ 10.3s 영상 → **~0.40s** (≈26x 실시간), 세그먼트 정확 |
 | 자막메이커 번역(Apple MT) | ✅ 2 세그먼트 배치 **~2.2s** (서브프로세스당 NSApplication+세션 워밍업 포함) |
-| 자막메이커 굽기(burn) | ⚠️ 이 환경에서 **측정 불가** — 시스템 ffmpeg 8.1에 libass 미포함(`subtitles` 필터 없음). **제품 버그 아님**(배포 앱은 libass 포함 ffmpeg 번들). |
+| 자막메이커 굽기(burn) | ✅ **~0.33s** (10.3s/320x240, 번들 ffmpeg `ffmpeg-aarch64-apple-darwin` = libass 포함, `YESON_FFMPEG_BIN` 지정). 시스템 Homebrew ffmpeg 8.1은 libass 미포함이라 최초 시도는 실패했었음(환경 제약, 제품 버그 아님). |
 | 라이브 메커니즘 | ✅ volatile 파셜 + 파이널(seq·EN·KO·t0/t1)이 실 바이너리·실 프로바이더로 정상 흐름 |
 | 라이브 콜드스타트 | ~5.0s (프로세스 기동→첫 자막; STT 모델+TranslationSession 워밍업, 스파이크 ~3.4s 관측과 일치) |
-| 라이브 phrase-end→final (정상상태) | P50 **~2.1–2.8s** — Gemini 실측 P50 1419.8ms보다 **느림** |
+| 라이브 phrase-end→final (정상상태) | P50 **~2.1–2.8s** (표본 N=7 발화/2런 — 소표본, 지표성) — Gemini 실측 P50 1419.8ms(8발화)보다 **느림** |
 | 엣지(a) 영구에러 | ✅ `unsupported_os`→`AppleProviderUnavailable`→영구 분류→운영자 provider_error 1회→3s창 스폰 1회(재접속 스팸 없음) |
 | 엣지(b) kill -9 재접속 | ✅ 재접속(provider_segment 1→2) + normalizer가 seq 단조 유지(1,2,3→4,5,6) |
 
@@ -332,7 +332,8 @@ if let request = try await AssetInventory.assetInstallationRequest(supporting: [
   `python -m apps.server.main`(port 8787) → 10.3s 테스트 mp4(`say`+ffmpeg 생성)를
   `POST /video-jobs/upload`로 업로드(`whisper_model=apple`). 번역 엔진 Apple은
   API의 `translate_provider` 정규식(`^(gemini|claude|codex|agy|opencode)$`)이
-  "apple"을 받지 않으므로 서버 env `YESON_VIDEO_TRANSLATE_PROVIDER=apple`로 선택
+  "apple"을 받지 않아 (수정됨: `7e7973a` — 패턴에 apple 허용) 당시에는 서버 env
+  `YESON_VIDEO_TRANSLATE_PROVIDER=apple`로 선택
   (파이프라인 `create_translator(provider=None)`가 env 폴백 → `AppleTranslator`).
   `GET /video-jobs/translate-engines`는 `apple: available=true` 노출 확인.
 - 단계별 실측(고빈도 폴링, `rebuild`로 재실행한 **웜** 값):
@@ -343,16 +344,19 @@ if let request = try await AssetInventory.assetInstallationRequest(supporting: [
   | 전사(transcribing, Apple STT) | 0→100% | **~0.40s** |
   | 번역(translating, Apple MT 2세그먼트) | | **~2.20s** |
   | **합계(→review)** | | **~2.7s** |
+  | 굽기(burning→done, 번들 ffmpeg libx264) | 0→100% | **~0.33s** |
 
   - 최초 업로드(콜드, 바이너리·모델 웜업 포함)는 review까지 **~12.0s**. 재실행(웜) ~2.7s.
   - 산출 세그먼트 예: `seq=1 0–3780ms "Hello, everybody. Welcome to today's meeting." / 안녕하세요, 여러분. 오늘 회의에 오신 것을 환영합니다.`
 - **whisper/Gemini 비교는 브리프 지침에 따라 생략**: `STORAGE_ROOT/whisper_models/` 아래
   다운로드된 whisper 모델이 없어(수 GB 다운로드 금지) 전사 비교 불가 → Apple-only 기록.
   (`GEMINI_API_KEY`는 env에 존재했으나 비교 조건은 whisper 모델 존재를 함께 요구.)
-- 굽기: `POST /video-jobs/{id}/burn`이 `ffmpeg ... -vf "subtitles=subs.srt:force_style='...'"`에서
-  실패(`code=234, "Error parsing filterchain 'subtitles=...'"`). 원인은 **시스템 ffmpeg 8.1의
-  libass 미탑재**(필터 문자열 자체는 유효). 배포 Tauri 앱은 libass 포함 ffmpeg를 번들하므로
-  제품 결함이 아니라 검증 환경 제약. → 굽기 실측 보류.
+- 굽기: 최초 시도는 시스템 Homebrew ffmpeg 8.1로 실패(`code=234, "Error parsing filterchain
+  'subtitles=...'"` — **libass 미탑재**; 필터 문자열 자체는 유효). 리뷰 반영으로 디스크의
+  **번들 ffmpeg**(`apps/server_desktop/src-tauri/binaries/ffmpeg-aarch64-apple-darwin/ffmpeg`,
+  8.1.2-tessus, `subtitles`/`ass` 필터 확인)를 `YESON_FFMPEG_BIN`으로 지정해 재측정:
+  `POST /burn` → burning→done **~0.33s**, burned.mp4(h264/aac, 10.29s) 정상 생성. 즉 배포
+  구성(번들 ffmpeg)에서는 굽기 정상 동작 — 최초 실패는 환경 제약이었음.
 
 ### 2. 라이브 종단 (컴포넌트 레벨)
 
@@ -365,6 +369,10 @@ if let request = try await AssetInventory.assetInstallationRequest(supporting: [
 - **정상상태 phrase-end→final**: 프로세스를 선(先)워밍한 뒤 측정 시 **P50 ~2.1–2.8s**,
   min ~0.95s(입력 EOF로 강제 finalize된 마지막 발화), max ~3.3s. 즉 완결(구두점·번역·
   용어보정 포함) **final 지연이 Gemini의 phrase-end→first-subtitle P50 1419.8ms보다 크다**.
+  - **표본 수: 총 N=7 발화, 2개 런** — 런1(9문장 클립, t1≥9s만 측정) N=5
+    [2765, 3304, 1400, 2881, 948ms], 런2(10s 선워밍+8문장) N=2 [2004, 1230ms].
+    Gemini 기준치(1419.8ms)도 8발화 1런이었으나, **N<10의 소표본**이므로 위 P50/min/max는
+    통계적 확정치가 아니라 지표(indicative)다. 실회의 오디오 + 더 긴 세션으로 재측정 필요.
   - Apple은 발화 도중 volatile 파셜을 계속 방출하므로 "무언가 보이기까지"는 더 빠르나,
     `isFinal` 확정에 후행 오디오(무음) 확인 창이 필요해 final이 ~2–3s 지연된다. 마지막
     발화가 EOF 강제 finalize로 <1s에 나온 점이 이를 뒷받침(버퍼링 아님).
@@ -412,6 +420,8 @@ normalized final seqs strictly-increasing = True
   YESON_AI_PROVIDER=apple_live_translate YESON_APPLE_TRANSLATE_BIN=<릴리스 바이너리>
   YESON_VIDEO_TRANSLATE_PROVIDER=apple PORT=8787 uv run --project apps/server python -m apps.server.main`
   (테이블은 `apps.server.db.seed.create_schema()`, 운영자 계정은 `seed()`로 사전 생성).
+  굽기 실측 시에는 `YESON_FFMPEG_BIN=<repo>/apps/server_desktop/src-tauri/binaries/ffmpeg-aarch64-apple-darwin/ffmpeg`
+  추가(시스템 Homebrew ffmpeg는 libass 미포함).
 - 오디오 생성: `say`(+`[[slnc N]]` 무음)→`ffmpeg -ar 16000 -ac 1`로 wav(전사) / `-f s16le` raw PCM(라이브).
 - 콜드/웜 구분: 각 서브프로세스는 매 호출 새로 뜨므로 STT/MT 워밍업 비용을 매번 지불한다
   → 프로세스 재사용/사전 워밍업(더미 입력)으로 완화 권장(§미해결 4와 동일 결론, 라이브에도 적용).
