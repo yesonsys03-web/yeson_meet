@@ -33,6 +33,15 @@ uv venv --clear --python "${PY_VERSION}" "${BUILD_VENV}"
 VIRTUAL_ENV="${BUILD_VENV}" uv pip install --python "${BUILD_VENV}/bin/python" \
     ./apps/server "pyinstaller>=6.21"
 
+# 하이브리드 B: 실리콘맥 번들에만 mlx-lm 포함 (인텔맥 회귀 방지 — 510741b 방침).
+MLX_COLLECT_FLAGS=()
+if [[ "$(uname -sm)" == "Darwin arm64" ]]; then
+    echo "Adding mlx-lm (Apple Silicon only)…"
+    VIRTUAL_ENV="${BUILD_VENV}" uv pip install --python "${BUILD_VENV}/bin/python" \
+        './apps/server[mlx]'
+    MLX_COLLECT_FLAGS=(--collect-all mlx --collect-all mlx_lm)
+fi
+
 # Build the viewer SPA (apps/web) so the frozen server serves it under the same
 # :8000 origin as /api + /ws (replacing the old Docker-path Caddy). Staged into
 # the bundle via PyInstaller --add-data below; main._web_dist_dir() reads it
@@ -70,6 +79,7 @@ echo "Building yeson-server (PyInstaller --onedir, Gemini-only)…"
     --collect-all av \
     --collect-all onnxruntime \
     --collect-all yt_dlp \
+    "${MLX_COLLECT_FLAGS[@]}" \
     --add-data "$(pwd)/apps/web/dist:web_dist" \
     --distpath "${DIST}" \
     --workpath "${WORK}" \
