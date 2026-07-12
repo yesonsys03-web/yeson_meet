@@ -51,6 +51,8 @@ pub fn run() {
             tunnel::lan_viewer_base_cmd,
             server_process::detect_lan_ip,
             server_process::install_fast_translation,
+            server_process::mlx_model_status,
+            server_process::mlx_download_model,
             restore::inspect_backup,
             restore::restore_backup,
             restore::list_dir,
