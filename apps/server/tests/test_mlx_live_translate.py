@@ -1,7 +1,15 @@
 # === ANCHOR: TEST_MLX_LIVE_TRANSLATE_START ===
 from __future__ import annotations
 
-from apps.server.ai.mlx_live_translate import guard_mlx_ko
+import os
+from apps.server.ai.mlx_live_translate import (
+    DEFAULT_MLX_MODEL,
+    guard_mlx_ko,
+    mlx_live_available,
+    mlx_model_dir,
+    mlx_model_id,
+    mlx_model_installed,
+)
 
 
 class TestGuardMlxKo:
@@ -67,3 +75,44 @@ class TestGuardMlxKo:
             "Sort and organize the files in the folder now.", chunk * 4
         ) == "repetition"
 # === ANCHOR: TEST_MLX_LIVE_TRANSLATE_END ===
+
+
+class TestModelResolution:
+    def test_default_model_id(self, monkeypatch):
+        monkeypatch.delenv("YESON_MLX_MODEL", raising=False)
+        assert mlx_model_id() == DEFAULT_MLX_MODEL == "mlx-community/Qwen3.5-9B-4bit"
+
+    def test_env_override(self, monkeypatch):
+        monkeypatch.setenv("YESON_MLX_MODEL", "mlx-community/Qwen3.5-4B-4bit")
+        assert mlx_model_id() == "mlx-community/Qwen3.5-4B-4bit"
+
+    def test_model_dir_sanitizes_slash(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+        d = mlx_model_dir("mlx-community/Qwen3.5-9B-4bit")
+        assert d == tmp_path / "mlx_models" / "mlx-community--Qwen3.5-9B-4bit"
+
+    def test_installed_requires_config_json(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+        model = "mlx-community/Qwen3.5-9B-4bit"
+        assert mlx_model_installed(model) is False
+        d = mlx_model_dir(model)
+        d.mkdir(parents=True)
+        (d / "config.json").write_text("{}")
+        assert mlx_model_installed(model) is True
+
+    def test_available_needs_both_gates(self, monkeypatch, tmp_path):
+        import apps.server.ai.mlx_live_translate as mod
+        monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+        monkeypatch.delenv("YESON_MLX_MODEL", raising=False)
+        # 모델 미설치 + apple 게이팅 True → False
+        monkeypatch.setattr(mod, "apple_stt_available", lambda: True)
+        assert mlx_live_available() is False
+        # 모델 설치 + apple 게이팅 False → False
+        d = mlx_model_dir(DEFAULT_MLX_MODEL)
+        d.mkdir(parents=True)
+        (d / "config.json").write_text("{}")
+        monkeypatch.setattr(mod, "apple_stt_available", lambda: False)
+        assert mlx_live_available() is False
+        # 둘 다 → True
+        monkeypatch.setattr(mod, "apple_stt_available", lambda: True)
+        assert mlx_live_available() is True

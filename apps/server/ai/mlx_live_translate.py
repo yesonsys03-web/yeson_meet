@@ -7,7 +7,11 @@
 """
 from __future__ import annotations
 
+import os
 import re
+from pathlib import Path
+
+from apps.server.ai.apple_native import apple_stt_available
 
 # --- 환각 가드 --------------------------------------------------------------
 # 2026-07-12 벤치 실측 실패 유형을 각각 겨냥한 5규칙. 전부 정규식/문자열 연산.
@@ -48,4 +52,29 @@ def guard_mlx_ko(en: str, ko: str) -> str | None:
     if _REPEAT_RE.search(ko_stripped):
         return "repetition"
     return None
+
+
+# --- 모델 해석/게이팅 ---------------------------------------------------------
+DEFAULT_MLX_MODEL = "mlx-community/Qwen3.5-9B-4bit"
+_MODEL_ENV = "YESON_MLX_MODEL"
+_STORAGE_ROOT_ENV = "STORAGE_ROOT"
+_DEFAULT_STORAGE_ROOT = "/var/lib/yeson-meet/storage"  # glossary.py와 동일 관례
+
+
+def mlx_model_id() -> str:
+    return os.environ.get(_MODEL_ENV, "").strip() or DEFAULT_MLX_MODEL
+
+
+def mlx_model_dir(model_id: str) -> Path:
+    root = os.environ.get(_STORAGE_ROOT_ENV) or _DEFAULT_STORAGE_ROOT
+    return Path(root) / "mlx_models" / model_id.replace("/", "--")
+
+
+def mlx_model_installed(model_id: str) -> bool:
+    return (mlx_model_dir(model_id) / "config.json").is_file()
+
+
+def mlx_live_available() -> bool:
+    """apple 전사 게이팅(macOS 26+/arm/바이너리) + 선택 모델 설치 여부."""
+    return apple_stt_available() and mlx_model_installed(mlx_model_id())
 # === ANCHOR: MLX_LIVE_TRANSLATE_END ===
