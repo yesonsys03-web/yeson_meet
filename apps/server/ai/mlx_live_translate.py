@@ -228,23 +228,38 @@ class MlxRefinedAppleProvider:
         client_ready = False
         respawns = 0
         inner_error: BaseException | None = None
+        spawn_lock = asyncio.Lock()  # 워밍업/첫 _refine의 동시 스폰 경합 방지
 
         async def _ensure_client() -> MlxWorkerClient | None:
             """기동 시도. 실패는 None — 파이널은 Apple KO로 흐른다."""
             nonlocal client, client_ready, respawns
             if client_ready and client is not None and client.alive:
                 return client
-            if respawns > self._max_respawns:
-                return None
-            try:
+            async with spawn_lock:
+                # 이중 확인 — 락 대기 중 다른 호출자가 이미 스폰을 끝냈을 수 있다
+                if client_ready and client is not None and client.alive:
+                    return client
+                if respawns > self._max_respawns:
+                    return None
                 fresh = self._client_factory()
-                await fresh.start()
-            except MlxWorkerUnavailable as exc:
-                respawns += 1
-                logger.warning("mlx worker unavailable (attempt %d): %s", respawns, exc)
-                return None
-            client, client_ready = fresh, True
-            return client
+                try:
+                    await fresh.start()
+                except asyncio.CancelledError:
+                    # 시작 도중 취소 — 이미 뜬 서브프로세스가 nonlocal에 연결되기
+                    # 전이므로 여기서 직접 정리하지 않으면 영구 누수된다.
+                    await fresh.close()
+                    raise
+                except MlxWorkerUnavailable as exc:
+                    # start()는 실패 시 내부적으로 이미 close()를 호출하지만,
+                    # close()는 멱등이므로 방어적으로 한 번 더 호출해도 무해하다.
+                    await fresh.close()
+                    respawns += 1
+                    logger.warning("mlx worker unavailable (attempt %d): %s", respawns, exc)
+                    return None
+                if client is not None:
+                    await client.close()  # 교체되는 구 클라이언트 누수 방지
+                client, client_ready = fresh, True
+                return client
 
         async def _refine(utterance: TranslatedUtterance) -> TranslatedUtterance:
             """파이널 1건 정제. 어떤 실패든 Apple KO 그대로 반환 (예외 금지)."""
@@ -259,7 +274,7 @@ class MlxRefinedAppleProvider:
                 mlx_ko = await asyncio.wait_for(
                     active.translate(
                         utterance.text_en, list(context), timeout=self._sentence_timeout),
-                    timeout=self._sentence_timeout)
+                    timeout=self._sentence_timeout + 0.5)
             except asyncio.TimeoutError:
                 logger.warning("mlx sentence timeout seq=%d", utterance.seq)
                 return utterance
@@ -296,9 +311,19 @@ class MlxRefinedAppleProvider:
                         refined = await _refine(pending)
                         context.append((refined.text_en, refined.text_ko))
                         await out_q.put(refined)
+            except asyncio.CancelledError:
+                # 취소는 삼키지 않는다 — finally에서 플러시한 뒤 그대로 전파.
+                raise
             except BaseException as exc:  # noqa: BLE001 — 잔여 홀드 플러시 후 재전파
                 inner_error = exc
             finally:
+                # 참고: 현재 인라인 펌프 구조상 "while holds:" 정제 루프가
+                # 매 utterance마다 holds를 완전히 비운 뒤에야 inner의 다음
+                # __anext__를 호출하므로, inner_error 발생 시점엔 holds가
+                # 항상 비어 있다 (백로그 스킵도 동일한 while holds 안에서 처리됨).
+                # 즉 아래 플러시는 현재 코드로는 도달 불가능하지만, refine을
+                # 루프 밖으로 빼는 미래 리팩터링에서 홀드가 비어있지 않은 채
+                # 종료될 수 있으므로 안전망으로 유지한다.
                 while holds:  # inner 종료/예외: 잔여 홀드는 Apple KO로 플러시
                     await out_q.put(holds.popleft())
                 await out_q.put(_SENTINEL)

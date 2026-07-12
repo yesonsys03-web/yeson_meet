@@ -251,15 +251,19 @@ class _FakeInner:
 
 class _FakeClient:
     """MlxWorkerClient 시늉: 응답 사전/지연/사망 시나리오 주입."""
-    def __init__(self, responses=None, start_error=False, hang=False):
+    def __init__(self, responses=None, start_error=False, hang=False,
+                 start_delay: float = 0.0):
         self._responses = responses or {}
         self._start_error = start_error
         self._hang = hang
+        self._start_delay = start_delay
         self.requests: list[tuple[str, list]] = []
         self.closed = False
         self.alive = False
 
     async def start(self):
+        if self._start_delay:
+            await asyncio.sleep(self._start_delay)
         if self._start_error:
             raise MlxWorkerUnavailable("no model")
         self.alive = True
@@ -364,4 +368,32 @@ class TestMlxRefinedAppleProvider:
         got = asyncio.run(run())
         finals = [u for u in got if u.is_final]
         assert finals and finals[0].text_ko == "하나(애플)"  # 홀드 플러시 후 재전파
+
+    def test_cold_start_spawns_single_worker(self):
+        # 워밍업 태스크와 첫 _refine이 동시에 client_ready==False를 보는
+        # 콜드 스타트 경합 — start_delay로 스폰 윈도우를 벌려 경합을 유발한다.
+        inner = _FakeInner([_utt(1, "Hello there.", "안녕하세요(애플)", final=True)])
+        created: list[_FakeClient] = []
+
+        def factory():
+            c = _FakeClient(start_delay=0.2)
+            created.append(c)
+            return c
+
+        provider = MlxRefinedAppleProvider(inner=inner, client_factory=factory)
+        asyncio.run(_collect(provider))
+        assert len(created) == 1  # 단일 스폰으로 코얼레스
+        assert all(c.closed for c in created)  # 살아남은 클라이언트도 종료 시 정리
+
+    def test_dead_client_closed_on_respawn(self):
+        inner = _FakeInner([
+            _utt(1, "One.", "하나(애플)", final=True),
+            _utt(2, "Two.", "둘(애플)", final=True),
+        ])
+        dead_client = _FakeClient(responses={"One.": MlxWorkerUnavailable("died")})
+        fresh_client = _FakeClient(responses={"Two.": "둘(MLX)"})
+        clients = [dead_client, fresh_client]
+        provider = MlxRefinedAppleProvider(inner=inner, client_factory=lambda: clients.pop(0))
+        asyncio.run(_collect(provider))
+        assert dead_client.closed is True  # 재스폰 시 죽은 클라이언트도 정리됨
 # === ANCHOR: TEST_MLX_LIVE_TRANSLATE_END ===
