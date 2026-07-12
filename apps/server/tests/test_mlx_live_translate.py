@@ -1,7 +1,6 @@
 # === ANCHOR: TEST_MLX_LIVE_TRANSLATE_START ===
 from __future__ import annotations
 
-import os
 from apps.server.ai.mlx_live_translate import (
     DEFAULT_MLX_MODEL,
     guard_mlx_ko,
@@ -74,7 +73,6 @@ class TestGuardMlxKo:
         assert guard_mlx_ko(
             "Sort and organize the files in the folder now.", chunk * 4
         ) == "repetition"
-# === ANCHOR: TEST_MLX_LIVE_TRANSLATE_END ===
 
 
 class TestModelResolution:
@@ -220,3 +218,150 @@ class TestMlxWorkerClient:
             elapsed = time.monotonic() - start
             assert elapsed < 2.0
         asyncio.run(run())
+
+
+from datetime import datetime, timezone
+
+from apps.server.ai.mlx_live_translate import MlxRefinedAppleProvider
+from apps.server.ai.providers import TranslatedUtterance
+
+
+def _utt(seq, en, ko, final, segment=1):
+    now = datetime.now(timezone.utc)
+    return TranslatedUtterance(seq=seq, text_en=en, text_ko=ko, started_at=now,
+                               ended_at=now, is_final=final, provider_segment=segment)
+
+
+class _FakeInner:
+    """미리 정의된 utterance 시퀀스를 방출하는 STTProvider."""
+    def __init__(self, utterances, error_after=None):
+        self._utterances = utterances
+        self._error_after = error_after
+
+    async def stream(self, audio, lang_hint):
+        for i, u in enumerate(self._utterances):
+            if self._error_after is not None and i == self._error_after:
+                raise RuntimeError("inner boom")
+            yield u
+        # error_after가 마지막 유효 인덱스 다음(len(utterances))을 가리키면
+        # 전량 방출 직후 죽는 상황 — enumerate만으로는 도달 불가능해 별도 처리.
+        if self._error_after == len(self._utterances):
+            raise RuntimeError("inner boom")
+
+
+class _FakeClient:
+    """MlxWorkerClient 시늉: 응답 사전/지연/사망 시나리오 주입."""
+    def __init__(self, responses=None, start_error=False, hang=False):
+        self._responses = responses or {}
+        self._start_error = start_error
+        self._hang = hang
+        self.requests: list[tuple[str, list]] = []
+        self.closed = False
+        self.alive = False
+
+    async def start(self):
+        if self._start_error:
+            raise MlxWorkerUnavailable("no model")
+        self.alive = True
+
+    async def translate(self, en, context, timeout):
+        self.requests.append((en, list(context)))
+        if self._hang:
+            await asyncio.sleep(timeout + 1)  # wait_for가 아니라 호출자가 timeout 처리
+            raise asyncio.TimeoutError()
+        if en in self._responses:
+            resp = self._responses[en]
+            if isinstance(resp, Exception):
+                self.alive = False
+                raise resp
+            return resp
+        return f"MLX:{en}"
+
+    async def close(self):
+        self.closed = True
+        self.alive = False
+
+
+async def _collect(provider):
+    async def _no_audio():
+        return
+        yield  # pragma: no cover
+    return [u async for u in provider.stream(_no_audio(), "en")]
+
+
+class TestMlxRefinedAppleProvider:
+    def test_partial_passthrough_final_refined(self):
+        inner = _FakeInner([
+            _utt(1, "Hello", "안녕(파셜)", final=False),
+            _utt(1, "Hello there.", "안녕하세요(애플)", final=True),
+        ])
+        client = _FakeClient(responses={"Hello there.": "안녕하십니까(MLX)"})
+        provider = MlxRefinedAppleProvider(inner=inner, client_factory=lambda: client)
+
+        out = asyncio.run(_collect(provider))
+        assert out[0].text_ko == "안녕(파셜)" and not out[0].is_final
+        finals = [u for u in out if u.is_final]
+        assert finals[0].text_ko == "안녕하십니까(MLX)"
+        assert finals[0].seq == 1
+        assert client.closed  # 스트림 종료 시 워커 정리
+
+    def test_guard_reject_falls_back_to_apple(self):
+        inner = _FakeInner([_utt(1, "Open codex.", "코덱스를 여세요(애플)", final=True)])
+        client = _FakeClient(responses={"Open codex.": "코다克斯를 여세요"})  # 한자 혼입
+        provider = MlxRefinedAppleProvider(inner=inner, client_factory=lambda: client)
+        out = asyncio.run(_collect(provider))
+        assert out[0].text_ko == "코덱스를 여세요(애플)"
+
+    def test_worker_start_failure_means_apple_only(self):
+        inner = _FakeInner([_utt(1, "Hello there.", "안녕하세요(애플)", final=True)])
+        client = _FakeClient(start_error=True)
+        provider = MlxRefinedAppleProvider(inner=inner, client_factory=lambda: client)
+        out = asyncio.run(_collect(provider))
+        assert out[0].text_ko == "안녕하세요(애플)"  # 예외 없이 폴백
+
+    def test_worker_death_falls_back_and_respawns(self):
+        inner = _FakeInner([
+            _utt(1, "One.", "하나(애플)", final=True),
+            _utt(2, "Two.", "둘(애플)", final=True),
+        ])
+        dead_client = _FakeClient(responses={"One.": MlxWorkerUnavailable("died")})
+        fresh_client = _FakeClient(responses={"Two.": "둘(MLX)"})
+        clients = [dead_client, fresh_client]
+        provider = MlxRefinedAppleProvider(inner=inner, client_factory=lambda: clients.pop(0))
+        out = asyncio.run(_collect(provider))
+        finals = {u.seq: u.text_ko for u in out if u.is_final}
+        assert finals[1] == "하나(애플)"   # 사망 → 폴백
+        assert finals[2] == "둘(MLX)"     # 재스폰 후 정상 정제
+
+    def test_context_uses_emitted_finals(self):
+        inner = _FakeInner([
+            _utt(1, "One.", "하나(애플)", final=True),
+            _utt(2, "Two.", "둘(애플)", final=True),
+        ])
+        client = _FakeClient(responses={"One.": "하나(MLX)", "Two.": "둘(MLX)"})
+        provider = MlxRefinedAppleProvider(inner=inner, client_factory=lambda: client)
+        asyncio.run(_collect(provider))
+        # 두 번째 요청의 문맥에 첫 번째의 (en, 발행 ko)가 들어간다
+        assert client.requests[1][1] == [("One.", "하나(MLX)")]
+
+    def test_inner_error_flushes_holds_then_reraises(self):
+        inner = _FakeInner(
+            [_utt(1, "One.", "하나(애플)", final=True)], error_after=1)
+        client = _FakeClient(hang=True)  # 정제가 끝나기 전에 inner가 죽는 상황
+        provider = MlxRefinedAppleProvider(
+            inner=inner, client_factory=lambda: client, sentence_timeout=0.2)
+
+        async def run():
+            got = []
+            with pytest.raises(RuntimeError, match="inner boom"):
+                async def _no_audio():
+                    return
+                    yield  # pragma: no cover
+                async for u in provider.stream(_no_audio(), "en"):
+                    got.append(u)
+            return got
+
+        got = asyncio.run(run())
+        finals = [u for u in got if u.is_final]
+        assert finals and finals[0].text_ko == "하나(애플)"  # 홀드 플러시 후 재전파
+# === ANCHOR: TEST_MLX_LIVE_TRANSLATE_END ===

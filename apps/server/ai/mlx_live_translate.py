@@ -14,9 +14,14 @@ import logging
 import os
 import re
 import sys
+from collections import deque
+from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
 from pathlib import Path
 
 from apps.server.ai.apple_native import apple_stt_available
+from apps.server.ai.glossary import apply_ko_corrections
+from apps.server.ai.providers import STTProvider, TranslatedUtterance
 
 logger = logging.getLogger("yeson.ai.mlx_live_translate")
 
@@ -182,4 +187,141 @@ class MlxWorkerClient:
                 proc.kill()
         with contextlib.suppress(Exception):
             await proc.wait()
+
+
+# --- 데코레이터 프로바이더 ----------------------------------------------------
+DEFAULT_SENTENCE_TIMEOUT_SECONDS = 6.0
+DEFAULT_MAX_PENDING = 3
+DEFAULT_MAX_RESPAWNS = 2
+_CONTEXT_WINDOW = 3
+_SENTINEL = object()  # inner 스트림 종료 표식
+
+
+class MlxRefinedAppleProvider:
+    """Apple 라이브 스트림의 파이널 KO만 MLX로 정제하는 데코레이터 (스펙 §데이터 흐름)."""
+
+    def __init__(
+        self,
+        inner: STTProvider | None = None,
+        client_factory: Callable[[], MlxWorkerClient] | None = None,
+        sentence_timeout: float = DEFAULT_SENTENCE_TIMEOUT_SECONDS,
+        max_pending: int = DEFAULT_MAX_PENDING,
+        max_respawns: int = DEFAULT_MAX_RESPAWNS,
+    ) -> None:
+        if inner is None:
+            from apps.server.ai.apple_live_translate import AppleLiveTranslateProvider
+
+            inner = AppleLiveTranslateProvider()
+        self._inner = inner
+        self._client_factory = client_factory or MlxWorkerClient
+        self._sentence_timeout = sentence_timeout
+        self._max_pending = max_pending
+        self._max_respawns = max_respawns
+
+    async def stream(
+        self, audio: AsyncIterator[bytes], lang_hint: str
+    ) -> AsyncIterator[TranslatedUtterance]:
+        out_q: asyncio.Queue = asyncio.Queue()
+        holds: deque[TranslatedUtterance] = deque()
+        context: deque[tuple[str, str]] = deque(maxlen=_CONTEXT_WINDOW)
+        client: MlxWorkerClient | None = None
+        client_ready = False
+        respawns = 0
+        inner_error: BaseException | None = None
+
+        async def _ensure_client() -> MlxWorkerClient | None:
+            """기동 시도. 실패는 None — 파이널은 Apple KO로 흐른다."""
+            nonlocal client, client_ready, respawns
+            if client_ready and client is not None and client.alive:
+                return client
+            if respawns > self._max_respawns:
+                return None
+            try:
+                fresh = self._client_factory()
+                await fresh.start()
+            except MlxWorkerUnavailable as exc:
+                respawns += 1
+                logger.warning("mlx worker unavailable (attempt %d): %s", respawns, exc)
+                return None
+            client, client_ready = fresh, True
+            return client
+
+        async def _refine(utterance: TranslatedUtterance) -> TranslatedUtterance:
+            """파이널 1건 정제. 어떤 실패든 Apple KO 그대로 반환 (예외 금지)."""
+            nonlocal client_ready, respawns
+            active = await _ensure_client()
+            if active is None:
+                return utterance
+            try:
+                # 외부 wait_for는 방어적 백스톱 — 실제 MlxWorkerClient는 timeout
+                # 파라미터로 스스로 예산을 지키지만, 만약을 대비해 호출부에서도
+                # 동일 예산을 강제해 자막 무중단을 보장한다.
+                mlx_ko = await asyncio.wait_for(
+                    active.translate(
+                        utterance.text_en, list(context), timeout=self._sentence_timeout),
+                    timeout=self._sentence_timeout)
+            except asyncio.TimeoutError:
+                logger.warning("mlx sentence timeout seq=%d", utterance.seq)
+                return utterance
+            except MlxWorkerUnavailable as exc:
+                client_ready = False
+                respawns += 1
+                logger.warning("mlx worker died (respawn %d/%d): %s",
+                               respawns, self._max_respawns, exc)
+                return utterance
+            reason = guard_mlx_ko(utterance.text_en, mlx_ko)
+            if reason is not None:
+                logger.info("mlx_guard_reject reason=%s seq=%d", reason, utterance.seq)
+                return utterance
+            return replace(utterance, text_ko=apply_ko_corrections(mlx_ko))
+
+        async def _pump_inner() -> None:
+            """inner 스트림 소비: 파셜 즉시 발행, 파이널은 홀드 큐 → 순차 정제."""
+            nonlocal inner_error
+            try:
+                async for utterance in self._inner.stream(audio, lang_hint):
+                    if not utterance.is_final:
+                        await out_q.put(utterance)
+                        continue
+                    holds.append(utterance)
+                    # 백로그: 홀드가 상한 초과면 최고참부터 MLX 생략(Apple KO 즉시)
+                    while len(holds) > self._max_pending:
+                        stale = holds.popleft()
+                        logger.info("mlx_backlog_skip seq=%d", stale.seq)
+                        context.append((stale.text_en, stale.text_ko))
+                        await out_q.put(stale)
+                    # 순차 정제 (워커도 순차 — 홀드 최고참부터)
+                    while holds:
+                        pending = holds.popleft()
+                        refined = await _refine(pending)
+                        context.append((refined.text_en, refined.text_ko))
+                        await out_q.put(refined)
+            except BaseException as exc:  # noqa: BLE001 — 잔여 홀드 플러시 후 재전파
+                inner_error = exc
+            finally:
+                while holds:  # inner 종료/예외: 잔여 홀드는 Apple KO로 플러시
+                    await out_q.put(holds.popleft())
+                await out_q.put(_SENTINEL)
+
+        pump = asyncio.create_task(_pump_inner())
+        # 워커는 백그라운드 선기동 — 로드가 끝나기 전 파이널은 _ensure_client의
+        # respawn 카운트를 소모하지 않도록 start를 미리 시도해 둔다.
+        warmup = asyncio.create_task(_ensure_client())
+        try:
+            while True:
+                item = await out_q.get()
+                if item is _SENTINEL:
+                    break
+                yield item
+            if inner_error is not None:
+                raise inner_error
+        finally:
+            warmup.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await warmup
+            pump.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await pump
+            if client is not None:
+                await client.close()
 # === ANCHOR: MLX_LIVE_TRANSLATE_END ===
