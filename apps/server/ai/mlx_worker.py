@@ -115,16 +115,22 @@ def run_worker() -> int:
 
 
 def run_download(model_id: str) -> int:
-    """모델 스냅샷을 {STORAGE_ROOT}/mlx_models/<id>로 받는다. 진행률 JSONL 출력."""
+    """모델 스냅샷을 {STORAGE_ROOT}/mlx_models/<id>로 받는다. 파일 단위 진행률 JSONL 출력
+    (snapshot_download 단일 호출은 수 분간 침묵하므로, 파일 하나씩 받아 매번 emit한다).
+    """
     from apps.server.ai.mlx_live_translate import mlx_model_dir
 
     target = mlx_model_dir(model_id)
     target.mkdir(parents=True, exist_ok=True)
     _emit({"type": "download", "state": "start", "model": model_id, "dir": str(target)})
     try:
-        from huggingface_hub import snapshot_download
+        from huggingface_hub import HfApi, hf_hub_download
 
-        snapshot_download(model_id, local_dir=str(target))
+        files = [f for f in HfApi().list_repo_files(model_id) if not f.endswith("/")]
+        for i, name in enumerate(files, 1):
+            _emit({"type": "download", "state": "progress", "file": i, "of": len(files),
+                   "name": name})
+            hf_hub_download(model_id, name, local_dir=str(target))
     except Exception as exc:  # noqa: BLE001 — 콘솔에 읽을 수 있는 실패 사유 전달
         _emit({"type": "download", "state": "error", "reason": f"{type(exc).__name__}: {exc}"})
         return 1

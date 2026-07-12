@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 
 def _spawn_fake_worker():
@@ -81,4 +82,77 @@ class TestFakeWorker:
             assert proc.wait(timeout=5) == 1
         finally:
             proc.stdin.close()
+
+
+class TestRunDownloadProgress:
+    """run_download은 파일 단위로 progress를 emit해야 한다 (진짜 네트워크 금지).
+
+    run_download 내부에서 `from huggingface_hub import HfApi, hf_hub_download`가
+    호출 시점에 지연 import되므로, huggingface_hub 모듈 자체의 속성을
+    monkeypatch해야 한다 (run_download가 가진 로컬 바인딩이 아니라).
+    """
+
+    def test_progress_events_then_done(self, tmp_path, monkeypatch, capsys):
+        import huggingface_hub
+
+        from apps.server.ai import mlx_worker
+        from apps.server.ai.mlx_live_translate import mlx_model_dir
+
+        monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+        model_id = "mlx-community/Fake-Model"
+        files = ["model.safetensors", "tokenizer.json", "config.json"]
+        calls: list[str] = []
+
+        class _FakeHfApi:
+            def list_repo_files(self, repo_id):
+                assert repo_id == model_id
+                return files
+
+        def _fake_hf_hub_download(repo_id, filename, local_dir=None, **kwargs):
+            assert repo_id == model_id
+            calls.append(filename)
+            d = Path(local_dir)
+            d.mkdir(parents=True, exist_ok=True)
+            (d / filename).write_text("{}" if filename == "config.json" else "x")
+            return str(d / filename)
+
+        monkeypatch.setattr(huggingface_hub, "HfApi", _FakeHfApi)
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", _fake_hf_hub_download)
+
+        rc = mlx_worker.run_download(model_id)
+        assert rc == 0
+        assert calls == files
+
+        out = capsys.readouterr().out.strip().splitlines()
+        events = [json.loads(line) for line in out]
+        assert events[0] == {
+            "type": "download", "state": "start", "model": model_id,
+            "dir": str(mlx_model_dir(model_id)),
+        }
+        progress = [e for e in events if e["state"] == "progress"]
+        assert [p["name"] for p in progress] == files
+        assert [p["file"] for p in progress] == [1, 2, 3]
+        assert all(p["of"] == 3 for p in progress)
+        assert events[-1] == {"type": "download", "state": "done", "model": model_id}
+
+    def test_download_error_reported(self, tmp_path, monkeypatch, capsys):
+        import huggingface_hub
+
+        from apps.server.ai import mlx_worker
+
+        monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+        model_id = "mlx-community/Fake-Model"
+
+        class _FailingHfApi:
+            def list_repo_files(self, repo_id):
+                raise RuntimeError("network down")
+
+        monkeypatch.setattr(huggingface_hub, "HfApi", _FailingHfApi)
+
+        rc = mlx_worker.run_download(model_id)
+        assert rc == 1
+
+        events = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+        assert events[-1]["type"] == "download" and events[-1]["state"] == "error"
+        assert "network down" in events[-1]["reason"]
 # === ANCHOR: TEST_MLX_WORKER_END ===
