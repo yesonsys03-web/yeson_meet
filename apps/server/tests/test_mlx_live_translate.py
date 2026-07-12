@@ -396,4 +396,30 @@ class TestMlxRefinedAppleProvider:
         provider = MlxRefinedAppleProvider(inner=inner, client_factory=lambda: clients.pop(0))
         asyncio.run(_collect(provider))
         assert dead_client.closed is True  # 재스폰 시 죽은 클라이언트도 정리됨
+
+
+from apps.server.ws.sidecar import create_ai_provider
+
+
+class TestProviderRegistration:
+    def test_registered_when_available(self, monkeypatch):
+        import apps.server.ws.sidecar as sidecar_mod
+        monkeypatch.setenv("YESON_AI_PROVIDER", "apple_mlx_live_translate")
+        monkeypatch.setattr(
+            "apps.server.ai.mlx_live_translate.mlx_live_available", lambda: True)
+        provider = sidecar_mod.create_ai_provider()
+        assert type(provider).__name__ == "MlxRefinedAppleProvider"
+
+    def test_alias_apple_mlx(self, monkeypatch):
+        monkeypatch.setenv("YESON_AI_PROVIDER", "apple_mlx")
+        monkeypatch.setattr(
+            "apps.server.ai.mlx_live_translate.mlx_live_available", lambda: True)
+        assert create_ai_provider() is not None
+
+    def test_unavailable_returns_none(self, monkeypatch):
+        # 게이팅 미충족 → None (S2 count-only) — apple provider와 동일 관례
+        monkeypatch.setenv("YESON_AI_PROVIDER", "apple_mlx_live_translate")
+        monkeypatch.setattr(
+            "apps.server.ai.mlx_live_translate.mlx_live_available", lambda: False)
+        assert create_ai_provider() is None
 # === ANCHOR: TEST_MLX_LIVE_TRANSLATE_END ===
