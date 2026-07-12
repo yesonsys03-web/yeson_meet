@@ -1253,10 +1253,12 @@ pub fn mlx_model_status(app: tauri::AppHandle, model_id: String) -> Result<bool,
 /// Download `model_id` by running the bundled `yeson-server` binary as a
 /// one-shot with `YESON_MLX_DOWNLOAD` set (Task 3's download path) instead of
 /// its normal `run()` entrypoint. Progress is streamed to the UI as JSONL
-/// lines via the `mlx-download-progress` event; the blocking stdout read runs
-/// on the async-command thread so it never stalls the Tauri runtime.
+/// lines via the `mlx-download-progress` event.
+// 동기 커맨드 — Tauri가 블로킹 스레드풀에서 실행하므로(sync_threadpool) 수 분짜리
+// 다운로드가 async 런타임 워커를 점유하지 않는다. async fn으로 바꾸면 공유 tokio
+// 런타임에서 블로킹 루프가 돌게 되므로 금지.
 #[tauri::command]
-pub async fn mlx_download_model(app: tauri::AppHandle, model_id: String) -> Result<String, String> {
+pub fn mlx_download_model(app: tauri::AppHandle, model_id: String) -> Result<String, String> {
     let bin = locate_bundled_server()
         .ok_or_else(|| "yeson-server 바이너리를 찾을 수 없습니다".to_string())?;
     let storage = storage_root(&app)?;
