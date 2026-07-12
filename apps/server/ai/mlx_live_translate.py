@@ -140,16 +140,27 @@ class MlxWorkerClient:
                         timeout: float) -> str:
         if not self.alive:
             raise MlxWorkerUnavailable("worker not running")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout  # 총 예산 — 라인 단위로 재무장하지 않는다
         async with self._lock:
+            proc = self._proc
+            if (proc is None or proc.returncode is not None
+                    or proc.stdin is None or proc.stdout is None):
+                raise MlxWorkerUnavailable("worker not running")
             self._next_id += 1
             req_id = self._next_id
             req = {"id": req_id, "en": en,
                    "context": [[a, b] for a, b in context], "glossary": {}}
-            assert self._proc is not None and self._proc.stdin and self._proc.stdout
-            self._proc.stdin.write((json.dumps(req, ensure_ascii=False) + "\n").encode())
-            await self._proc.stdin.drain()
+            try:
+                proc.stdin.write((json.dumps(req, ensure_ascii=False) + "\n").encode())
+                await proc.stdin.drain()
+            except (ConnectionError, BrokenPipeError, RuntimeError) as exc:
+                raise MlxWorkerUnavailable(f"worker pipe closed: {exc}") from exc
             while True:
-                line = await asyncio.wait_for(self._proc.stdout.readline(), timeout=timeout)
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError()
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=remaining)
                 if not line:  # EOF = 워커 사망
                     raise MlxWorkerUnavailable("worker died mid-request")
                 try:

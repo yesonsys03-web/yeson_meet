@@ -152,6 +152,22 @@ DIES_AFTER_READY_WORKER = """\
     sys.exit(9)
 """
 
+SILENT_AFTER_REQUEST_WORKER = """\
+    import json, sys, time
+    print(json.dumps({"type": "status", "state": "ready"}), flush=True)
+    sys.stdin.readline()
+    time.sleep(60)
+"""
+
+NOISY_NON_MATCHING_WORKER = """\
+    import json, sys, time
+    print(json.dumps({"type": "status", "state": "ready"}), flush=True)
+    sys.stdin.readline()
+    while True:
+        print(json.dumps({"id": 999, "ko": "x", "gen_ms": 1}), flush=True)
+        time.sleep(0.1)
+"""
+
 
 class TestMlxWorkerClient:
     def test_start_and_translate(self, tmp_path):
@@ -180,4 +196,27 @@ class TestMlxWorkerClient:
             await client.start()
             with pytest.raises(MlxWorkerUnavailable):
                 await client.translate("Hello.", [], timeout=5.0)
+        asyncio.run(run())
+
+    def test_translate_timeout_raises(self, tmp_path):
+        async def run():
+            client = MlxWorkerClient(
+                argv=_script_argv(tmp_path, SILENT_AFTER_REQUEST_WORKER))
+            await client.start()
+            with pytest.raises(asyncio.TimeoutError):
+                await client.translate("Hello.", [], timeout=0.4)
+        asyncio.run(run())
+
+    def test_timeout_is_total_budget_despite_noise(self, tmp_path):
+        import time
+
+        async def run():
+            client = MlxWorkerClient(
+                argv=_script_argv(tmp_path, NOISY_NON_MATCHING_WORKER))
+            await client.start()
+            start = time.monotonic()
+            with pytest.raises(asyncio.TimeoutError):
+                await client.translate("Hello.", [], timeout=0.5)
+            elapsed = time.monotonic() - start
+            assert elapsed < 2.0
         asyncio.run(run())
