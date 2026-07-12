@@ -34,6 +34,7 @@ VIRTUAL_ENV="${BUILD_VENV}" uv pip install --python "${BUILD_VENV}/bin/python" \
     ./apps/server "pyinstaller>=6.21"
 
 # 하이브리드 B: 실리콘맥 번들에만 mlx-lm 포함 (인텔맥 회귀 방지 — 510741b 방침).
+# macOS bash 3.2 + set -u에서 빈 배열 확장이 unbound variable 처리 → 아래 pyinstaller 호출에서 ${arr[@]+...} 가드 필수.
 MLX_COLLECT_FLAGS=()
 if [[ "$(uname -sm)" == "Darwin arm64" ]]; then
     echo "Adding mlx-lm (Apple Silicon only)…"
@@ -79,7 +80,7 @@ echo "Building yeson-server (PyInstaller --onedir, Gemini-only)…"
     --collect-all av \
     --collect-all onnxruntime \
     --collect-all yt_dlp \
-    "${MLX_COLLECT_FLAGS[@]}" \
+    ${MLX_COLLECT_FLAGS[@]+"${MLX_COLLECT_FLAGS[@]}"} \
     --add-data "$(pwd)/apps/web/dist:web_dist" \
     --distpath "${DIST}" \
     --workpath "${WORK}" \
