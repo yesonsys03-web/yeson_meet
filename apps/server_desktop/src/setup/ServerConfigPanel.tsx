@@ -1,6 +1,7 @@
 // === ANCHOR: SERVER_CONFIG_PANEL_START ===
 import { useCallback, useEffect, useState } from "react";
 import { append } from "../appLog";
+import { MlxModelPanel } from "./MlxModelPanel";
 import {
   DEFAULT_PROVIDER,
   EMPTY_META,
@@ -21,7 +22,13 @@ function presence(label: string, configured: boolean): string {
   return configured ? `${label}: configured` : `${label}: not set`;
 }
 
-const PROVIDERS = ["gemini_live_translate", "gemini_live", "google_stt_translate", "apple_live_translate"] as const;
+const PROVIDERS = [
+  "gemini_live_translate",
+  "gemini_live",
+  "google_stt_translate",
+  "apple_live_translate",
+  "apple_mlx_live_translate",
+] as const;
 const SUMMARY_BACKENDS = ["auto", "claude", "codex"] as const;
 
 export default function ServerConfigPanel() {
@@ -39,6 +46,7 @@ export default function ServerConfigPanel() {
   const [sttLanguage, setSttLanguage] = useState("");
   const [translateTarget, setTranslateTarget] = useState("");
   const [provider, setProvider] = useState<string>(DEFAULT_PROVIDER);
+  const [mlxModel, setMlxModel] = useState("");
   const [viewerBase, setViewerBase] = useState("");
   const [summaryBackend, setSummaryBackend] = useState<string>("auto");
   const [summaryModel, setSummaryModel] = useState("");
@@ -58,6 +66,7 @@ export default function ServerConfigPanel() {
     setSttLanguage(next.googleSttLanguageCode);
     setTranslateTarget(next.googleTranslateTargetLanguage);
     setProvider(next.provider || DEFAULT_PROVIDER);
+    setMlxModel(next.mlxModel);
     setViewerBase(next.viewerBase);
     setSummaryBackend(next.summaryBackend || "auto");
     setSummaryModel(next.summaryModel);
@@ -87,6 +96,7 @@ export default function ServerConfigPanel() {
         googleSttLanguageCode: sttLanguage,
         googleTranslateTargetLanguage: translateTarget,
         yesonAiProvider: provider,
+        yesonMlxModel: mlxModel,
         viewerBase,
         summaryBackend,
         summaryModel,
@@ -104,7 +114,7 @@ export default function ServerConfigPanel() {
     } finally {
       setBusy(false);
     }
-  }, [geminiApiKey, googleCredsJson, googleProject, sttLanguage, translateTarget, provider, viewerBase, summaryBackend, summaryModel, syncMeta]);
+  }, [geminiApiKey, googleCredsJson, googleProject, sttLanguage, translateTarget, provider, mlxModel, viewerBase, summaryBackend, summaryModel, syncMeta]);
 
   const onClear = useCallback(async () => {
     setError(null);
@@ -193,8 +203,22 @@ export default function ServerConfigPanel() {
       <Field label="provider">
         <select value={provider} onChange={(e) => setProvider(e.target.value)} style={styles.input}>
           {PROVIDERS.map((p) => (
-            <option key={p} value={p} title={p === "apple_live_translate" ? "실험적 — 실리콘맥 전용. 자막 리듬·품질이 gemini_live_translate보다 낮음. 회의에는 gemini_live_translate 권장" : undefined}>
-              {p === "apple_live_translate" ? `${p} (실험적)` : p}
+            <option
+              key={p}
+              value={p}
+              title={
+                p === "apple_live_translate"
+                  ? "실험적 — 실리콘맥 전용. 자막 리듬·품질이 gemini_live_translate보다 낮음. 회의에는 gemini_live_translate 권장"
+                  : p === "apple_mlx_live_translate"
+                    ? "실험적 — 실리콘맥 전용. Apple 전사 + 로컬 LLM 번역. 회의에는 gemini_live_translate 권장"
+                    : undefined
+              }
+            >
+              {p === "apple_live_translate"
+                ? `${p} (실험적)`
+                : p === "apple_mlx_live_translate"
+                  ? "Apple 전사 + 로컬 LLM 번역 (실험적)"
+                  : p}
             </option>
           ))}
         </select>
@@ -207,6 +231,10 @@ export default function ServerConfigPanel() {
           </button>
           {fastInstallMsg ? <p style={{ ...styles.sub, margin: "6px 0 0" }}>{fastInstallMsg}</p> : null}
         </div>
+      ) : null}
+
+      {provider === "apple_mlx_live_translate" ? (
+        <MlxModelPanel selectedModel={mlxModel} onSelectModel={setMlxModel} />
       ) : null}
 
       <Field label="요약 백엔드 (summary backend)">
