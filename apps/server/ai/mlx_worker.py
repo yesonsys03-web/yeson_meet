@@ -87,6 +87,10 @@ def run_worker() -> int:
         translate = _make_translate()
     except SystemExit as exc:
         return int(exc.code or 1)
+    except Exception as exc:  # noqa: BLE001 — 기동 실패는 반드시 status:error로 표면화
+        _emit({"type": "status", "state": "error",
+               "reason": f"mlx_startup_failed: {type(exc).__name__}: {exc}"})
+        return 1
     _emit({"type": "status", "state": "ready"})
     for line in sys.stdin:
         line = line.strip()

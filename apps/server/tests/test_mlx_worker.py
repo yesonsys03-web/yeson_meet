@@ -62,4 +62,23 @@ class TestFakeWorker:
             assert proc.wait(timeout=5) == 1
         finally:
             proc.stdin.close()
+
+    def test_startup_exception_reports_error(self, tmp_path):
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        (model_dir / "config.json").write_text("{}")
+        proc = subprocess.Popen(
+            [sys.executable, "-c",
+             "from apps.server.ai.mlx_worker import run_worker; import sys; sys.exit(run_worker())"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True,
+            env={"YESON_MLX_MODEL_PATH": str(model_dir), "PATH": "/usr/bin:/bin", "PYTHONPATH": os.getcwd()},
+        )
+        try:
+            status = json.loads(proc.stdout.readline())
+            assert status["type"] == "status" and status["state"] == "error"
+            assert status["reason"].startswith("mlx_startup_failed")
+            assert proc.wait(timeout=5) == 1
+        finally:
+            proc.stdin.close()
 # === ANCHOR: TEST_MLX_WORKER_END ===
