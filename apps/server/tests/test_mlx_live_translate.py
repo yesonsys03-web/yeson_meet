@@ -116,3 +116,68 @@ class TestModelResolution:
         # 둘 다 → True
         monkeypatch.setattr(mod, "apple_stt_available", lambda: True)
         assert mlx_live_available() is True
+
+
+import asyncio
+import sys
+import textwrap
+
+import pytest
+
+from apps.server.ai.mlx_live_translate import MlxWorkerClient, MlxWorkerUnavailable
+
+
+def _script_argv(tmp_path, body: str) -> list[str]:
+    script = tmp_path / "fake_worker.py"
+    script.write_text(textwrap.dedent(body))
+    return [sys.executable, str(script)]
+
+
+ECHO_WORKER = """\
+    import json, sys
+    print(json.dumps({"type": "status", "state": "ready"}), flush=True)
+    for line in sys.stdin:
+        req = json.loads(line)
+        print(json.dumps({"id": req["id"], "ko": "KO:" + req["en"], "gen_ms": 1}), flush=True)
+"""
+
+NEVER_READY_WORKER = """\
+    import time
+    time.sleep(60)
+"""
+
+DIES_AFTER_READY_WORKER = """\
+    import json, sys
+    print(json.dumps({"type": "status", "state": "ready"}), flush=True)
+    sys.exit(9)
+"""
+
+
+class TestMlxWorkerClient:
+    def test_start_and_translate(self, tmp_path):
+        async def run():
+            client = MlxWorkerClient(argv=_script_argv(tmp_path, ECHO_WORKER))
+            await client.start()
+            assert client.alive
+            ko = await client.translate("Hello.", [("Hi.", "안녕.")], timeout=5.0)
+            assert ko == "KO:Hello."
+            await client.close()
+            assert not client.alive
+        asyncio.run(run())
+
+    def test_ready_timeout_raises_unavailable(self, tmp_path):
+        async def run():
+            client = MlxWorkerClient(
+                argv=_script_argv(tmp_path, NEVER_READY_WORKER), ready_timeout=0.5)
+            with pytest.raises(MlxWorkerUnavailable):
+                await client.start()
+            assert not client.alive
+        asyncio.run(run())
+
+    def test_death_during_translate_raises_unavailable(self, tmp_path):
+        async def run():
+            client = MlxWorkerClient(argv=_script_argv(tmp_path, DIES_AFTER_READY_WORKER))
+            await client.start()
+            with pytest.raises(MlxWorkerUnavailable):
+                await client.translate("Hello.", [], timeout=5.0)
+        asyncio.run(run())
