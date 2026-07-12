@@ -166,6 +166,18 @@ NOISY_NON_MATCHING_WORKER = """\
         time.sleep(0.1)
 """
 
+# ready 이전에 non-JSON 줄 + 무관 JSON 줄(status가 아닌 type)을 찍는 워커.
+# mlx-lm/transformers가 stdout에 경고를 흘리는 상황을 모사한다.
+NOISY_STARTUP_WORKER = """\
+    import json, sys
+    print("warning: some library banner", flush=True)
+    print(json.dumps({"type": "other", "note": "irrelevant"}), flush=True)
+    print(json.dumps({"type": "status", "state": "ready"}), flush=True)
+    for line in sys.stdin:
+        req = json.loads(line)
+        print(json.dumps({"id": req["id"], "ko": "KO:" + req["en"], "gen_ms": 1}), flush=True)
+"""
+
 
 class TestMlxWorkerClient:
     def test_start_and_translate(self, tmp_path):
@@ -219,6 +231,35 @@ class TestMlxWorkerClient:
             assert elapsed < 2.0
         asyncio.run(run())
 
+    def test_noisy_startup_lines_are_skipped(self, tmp_path):
+        # mlx-lm/transformers 등이 stdout에 경고/무관 JSON을 찍어도 ready 이벤트가
+        # 나올 때까지 스킵하고 기다려야 한다 (즉사 금지).
+        async def run():
+            client = MlxWorkerClient(argv=_script_argv(tmp_path, NOISY_STARTUP_WORKER))
+            await client.start()
+            assert client.alive
+            ko = await client.translate("Hello.", [], timeout=5.0)
+            assert ko == "KO:Hello."
+            await client.close()
+        asyncio.run(run())
+
+    def test_ready_timeout_message_includes_stderr_tail(self, tmp_path):
+        # ready 실패 시 MlxWorkerUnavailable 메시지에 stderr tail이 포함돼야 한다
+        # (기존 start 실패 테스트가 여전히 통과하는지도 함께 검증).
+        worker = """\
+            import sys
+            print("boom: fatal init error", file=sys.stderr, flush=True)
+            import time
+            time.sleep(60)
+        """
+        async def run():
+            client = MlxWorkerClient(
+                argv=_script_argv(tmp_path, worker), ready_timeout=0.5)
+            with pytest.raises(MlxWorkerUnavailable, match="boom: fatal init error"):
+                await client.start()
+            assert not client.alive
+        asyncio.run(run())
+
 
 from datetime import datetime, timezone
 
@@ -242,6 +283,10 @@ class _FakeInner:
         for i, u in enumerate(self._utterances):
             if self._error_after is not None and i == self._error_after:
                 raise RuntimeError("inner boom")
+            # 실제 inner(subprocess stdout 읽기)는 매 utterance마다 진짜 I/O
+            # 서스펜션을 겪는다 — 페이크도 체크포인트를 하나 둬서 백그라운드
+            # 스폰 태스크가 끼어들 기회를 realistically 준다.
+            await asyncio.sleep(0)
             yield u
         # error_after가 마지막 유효 인덱스 다음(len(utterances))을 가리키면
         # 전량 방출 직후 죽는 상황 — enumerate만으로는 도달 불가능해 별도 처리.
@@ -384,6 +429,34 @@ class TestMlxRefinedAppleProvider:
         asyncio.run(_collect(provider))
         assert len(created) == 1  # 단일 스폰으로 코얼레스
         assert all(c.closed for c in created)  # 살아남은 클라이언트도 종료 시 정리
+
+    def test_final_during_slow_start_falls_back_immediately(self):
+        # Critical: 워커 로드(콜드 최대 120s)가 진행 중일 때 도착한 파이널이
+        # 스폰 완료를 기다려선 안 된다 — 즉시 Apple KO로 발행돼야 한다.
+        import time
+
+        inner = _FakeInner([_utt(1, "Hello there.", "안녕하세요(애플)", final=True)])
+        created: list[_FakeClient] = []
+
+        def factory():
+            c = _FakeClient(start_delay=1.0)
+            created.append(c)
+            return c
+
+        provider = MlxRefinedAppleProvider(inner=inner, client_factory=factory)
+
+        async def run():
+            start = time.monotonic()
+            out = await _collect(provider)
+            elapsed = time.monotonic() - start
+            return out, elapsed
+
+        out, elapsed = asyncio.run(run())
+        assert elapsed < 0.5  # 스폰(1.0s)을 기다리지 않고 즉시 발행됨
+        finals = [u for u in out if u.is_final]
+        assert finals[0].text_ko == "안녕하세요(애플)"  # Apple KO 폴백, 예외 없음
+        assert len(created) == 1
+        assert all(c.closed for c in created)  # 스트림 종료 후 생성된 클라이언트도 정리됨
 
     def test_dead_client_closed_on_respawn(self):
         inner = _FakeInner([

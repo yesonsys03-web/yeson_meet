@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import sys
+import tempfile
 from collections import deque
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
@@ -111,6 +112,7 @@ class MlxWorkerClient:
         self._argv = argv
         self._ready_timeout = ready_timeout
         self._proc: asyncio.subprocess.Process | None = None
+        self._stderr_file: tempfile._TemporaryFileWrapper | None = None
         self._next_id = 0
         self._lock = asyncio.Lock()  # 요청은 순차 — 워커도 순차 처리
 
@@ -118,28 +120,60 @@ class MlxWorkerClient:
     def alive(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
 
+    def _stderr_tail(self) -> str:
+        if self._stderr_file is None:
+            return ""
+        with contextlib.suppress(Exception):
+            self._stderr_file.seek(0)
+            data = self._stderr_file.read()
+            return data.decode("utf-8", errors="replace")[-300:]
+        return ""
+
     async def start(self) -> None:
         argv = self._argv if self._argv is not None else _worker_argv()
         env = dict(os.environ)
+        env.pop("YESON_MLX_FAKE", None)  # 운영 env 오염이 페이크 모드로 새는 것 차단
         env.update({
             "YESON_MLX_WORKER": "1",
             "YESON_MLX_MODEL_PATH": str(mlx_model_dir(mlx_model_id())),
             "HF_HUB_OFFLINE": "1",  # 회의 중 네트워크 0 (스펙)
         })
+        # stderr=PIPE는 아무도 안 읽으면 버퍼가 차서 데드락 위험 — apple_live_translate.py의
+        # 검증된 패턴대로 실제 파일에 흘려보내고 실패 시에만 tail을 읽는다.
+        self._stderr_file = tempfile.TemporaryFile()
         self._proc = await asyncio.create_subprocess_exec(
             *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, env=env)
+            stderr=self._stderr_file, env=env)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._ready_timeout  # 총예산 — 잡음 줄이 있어도 재무장하지 않는다
+        event: dict = {}
         try:
-            line = await asyncio.wait_for(
-                self._proc.stdout.readline(), timeout=self._ready_timeout)
-            event = json.loads(line) if line else {}
-        except (asyncio.TimeoutError, json.JSONDecodeError) as exc:
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError()
+                line = await asyncio.wait_for(
+                    self._proc.stdout.readline(), timeout=remaining)
+                if not line:  # EOF — ready 이전에 죽음
+                    break
+                try:
+                    candidate = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # mlx-lm/transformers 경고 등 무관 줄은 스킵
+                if candidate.get("type") == "status":
+                    event = candidate
+                    break
+                # type이 status가 아닌 JSON 줄도 무관 — 계속 대기
+        except asyncio.TimeoutError as exc:
+            tail = self._stderr_tail()
             await self.close()
-            raise MlxWorkerUnavailable(f"worker not ready: {exc!r}") from exc
-        if event.get("type") != "status" or event.get("state") != "ready":
+            raise MlxWorkerUnavailable(
+                f"worker not ready: timeout ({exc!r}); stderr: {tail}") from exc
+        if event.get("state") != "ready":
             reason = event.get("reason", "no ready event")
+            tail = self._stderr_tail()
             await self.close()
-            raise MlxWorkerUnavailable(f"worker start failed: {reason}")
+            raise MlxWorkerUnavailable(f"worker start failed: {reason}; stderr: {tail}")
 
     async def translate(self, en: str, context: list[tuple[str, str]],
                         timeout: float) -> str:
@@ -177,16 +211,19 @@ class MlxWorkerClient:
 
     async def close(self) -> None:
         proc, self._proc = self._proc, None
-        if proc is None:
-            return
-        with contextlib.suppress(Exception):
-            if proc.stdin:
-                proc.stdin.close()
-        if proc.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-        with contextlib.suppress(Exception):
-            await proc.wait()
+        if proc is not None:
+            with contextlib.suppress(Exception):
+                if proc.stdin:
+                    proc.stdin.close()
+            if proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+            with contextlib.suppress(Exception):
+                await proc.wait()
+        stderr_file, self._stderr_file = self._stderr_file, None
+        if stderr_file is not None:
+            with contextlib.suppress(Exception):
+                stderr_file.close()
 
 
 # --- 데코레이터 프로바이더 ----------------------------------------------------
@@ -228,44 +265,68 @@ class MlxRefinedAppleProvider:
         client_ready = False
         respawns = 0
         inner_error: BaseException | None = None
-        spawn_lock = asyncio.Lock()  # 워밍업/첫 _refine의 동시 스폰 경합 방지
+        spawn_lock = asyncio.Lock()  # _spawn_client 동시 스폰 경합 방지
+        spawn_task: asyncio.Task | None = None  # 진행 중인 백그라운드 스폰(워밍업/재스폰 겸용)
 
-        async def _ensure_client() -> MlxWorkerClient | None:
-            """기동 시도. 실패는 None — 파이널은 Apple KO로 흐른다."""
+        async def _spawn_client() -> MlxWorkerClient | None:
+            """워커 기동 시도 (락 보유, 블로킹) — 워밍업/백그라운드 태스크 전용.
+            절대 _refine에서 직접 호출하지 않는다 (콜드 스타트/리로드 동안
+            파이널·파셜 발행이 막히는 것을 방지하는 것이 이 분리의 목적)."""
             nonlocal client, client_ready, respawns
-            if client_ready and client is not None and client.alive:
-                return client
             async with spawn_lock:
                 # 이중 확인 — 락 대기 중 다른 호출자가 이미 스폰을 끝냈을 수 있다
                 if client_ready and client is not None and client.alive:
                     return client
                 if respawns > self._max_respawns:
                     return None
-                fresh = self._client_factory()
+                fresh: MlxWorkerClient | None = None
                 try:
+                    fresh = self._client_factory()
                     await fresh.start()
                 except asyncio.CancelledError:
                     # 시작 도중 취소 — 이미 뜬 서브프로세스가 nonlocal에 연결되기
                     # 전이므로 여기서 직접 정리하지 않으면 영구 누수된다.
-                    await fresh.close()
+                    if fresh is not None:
+                        await fresh.close()
                     raise
                 except MlxWorkerUnavailable as exc:
                     # start()는 실패 시 내부적으로 이미 close()를 호출하지만,
                     # close()는 멱등이므로 방어적으로 한 번 더 호출해도 무해하다.
-                    await fresh.close()
+                    if fresh is not None:
+                        await fresh.close()
                     respawns += 1
                     logger.warning("mlx worker unavailable (attempt %d): %s", respawns, exc)
                     return None
-                if client is not None:
-                    await client.close()  # 교체되는 구 클라이언트 누수 방지
-                client, client_ready = fresh, True
+                except Exception as exc:  # noqa: BLE001 — 커스텀 팩토리 예외도 비전파 불변에 포섭
+                    if fresh is not None:
+                        await fresh.close()
+                    respawns += 1
+                    logger.warning(
+                        "mlx client factory/start failed (attempt %d): %s", respawns, exc)
+                    return None
+                old_client = client
+                client, client_ready = fresh, True  # 취소 경합 창을 없애기 위해 await 없이 먼저 갱신
+                if old_client is not None:
+                    await old_client.close()  # 교체되는 구 클라이언트 누수 방지
                 return client
 
+        def _maybe_trigger_spawn() -> None:
+            """스폰이 진행 중이 아니고 예산이 남았으면 백그라운드로 발사 (non-blocking)."""
+            nonlocal spawn_task
+            if spawn_task is not None and not spawn_task.done():
+                return
+            if respawns > self._max_respawns:
+                return
+            spawn_task = asyncio.create_task(_spawn_client())
+
         async def _refine(utterance: TranslatedUtterance) -> TranslatedUtterance:
-            """파이널 1건 정제. 어떤 실패든 Apple KO 그대로 반환 (예외 금지)."""
+            """파이널 1건 정제. 절대 스폰을 기다리지 않는다 — 준비된 client가
+            있으면 즉시 사용하고, 없으면 즉시 Apple KO로 폴백하며 백그라운드
+            스폰만 트리거한다. 어떤 실패든 예외 없이 Apple KO 그대로 반환."""
             nonlocal client_ready, respawns
-            active = await _ensure_client()
+            active = client if (client_ready and client is not None and client.alive) else None
             if active is None:
+                _maybe_trigger_spawn()
                 return utterance
             try:
                 # 외부 wait_for는 방어적 백스톱 — 실제 MlxWorkerClient는 timeout
@@ -283,6 +344,7 @@ class MlxRefinedAppleProvider:
                 respawns += 1
                 logger.warning("mlx worker died (respawn %d/%d): %s",
                                respawns, self._max_respawns, exc)
+                _maybe_trigger_spawn()  # 다음 파이널을 위해 재스폰만 트리거 (대기 없음)
                 return utterance
             reason = guard_mlx_ko(utterance.text_en, mlx_ko)
             if reason is not None:
@@ -329,9 +391,10 @@ class MlxRefinedAppleProvider:
                 await out_q.put(_SENTINEL)
 
         pump = asyncio.create_task(_pump_inner())
-        # 워커는 백그라운드 선기동 — 로드가 끝나기 전 파이널은 _ensure_client의
-        # respawn 카운트를 소모하지 않도록 start를 미리 시도해 둔다.
-        warmup = asyncio.create_task(_ensure_client())
+        # 워커는 백그라운드 선기동 — 로드가 끝나기 전 도착하는 파이널이 스폰을
+        # 기다리지 않도록(Critical: 자막 동결 방지) start를 미리 트리거해 둔다.
+        # _refine은 이 태스크를 절대 await하지 않는다 — 완료 여부만 확인한다.
+        spawn_task = asyncio.create_task(_spawn_client())
         try:
             while True:
                 item = await out_q.get()
@@ -341,9 +404,9 @@ class MlxRefinedAppleProvider:
             if inner_error is not None:
                 raise inner_error
         finally:
-            warmup.cancel()
+            spawn_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
-                await warmup
+                await spawn_task
             pump.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await pump
