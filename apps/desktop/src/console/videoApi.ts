@@ -11,6 +11,10 @@ export type VideoModelInfo = {
   // 서버 내장 모델(예: Apple 온디바이스): 다운로드/삭제 대상이 아님 — 클라는
   // 삭제 버튼을 숨기고 크기 대신 "내장"을 표시한다.
   builtin?: boolean;
+  // 이 기기에서 실제 선택 가능한지. 생략(undefined)이면 사용 가능으로 본다.
+  // Apple 온디바이스 모델은 인텔맥/윈도우/구버전 macOS에서 false로 와서
+  // 목록엔 보이되 비활성 처리된다(번역 엔진의 available과 동일 정책).
+  available?: boolean;
 };
 
 export type VideoJobSummary = {

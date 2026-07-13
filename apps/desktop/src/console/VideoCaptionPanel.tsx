@@ -461,11 +461,15 @@ function VideoCaptionInner({ active }: { active: boolean }) {
             onChange={(e) => setSelectedModel(e.target.value)}
             style={{ ...consoleStyles.input, width: 160 }}
           >
-            {models.map((m) => (
-              <option key={m.name} value={m.name} disabled={!m.downloaded}>
-                {m.name}{m.downloaded ? "" : " (미설치)"}
-              </option>
-            ))}
+            {models.map((m) => {
+              const unavailable = m.available === false;
+              const suffix = unavailable ? " (실리콘맥 전용)" : m.downloaded ? "" : " (미설치)";
+              return (
+                <option key={m.name} value={m.name} disabled={unavailable || !m.downloaded}>
+                  {m.name}{suffix}
+                </option>
+              );
+            })}
           </select>
           <select
             value={translateProvider}
@@ -725,11 +729,17 @@ function VideoCaptionInner({ active }: { active: boolean }) {
             <div style={{ flex: 1 }}>
               <strong>{m.name}</strong>
               <span style={{ fontSize: 12, opacity: 0.7, marginLeft: 8 }}>
-                {m.builtin ? "내장" : formatBytes(m.approx_bytes)} · {m.label}
+                {m.builtin
+                  ? (m.available === false ? "실리콘맥 전용" : "내장")
+                  : formatBytes(m.approx_bytes)} · {m.label}
               </span>
             </div>
             {m.builtin ? (
-              <span style={{ fontSize: 13, color: "#30a46c" }}>내장</span>
+              m.available === false ? (
+                <span style={{ fontSize: 13, opacity: 0.6 }}>이 기기에서 사용 불가</span>
+              ) : (
+                <span style={{ fontSize: 13, color: "#30a46c" }}>내장</span>
+              )
             ) : m.downloading ? (
               <span style={{ fontSize: 13 }}>다운로드 중… {m.progress ?? 0}%</span>
             ) : m.downloaded ? (
