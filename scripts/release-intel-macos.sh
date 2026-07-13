@@ -92,6 +92,12 @@ PY
   rm -rf "$DIR"
 }
 
+# 서버 콘솔 번들은 동결본(binaries/yeson-server-*)을 그대로 담으므로, 릴리스 전
+# 반드시 재동결해 최신 서버 소스를 반영한다. 빠뜨리면 옛 서버가 번들돼 새 라우트가
+# 빠진 dmg가 나간다(v1.3.0 Intel이 v1.2.4 서버로 나갔던 실사고 — 재발 방지).
+echo "=== refreeze server (intel bundle 최신화) ==="
+bash "$ROOT/apps/server_desktop/scripts/build-server.sh"
+
 build_one apps/desktop        yeson-meet           "yeson-meet_${VERSION}_x64.dmg"
 build_one apps/server_desktop yeson-server-console "yeson-server-console_${VERSION}_x64.dmg"
 
