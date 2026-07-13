@@ -65,21 +65,32 @@ jobs:
       - name: Build + stage frozen server (+ cloudflared)
         run: bash apps/server_desktop/scripts/build-server.sh
 
-      # NOTE (2026-07-13): apple-live-translate(Swift) CI 스테이징은 보류.
-      # 코드가 macOS 26.4 전용 API(preferredStrategy/.lowLatency)를 쓰는데 GitHub
-      # 러너 Xcode는 26.0.1(26.0 SDK)이라 컴파일 실패(#available은 런타임 가드일 뿐
-      # 컴파일엔 26.4 SDK 필요). 러너가 26.4 SDK를 갖추거나 Swift가 26.4 API를 뗄
-      # 때까지 플레인 빌드 유지 → 실리콘 서버콘솔엔 apple 바이너리 미포함(qwen/apple
-      # provider는 비활성 표시). 실동작 실리콘 dmg는 26.4-SDK 맥에서 로컬 빌드
-      # (build_apple_translate.sh + tauri.macos-arm.conf.json)해 업로드한다.
-      #
+      # apple-live-translate(Swift)는 macOS 26.4 전용 API(preferredStrategy/
+      # .lowLatency)를 쓰므로 26.4+ SDK가 필요하다. macOS 26 러너에는 Xcode
+      # 26.4.1/26.5/26.6이 모두 있으니 설치된 26.x 중 최신을 명시 선택한다
+      # (기본값에 의존하지 않음 — 이전에 글롭이 26.0.1을 집어 컴파일 실패한 사고
+      # 재발 방지, 2026-07-13). 러너가 arm64라 아키텍처도 충족.
+      - name: Select newest Xcode 26 (macOS 26.4+ SDK)
+        run: |
+          XC="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$XC" ]; then echo "no Xcode 26 found" >&2; exit 1; fi
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+      # Swift 바이너리를 빌드해 binaries/apple-translate-aarch64-apple-darwin/에
+      # 스테이징 → arm 전용 config 글롭이 번들에 포함시킨다. 없으면 --config 빌드가
+      # fail-loud라 실리콘 배포판에 apple 바이너리가 빠진 채 나갈 일은 없다.
+      - name: Build + stage apple-live-translate (Apple Silicon)
+        run: bash apps/native_helper_mac/scripts/build_apple_translate.sh
+
       # macOS bundles only (the shared config also lists nsis/msi).
+      # arm 전용 config = 기본 글롭 + binaries/apple-translate-*/**/* (apple 포함).
       - name: Build server console installer (app + dmg)
         working-directory: apps/server_desktop
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --bundles app dmg
+        run: pnpm tauri build --bundles app dmg --config src-tauri/tauri.macos-arm.conf.json
 
       - name: List built installers
         run: find apps/server_desktop/src-tauri/target/release/bundle -name '*.dmg' -exec ls -lh {} \;
@@ -110,15 +121,14 @@ jobs:
 
             ---
 
-            ## yeson-server-console v1.3.1 — 무엇이 바뀌었나
+            ## yeson-server-console v1.3.2 — 무엇이 바뀌었나
 
-            ### Apple 온디바이스 실시간 번역 (실험적) 🍎
-            - 회의 실시간 자막에 **Apple 전사 + MLX Qwen 로컬 번역(하이브리드 B)** provider가 추가됐습니다. 인터넷 없이 실리콘맥(macOS 26)에서 동작합니다.
-            - provider 설정의 Apple 계열 옵션은 **실리콘맥에서만 선택 가능**하며, 인텔맥·윈도우에서는 '실리콘맥 전용 (이 기기 미지원)'으로 비활성 표시됩니다.
-            - MLX 번역 모델(Qwen3.5 9B/4B) 다운로드·선택 UI가 추가됐습니다.
+            ### Apple 온디바이스 실시간 번역 실동작 (실리콘맥) 🍎
+            - 회의 실시간 자막의 **Apple 전사 + MLX Qwen 로컬 번역(하이브리드 B)** 이 Apple Silicon Mac(macOS 26)에서 **실제로 동작**합니다(배포 빌드에 Apple 실행 바이너리 포함). 인텔맥·윈도우에서는 '실리콘맥 전용'으로 비활성 표시됩니다.
+            - MLX 번역 모델(Qwen3.5 9B/4B) 다운로드·선택 UI.
 
             ### 자막 메이커 🎬
-            - 영상 자막의 Apple 온디바이스 전사·번역 엔진 지원(실리콘맥). 사용 불가한 기기에서도 목록엔 '비활성'으로 표시됩니다.
+            - 영화·영상 전사에서 배경음악·효과음 구간의 대사 누락을 완화했습니다(음성감지 임계값 조정).
 
             ### 자동 업데이트 ✅
             - v1.2.0 이상을 설치하셨다면 이 버전은 자동으로 받게 됩니다.
