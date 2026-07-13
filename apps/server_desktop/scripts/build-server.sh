@@ -33,6 +33,16 @@ uv venv --clear --python "${PY_VERSION}" "${BUILD_VENV}"
 VIRTUAL_ENV="${BUILD_VENV}" uv pip install --python "${BUILD_VENV}/bin/python" \
     ./apps/server "pyinstaller>=6.21"
 
+# 하이브리드 B: 실리콘맥 번들에만 mlx-lm 포함 (인텔맥 회귀 방지 — 510741b 방침).
+# macOS bash 3.2 + set -u에서 빈 배열 확장이 unbound variable 처리 → 아래 pyinstaller 호출에서 ${arr[@]+...} 가드 필수.
+MLX_COLLECT_FLAGS=()
+if [[ "$(uname -sm)" == "Darwin arm64" ]]; then
+    echo "Adding mlx-lm (Apple Silicon only)…"
+    VIRTUAL_ENV="${BUILD_VENV}" uv pip install --python "${BUILD_VENV}/bin/python" \
+        './apps/server[mlx]'
+    MLX_COLLECT_FLAGS=(--collect-all mlx --collect-all mlx_lm)
+fi
+
 # Build the viewer SPA (apps/web) so the frozen server serves it under the same
 # :8000 origin as /api + /ws (replacing the old Docker-path Caddy). Staged into
 # the bundle via PyInstaller --add-data below; main._web_dist_dir() reads it
@@ -70,6 +80,7 @@ echo "Building yeson-server (PyInstaller --onedir, Gemini-only)…"
     --collect-all av \
     --collect-all onnxruntime \
     --collect-all yt_dlp \
+    ${MLX_COLLECT_FLAGS[@]+"${MLX_COLLECT_FLAGS[@]}"} \
     --add-data "$(pwd)/apps/web/dist:web_dist" \
     --distpath "${DIST}" \
     --workpath "${WORK}" \
@@ -81,6 +92,15 @@ OUT_BIN="${OUT_DIR}/yeson-server"
 if [[ ! -x "${OUT_BIN}" ]]; then
     echo "ERROR: expected binary at ${OUT_BIN}" >&2
     exit 1
+fi
+
+# MLX Metal 커널: libmlx는 자기 dylib과 "같은 디렉터리"에서 mlx.metallib을 찾는데,
+# PyInstaller가 libmlx.dylib을 _internal 루트로 복제하므로 metallib도 루트에 있어야
+# 한다 (없으면 워커가 "Failed to load the default metallib"로 즉사 — 2026-07-12 E2E 실측).
+# collect-all이 넣어주는 _internal/mlx/lib/mlx.metallib을 루트로 하드링크한다.
+if [[ -f "${OUT_DIR}/_internal/mlx/lib/mlx.metallib" ]]; then
+    ln -f "${OUT_DIR}/_internal/mlx/lib/mlx.metallib" "${OUT_DIR}/_internal/mlx.metallib"
+    echo "mlx.metallib linked to _internal root (metal kernel colocated fix)"
 fi
 
 # Map host arch → Tauri target-triple suffix expected by externalBin.
@@ -99,6 +119,10 @@ DEST_DIR="apps/server_desktop/src-tauri/binaries/yeson-server-${TRIPLE}"
 rm -rf "${DEST_DIR}"
 mkdir -p "$(dirname "${DEST_DIR}")"
 cp -R "${OUT_DIR}" "${DEST_DIR}"
+# cp -R이 하드링크를 별도 파일로 풀어 155MB metallib이 중복되므로 다시 결합.
+if [[ -f "${DEST_DIR}/_internal/mlx/lib/mlx.metallib" ]]; then
+    ln -f "${DEST_DIR}/_internal/mlx/lib/mlx.metallib" "${DEST_DIR}/_internal/mlx.metallib"
+fi
 echo "→ ${DEST_DIR}"
 echo "  bundle size: $(du -sh "${DEST_DIR}" | cut -f1)"
 echo "  entry binary: ${DEST_DIR}/yeson-server"

@@ -13,6 +13,7 @@ export type ServerConfigInput = {
   googleSttLanguageCode: string;
   googleTranslateTargetLanguage: string;
   yesonAiProvider: string;
+  yesonMlxModel: string;
   viewerBase: string;
   summaryBackend: string;
   summaryModel: string;
@@ -26,6 +27,7 @@ export type ServerConfigMeta = {
   googleSttLanguageCode: string;
   googleTranslateTargetLanguage: string;
   provider: string;
+  mlxModel: string;
   viewerBase: string;
   summaryBackend: string;
   summaryModel: string;
@@ -46,6 +48,7 @@ export const EMPTY_META: ServerConfigMeta = {
   googleSttLanguageCode: "",
   googleTranslateTargetLanguage: "",
   provider: DEFAULT_PROVIDER,
+  mlxModel: "",
   viewerBase: "",
   summaryBackend: "auto",
   summaryModel: "",
@@ -78,6 +81,30 @@ export async function bootstrapAdmin(email: string, password: string): Promise<B
 // 실리콘맥 번들에서만 성공하고, 그 외에서는 Rust가 Err(문자열)를 던진다.
 export async function installFastTranslation(): Promise<string> {
   return invoke<string>("install_fast_translation");
+}
+
+// MLX 온디바이스 번역 모델 목록. apple_mlx_live_translate provider 전용 — 실리콘맥 번들에서만
+// 의미가 있다(다운로드/상태 확인은 Rust 쪽에서 실리콘맥 여부와 무관하게 파일 존재만 본다).
+export const MLX_MODELS = [
+  { id: "mlx-community/Qwen3.5-9B-4bit", label: "Qwen3.5 9B (기본 — 품질 우선, RAM ~5GB)" },
+  { id: "mlx-community/Qwen3.5-4B-4bit", label: "Qwen3.5 4B (저사양 — 지연 절반, RAM ~2.3GB)" },
+] as const;
+
+export async function mlxModelStatus(modelId: string): Promise<boolean> {
+  if (!hasTauriRuntime()) return false;
+  return invoke<boolean>("mlx_model_status", { modelId });
+}
+
+// 이 기기에서 Apple 전사·MLX 하이브리드 provider가 실제 동작 가능한지(번들에
+// apple-live-translate 바이너리가 있는지 = 실리콘맥 빌드). 인텔맥/윈도우/구버전
+// macOS에서는 false → provider 옵션은 보이되 비활성. 런타임 주입과 같은 진실.
+export async function appleTranslateAvailable(): Promise<boolean> {
+  if (!hasTauriRuntime()) return false;
+  return invoke<boolean>("apple_translate_available");
+}
+
+export async function downloadMlxModel(modelId: string): Promise<string> {
+  return invoke<string>("mlx_download_model", { modelId });
 }
 
 // Minimum password strength for the first-run operator account. A small,

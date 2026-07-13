@@ -47,6 +47,10 @@ pub struct ServerConfig {
     pub google_translate_target_language: String,
     /// AI provider selector; defaults to `gemini_live_translate` (동시통역 — 더 정확).
     pub yeson_ai_provider: String,
+    /// MLX 온디바이스 라이브 번역 모델 id (예: `mlx-community/Qwen3.5-9B-4bit`).
+    /// Empty → server-side `mlx_model_id()` (apps/server/ai/mlx_live_translate.py)
+    /// applies its own default; the Rust side never duplicates that default.
+    pub yeson_mlx_model: String,
     /// Public viewer base URL used to mint viewer links.
     pub viewer_base: String,
     /// Report-summary CLI backend ("auto" | "claude" | "codex" | …). Empty/"auto"
@@ -70,6 +74,7 @@ pub struct ServerConfigMeta {
     pub google_stt_language_code: String,
     pub google_translate_target_language: String,
     pub provider: String,
+    pub mlx_model: String,
     pub viewer_base: String,
     pub summary_backend: String,
     pub summary_model: String,
@@ -88,6 +93,7 @@ pub struct ServerConfigInput {
     pub google_stt_language_code: String,
     pub google_translate_target_language: String,
     pub yeson_ai_provider: String,
+    pub yeson_mlx_model: String,
     pub viewer_base: String,
     pub summary_backend: String,
     pub summary_model: String,
@@ -128,6 +134,7 @@ impl ServerConfig {
             google_stt_language_code: self.google_stt_language_code.clone(),
             google_translate_target_language: self.google_translate_target_language.clone(),
             provider: self.provider(),
+            mlx_model: self.yeson_mlx_model.clone(),
             viewer_base: self.viewer_base.clone(),
             summary_backend: self.summary_backend(),
             summary_model: self.summary_model.clone(),
@@ -150,6 +157,7 @@ impl ServerConfig {
         self.google_translate_target_language =
             input.google_translate_target_language.trim().to_string();
         self.yeson_ai_provider = input.yeson_ai_provider.trim().to_string();
+        self.yeson_mlx_model = input.yeson_mlx_model.trim().to_string();
         self.viewer_base = input.viewer_base.trim().to_string();
         self.summary_backend = input.summary_backend.trim().to_string();
         self.summary_model = input.summary_model.trim().to_string();
@@ -267,6 +275,7 @@ mod tests {
             google_stt_language_code: "en-US".to_string(),
             google_translate_target_language: "ko".to_string(),
             yeson_ai_provider: "gemini_live".to_string(),
+            yeson_mlx_model: "mlx-community/Qwen3.5-4B-4bit".to_string(),
             viewer_base: "https://viewer".to_string(),
             summary_backend: "claude".to_string(),
             summary_model: String::new(),
@@ -278,6 +287,7 @@ mod tests {
         assert!(meta.has_jwt_secret);
         // ...and the projection carries the non-secret values verbatim...
         assert_eq!(meta.provider, "gemini_live");
+        assert_eq!(meta.mlx_model, "mlx-community/Qwen3.5-4B-4bit");
         assert_eq!(meta.viewer_base, "https://viewer");
         assert_eq!(meta.google_cloud_project, "proj");
         assert_eq!(meta.summary_backend, "claude");

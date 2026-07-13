@@ -414,6 +414,12 @@ fn inject_secrets(command: &mut Command) -> Result<(), String> {
         // detection (claude → codex).
         ("YESON_SUMMARY_BACKEND", config.summary_backend.trim()),
         ("YESON_SUMMARY_MODEL", config.summary_model.trim()),
+        // MLX on-device live-translate model selector (Config panel). Empty →
+        // not injected → the server's mlx_model_id() (apps/server/ai/
+        // mlx_live_translate.py) applies its own default; we never duplicate
+        // that default here. Unlike YESON_AI_PROVIDER this has no per-run
+        // start-request override, so it belongs in the keychain config pass.
+        ("YESON_MLX_MODEL", config.yeson_mlx_model.trim()),
         // YESON_AI_PROVIDER is resolved at spawn time earlier (explicit start
         // request override, else the keychain dropdown value), so it is not
         // injected here where it could shadow that resolution.
@@ -639,6 +645,15 @@ fn locate_bundled_ffmpeg() -> Option<PathBuf> {
 /// special-casing one platform. Returns `None` when missing (dev runs without
 /// a local build, or any non-mac bundle), in which case the caller does not
 /// inject `YESON_APPLE_TRANSLATE_BIN` and the server falls back to PATH.
+/// 클라(ServerConfigPanel)가 apple/mlx provider 옵션을 비활성-표시할지 결정하는
+/// 단일 진실. 번들에 apple-live-translate 바이너리가 있으면 = 이 기기에서 Apple
+/// 전사·MLX 하이브리드가 실제로 동작 가능(런타임 주입도 같은 함수를 씀). 인텔맥/
+/// 윈도우/구버전 macOS 번들엔 바이너리가 없어 false → 옵션은 보이되 비활성.
+#[tauri::command]
+pub fn apple_translate_available() -> bool {
+    locate_bundled_apple_translate().is_some()
+}
+
 fn locate_bundled_apple_translate() -> Option<PathBuf> {
     let triple: &str = if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
         "x86_64-pc-windows-msvc"
@@ -1225,5 +1240,57 @@ pub fn detect_lan_ip() -> Result<String, String> {
     local_ip_address::local_ip()
         .map(|ip| ip.to_string())
         .map_err(|error| format!("LAN IP 감지 실패: {error}"))
+}
+
+/// `{STORAGE_ROOT}/mlx_models/<model_id '/'→'--'>/` — SAME derivation the
+/// bundled server's download one-shot uses (`apps/server/ai/
+/// mlx_live_translate.py::mlx_model_dir`), so the console's install probe and
+/// Task 3's downloader always agree on the path.
+fn mlx_model_dir(storage_root: &std::path::Path, model_id: &str) -> PathBuf {
+    storage_root.join("mlx_models").join(model_id.replace('/', "--"))
+}
+
+/// Whether `model_id` has already been downloaded — probed by checking for the
+/// `config.json` HF snapshot marker, mirroring the Python-side
+/// `mlx_model_installed()` check.
+#[tauri::command]
+pub fn mlx_model_status(app: tauri::AppHandle, model_id: String) -> Result<bool, String> {
+    let storage = storage_root(&app)?;
+    Ok(mlx_model_dir(&storage, &model_id).join("config.json").is_file())
+}
+
+/// Download `model_id` by running the bundled `yeson-server` binary as a
+/// one-shot with `YESON_MLX_DOWNLOAD` set (Task 3's download path) instead of
+/// its normal `run()` entrypoint. Progress is streamed to the UI as JSONL
+/// lines via the `mlx-download-progress` event.
+// 동기 커맨드 — Tauri가 블로킹 스레드풀에서 실행하므로(sync_threadpool) 수 분짜리
+// 다운로드가 async 런타임 워커를 점유하지 않는다. async fn으로 바꾸면 공유 tokio
+// 런타임에서 블로킹 루프가 돌게 되므로 금지.
+#[tauri::command]
+pub fn mlx_download_model(app: tauri::AppHandle, model_id: String) -> Result<String, String> {
+    let bin = locate_bundled_server()
+        .ok_or_else(|| "yeson-server 바이너리를 찾을 수 없습니다".to_string())?;
+    let storage = storage_root(&app)?;
+
+    let mut child = Command::new(&bin)
+        .env("YESON_MLX_DOWNLOAD", &model_id)
+        .env("STORAGE_ROOT", &storage)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("다운로드 프로세스 실행 실패: {error}"))?;
+
+    let stdout = child.stdout.take().ok_or("stdout 캡처 실패")?;
+    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        let _ = app.emit("mlx-download-progress", &line); // JSONL 줄 그대로 전달
+    }
+    let status = child
+        .wait()
+        .map_err(|error| format!("다운로드 대기 실패: {error}"))?;
+    if status.success() {
+        Ok(format!("{model_id} 다운로드 완료"))
+    } else {
+        Err(format!("{model_id} 다운로드 실패 — 콘솔 로그 확인"))
+    }
 }
 // === ANCHOR: SERVER_PROCESS_END ===

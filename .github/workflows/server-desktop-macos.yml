@@ -65,13 +65,29 @@ jobs:
       - name: Build + stage frozen server (+ cloudflared)
         run: bash apps/server_desktop/scripts/build-server.sh
 
+      # apple-live-translate (Swift) — Apple 전사·MLX 하이브리드 provider의 온디바이스
+      # 바이너리. macOS 26 SDK(Xcode 26) + Apple Silicon 러너 필요. 여기서 빌드해
+      # binaries/apple-translate-aarch64-apple-darwin/에 스테이징해야 아래 arm 전용
+      # config의 글롭이 번들에 포함시킨다(없으면 --config 빌드가 fail-loud → CI에서
+      # 안 되면 즉시 드러나 로컬 실리콘 빌드로 폴백 판단).
+      - name: Select Xcode 26 (macOS 26 SDK)
+        run: |
+          for x in /Applications/Xcode_26*.app; do
+            if [ -d "$x" ]; then sudo xcode-select -s "$x"; break; fi
+          done
+          xcodebuild -version || true
+          swift --version || true
+      - name: Build + stage apple-live-translate (Apple Silicon)
+        run: bash apps/native_helper_mac/scripts/build_apple_translate.sh
+
       # macOS bundles only (the shared config also lists nsis/msi).
+      # arm 전용 config = 기본 글롭 + binaries/apple-translate-*/**/* (apple 바이너리 포함).
       - name: Build server console installer (app + dmg)
         working-directory: apps/server_desktop
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --bundles app dmg
+        run: pnpm tauri build --bundles app dmg --config src-tauri/tauri.macos-arm.conf.json
 
       - name: List built installers
         run: find apps/server_desktop/src-tauri/target/release/bundle -name '*.dmg' -exec ls -lh {} \;
@@ -102,15 +118,15 @@ jobs:
 
             ---
 
-            ## yeson-server-console v1.3.0 — 무엇이 바뀌었나
+            ## yeson-server-console v1.3.1 — 무엇이 바뀌었나
 
-            ### 자막 메이커 개선 🎬
-            - **Windows 폴더 선택 개선** — '폴더 선택…'이 파일이 보이는 선택창을 열고, 폴더 안 영상 하나를 고르면 폴더 전체를 일괄 처리(기존 Windows 폴더 선택창은 OS 제약으로 파일 미표시).
-            - **번역 엔진 옵션 확장** — Apple 고속/고품질(실험적) 옵션 추가. 사용 가능한 환경에서만 활성화, 기본 엔진은 기존과 동일.
+            ### Apple 온디바이스 실시간 번역 (실험적) 🍎
+            - 회의 실시간 자막에 **Apple 전사 + MLX Qwen 로컬 번역(하이브리드 B)** provider가 추가됐습니다. 인터넷 없이 실리콘맥(macOS 26)에서 동작합니다.
+            - provider 설정의 Apple 계열 옵션은 **실리콘맥에서만 선택 가능**하며, 인텔맥·윈도우에서는 '실리콘맥 전용 (이 기기 미지원)'으로 비활성 표시됩니다.
+            - MLX 번역 모델(Qwen3.5 9B/4B) 다운로드·선택 UI가 추가됐습니다.
 
-            ### Apple 온디바이스 전사·번역 (실험적) 🍎
-            - Apple Silicon Mac에서 인터넷 없이 동작하는 온디바이스 전사·번역 지원 추가.
-            - **참고: 이번 배포 빌드에는 Apple 실행 바이너리 미포함 — 해당 옵션은 비활성으로 표시**(추후 릴리스 제공 예정). 다른 기능 영향 없음.
+            ### 자막 메이커 🎬
+            - 영상 자막의 Apple 온디바이스 전사·번역 엔진 지원(실리콘맥). 사용 불가한 기기에서도 목록엔 '비활성'으로 표시됩니다.
 
             ### 자동 업데이트 ✅
             - v1.2.0 이상을 설치하셨다면 이 버전은 자동으로 받게 됩니다.

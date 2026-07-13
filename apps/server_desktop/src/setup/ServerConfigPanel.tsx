@@ -1,10 +1,12 @@
 // === ANCHOR: SERVER_CONFIG_PANEL_START ===
 import { useCallback, useEffect, useState } from "react";
 import { append } from "../appLog";
+import { MlxModelPanel } from "./MlxModelPanel";
 import {
   DEFAULT_PROVIDER,
   EMPTY_META,
   type ServerConfigMeta,
+  appleTranslateAvailable,
   bootstrapAdmin,
   clearServerConfig,
   installFastTranslation,
@@ -12,6 +14,9 @@ import {
   passwordStrengthError,
   saveServerConfig,
 } from "./serverConfig";
+
+// Apple 전사 바이너리를 요구하는 provider — 실리콘맥 빌드에서만 실제 동작한다.
+const APPLE_PROVIDERS = new Set(["apple_live_translate", "apple_mlx_live_translate"]);
 
 function errorToText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -21,7 +26,13 @@ function presence(label: string, configured: boolean): string {
   return configured ? `${label}: configured` : `${label}: not set`;
 }
 
-const PROVIDERS = ["gemini_live_translate", "gemini_live", "google_stt_translate", "apple_live_translate"] as const;
+const PROVIDERS = [
+  "gemini_live_translate",
+  "gemini_live",
+  "google_stt_translate",
+  "apple_live_translate",
+  "apple_mlx_live_translate",
+] as const;
 const SUMMARY_BACKENDS = ["auto", "claude", "codex"] as const;
 
 export default function ServerConfigPanel() {
@@ -39,6 +50,7 @@ export default function ServerConfigPanel() {
   const [sttLanguage, setSttLanguage] = useState("");
   const [translateTarget, setTranslateTarget] = useState("");
   const [provider, setProvider] = useState<string>(DEFAULT_PROVIDER);
+  const [mlxModel, setMlxModel] = useState("");
   const [viewerBase, setViewerBase] = useState("");
   const [summaryBackend, setSummaryBackend] = useState<string>("auto");
   const [summaryModel, setSummaryModel] = useState("");
@@ -51,6 +63,10 @@ export default function ServerConfigPanel() {
   const [installingFast, setInstallingFast] = useState(false);
   const [fastInstallMsg, setFastInstallMsg] = useState<string | null>(null);
 
+  // 이 기기에서 Apple provider가 실제 동작 가능한지(실리콘맥 번들 여부). 인텔맥/
+  // 윈도우에서는 false → apple provider 옵션을 보이되 비활성 처리한다.
+  const [appleAvailable, setAppleAvailable] = useState(false);
+
   const syncMeta = useCallback((next: ServerConfigMeta) => {
     setMeta(next);
     // Hydrate the non-secret editable fields from the projection (secrets stay blank).
@@ -58,6 +74,7 @@ export default function ServerConfigPanel() {
     setSttLanguage(next.googleSttLanguageCode);
     setTranslateTarget(next.googleTranslateTargetLanguage);
     setProvider(next.provider || DEFAULT_PROVIDER);
+    setMlxModel(next.mlxModel);
     setViewerBase(next.viewerBase);
     setSummaryBackend(next.summaryBackend || "auto");
     setSummaryModel(next.summaryModel);
@@ -66,6 +83,7 @@ export default function ServerConfigPanel() {
   const refresh = useCallback(async () => {
     try {
       syncMeta(await loadServerConfigMeta());
+      setAppleAvailable(await appleTranslateAvailable());
     } catch (err) {
       setError(errorToText(err));
     }
@@ -87,6 +105,7 @@ export default function ServerConfigPanel() {
         googleSttLanguageCode: sttLanguage,
         googleTranslateTargetLanguage: translateTarget,
         yesonAiProvider: provider,
+        yesonMlxModel: mlxModel,
         viewerBase,
         summaryBackend,
         summaryModel,
@@ -104,7 +123,7 @@ export default function ServerConfigPanel() {
     } finally {
       setBusy(false);
     }
-  }, [geminiApiKey, googleCredsJson, googleProject, sttLanguage, translateTarget, provider, viewerBase, summaryBackend, summaryModel, syncMeta]);
+  }, [geminiApiKey, googleCredsJson, googleProject, sttLanguage, translateTarget, provider, mlxModel, viewerBase, summaryBackend, summaryModel, syncMeta]);
 
   const onClear = useCallback(async () => {
     setError(null);
@@ -192,11 +211,32 @@ export default function ServerConfigPanel() {
 
       <Field label="provider">
         <select value={provider} onChange={(e) => setProvider(e.target.value)} style={styles.input}>
-          {PROVIDERS.map((p) => (
-            <option key={p} value={p} title={p === "apple_live_translate" ? "실험적 — 실리콘맥 전용. 자막 리듬·품질이 gemini_live_translate보다 낮음. 회의에는 gemini_live_translate 권장" : undefined}>
-              {p === "apple_live_translate" ? `${p} (실험적)` : p}
-            </option>
-          ))}
+          {PROVIDERS.map((p) => {
+            // apple provider는 실리콘맥 번들에서만 동작 — 그 외 기기에서는 보이되 비활성.
+            const appleGated = APPLE_PROVIDERS.has(p) && !appleAvailable;
+            const baseLabel =
+              p === "apple_live_translate"
+                ? `${p} (실험적)`
+                : p === "apple_mlx_live_translate"
+                  ? "Apple 전사 + 로컬 LLM 번역 (실험적)"
+                  : p;
+            return (
+              <option
+                key={p}
+                value={p}
+                disabled={appleGated}
+                title={
+                  p === "apple_live_translate"
+                    ? "실험적 — 실리콘맥 전용. 자막 리듬·품질이 gemini_live_translate보다 낮음. 회의에는 gemini_live_translate 권장"
+                    : p === "apple_mlx_live_translate"
+                      ? "실험적 — 실리콘맥 전용. Apple 전사 + 로컬 LLM 번역. 회의에는 gemini_live_translate 권장"
+                      : undefined
+                }
+              >
+                {baseLabel}{appleGated ? " — 실리콘맥 전용 (이 기기 미지원)" : ""}
+              </option>
+            );
+          })}
         </select>
       </Field>
 
@@ -207,6 +247,10 @@ export default function ServerConfigPanel() {
           </button>
           {fastInstallMsg ? <p style={{ ...styles.sub, margin: "6px 0 0" }}>{fastInstallMsg}</p> : null}
         </div>
+      ) : null}
+
+      {provider === "apple_mlx_live_translate" ? (
+        <MlxModelPanel selectedModel={mlxModel} onSelectModel={setMlxModel} />
       ) : null}
 
       <Field label="요약 백엔드 (summary backend)">
