@@ -23,6 +23,12 @@ export function canRebuild(status: string): boolean {
   return REBUILDABLE_STATUSES.has(status);
 }
 
+// 체크박스 선택 가능 상태 = 터미널 상태 전부. 진행 중만 제외 — 오류/취소됨도
+// '선택 재생성'의 대상이므로 선택 가능해야 한다(취소된 배치 일괄 복구 흐름).
+export function isSelectableStatus(status: string): boolean {
+  return REBUILDABLE_STATUSES.has(status);
+}
+
 // 서버는 단계별 원시 진행률(전사/번역/굽기 각 0→100)을 보내고, 고정 단계는
 // 베이스라인(ingesting=5, extracting=15)만 갖는다. 그대로 그리면 단계 전환 때
 // 바가 뒤로 간다(전사 100% → 번역 0%). 각 단계를 전체 구간의 밴드로 환산해
@@ -45,24 +51,30 @@ export function overallProgress(status: string, progress: number): number {
   return Math.min(100, Math.max(0, Math.round(band.base + (band.span * p) / 100)));
 }
 
-// 체크박스로 고를 수 있는(=일괄 동작 대상이 될 수 있는) 작업 id. 진행 중/오류는 제외.
+// 체크박스로 고를 수 있는(=일괄 동작 대상이 될 수 있는) 작업 id. 진행 중만 제외.
 export function actionableJobIds(jobs: VideoJobSummary[]): string[] {
-  return jobs
-    .filter((j) => j.status === BURNABLE_STATUS || j.status === DOWNLOADABLE_STATUS)
-    .map((j) => j.job_id);
+  return jobs.filter((j) => isSelectableStatus(j.status)).map((j) => j.job_id);
 }
 
-// 선택된 id 집합을 굽기/다운로드 대상으로 분할한다. 선택됐어도 상태가 맞지 않으면 어느 쪽에도 안 들어간다.
+// 선택된 id 집합을 굽기/다운로드/재생성 대상으로 분할한다. 선택됐어도 상태가 맞지 않으면 어느 쪽에도 안 들어간다.
 export function partitionSelection(
   jobs: VideoJobSummary[],
   selected: Set<string>,
-): { burnable: VideoJobSummary[]; downloadable: VideoJobSummary[] } {
+): {
+  burnable: VideoJobSummary[];
+  downloadable: VideoJobSummary[];
+  rebuildable: VideoJobSummary[];
+} {
   const burnable: VideoJobSummary[] = [];
   const downloadable: VideoJobSummary[] = [];
+  // 일괄 재생성 대상은 오류/취소됨만 — 검수 대기/완료 작업을 실수로 처음부터
+  // 다시 돌리는 사고를 막는다(개별 행의 재생성 버튼은 여전히 터미널 전부 허용).
+  const rebuildable: VideoJobSummary[] = [];
   for (const j of jobs) {
     if (!selected.has(j.job_id)) continue;
     if (j.status === BURNABLE_STATUS) burnable.push(j);
     else if (j.status === DOWNLOADABLE_STATUS) downloadable.push(j);
+    else if (j.status === "error" || j.status === "cancelled") rebuildable.push(j);
   }
-  return { burnable, downloadable };
+  return { burnable, downloadable, rebuildable };
 }
