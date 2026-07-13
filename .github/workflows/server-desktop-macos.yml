@@ -65,29 +65,21 @@ jobs:
       - name: Build + stage frozen server (+ cloudflared)
         run: bash apps/server_desktop/scripts/build-server.sh
 
-      # apple-live-translate (Swift) — Apple 전사·MLX 하이브리드 provider의 온디바이스
-      # 바이너리. macOS 26 SDK(Xcode 26) + Apple Silicon 러너 필요. 여기서 빌드해
-      # binaries/apple-translate-aarch64-apple-darwin/에 스테이징해야 아래 arm 전용
-      # config의 글롭이 번들에 포함시킨다(없으면 --config 빌드가 fail-loud → CI에서
-      # 안 되면 즉시 드러나 로컬 실리콘 빌드로 폴백 판단).
-      - name: Select Xcode 26 (macOS 26 SDK)
-        run: |
-          for x in /Applications/Xcode_26*.app; do
-            if [ -d "$x" ]; then sudo xcode-select -s "$x"; break; fi
-          done
-          xcodebuild -version || true
-          swift --version || true
-      - name: Build + stage apple-live-translate (Apple Silicon)
-        run: bash apps/native_helper_mac/scripts/build_apple_translate.sh
-
+      # NOTE (2026-07-13): apple-live-translate(Swift) CI 스테이징은 보류.
+      # 코드가 macOS 26.4 전용 API(preferredStrategy/.lowLatency)를 쓰는데 GitHub
+      # 러너 Xcode는 26.0.1(26.0 SDK)이라 컴파일 실패(#available은 런타임 가드일 뿐
+      # 컴파일엔 26.4 SDK 필요). 러너가 26.4 SDK를 갖추거나 Swift가 26.4 API를 뗄
+      # 때까지 플레인 빌드 유지 → 실리콘 서버콘솔엔 apple 바이너리 미포함(qwen/apple
+      # provider는 비활성 표시). 실동작 실리콘 dmg는 26.4-SDK 맥에서 로컬 빌드
+      # (build_apple_translate.sh + tauri.macos-arm.conf.json)해 업로드한다.
+      #
       # macOS bundles only (the shared config also lists nsis/msi).
-      # arm 전용 config = 기본 글롭 + binaries/apple-translate-*/**/* (apple 바이너리 포함).
       - name: Build server console installer (app + dmg)
         working-directory: apps/server_desktop
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --bundles app dmg --config src-tauri/tauri.macos-arm.conf.json
+        run: pnpm tauri build --bundles app dmg
 
       - name: List built installers
         run: find apps/server_desktop/src-tauri/target/release/bundle -name '*.dmg' -exec ls -lh {} \;
