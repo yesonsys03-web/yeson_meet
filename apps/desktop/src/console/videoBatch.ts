@@ -3,9 +3,11 @@
 // UI(VideoCaptionPanel)에서 분리해 단위 테스트 가능하게 둔다.
 
 // 폴더 선택(webkitdirectory)은 폴더 안 모든 파일을 주므로 영상만 골라낸다.
-const VIDEO_EXTS = new Set([
+// 네이티브 파일 다이얼로그 필터(VideoCaptionPanel pickFolder)와 공유.
+export const VIDEO_EXT_LIST = [
   "mp4", "mov", "mkv", "avi", "webm", "m4v", "mpg", "mpeg", "wmv", "flv", "ts", "3gp",
-]);
+];
+const VIDEO_EXTS = new Set(VIDEO_EXT_LIST);
 
 export function filterVideoFiles(files: File[]): File[] {
   return files.filter((file) => {
