@@ -6,7 +6,8 @@
   "bundle": {
     "externalBin": ["binaries/yeson-mac-audio-helper", "binaries/yeson-sidecar"],
     "macOS": {
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist"
     }
   }
 }
