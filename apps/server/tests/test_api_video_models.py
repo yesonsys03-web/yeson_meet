@@ -15,11 +15,30 @@ def _storage(monkeypatch, tmp_path: Path):
     yield
 
 
-async def test_list_models(client):
+async def test_list_models(client, monkeypatch):
+    # Apple 미가용 기기(인텔/윈도우/구버전 macOS)에서도 목록엔 항상 노출된다.
+    monkeypatch.setattr(api_vm, "apple_stt_available", lambda: False)
     resp = await client.get("/api/v1/video-models")
     assert resp.status_code == 200
     names = [m["name"] for m in resp.json()["models"]]
-    assert names == ["tiny", "base", "small", "medium", "large-v3"]
+    assert names == ["apple", "tiny", "base", "small", "medium", "large-v3"]
+
+
+async def test_apple_model_shown_but_unavailable_on_non_silicon(client, monkeypatch):
+    monkeypatch.setattr(api_vm, "apple_stt_available", lambda: False)
+    resp = await client.get("/api/v1/video-models")
+    apple = next(m for m in resp.json()["models"] if m["name"] == "apple")
+    assert apple["builtin"] is True
+    assert apple["available"] is False
+    assert apple["downloaded"] is False  # 드롭다운이 비활성 처리
+
+
+async def test_apple_model_available_on_silicon(client, monkeypatch):
+    monkeypatch.setattr(api_vm, "apple_stt_available", lambda: True)
+    resp = await client.get("/api/v1/video-models")
+    apple = next(m for m in resp.json()["models"] if m["name"] == "apple")
+    assert apple["available"] is True
+    assert apple["downloaded"] is True
 
 
 async def test_download_starts_background_thread(client, monkeypatch):

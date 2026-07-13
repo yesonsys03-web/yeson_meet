@@ -29,14 +29,18 @@ def _spawn_gpu_pack_download() -> None:  # test seam
 @router.get("")
 async def list_video_models() -> dict:
     models = wm.list_models()
-    if apple_stt_available():
-        models.insert(0, {
-            "name": APPLE_TRANSCRIBE_MODEL,
-            "label": "Apple 온디바이스 (실리콘맥, 초고속)",
-            "approx_bytes": 0, "downloaded": True, "disk_bytes": 0,
-            "downloading": False, "progress": None,
-            "builtin": True,  # 클라: 다운로드/삭제 버튼 숨김 플래그
-        })
+    # Apple 온디바이스 전사 모델은 항상 목록에 노출한다(번역 엔진과 동일 정책).
+    # 인텔맥/윈도우/구버전 macOS에서는 available=False로만 표시돼 클라가 회색
+    # 비활성 처리 — 플랫폼별로 항목 자체가 사라지던 비대칭을 없앤다.
+    apple_ok = apple_stt_available()
+    models.insert(0, {
+        "name": APPLE_TRANSCRIBE_MODEL,
+        "label": "Apple 온디바이스 (실리콘맥, 초고속)",
+        "approx_bytes": 0, "downloaded": apple_ok, "disk_bytes": 0,
+        "downloading": False, "progress": None,
+        "builtin": True,        # 클라: 다운로드/삭제 버튼 숨김 플래그
+        "available": apple_ok,  # 이 기기에서 실제 선택 가능한지(불가 시 비활성)
+    })
     return {"models": models}
 
 
