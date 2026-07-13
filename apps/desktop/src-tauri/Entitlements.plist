@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Applied by Tauri to the app AND every externalBin (yeson-sidecar, native helper)
+  during the ad-hoc bundle signing (tauri.macos.conf.json signingIdentity="-").
+
+  Why disable-library-validation: the PyInstaller onefile sidecar extracts a
+  bundled Python.framework at runtime and dlopen()s it. That framework carries
+  python.org's Team ID, while the sidecar bootloader is ad-hoc (no Team ID). Under
+  hardened runtime, macOS 26 (Tahoe) enforces Library Validation and refuses to map
+  a differently-signed dylib into the process ("... have different Team IDs"),
+  so the sidecar dies at startup → no audio capture → no captions (2026-07-13).
+  Disabling library validation lets the sidecar load its own embedded Python.
+  allow-dyld-environment-variables / allow-unsigned-executable-memory cover
+  PyInstaller's bootstrap (temp-dir dyld paths, CPython ctypes).
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>
