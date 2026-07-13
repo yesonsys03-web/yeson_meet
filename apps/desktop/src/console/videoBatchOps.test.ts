@@ -20,11 +20,12 @@ const JOBS = [
   job("d", "review"),
   job("e", "error"),
   job("f", "done"),
+  job("g", "cancelled"),
 ];
 
 describe("actionableJobIds", () => {
-  it("returns only review/done jobs (excludes in-flight and error)", () => {
-    expect(actionableJobIds(JOBS)).toEqual(["a", "b", "d", "f"]);
+  it("returns terminal jobs incl. error/cancelled (excludes in-flight only)", () => {
+    expect(actionableJobIds(JOBS)).toEqual(["a", "b", "d", "e", "f", "g"]);
   });
 });
 
@@ -111,22 +112,25 @@ describe("captionedFileName", () => {
 describe("partitionSelection", () => {
   it("splits the selected set into burnable(review) and downloadable(done)", () => {
     const sel = new Set(["a", "b", "d"]);
-    const { burnable, downloadable } = partitionSelection(JOBS, sel);
+    const { burnable, downloadable, rebuildable } = partitionSelection(JOBS, sel);
     expect(burnable.map((j) => j.job_id)).toEqual(["a", "d"]);
     expect(downloadable.map((j) => j.job_id)).toEqual(["b"]);
+    expect(rebuildable).toEqual([]);
   });
 
-  it("ignores selected ids whose status is not actionable", () => {
-    const sel = new Set(["c", "e"]); // transcribing + error
-    const { burnable, downloadable } = partitionSelection(JOBS, sel);
+  it("routes selected error/cancelled jobs to rebuildable (in-flight ignored)", () => {
+    const sel = new Set(["c", "e", "g"]); // transcribing + error + cancelled
+    const { burnable, downloadable, rebuildable } = partitionSelection(JOBS, sel);
     expect(burnable).toEqual([]);
     expect(downloadable).toEqual([]);
+    expect(rebuildable.map((j) => j.job_id)).toEqual(["e", "g"]);
   });
 
   it("ignores ids not present in the job list", () => {
     const sel = new Set(["zzz"]);
-    const { burnable, downloadable } = partitionSelection(JOBS, sel);
+    const { burnable, downloadable, rebuildable } = partitionSelection(JOBS, sel);
     expect(burnable).toEqual([]);
     expect(downloadable).toEqual([]);
+    expect(rebuildable).toEqual([]);
   });
 });

@@ -15,7 +15,8 @@ import {
 } from "./videoBatch";
 import type { NativeVideoFile } from "./videoBatch";
 import {
-  actionableJobIds, canRebuild, captionedFileName, overallProgress, partitionSelection,
+  actionableJobIds, canRebuild, captionedFileName, isSelectableStatus, overallProgress,
+  partitionSelection,
 } from "./videoBatchOps";
 import { shouldShowCudaWarning } from "./videoReviewLogic";
 import { VideoReviewView } from "./VideoReviewView";
@@ -113,6 +114,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(0);
   const [confirmBatchBurn, setConfirmBatchBurn] = useState(false);
+  const [confirmBatchRebuild, setConfirmBatchRebuild] = useState(false);
   // 최초 엔진 목록 응답에서 apple_hifi 기본 전환을 1회만 시도(사용자가 이후
   // 직접 고른 선택을 다시 덮어쓰지 않기 위함 — 재조회 폴링마다 재실행 방지).
   const appleHifiDefaultTriedRef = useRef(false);
@@ -340,6 +342,32 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     setBusy(false);
   }, [jobs, selectedJobs, refresh]);
 
+  // 선택 재생성 — 오류/취소됨 작업만 처음부터 다시 처리(서버가 순차 큐잉).
+  const runBatchRebuild = useCallback(async () => {
+    const { rebuildable } = partitionSelection(jobs, selectedJobs);
+    if (rebuildable.length === 0) return;
+    setConfirmBatchRebuild(false);
+    setBusy(true);
+    setError(null);
+    setBatchStatus(null);
+    let ok = 0;
+    const failed: string[] = [];
+    for (const j of rebuildable) {
+      try {
+        await rebuildVideoJob(j.job_id);
+        ok += 1;
+      } catch {
+        failed.push(j.title);
+      }
+    }
+    const parts = [`${ok}개 재생성을 시작했습니다`];
+    if (failed.length) parts.push(`${failed.length}개 실패: ${failed.join(", ")}`);
+    setBatchStatus(parts.join(" · "));
+    setSelectedJobs(new Set());
+    await refresh();
+    setBusy(false);
+  }, [jobs, selectedJobs, refresh]);
+
   // 선택 다운로드 — 폴더 하나를 고른 뒤 완료 작업의 mp4를 그 안에 {제목}-captioned.mp4로 저장.
   const runBatchDownload = useCallback(async () => {
     const { downloadable } = partitionSelection(jobs, selectedJobs);
@@ -428,7 +456,8 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const totalPages = Math.max(1, Math.ceil(jobs.length / PAGE_SIZE));
   const curPage = Math.min(page, totalPages - 1); // jobs 축소(삭제/프루닝) 시 자동 클램프
   const pagedJobs = jobs.slice(curPage * PAGE_SIZE, curPage * PAGE_SIZE + PAGE_SIZE);
-  const { burnable: burnableSel, downloadable: downloadableSel } = partitionSelection(jobs, selectedJobs);
+  const { burnable: burnableSel, downloadable: downloadableSel, rebuildable: rebuildableSel } =
+    partitionSelection(jobs, selectedJobs);
   const actionableIds = actionableJobIds(jobs);
   const allActionableSelected = actionableIds.length > 0 && actionableIds.every((id) => selectedJobs.has(id));
   // 로컬 배치 업로드가 진행 중이거나(busy), 서버에 대기/실행 중인 작업이 하나라도
@@ -590,6 +619,25 @@ function VideoCaptionInner({ active }: { active: boolean }) {
               onClick={() => void runBatchDownload()}>
               선택 다운로드{downloadableSel.length ? ` (${downloadableSel.length})` : ""}
             </button>
+            {confirmBatchRebuild ? (
+              <>
+                <span style={{ fontSize: 13, opacity: 0.85 }}>
+                  {rebuildableSel.length}개를 처음부터 다시 처리합니다.
+                </span>
+                <button type="button" style={consoleStyles.action}
+                  disabled={busy} onClick={() => void runBatchRebuild()}>확인</button>
+                <button type="button" style={consoleStyles.mutedAction}
+                  disabled={busy} onClick={() => setConfirmBatchRebuild(false)}>취소</button>
+              </>
+            ) : (
+              <button type="button"
+                title="선택한 작업 중 '오류/취소됨' 상태만 처음부터 다시 처리합니다 (검수 대기·완료는 제외)"
+                style={{ ...consoleStyles.mutedAction, ...(busy || rebuildableSel.length === 0 ? consoleStyles.actionDisabled : null) }}
+                disabled={busy || rebuildableSel.length === 0}
+                onClick={() => setConfirmBatchRebuild(true)}>
+                선택 재생성{rebuildableSel.length ? ` (${rebuildableSel.length})` : ""}
+              </button>
+            )}
             <span style={{ flex: 1 }} />
             {selectedJobs.size > 0 ? (
               <span style={{ fontSize: 12, opacity: 0.7 }}>{selectedJobs.size}개 선택됨</span>
@@ -614,9 +662,9 @@ function VideoCaptionInner({ active }: { active: boolean }) {
                      border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8 }}>
             <input type="checkbox"
               checked={selectedJobs.has(job.job_id)}
-              disabled={busy || !["review", "done"].includes(job.status)}
+              disabled={busy || !isSelectableStatus(job.status)}
               onChange={() => toggleJob(job.job_id)}
-              style={["review", "done"].includes(job.status) ? undefined : { visibility: "hidden" }}
+              style={isSelectableStatus(job.status) ? undefined : { visibility: "hidden" }}
               title="일괄 작업 선택" />
             <div style={{ flex: 1, minWidth: 0 }}>
               {/* 파일명은 잘라내지 않는다 — 언더스코어 이름은 공백이 없어 breakAll 줄바꿈 */}
