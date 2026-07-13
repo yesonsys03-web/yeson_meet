@@ -425,6 +425,19 @@ def main() -> int:
     # apps.server.db.session binds the engine from this env var at import time.
     os.environ["DATABASE_URL"] = _resolve_database_url()
 
+    # MLX 번역 워커 모드: 모델 로드 후 stdin JSONL 루프 (uvicorn 없음).
+    if os.environ.get("YESON_MLX_WORKER") == "1":
+        from apps.server.ai.mlx_worker import run_worker
+
+        return run_worker()
+
+    # MLX 모델 다운로드 원샷: 진행률 JSONL 출력 후 종료 (uvicorn 없음).
+    mlx_download = os.environ.get("YESON_MLX_DOWNLOAD", "")
+    if mlx_download:
+        from apps.server.ai.mlx_worker import run_download
+
+        return run_download(mlx_download)
+
     # One-shot bootstrap mode: seed the first operator and exit (no uvicorn).
     if os.environ.get("YESON_BOOTSTRAP_ADMIN") == "1":
         return _bootstrap_admin_mode()

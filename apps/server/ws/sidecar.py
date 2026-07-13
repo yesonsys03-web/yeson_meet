@@ -134,6 +134,12 @@ def create_ai_provider(trace_extra: Mapping[str, object] | None = None) -> STTPr
         if resolve_apple_bin() is None:
             return None  # 미지원 환경 — S2 count-only 모드 유지
         return AppleLiveTranslateProvider()
+    if provider_name in {"apple_mlx_live_translate", "apple_mlx"}:
+        from apps.server.ai import mlx_live_translate
+
+        if not mlx_live_translate.mlx_live_available():
+            return None  # 게이팅/모델 미설치 — S2 count-only 모드 유지
+        return mlx_live_translate.MlxRefinedAppleProvider()
     if provider_name in {"gemini_live_translate", "live_translate", "gemini_translate"}:
         if not os.environ.get("GEMINI_API_KEY"):
             return None
