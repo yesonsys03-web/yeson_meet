@@ -41,3 +41,11 @@ mkdir -p "$(dirname "$DEST_BUNDLE")"
 cp "$OUT" "$DEST_BUNDLE"
 echo "→ $DEST_BUNDLE"
 echo "  size: $(stat -f%z "$DEST_BUNDLE") bytes"
+
+# 애드혹 코드서명 — 이 바이너리가 회의 오디오 캡처(ScreenCaptureKit)를 하는
+# 프로세스라 TCC(화면 기록)가 서명을 검증한다. 서명이 무효면 macOS가 헬퍼를
+# 앱 소속으로 인식 못 해 사용자가 권한을 켜도 ScreenCapture를 거부한다(자막 무음;
+# macOS 26 Tahoe 실측 -67056, 2026-07-13). tauri의 externalBin deep-sign에만
+# 의존하지 않도록 번들 전에 여기서 확실히 서명한다.
+codesign --force --sign - "$DEST_BUNDLE"
+codesign --verify --strict "$DEST_BUNDLE" && echo "  codesigned (ad-hoc) ✓"

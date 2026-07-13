@@ -4,6 +4,9 @@
     "beforeBuildCommand": "pnpm build:native-helper-mac && pnpm build:sidecar-mac && pnpm build:vite"
   },
   "bundle": {
-    "externalBin": ["binaries/yeson-mac-audio-helper", "binaries/yeson-sidecar"]
+    "externalBin": ["binaries/yeson-mac-audio-helper", "binaries/yeson-sidecar"],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }
