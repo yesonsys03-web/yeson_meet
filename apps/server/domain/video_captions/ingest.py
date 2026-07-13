@@ -39,6 +39,14 @@ def download_youtube(url: str, dest_dir: Path,
         "quiet": True,
         "no_warnings": True,
         "merge_output_format": "mp4",
+        # YouTube가 미디어 다운로드에 간헐적 403(봇 감지·rate-limit)을 내는 경우가
+        # 있어 재시도로 완화한다. player_client는 강제하지 않는다 — yt-dlp 기본
+        # client 선택이 가장 안정적이고, 특정 client를 강제하면 오히려 DRM/포맷없음
+        # 으로 정상 영상이 깨진다(2026-07-13 실측). extractor_retries는 만료된
+        # 미디어 URL을 새로 추출해 403을 회복시키는 데 도움된다.
+        "retries": 3,
+        "fragment_retries": 3,
+        "extractor_retries": 3,
     }
     if ffmpeg_location:
         opts["ffmpeg_location"] = ffmpeg_location
