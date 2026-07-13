@@ -130,10 +130,20 @@ def _transcribe_on(audio_path: Path, model_name: str, device: str, compute_type:
     # 오도성 문맥이 되어, base 모델이 30초 윈도우 하나를 통째로 버리는 회귀를
     # 일으켰다(2026-07-08, 14.9~30.9s 유실 실측·분리실험으로 확정). 용어 매핑은
     # 번역 단계(build_translation_prompt의 glossary_block)가 전담한다.
+    # VAD 임계값을 기본(0.5)보다 크게 낮춘다(0.1) — 영화·영상은 배경음악/효과음
+    # 위에 대사가 얹히는 구간이 많은데, 기본 VAD는 이를 '비음성'으로 오판해 오디오
+    # 구간을 통째로 버려 대사가 누락된다(마리오 무비 2:09~5:17 전멸 실측,
+    # 2026-07-13). 0.1로 낮추고 speech_pad로 앞뒤를 넉넉히 잡아 음악 위 대사를
+    # 최대한 살린다. (한계: 최대음량 SFX 구간의 대사는 그래도 일부 누락될 수 있고,
+    # 완전 복원은 vad_filter=False가 필요하지만 그건 전 구간 전사로 매우 느리고
+    # 음악 구간에 반복 헛자막을 유발한다 — 균형점으로 0.1 채택. 사용자 결정 2026-07-13.)
+    # VAD/threshold는 자막메이커(faster-whisper) 전용 — 라이브 자막(Gemini)과 무관.
     segments, info = model.transcribe(
         str(audio_path),
         language="en",
         vad_filter=True,
+        vad_parameters=dict(threshold=0.1, min_silence_duration_ms=500,
+                            speech_pad_ms=400),
         word_timestamps=True,
     )
     duration = getattr(info, "duration", None)
