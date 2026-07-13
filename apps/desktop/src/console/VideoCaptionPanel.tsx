@@ -11,7 +11,7 @@ import type {
   VideoStorageInfo,
 } from "./videoApi";
 import {
-  abortBatchThenCancelAll, filterVideoFiles, uploadBatch, uploadBatchNative,
+  abortBatchThenCancelAll, filterVideoFiles, uploadBatch, uploadBatchNative, VIDEO_EXT_LIST,
 } from "./videoBatch";
 import type { NativeVideoFile } from "./videoBatch";
 import {
@@ -237,8 +237,24 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     setError(null);
     setBatchStatus(null);
     const { open } = await import("@tauri-apps/plugin-dialog");
-    const dir = await open({ directory: true, title: "영상 폴더 선택" });
-    if (typeof dir !== "string") return;
+    // Windows 폴더 선택 모드(FOS_PICKFOLDERS)는 OS가 파일을 숨겨 폴더 내용물을
+    // 확인할 수 없다(예전 webkitdirectory 다이얼로그도 동일한 OS 창). Windows에서는
+    // 파일이 보이는 파일 다이얼로그에서 폴더 안 영상 하나를 고르게 하고, 그 부모
+    // 폴더를 대상 폴더로 쓴다. macOS 폴더 선택창은 파일을 회색으로 보여주므로 유지.
+    let dir: string;
+    if (navigator.userAgent.includes("Windows")) {
+      const file = await open({
+        title: "영상 폴더 선택 — 폴더 안 영상 파일 하나를 고르세요 (폴더 전체 처리)",
+        filters: [{ name: "영상 파일", extensions: VIDEO_EXT_LIST }],
+      });
+      if (typeof file !== "string") return;
+      const { dirname } = await import("@tauri-apps/api/path");
+      dir = await dirname(file);
+    } else {
+      const picked = await open({ directory: true, title: "영상 폴더 선택" });
+      if (typeof picked !== "string") return;
+      dir = picked;
+    }
     setBusy(true);
     batchCancelRef.current = false;
     try {
@@ -502,8 +518,9 @@ function VideoCaptionInner({ active }: { active: boolean }) {
             }} />
         </div>
         <p style={{ margin: 0, fontSize: 12, opacity: 0.6 }}>
-          Windows 폴더 선택창에는 폴더만 표시됩니다 — 폴더를 선택하면 내부 영상을 자동으로
-          찾습니다. 파일을 직접 보며 고르려면 &apos;로컬 파일 선택…&apos;을 쓰세요.
+          Windows에서 &apos;폴더 선택…&apos;은 파일이 보이는 창을 엽니다 — 폴더 안 영상
+          하나를 고르면 그 폴더의 모든 영상을 일괄 처리합니다. 특정 파일만 처리하려면
+          &apos;로컬 파일 선택…&apos;을 쓰세요.
         </p>
         {batchStatus ? (
           <p style={{ margin: 0, fontSize: 13, opacity: 0.85 }}>{batchStatus}</p>
