@@ -6,6 +6,7 @@ import {
   DEFAULT_PROVIDER,
   EMPTY_META,
   type ServerConfigMeta,
+  appleTranslateAvailable,
   bootstrapAdmin,
   clearServerConfig,
   installFastTranslation,
@@ -13,6 +14,9 @@ import {
   passwordStrengthError,
   saveServerConfig,
 } from "./serverConfig";
+
+// Apple 전사 바이너리를 요구하는 provider — 실리콘맥 빌드에서만 실제 동작한다.
+const APPLE_PROVIDERS = new Set(["apple_live_translate", "apple_mlx_live_translate"]);
 
 function errorToText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -59,6 +63,10 @@ export default function ServerConfigPanel() {
   const [installingFast, setInstallingFast] = useState(false);
   const [fastInstallMsg, setFastInstallMsg] = useState<string | null>(null);
 
+  // 이 기기에서 Apple provider가 실제 동작 가능한지(실리콘맥 번들 여부). 인텔맥/
+  // 윈도우에서는 false → apple provider 옵션을 보이되 비활성 처리한다.
+  const [appleAvailable, setAppleAvailable] = useState(false);
+
   const syncMeta = useCallback((next: ServerConfigMeta) => {
     setMeta(next);
     // Hydrate the non-secret editable fields from the projection (secrets stay blank).
@@ -75,6 +83,7 @@ export default function ServerConfigPanel() {
   const refresh = useCallback(async () => {
     try {
       syncMeta(await loadServerConfigMeta());
+      setAppleAvailable(await appleTranslateAvailable());
     } catch (err) {
       setError(errorToText(err));
     }
@@ -202,25 +211,32 @@ export default function ServerConfigPanel() {
 
       <Field label="provider">
         <select value={provider} onChange={(e) => setProvider(e.target.value)} style={styles.input}>
-          {PROVIDERS.map((p) => (
-            <option
-              key={p}
-              value={p}
-              title={
-                p === "apple_live_translate"
-                  ? "실험적 — 실리콘맥 전용. 자막 리듬·품질이 gemini_live_translate보다 낮음. 회의에는 gemini_live_translate 권장"
-                  : p === "apple_mlx_live_translate"
-                    ? "실험적 — 실리콘맥 전용. Apple 전사 + 로컬 LLM 번역. 회의에는 gemini_live_translate 권장"
-                    : undefined
-              }
-            >
-              {p === "apple_live_translate"
+          {PROVIDERS.map((p) => {
+            // apple provider는 실리콘맥 번들에서만 동작 — 그 외 기기에서는 보이되 비활성.
+            const appleGated = APPLE_PROVIDERS.has(p) && !appleAvailable;
+            const baseLabel =
+              p === "apple_live_translate"
                 ? `${p} (실험적)`
                 : p === "apple_mlx_live_translate"
                   ? "Apple 전사 + 로컬 LLM 번역 (실험적)"
-                  : p}
-            </option>
-          ))}
+                  : p;
+            return (
+              <option
+                key={p}
+                value={p}
+                disabled={appleGated}
+                title={
+                  p === "apple_live_translate"
+                    ? "실험적 — 실리콘맥 전용. 자막 리듬·품질이 gemini_live_translate보다 낮음. 회의에는 gemini_live_translate 권장"
+                    : p === "apple_mlx_live_translate"
+                      ? "실험적 — 실리콘맥 전용. Apple 전사 + 로컬 LLM 번역. 회의에는 gemini_live_translate 권장"
+                      : undefined
+                }
+              >
+                {baseLabel}{appleGated ? " — 실리콘맥 전용 (이 기기 미지원)" : ""}
+              </option>
+            );
+          })}
         </select>
       </Field>
 

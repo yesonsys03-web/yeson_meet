@@ -53,6 +53,7 @@ pub fn run() {
             server_process::install_fast_translation,
             server_process::mlx_model_status,
             server_process::mlx_download_model,
+            server_process::apple_translate_available,
             restore::inspect_backup,
             restore::restore_backup,
             restore::list_dir,

@@ -645,6 +645,15 @@ fn locate_bundled_ffmpeg() -> Option<PathBuf> {
 /// special-casing one platform. Returns `None` when missing (dev runs without
 /// a local build, or any non-mac bundle), in which case the caller does not
 /// inject `YESON_APPLE_TRANSLATE_BIN` and the server falls back to PATH.
+/// 클라(ServerConfigPanel)가 apple/mlx provider 옵션을 비활성-표시할지 결정하는
+/// 단일 진실. 번들에 apple-live-translate 바이너리가 있으면 = 이 기기에서 Apple
+/// 전사·MLX 하이브리드가 실제로 동작 가능(런타임 주입도 같은 함수를 씀). 인텔맥/
+/// 윈도우/구버전 macOS 번들엔 바이너리가 없어 false → 옵션은 보이되 비활성.
+#[tauri::command]
+pub fn apple_translate_available() -> bool {
+    locate_bundled_apple_translate().is_some()
+}
+
 fn locate_bundled_apple_translate() -> Option<PathBuf> {
     let triple: &str = if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
         "x86_64-pc-windows-msvc"

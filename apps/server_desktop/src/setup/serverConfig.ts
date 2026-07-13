@@ -95,6 +95,14 @@ export async function mlxModelStatus(modelId: string): Promise<boolean> {
   return invoke<boolean>("mlx_model_status", { modelId });
 }
 
+// 이 기기에서 Apple 전사·MLX 하이브리드 provider가 실제 동작 가능한지(번들에
+// apple-live-translate 바이너리가 있는지 = 실리콘맥 빌드). 인텔맥/윈도우/구버전
+// macOS에서는 false → provider 옵션은 보이되 비활성. 런타임 주입과 같은 진실.
+export async function appleTranslateAvailable(): Promise<boolean> {
+  if (!hasTauriRuntime()) return false;
+  return invoke<boolean>("apple_translate_available");
+}
+
 export async function downloadMlxModel(modelId: string): Promise<string> {
   return invoke<string>("mlx_download_model", { modelId });
 }
