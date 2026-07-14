@@ -28,6 +28,7 @@ logger = logging.getLogger("yeson.video.translate_mlx")
 QWEN_MLX_MODELS: dict[str, str] = {
     "qwen": "mlx-community/Qwen3.5-9B-4bit",
     "qwen_lite": "mlx-community/Qwen3.5-4B-4bit",
+    "qwen_hifi": "mlx-community/Qwen3.5-9B-8bit",
 }
 
 DEFAULT_BATCH_TIMEOUT = 300.0

@@ -273,10 +273,10 @@ async def test_translate_engines_endpoint(client, admin_user):
     resp = await client.get("/api/v1/video-jobs/translate-engines")
     assert resp.status_code == 200
     engines = resp.json()["engines"]
-    assert len(engines) == 9
+    assert len(engines) == 10
     assert {e["value"] for e in engines} == {
         "gemini", "claude", "codex", "agy", "opencode", "apple", "apple_hifi",
-        "qwen", "qwen_lite"}
+        "qwen", "qwen_lite", "qwen_hifi"}
     for engine in engines:
         assert "label" in engine
         assert isinstance(engine["available"], bool)

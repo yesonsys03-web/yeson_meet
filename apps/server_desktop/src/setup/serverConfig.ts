@@ -88,6 +88,7 @@ export async function installFastTranslation(): Promise<string> {
 export const MLX_MODELS = [
   { id: "mlx-community/Qwen3.5-9B-4bit", label: "Qwen3.5 9B (기본 — 품질 우선, RAM ~5GB)" },
   { id: "mlx-community/Qwen3.5-4B-4bit", label: "Qwen3.5 4B (저사양 — 지연 절반, RAM ~2.3GB)" },
+  { id: "mlx-community/Qwen3.5-9B-8bit", label: "Qwen3.5 9B 8bit (고품질 — RAM ~10GB, 느림)" },
 ] as const;
 
 export async function mlxModelStatus(modelId: string): Promise<boolean> {

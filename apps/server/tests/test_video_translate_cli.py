@@ -278,7 +278,7 @@ def test_list_translate_engines_reports_availability(monkeypatch):
 
     assert set(by_value) == {
         "gemini", "claude", "codex", "agy", "opencode", "apple", "apple_hifi",
-        "qwen", "qwen_lite"}
+        "qwen", "qwen_lite", "qwen_hifi"}
     assert by_value["gemini"]["available"] is True
     assert by_value["claude"]["available"] is True
     assert by_value["opencode"]["available"] is True
@@ -325,3 +325,10 @@ def test_create_translator_qwen_lite():
     translator = tc.create_translator(provider="qwen_lite")
     assert isinstance(translator, QwenMlxTranslator)
     assert translator._model_id == "mlx-community/Qwen3.5-4B-4bit"
+
+
+def test_create_translator_qwen_hifi():
+    from apps.server.domain.video_captions.translate_mlx import QwenMlxTranslator
+    translator = tc.create_translator(provider="qwen_hifi")
+    assert isinstance(translator, QwenMlxTranslator)
+    assert translator._model_id == "mlx-community/Qwen3.5-9B-8bit"
