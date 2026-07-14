@@ -269,6 +269,36 @@ async def test_create_youtube_job_accepts_apple_hifi_translate_provider(client, 
     assert row.translate_provider == "apple_hifi"
 
 
+async def test_create_youtube_job_accepts_qwen_hifi_translate_provider(client, admin_user, db_session):
+    # qwen 계열(MLX 로컬)도 apple과 같은 배선 회귀 가드가 필요하다. PR#50이 엔진목록엔
+    # qwen을 넣었지만 생성 패턴 갱신을 빠뜨려 실리콘맥에서 선택 시 422가 났다(2026-07-14).
+    await _install_model()
+    resp = await client.post("/api/v1/video-jobs",
+                             json={"youtube_url": "https://youtu.be/abc",
+                                   "whisper_model": "small",
+                                   "translate_provider": "qwen_hifi"})
+    assert resp.status_code == 201
+    job_id = resp.json()["job_id"]
+    row = (await db_session.execute(
+        select(VideoJob).where(VideoJob.external_id == job_id))).scalar_one()
+    assert row.translate_provider == "qwen_hifi"
+
+
+def test_create_pattern_accepts_every_listed_engine_value():
+    # 포괄 드리프트 가드: 생성 검증 패턴이 translate-engines의 모든 값을 수용해야 한다.
+    # 패턴을 하드코딩해 엔진 추가 때 빠뜨리면 UI 선택 시 422 — 이 테스트가 그걸 막는다.
+    import re
+
+    from apps.server.api.v1.video_jobs import _TRANSLATE_PROVIDER_PATTERN
+    from apps.server.domain.video_captions.translate_cli import list_translate_engines
+
+    rx = re.compile(_TRANSLATE_PROVIDER_PATTERN)
+    for engine in list_translate_engines():
+        assert rx.fullmatch(engine["value"]), (
+            f"provider {engine['value']}가 생성 검증 패턴에서 거부됨")
+    assert rx.fullmatch("bogus_provider") is None
+
+
 async def test_translate_engines_endpoint(client, admin_user):
     resp = await client.get("/api/v1/video-jobs/translate-engines")
     assert resp.status_code == 200

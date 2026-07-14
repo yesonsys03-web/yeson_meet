@@ -57,12 +57,19 @@ def _prune_old_jobs() -> None:  # test seam
     start_task(prune_old_video_jobs())
 
 
+# 번역 provider 검증 패턴은 list_translate_engines()가 노출하는 값에서 자동 도출한다.
+# 하드코딩하면 엔진 추가 때 갱신을 빠뜨려 작업 생성이 422로 막힌다(qwen 계열이 그 사례,
+# 2026-07-14) — 엔진 목록이 유일한 출처가 되도록 파생시켜 드리프트를 원천 차단한다.
+_TRANSLATE_PROVIDER_PATTERN = "^(" + "|".join(
+    e["value"] for e in list_translate_engines()) + ")$"
+
+
 class VideoJobCreateIn(BaseModel):
     youtube_url: str
     whisper_model: str
     title: str | None = None
     translate_provider: str | None = Field(
-        default=None, pattern="^(gemini|claude|codex|agy|opencode|apple|apple_hifi)$")
+        default=None, pattern=_TRANSLATE_PROVIDER_PATTERN)
     translate_cli_model: str | None = None
 
 
@@ -163,7 +170,7 @@ async def create_upload_job(
     whisper_model: Annotated[str, Form()],
     title: Annotated[str | None, Form()] = None,
     translate_provider: Annotated[
-        str | None, Form(pattern="^(gemini|claude|codex|agy|opencode|apple|apple_hifi)$")] = None,
+        str | None, Form(pattern=_TRANSLATE_PROVIDER_PATTERN)] = None,
     translate_cli_model: Annotated[str | None, Form()] = None,
 ) -> dict:
     _require_model(whisper_model)
