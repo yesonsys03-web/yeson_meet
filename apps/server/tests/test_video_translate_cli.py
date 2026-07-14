@@ -307,28 +307,38 @@ def test_list_engines_includes_qwen(monkeypatch):
 
 def test_list_engines_qwen_unavailable(monkeypatch):
     from apps.server.domain.video_captions import translate_mlx as tm
+    from apps.server.domain.video_captions import translate_ollama as to
     monkeypatch.setattr(tm, "qwen_mlx_available", lambda mid: False)
+    monkeypatch.setattr(to, "qwen_ollama_available", lambda tag: False)
     engines = tc.list_translate_engines()
     qwen = next(e for e in engines if e["value"] == "qwen")
     assert qwen["available"] is False
 
 
-def test_create_translator_qwen():
+# create_translator는 런타임을 자동 선택한다: 실리콘맥 + MLX 모델 설치 시 MLX.
+# 아래 3건은 MLX 경로(우선순위)를 결정적으로 검증하려고 qwen_mlx_available을 강제한다.
+def test_create_translator_qwen(monkeypatch):
+    from apps.server.domain.video_captions import translate_mlx as tm
     from apps.server.domain.video_captions.translate_mlx import QwenMlxTranslator
+    monkeypatch.setattr(tm, "qwen_mlx_available", lambda mid: True)
     translator = tc.create_translator(provider="qwen")
     assert isinstance(translator, QwenMlxTranslator)
     assert translator._model_id == "mlx-community/Qwen3.5-9B-4bit"
 
 
-def test_create_translator_qwen_lite():
+def test_create_translator_qwen_lite(monkeypatch):
+    from apps.server.domain.video_captions import translate_mlx as tm
     from apps.server.domain.video_captions.translate_mlx import QwenMlxTranslator
+    monkeypatch.setattr(tm, "qwen_mlx_available", lambda mid: True)
     translator = tc.create_translator(provider="qwen_lite")
     assert isinstance(translator, QwenMlxTranslator)
     assert translator._model_id == "mlx-community/Qwen3.5-4B-4bit"
 
 
-def test_create_translator_qwen_hifi():
+def test_create_translator_qwen_hifi(monkeypatch):
+    from apps.server.domain.video_captions import translate_mlx as tm
     from apps.server.domain.video_captions.translate_mlx import QwenMlxTranslator
+    monkeypatch.setattr(tm, "qwen_mlx_available", lambda mid: True)
     translator = tc.create_translator(provider="qwen_hifi")
     assert isinstance(translator, QwenMlxTranslator)
     assert translator._model_id == "mlx-community/Qwen3.5-9B-8bit"

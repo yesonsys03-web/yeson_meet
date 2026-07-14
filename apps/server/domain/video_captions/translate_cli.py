@@ -92,8 +92,18 @@ def resolve_cli(name: str) -> str | None:
 
 
 def list_translate_engines() -> list[dict]:
-    """클라 드롭다운용 — 서버에서 사용 가능한 번역 엔진과 설치 여부."""
+    """클라 드롭다운용 — 서버에서 사용 가능한 번역 엔진과 설치 여부.
+
+    qwen 계열은 실리콘맥(MLX) 또는 그 외 플랫폼(Ollama) 중 설치된 런타임이 있으면
+    활성. 라벨에서 MLX를 노출하지 않는다 — 런타임 선택은 create_translator가 자동.
+    """
     from .translate_mlx import QWEN_MLX_MODELS, qwen_mlx_available
+    from .translate_ollama import qwen_ollama_available, qwen_ollama_model
+
+    def _qwen_available(provider: str) -> bool:
+        return (qwen_mlx_available(QWEN_MLX_MODELS[provider])
+                or qwen_ollama_available(qwen_ollama_model(provider)))
+
     return [
         {"value": "gemini", "label": "Gemini",
          "available": bool(os.environ.get("GEMINI_API_KEY"))},
@@ -109,12 +119,12 @@ def list_translate_engines() -> list[dict]:
          "available": apple_mt_available()},
         {"value": "apple_hifi", "label": "Apple 온디바이스 (고품질·느림)",
          "available": apple_mt_available()},
-        {"value": "qwen", "label": "Qwen 9B (MLX 로컬)",
-         "available": qwen_mlx_available(QWEN_MLX_MODELS["qwen"])},
-        {"value": "qwen_lite", "label": "Qwen 4B (MLX 로컬·빠름)",
-         "available": qwen_mlx_available(QWEN_MLX_MODELS["qwen_lite"])},
-        {"value": "qwen_hifi", "label": "Qwen 9B (MLX 로컬·고품질 8bit)",
-         "available": qwen_mlx_available(QWEN_MLX_MODELS["qwen_hifi"])},
+        {"value": "qwen", "label": "Qwen 9B (로컬)",
+         "available": _qwen_available("qwen")},
+        {"value": "qwen_lite", "label": "Qwen 4B (로컬·빠름)",
+         "available": _qwen_available("qwen_lite")},
+        {"value": "qwen_hifi", "label": "Qwen 9B (로컬·고품질 8bit)",
+         "available": _qwen_available("qwen_hifi")},
     ]
 
 
@@ -277,8 +287,24 @@ def create_translator(
         return AppleTranslator(strategy="high")
 
     if provider in QWEN_MLX_MODELS:
-        from .translate_mlx import QwenMlxTranslator
-        return QwenMlxTranslator(QWEN_MLX_MODELS[provider])
+        # 런타임 자동 선택: 실리콘맥 + MLX 모델 설치 → MLX(더 빠름). 그 외(윈도·인텔맥)
+        # 또는 MLX 미설치 → Ollama. 둘 다 없으면 설치 안내와 함께 실패.
+        from .translate_mlx import QwenMlxTranslator, qwen_mlx_available
+        from .translate_ollama import (
+            OllamaTranslator,
+            qwen_ollama_available,
+            qwen_ollama_model,
+        )
+
+        if qwen_mlx_available(QWEN_MLX_MODELS[provider]):
+            return QwenMlxTranslator(QWEN_MLX_MODELS[provider])
+        ollama_tag = qwen_ollama_model(provider)
+        if qwen_ollama_available(ollama_tag):
+            return OllamaTranslator(ollama_tag)
+        raise TranslationError(
+            f"'{provider}' 로컬 번역 불가: 실리콘맥은 MLX 모델을, 그 외 플랫폼은 "
+            f"Ollama 서버(:11434)와 모델(`ollama pull {ollama_tag}`)이 필요합니다."
+        )
 
     if provider in _BACKENDS:
         backend = _BACKENDS[provider]
