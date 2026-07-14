@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from apps.server.api.v1 import translate_models as router
+from apps.server.domain.video_captions import ollama_install as oi
 from apps.server.domain.video_captions import translate_models as tm
 from apps.server.domain.video_captions import translate_ollama as to
 
@@ -14,6 +15,7 @@ def _reset_state():
     tm._progress.clear()
     to._avail_cache["at"] = -1e9
     to._avail_cache["models"] = frozenset()
+    oi._state.update(downloading=False, progress=0, launched=False, last_error=None)
     yield
     tm._downloading.clear()
     tm._progress.clear()
@@ -245,3 +247,85 @@ async def test_router_delete_conflict(monkeypatch):
     with pytest.raises(HTTPException) as ei:
         await router.delete_translate_model("qwen")
     assert ei.value.status_code == 409
+
+
+# ── ollama_install (반자동 설치) ─────────────────────────────────────────────
+def test_install_host_detection(monkeypatch):
+    monkeypatch.setattr(oi.sys, "platform", "darwin")
+    assert oi._host() == "darwin" and oi.is_supported() is True
+    monkeypatch.setattr(oi.sys, "platform", "win32")
+    assert oi._host() == "windows"
+    monkeypatch.setattr(oi.sys, "platform", "linux")
+    assert oi._host() is None and oi.is_supported() is False
+
+
+def test_install_download_and_launch_success(monkeypatch, tmp_path):
+    monkeypatch.setattr(oi.sys, "platform", "darwin")
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    monkeypatch.setattr(oi, "_download", lambda url, dest, cb: (dest.write_bytes(b"x"), cb(50)))
+    launched = {}
+    monkeypatch.setattr(oi, "_launch", lambda p: launched.setdefault("p", str(p)))
+    oi.download_and_launch()
+    assert oi._state["launched"] is True
+    assert oi._state["last_error"] is None
+    assert oi._state["downloading"] is False
+    assert launched["p"].endswith("Ollama-darwin.zip")
+
+
+def test_install_unsupported_sets_error(monkeypatch):
+    monkeypatch.setattr(oi.sys, "platform", "linux")
+    oi.download_and_launch()
+    assert oi._state["last_error"] is not None
+    assert oi._state["launched"] is False
+
+
+def test_install_download_error_surfaced(monkeypatch, tmp_path):
+    monkeypatch.setattr(oi.sys, "platform", "darwin")
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    def boom(url, dest, cb):
+        raise RuntimeError("net down")
+    monkeypatch.setattr(oi, "_download", boom)
+    oi.download_and_launch()
+    assert "net down" in (oi._state["last_error"] or "")
+    assert oi._state["downloading"] is False
+
+
+def test_list_models_includes_install_status(monkeypatch):
+    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: False)
+    monkeypatch.setattr(to, "ollama_running", lambda: False)
+    monkeypatch.setattr(to, "ollama_installed", lambda: False)
+    monkeypatch.setattr(to, "qwen_ollama_available", lambda tag: False)
+    out = tm.list_models()
+    assert out["ollama_install"] is not None
+    assert "supported" in out["ollama_install"]
+
+
+def test_list_models_mlx_no_install_status(monkeypatch):
+    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: True)
+    monkeypatch.setattr(tm, "mlx_model_installed", lambda repo: False)
+    out = tm.list_models()
+    assert out["ollama_install"] is None  # mlx 런타임엔 설치 UI 불필요
+
+
+async def test_router_install_started(monkeypatch):
+    monkeypatch.setattr(oi, "is_supported", lambda: True)
+    monkeypatch.setattr(oi, "status", lambda: {"supported": True, "downloading": False})
+    spawned = {}
+    monkeypatch.setattr(router, "_spawn_ollama_install", lambda: spawned.setdefault("x", 1))
+    out = await router.install_ollama()
+    assert out["status"] == "started" and spawned["x"] == 1
+
+
+async def test_router_install_unsupported_409(monkeypatch):
+    from fastapi import HTTPException
+    monkeypatch.setattr(oi, "is_supported", lambda: False)
+    with pytest.raises(HTTPException) as ei:
+        await router.install_ollama()
+    assert ei.value.status_code == 409
+
+
+async def test_router_install_already_downloading(monkeypatch):
+    monkeypatch.setattr(oi, "is_supported", lambda: True)
+    monkeypatch.setattr(oi, "status", lambda: {"supported": True, "downloading": True})
+    out = await router.install_ollama()
+    assert out["status"] == "downloading"

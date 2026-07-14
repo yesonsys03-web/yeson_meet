@@ -19,6 +19,7 @@ from pathlib import Path
 
 from apps.server.ai.apple_native import _is_apple_silicon_mac
 from apps.server.ai.mlx_live_translate import mlx_model_dir, mlx_model_installed
+from . import ollama_install as oi
 from . import translate_ollama as to
 from .translate_mlx import QWEN_MLX_MODELS
 
@@ -146,4 +147,6 @@ def list_models() -> dict:
         "runtime": rt,
         "ollama_installed": ollama_inst,
         "ollama_running": ollama_run,
+        # 반자동 설치 상태(ollama 런타임에서만) — 미설치 시 클라가 '설치' 버튼 표시.
+        "ollama_install": oi.status() if rt == "ollama" else None,
     }

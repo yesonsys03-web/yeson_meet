@@ -10,6 +10,7 @@ import threading
 
 from fastapi import APIRouter, HTTPException, status
 
+from apps.server.domain.video_captions import ollama_install as oinst
 from apps.server.domain.video_captions import translate_models as tmods
 
 router = APIRouter(tags=["translate-models"], prefix="/translate-models")
@@ -17,6 +18,23 @@ router = APIRouter(tags=["translate-models"], prefix="/translate-models")
 
 def _spawn_download(name: str) -> None:  # test seam
     threading.Thread(target=tmods.download_model, args=(name,), daemon=True).start()
+
+
+def _spawn_ollama_install() -> None:  # test seam
+    threading.Thread(target=oinst.download_and_launch, daemon=True).start()
+
+
+@router.post("/ollama/install", status_code=status.HTTP_202_ACCEPTED)
+async def install_ollama() -> dict:
+    """공식 Ollama 설치 프로그램을 서버 머신에 받아 실행(반자동). 설치는 서버에서 진행됨."""
+    if not oinst.is_supported():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "이 서버 플랫폼은 자동 설치를 지원하지 않습니다. ollama.com에서 수동 설치하세요.")
+    if oinst.status()["downloading"]:
+        return {"status": "downloading"}
+    _spawn_ollama_install()
+    return {"status": "started"}
 
 
 @router.get("")

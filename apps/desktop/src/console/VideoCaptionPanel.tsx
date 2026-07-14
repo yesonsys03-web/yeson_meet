@@ -3,7 +3,7 @@ import { consoleStyles } from "./consoleStyles";
 import {
   burnVideoJob, cancelAllVideoJobs, cancelVideoJob, createYoutubeJob, deleteVideoJob,
   deleteTranslateModel, deleteVideoModel, downloadGpuPack, downloadTranslateModel,
-  downloadVideoModel, getGpuStatus, getVideoStorage, listTranslateEngines,
+  downloadVideoModel, getGpuStatus, getVideoStorage, installOllama, listTranslateEngines,
   listTranslateModels, listVideoJobs, listVideoModels, rebuildVideoJob, setGpuEnabled,
   uploadVideoJob, videoDownloadUrl, videoUploadUrl,
 } from "./videoApi";
@@ -895,12 +895,37 @@ function VideoCaptionInner({ active }: { active: boolean }) {
         <>
           {translateMeta && translateMeta.runtime === "ollama" && !translateMeta.ollama_running ? (
             <div style={{ fontSize: 13, padding: "8px 12px", borderRadius: 8,
+                          display: "flex", flexDirection: "column", gap: 6,
                           border: "1px solid rgba(229,72,77,0.4)", background: "rgba(229,72,77,0.08)" }}>
-              {translateMeta.ollama_installed
-                ? "Ollama가 실행 중이 아닙니다 — Ollama를 실행한 뒤 새로고침하세요."
-                : "로컬 번역 모델을 받으려면 Ollama가 필요합니다."}{" "}
-              <a href="https://ollama.com/download" target="_blank" rel="noreferrer"
-                 style={{ color: "#7cc4ff" }}>ollama.com에서 설치</a>
+              {translateMeta.ollama_installed ? (
+                <span>Ollama가 실행 중이 아닙니다 — Ollama를 실행한 뒤 잠시 기다리세요.</span>
+              ) : translateMeta.ollama_install?.downloading ? (
+                <span>Ollama 설치 프로그램 다운로드 중… {translateMeta.ollama_install.progress}%</span>
+              ) : translateMeta.ollama_install?.launched ? (
+                <span>설치 프로그램을 실행했습니다 — <strong>서버 컴퓨터</strong>에서 설치를 완료하면
+                  자동으로 활성화됩니다.</span>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span>로컬 번역 모델을 받으려면 Ollama가 필요합니다.</span>
+                  {translateMeta.ollama_install?.supported ? (
+                    <button type="button" style={consoleStyles.mutedAction}
+                      onClick={() => void installOllama().then(refresh)
+                        .catch((e) => setError(e instanceof Error ? e.message : String(e)))}>
+                      Ollama 설치
+                    </button>
+                  ) : null}
+                  <a href="https://ollama.com/download" target="_blank" rel="noreferrer"
+                     style={{ color: "#7cc4ff" }}>수동 설치</a>
+                </div>
+              )}
+              {translateMeta.ollama_install?.last_error ? (
+                <span style={{ color: "#e5484d", fontSize: 12 }}>
+                  설치 실패: {translateMeta.ollama_install.last_error}
+                </span>
+              ) : null}
+              {translateMeta.ollama_install?.supported && !translateMeta.ollama_installed ? (
+                <span style={{ fontSize: 12, opacity: 0.7 }}>설치는 서버 컴퓨터에서 진행됩니다.</span>
+              ) : null}
             </div>
           ) : null}
           <p style={{ margin: 0, fontSize: 13, opacity: 0.75 }}>

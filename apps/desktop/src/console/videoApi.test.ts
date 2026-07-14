@@ -14,7 +14,7 @@ vi.mock("../diagnostics/appLog", () => ({
 import {
   burnVideoJob, cancelAllVideoJobs, cancelVideoJob, createYoutubeJob,
   deleteTranslateModel, downloadGpuPack, downloadTranslateModel,
-  getGpuStatus, getVideoStorage, listTranslateEngines, listTranslateModels,
+  getGpuStatus, getVideoStorage, installOllama, listTranslateEngines, listTranslateModels,
   listVideoModels, rebuildVideoJob,
   setGpuEnabled, uploadVideoJob, videoMediaUrl,
 } from "./videoApi";
@@ -67,6 +67,14 @@ describe("videoApi", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(String(url)).toBe("http://localhost:8000/api/v1/translate-models/qwen_hifi");
     expect(init.method).toBe("DELETE");
+  });
+
+  it("installOllama POSTs /translate-models/ollama/install", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 202, json: async () => ({ status: "started" }) });
+    await installOllama();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:8000/api/v1/translate-models/ollama/install");
+    expect(init.method).toBe("POST");
   });
 
   it("createYoutubeJob POSTs JSON body", async () => {
