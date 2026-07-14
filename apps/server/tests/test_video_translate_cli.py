@@ -277,7 +277,8 @@ def test_list_translate_engines_reports_availability(monkeypatch):
     by_value = {e["value"]: e for e in engines}
 
     assert set(by_value) == {
-        "gemini", "claude", "codex", "agy", "opencode", "apple", "apple_hifi"}
+        "gemini", "claude", "codex", "agy", "opencode", "apple", "apple_hifi",
+        "qwen", "qwen_lite"}
     assert by_value["gemini"]["available"] is True
     assert by_value["claude"]["available"] is True
     assert by_value["opencode"]["available"] is True
@@ -291,3 +292,36 @@ def test_list_translate_engines_gemini_unavailable_without_key(monkeypatch):
     engines = tc.list_translate_engines()
     gemini = next(e for e in engines if e["value"] == "gemini")
     assert gemini["available"] is False
+
+
+def test_list_engines_includes_qwen(monkeypatch):
+    from apps.server.domain.video_captions import translate_mlx as tm
+    monkeypatch.setattr(tm, "qwen_mlx_available", lambda mid: True)
+    engines = tc.list_translate_engines()
+    values = {e["value"] for e in engines}
+    assert "qwen" in values
+    assert "qwen_lite" in values
+    qwen = next(e for e in engines if e["value"] == "qwen")
+    assert qwen["available"] is True
+
+
+def test_list_engines_qwen_unavailable(monkeypatch):
+    from apps.server.domain.video_captions import translate_mlx as tm
+    monkeypatch.setattr(tm, "qwen_mlx_available", lambda mid: False)
+    engines = tc.list_translate_engines()
+    qwen = next(e for e in engines if e["value"] == "qwen")
+    assert qwen["available"] is False
+
+
+def test_create_translator_qwen():
+    from apps.server.domain.video_captions.translate_mlx import QwenMlxTranslator
+    translator = tc.create_translator(provider="qwen")
+    assert isinstance(translator, QwenMlxTranslator)
+    assert translator._model_id == "mlx-community/Qwen3.5-9B-4bit"
+
+
+def test_create_translator_qwen_lite():
+    from apps.server.domain.video_captions.translate_mlx import QwenMlxTranslator
+    translator = tc.create_translator(provider="qwen_lite")
+    assert isinstance(translator, QwenMlxTranslator)
+    assert translator._model_id == "mlx-community/Qwen3.5-4B-4bit"
