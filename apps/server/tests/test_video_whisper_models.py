@@ -13,9 +13,33 @@ def _storage(monkeypatch, tmp_path: Path):
     yield
 
 
-def test_catalog_has_expected_models():
-    assert set(wm.CATALOG) == {"tiny", "base", "small", "medium", "large-v3"}
-    assert wm.CATALOG["small"].repo_id == "Systran/faster-whisper-small"
+def test_builtin_catalog_has_expected_models():
+    assert set(wm.BUILTIN_CATALOG) == {
+        "tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"}
+    assert wm.BUILTIN_CATALOG["small"].repo_id == "Systran/faster-whisper-small"
+    turbo = wm.BUILTIN_CATALOG["large-v3-turbo"]
+    assert turbo.repo_id == "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+    assert turbo.approx_bytes == 1_620_000_000
+
+
+def test_get_catalog_merges_remote(monkeypatch):
+    from apps.server.domain.video_captions import remote_catalog as rc
+    monkeypatch.setattr(rc, "get_remote_models", lambda force=False: [
+        rc.RemoteModel("future-xl", "acme/future-xl", 9_000_000_000, "실험 모델"),
+        rc.RemoteModel("small", "acme/override-small", 111, "덮어쓴 라벨"),  # override
+    ])
+    cat = wm.get_catalog()
+    assert "future-xl" in cat and cat["future-xl"].repo_id == "acme/future-xl"
+    assert cat["small"].repo_id == "acme/override-small"      # 오버라이드
+    assert cat["small"].label == "덮어쓴 라벨"
+    # 빌트인 삭제 불가: 원격에 없어도 유지
+    assert "large-v3" in cat
+
+
+def test_get_catalog_offline_is_builtin(monkeypatch):
+    from apps.server.domain.video_captions import remote_catalog as rc
+    monkeypatch.setattr(rc, "get_remote_models", lambda force=False: [])
+    assert set(wm.get_catalog()) == set(wm.BUILTIN_CATALOG)
 
 
 def test_is_downloaded_false_then_true_after_model_bin(tmp_path: Path):

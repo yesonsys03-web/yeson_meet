@@ -12,6 +12,8 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+from apps.server.domain.video_captions import remote_catalog
+
 logger = logging.getLogger("yeson.video.whisper_models")
 
 STORAGE_ROOT_ENV = "STORAGE_ROOT"
@@ -25,13 +27,27 @@ class ModelInfo:
     label: str
 
 
-CATALOG: dict[str, ModelInfo] = {
+BUILTIN_CATALOG: dict[str, ModelInfo] = {
     "tiny": ModelInfo("Systran/faster-whisper-tiny", 75_000_000, "가장 빠름, 초벌용"),
     "base": ModelInfo("Systran/faster-whisper-base", 145_000_000, "빠름, 짧은 영상"),
     "small": ModelInfo("Systran/faster-whisper-small", 486_000_000, "권장 기본값 (품질/속도 균형)"),
     "medium": ModelInfo("Systran/faster-whisper-medium", 1_530_000_000, "고품질, 느림"),
     "large-v3": ModelInfo("Systran/faster-whisper-large-v3", 3_090_000_000, "최고 품질, 가장 느림"),
+    "large-v3-turbo": ModelInfo(
+        "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+        1_620_000_000, "고품질·고속 (large급 품질, 약 5~8배 빠름)"),
 }
+
+
+def get_catalog() -> dict[str, ModelInfo]:
+    """빌트인 baseline에 원격 카탈로그를 오버레이한 유효 목록.
+
+    원격은 새 이름 추가·기존 이름 오버라이드만 가능하고 빌트인 삭제는 불가하다.
+    """
+    merged = dict(BUILTIN_CATALOG)
+    for m in remote_catalog.get_remote_models():
+        merged[m.name] = ModelInfo(m.repo_id, m.approx_bytes, m.label)
+    return merged
 
 # name -> True while a download thread is running
 _downloading: dict[str, bool] = {}
@@ -64,7 +80,7 @@ def _snapshot_download(repo_id: str, local_dir: str) -> None:  # test seam
 
 def download_model(name: str) -> None:
     """Blocking download — callers run this in a worker thread. Idempotent no-op if already downloading."""
-    info = CATALOG[name]  # KeyError for unknown names is intentional
+    info = get_catalog()[name]  # KeyError for unknown names is intentional
     with _state_lock:
         if _downloading.get(name):
             logger.info("download_model(%s): already downloading — skip", name)
@@ -81,7 +97,7 @@ def download_model(name: str) -> None:
 
 
 def delete_model(name: str) -> None:
-    CATALOG[name]
+    get_catalog()[name]
     with _state_lock:
         if _downloading.get(name):
             raise RuntimeError(f"모델 '{name}'은(는) 다운로드 중이라 삭제할 수 없습니다.")
@@ -90,7 +106,7 @@ def delete_model(name: str) -> None:
 
 def list_models() -> list[dict]:
     out: list[dict] = []
-    for name, info in CATALOG.items():
+    for name, info in get_catalog().items():
         disk = _dir_size(model_dir(name))
         downloading = _downloading.get(name, False)
         out.append({
