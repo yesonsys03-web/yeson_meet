@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "name": "large-v3-turbo",
+      "repo_id": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+      "approx_bytes": 1620000000,
+      "label": "고품질·고속 (large급 품질, 약 5~8배 빠름)"
+    }
+  ]
+}
