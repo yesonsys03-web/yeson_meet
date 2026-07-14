@@ -113,6 +113,8 @@ def list_translate_engines() -> list[dict]:
          "available": qwen_mlx_available(QWEN_MLX_MODELS["qwen"])},
         {"value": "qwen_lite", "label": "Qwen 4B (MLX 로컬·빠름)",
          "available": qwen_mlx_available(QWEN_MLX_MODELS["qwen_lite"])},
+        {"value": "qwen_hifi", "label": "Qwen 9B (MLX 로컬·고품질 8bit)",
+         "available": qwen_mlx_available(QWEN_MLX_MODELS["qwen_hifi"])},
     ]
 
 
