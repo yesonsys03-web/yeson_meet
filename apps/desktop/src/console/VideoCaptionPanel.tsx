@@ -506,7 +506,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
           <select
             value={selectedModel}
             onChange={(e) => setSelectedModel(e.target.value)}
-            style={{ ...consoleStyles.input, width: 160 }}
+            style={{ ...consoleStyles.select, width: 160 }}
           >
             {models.map((m) => {
               const unavailable = m.available === false;
@@ -521,7 +521,7 @@ function VideoCaptionInner({ active }: { active: boolean }) {
           <select
             value={translateProvider}
             onChange={(e) => setTranslateProvider(e.target.value)}
-            style={{ ...consoleStyles.input, width: 200 }}
+            style={{ ...consoleStyles.select, width: 200 }}
           >
             {engineOptions.map((engine) => (
               <option key={engine.value} value={engine.value} disabled={!engine.available}>
