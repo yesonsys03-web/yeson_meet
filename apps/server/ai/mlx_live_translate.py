@@ -108,9 +108,11 @@ def _worker_argv() -> list[str]:
 
 class MlxWorkerClient:
     def __init__(self, argv: list[str] | None = None,
-                 ready_timeout: float = DEFAULT_READY_TIMEOUT_SECONDS) -> None:
+                 ready_timeout: float = DEFAULT_READY_TIMEOUT_SECONDS,
+                 model_id: str | None = None) -> None:
         self._argv = argv
         self._ready_timeout = ready_timeout
+        self._model_id = model_id
         self._proc: asyncio.subprocess.Process | None = None
         self._stderr_file: tempfile._TemporaryFileWrapper | None = None
         self._next_id = 0
@@ -135,7 +137,7 @@ class MlxWorkerClient:
         env.pop("YESON_MLX_FAKE", None)  # 운영 env 오염이 페이크 모드로 새는 것 차단
         env.update({
             "YESON_MLX_WORKER": "1",
-            "YESON_MLX_MODEL_PATH": str(mlx_model_dir(mlx_model_id())),
+            "YESON_MLX_MODEL_PATH": str(mlx_model_dir(self._model_id or mlx_model_id())),
             "HF_HUB_OFFLINE": "1",  # 회의 중 네트워크 0 (스펙)
         })
         # stderr=PIPE는 아무도 안 읽으면 버퍼가 차서 데드락 위험 — apple_live_translate.py의
@@ -208,6 +210,43 @@ class MlxWorkerClient:
                     continue
                 if resp.get("id") == req_id:
                     return str(resp.get("ko", ""))
+
+    async def generate(self, prompt: str, timeout: float) -> str:
+        """임의 프롬프트를 워커에 보내 원문 출력을 받는다(배치 자막 번역용).
+
+        translate()의 왕복 구조를 그대로 미러하되 요청은 {"id","prompt"},
+        응답은 {"id","text"}를 읽는다. 순차 처리(_lock)·총예산 타임아웃 동일.
+        """
+        if not self.alive:
+            raise MlxWorkerUnavailable("worker not running")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        async with self._lock:
+            proc = self._proc
+            if (proc is None or proc.returncode is not None
+                    or proc.stdin is None or proc.stdout is None):
+                raise MlxWorkerUnavailable("worker not running")
+            self._next_id += 1
+            req_id = self._next_id
+            req = {"id": req_id, "prompt": prompt}
+            try:
+                proc.stdin.write((json.dumps(req, ensure_ascii=False) + "\n").encode())
+                await proc.stdin.drain()
+            except (ConnectionError, BrokenPipeError, RuntimeError) as exc:
+                raise MlxWorkerUnavailable(f"worker pipe closed: {exc}") from exc
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError()
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=remaining)
+                if not line:  # EOF = 워커 사망
+                    raise MlxWorkerUnavailable("worker died mid-request")
+                try:
+                    resp = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if resp.get("id") == req_id:
+                    return str(resp.get("text", ""))
 
     async def close(self) -> None:
         proc, self._proc = self._proc, None

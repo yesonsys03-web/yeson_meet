@@ -93,6 +93,7 @@ def resolve_cli(name: str) -> str | None:
 
 def list_translate_engines() -> list[dict]:
     """클라 드롭다운용 — 서버에서 사용 가능한 번역 엔진과 설치 여부."""
+    from .translate_mlx import QWEN_MLX_MODELS, qwen_mlx_available
     return [
         {"value": "gemini", "label": "Gemini",
          "available": bool(os.environ.get("GEMINI_API_KEY"))},
@@ -108,6 +109,10 @@ def list_translate_engines() -> list[dict]:
          "available": apple_mt_available()},
         {"value": "apple_hifi", "label": "Apple 온디바이스 (고품질·느림)",
          "available": apple_mt_available()},
+        {"value": "qwen", "label": "Qwen 9B (MLX 로컬)",
+         "available": qwen_mlx_available(QWEN_MLX_MODELS["qwen"])},
+        {"value": "qwen_lite", "label": "Qwen 4B (MLX 로컬·빠름)",
+         "available": qwen_mlx_available(QWEN_MLX_MODELS["qwen_lite"])},
     ]
 
 
@@ -256,6 +261,7 @@ def create_translator(
     """
     provider = (provider or "").strip().lower() or os.environ.get(PROVIDER_ENV, "gemini").strip().lower()
     timeout = _timeout_from_env()
+    from .translate_mlx import QWEN_MLX_MODELS
 
     if provider in ("", "gemini"):
         return GeminiFlashTranslator()
@@ -267,6 +273,10 @@ def create_translator(
     if provider == "apple_hifi":
         from .translate_apple import AppleTranslator
         return AppleTranslator(strategy="high")
+
+    if provider in QWEN_MLX_MODELS:
+        from .translate_mlx import QwenMlxTranslator
+        return QwenMlxTranslator(QWEN_MLX_MODELS[provider])
 
     if provider in _BACKENDS:
         backend = _BACKENDS[provider]

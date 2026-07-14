@@ -674,6 +674,31 @@ async def test_run_burn_job_killed_ffmpeg_error_stays_cancelled(
     assert loaded.burned_path is None
 
 
+async def test_maybe_aclose_translator_calls_when_present():
+    """pipeline이 쓰는 옵셔널 aclose 정리 규약을 검증 (QwenMlxTranslator처럼
+    서브프로세스 워커를 쓰는 번역기는 잡 종료 시 정리된다)."""
+
+    class WithAclose:
+        def __init__(self):
+            self.closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    t1 = WithAclose()
+    await pl._maybe_aclose_translator(t1)
+    assert t1.closed is True
+
+
+async def test_maybe_aclose_translator_noop_when_absent():
+    """aclose가 없는 번역기(gemini/CLI/apple)는 예외 없이 무시된다."""
+
+    class WithoutAclose:
+        pass
+
+    await pl._maybe_aclose_translator(WithoutAclose())
+
+
 async def test_run_burn_job_stale_generation_stops_and_keeps_cancelled(
         monkeypatch, db_session, admin_user, tmp_path):
     """굽기 도중 취소되면(상태 cancelled + 세대 상승) 진행 콜백이 StaleRunCancelled를

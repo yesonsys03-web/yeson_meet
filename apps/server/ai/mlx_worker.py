@@ -45,9 +45,14 @@ def _emit(obj: dict) -> None:
 
 
 def _make_translate():
-    """(en, context) -> ko 클로저를 만든다. 페이크/실모델 분기."""
+    """(structured_translate, generate_raw) 두 클로저를 반환. 모델/토크나이저 공유.
+
+    structured_translate(en, context) -> ko : 라이브 문장별 번역(기존 로직).
+    generate_raw(prompt) -> text            : 임의 프롬프트 원문 생성(배치 자막용).
+    """
     if os.environ.get("YESON_MLX_FAKE") == "1":
-        return lambda en, context: f"[fake] {en}"
+        return (lambda en, context: f"[fake] {en}",
+                lambda prompt: f"[fake-raw] {prompt}")
 
     model_path = os.environ.get("YESON_MLX_MODEL_PATH", "")
     if not model_path or not os.path.isfile(os.path.join(model_path, "config.json")):
@@ -62,7 +67,13 @@ def _make_translate():
     model, tokenizer = load(model_path)
     sampler = make_sampler(temp=0.0)
 
-    def _translate(en: str, context: list[list[str]]) -> str:
+    def _strip_think(text: str) -> str:
+        out = text.strip()
+        if "</think>" in out:
+            out = out.split("</think>", 1)[1].strip()
+        return out
+
+    def _structured_translate(en: str, context: list[list[str]]) -> str:
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": _build_user(context, en)},
@@ -74,17 +85,25 @@ def _make_translate():
             prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
         text = generate(model, tokenizer, prompt=prompt, max_tokens=256,
                         sampler=sampler, verbose=False)
-        ko = text.strip()
-        if "</think>" in ko:
-            ko = ko.split("</think>", 1)[1].strip()
-        return ko
+        return _strip_think(text)
 
-    return _translate
+    def _generate_raw(user_prompt: str) -> str:
+        messages = [{"role": "user", "content": user_prompt}]
+        try:
+            prompt = tokenizer.apply_chat_template(
+                messages, add_generation_prompt=True, enable_thinking=False)
+        except TypeError:
+            prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
+        text = generate(model, tokenizer, prompt=prompt, max_tokens=4096,
+                        sampler=sampler, verbose=False)
+        return _strip_think(text)
+
+    return (_structured_translate, _generate_raw)
 
 
 def run_worker() -> int:
     try:
-        translate = _make_translate()
+        translate, generate_raw = _make_translate()
     except SystemExit as exc:
         return int(exc.code or 1)
     except Exception as exc:  # noqa: BLE001 — 기동 실패는 반드시 status:error로 표면화
@@ -99,12 +118,24 @@ def run_worker() -> int:
         try:
             req = json.loads(line)
             req_id = req["id"]
-            en = str(req["en"])
-            context = [[str(a), str(b)] for a, b in req.get("context", [])]
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             print(f"mlx-worker: bad request line: {line[:120]}", file=sys.stderr, flush=True)
             continue
         t0 = time.perf_counter()
+        if "prompt" in req:
+            try:
+                text = generate_raw(str(req["prompt"]))
+            except Exception as exc:  # noqa: BLE001 — 요청 하나의 실패가 워커를 죽이면 안 됨
+                print(f"mlx-worker: raw generate failed: {exc}", file=sys.stderr, flush=True)
+                text = ""
+            _emit({"id": req_id, "text": text, "gen_ms": round((time.perf_counter() - t0) * 1000)})
+            continue
+        try:
+            en = str(req["en"])
+            context = [[str(a), str(b)] for a, b in req.get("context", [])]
+        except (KeyError, TypeError, ValueError):
+            print(f"mlx-worker: bad request line: {line[:120]}", file=sys.stderr, flush=True)
+            continue
         try:
             ko = translate(en, context)
         except Exception as exc:  # noqa: BLE001 — 요청 하나의 실패가 워커를 죽이면 안 됨
