@@ -120,6 +120,10 @@ export const consoleStyles: Record<string, CSSProperties> = {
     flex: 1,
     minHeight: 0,
     overflowY: "auto",
+    // 스크롤바 자리를 항상 예약 — 탭 전환으로 내용 높이가 바뀌어 스크롤바가
+    // 생겼다 사라질 때 콘텐츠 폭이 흔들리는(위쪽 '새 작업' 행까지 좌우로 밀리는)
+    // 레이아웃 시프트 방지.
+    scrollbarGutter: "stable",
   },
   panel: {
     maxWidth: 1180,
