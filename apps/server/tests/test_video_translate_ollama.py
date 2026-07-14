@@ -11,10 +11,10 @@ from apps.server.domain.video_captions.translate import TranslationError
 class FakeResponse:
     def __init__(self, payload: dict, status: int = 200):
         self._payload = payload
-        self._status = status
+        self.status_code = status
 
     def raise_for_status(self):
-        if self._status >= 400:
+        if self.status_code >= 400:
             raise httpx.HTTPStatusError(
                 "err", request=None, response=None)  # type: ignore[arg-type]
 
@@ -73,6 +73,14 @@ def test_available_false_when_server_down(monkeypatch):
 
 def test_available_false_for_none():
     assert to.qwen_ollama_available(None) is False
+
+
+def test_up_with_zero_models(monkeypatch):
+    # 서버는 떠 있지만(200) pull된 모델이 하나도 없음 — 'down'과 구분돼야 한다
+    # (_get_tags 통합의 핵심 이득: up=True인데 모델 목록은 빈 집합).
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: FakeResponse({"models": []}))
+    assert to.ollama_running() is True
+    assert to.qwen_ollama_available("qwen3.5:9b") is False
 
 
 # ── OllamaTranslator.translate_batch ────────────────────────────────────────

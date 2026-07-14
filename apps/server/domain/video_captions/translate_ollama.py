@@ -73,8 +73,8 @@ def _get_tags() -> tuple[bool, frozenset[str]]:
         import httpx
 
         resp = httpx.get(f"{ollama_base_url()}/api/tags", timeout=_TAGS_TIMEOUT)
+        up = resp.status_code == 200  # 이전 ollama_running과 정확히 동일(200에 한정)
         resp.raise_for_status()
-        up = True
         models = frozenset(
             m["name"] for m in resp.json().get("models", []) if m.get("name")
         )
