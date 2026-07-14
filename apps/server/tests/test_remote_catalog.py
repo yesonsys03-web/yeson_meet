@@ -96,3 +96,29 @@ def test_non_https_url_ignored(monkeypatch):
     monkeypatch.setattr(rc, "_now", lambda: 1000.0)
     assert rc.get_remote_models(force=True) == []
     assert called["n"] == 0
+
+
+def test_cached_models_reads_cache_without_network(monkeypatch):
+    monkeypatch.setattr(rc, "_http_get", lambda url: _payload(VALID))
+    monkeypatch.setattr(rc, "_now", lambda: 1000.0)
+    rc.get_remote_models(force=True)  # populate cache
+    calls = {"n": 0}
+    monkeypatch.setattr(rc, "_http_get", lambda url: calls.__setitem__("n", 1) or _payload(VALID))
+    out = rc.cached_models()
+    assert [m.name for m in out] == ["large-v3-turbo"]
+    assert calls["n"] == 0  # never hits network
+
+
+def test_cached_models_empty_when_no_cache(monkeypatch):
+    assert rc.cached_models() == []
+
+
+def test_dot_names_are_rejected(monkeypatch):
+    dotted = [
+        {"name": ".", "repo_id": "a/b", "approx_bytes": 10, "label": "x"},
+        {"name": "..", "repo_id": "a/b", "approx_bytes": 10, "label": "x"},
+    ]
+    monkeypatch.setattr(rc, "_http_get", lambda url: _payload(VALID, *dotted))
+    monkeypatch.setattr(rc, "_now", lambda: 1000.0)
+    out = rc.get_remote_models(force=True)
+    assert [m.name for m in out] == ["large-v3-turbo"]  # dotted entries skipped

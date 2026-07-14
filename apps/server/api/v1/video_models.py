@@ -10,6 +10,7 @@ import threading
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from apps.server.ai.apple_native import APPLE_TRANSCRIBE_MODEL, apple_stt_available
 from apps.server.domain.video_captions import gpu_pack
@@ -29,9 +30,9 @@ def _spawn_gpu_pack_download() -> None:  # test seam
 
 @router.get("")
 async def list_video_models(refresh: bool = False) -> dict:
-    if refresh:
-        # TTL 무시하고 원격 재조회(수동 새로고침). 실패해도 예외 없음.
-        remote_catalog.get_remote_models(force=True)
+    # 원격 카탈로그 갱신은 블로킹 requests.get이므로 스레드풀로 오프로드(루프 정지 방지).
+    # force=False면 TTL 캐시가 신선할 때 네트워크를 타지 않는다(탭 열 때 갱신).
+    await run_in_threadpool(remote_catalog.get_remote_models, refresh)
     models = wm.list_models()
     # Apple 온디바이스 전사 모델은 항상 목록에 노출한다(번역 엔진과 동일 정책).
     # 인텔맥/윈도우/구버전 macOS에서는 available=False로만 표시돼 클라가 회색

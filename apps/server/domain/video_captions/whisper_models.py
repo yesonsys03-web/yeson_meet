@@ -40,12 +40,13 @@ BUILTIN_CATALOG: dict[str, ModelInfo] = {
 
 
 def get_catalog() -> dict[str, ModelInfo]:
-    """빌트인 baseline에 원격 카탈로그를 오버레이한 유효 목록.
+    """빌트인 baseline에 원격 카탈로그(디스크 캐시)를 오버레이한 유효 목록.
 
+    네트워크는 타지 않는다 — 원격 갱신은 /video-models 엔드포인트가 담당한다.
     원격은 새 이름 추가·기존 이름 오버라이드만 가능하고 빌트인 삭제는 불가하다.
     """
     merged = dict(BUILTIN_CATALOG)
-    for m in remote_catalog.get_remote_models():
+    for m in remote_catalog.cached_models():
         merged[m.name] = ModelInfo(m.repo_id, m.approx_bytes, m.label)
     return merged
 

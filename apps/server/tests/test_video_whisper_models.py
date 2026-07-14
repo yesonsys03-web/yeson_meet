@@ -24,7 +24,7 @@ def test_builtin_catalog_has_expected_models():
 
 def test_get_catalog_merges_remote(monkeypatch):
     from apps.server.domain.video_captions import remote_catalog as rc
-    monkeypatch.setattr(rc, "get_remote_models", lambda force=False: [
+    monkeypatch.setattr(rc, "cached_models", lambda: [
         rc.RemoteModel("future-xl", "acme/future-xl", 9_000_000_000, "실험 모델"),
         rc.RemoteModel("small", "acme/override-small", 111, "덮어쓴 라벨"),  # override
     ])
@@ -38,7 +38,7 @@ def test_get_catalog_merges_remote(monkeypatch):
 
 def test_get_catalog_offline_is_builtin(monkeypatch):
     from apps.server.domain.video_captions import remote_catalog as rc
-    monkeypatch.setattr(rc, "get_remote_models", lambda force=False: [])
+    monkeypatch.setattr(rc, "cached_models", lambda: [])
     assert set(wm.get_catalog()) == set(wm.BUILTIN_CATALOG)
 
 

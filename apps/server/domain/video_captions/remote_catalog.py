@@ -71,6 +71,7 @@ def _parse(payload: object) -> list[RemoteModel]:
         approx = item.get("approx_bytes")
         label = item.get("label")
         if (not isinstance(name, str) or not _NAME_RE.match(name)
+                or name in (".", "..")
                 or not isinstance(repo_id, str) or not repo_id
                 or not isinstance(approx, int) or isinstance(approx, bool) or approx <= 0
                 or not isinstance(label, str)):
@@ -98,6 +99,16 @@ def _write_cache(models: list[RemoteModel]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"fetched_at": _now(), "models": [asdict(m) for m in models]}
     path.write_text(json.dumps(payload, ensure_ascii=False), "utf-8")
+
+
+def cached_models() -> list[RemoteModel]:
+    """디스크 캐시만 읽어 반환(네트워크 없음·예외 없음). get_catalog() 병합용."""
+    try:
+        cached = _read_cache()
+    except Exception as exc:
+        logger.warning("remote_catalog: cache read failed: %s", exc)
+        return []
+    return cached[1] if cached else []
 
 
 def get_remote_models(force: bool = False) -> list[RemoteModel]:
