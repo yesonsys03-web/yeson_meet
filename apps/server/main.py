@@ -22,6 +22,7 @@ from apps.server.api.v1.sessions import router as sessions_router
 from apps.server.api.v1.utterances import router as utterances_router
 from apps.server.api.v1.audio_stats import router as audio_stats_router
 from apps.server.api.v1.video_models import router as video_models_router
+from apps.server.api.v1.translate_models import router as translate_models_router
 from apps.server.api.v1.video_jobs import router as video_jobs_router
 from apps.server.api.v1.reports import router as reports_router
 from apps.server.ai.gemini_live import gemini_config_health
@@ -184,6 +185,7 @@ app.include_router(utterances_router, prefix="/api/v1")
 app.include_router(audio_stats_router, prefix="/api/v1")
 app.include_router(operator_alerts_router, prefix="/api/v1")
 app.include_router(video_models_router, prefix="/api/v1")
+app.include_router(translate_models_router, prefix="/api/v1")
 app.include_router(video_jobs_router, prefix="/api/v1")
 app.include_router(reports_router, prefix="/api/v1")
 app.include_router(ws_operator_router)

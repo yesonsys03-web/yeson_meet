@@ -120,6 +120,10 @@ export const consoleStyles: Record<string, CSSProperties> = {
     flex: 1,
     minHeight: 0,
     overflowY: "auto",
+    // 스크롤바 자리를 항상 예약 — 탭 전환으로 내용 높이가 바뀌어 스크롤바가
+    // 생겼다 사라질 때 콘텐츠 폭이 흔들리는(위쪽 '새 작업' 행까지 좌우로 밀리는)
+    // 레이아웃 시프트 방지.
+    scrollbarGutter: "stable",
   },
   panel: {
     maxWidth: 1180,
@@ -185,6 +189,25 @@ export const consoleStyles: Record<string, CSSProperties> = {
     background: "var(--ys-bg-app)",
     border: "1px solid var(--ys-border-strong)",
     outline: "none",
+  },
+  // native <select>는 WebKit이 고유 높이로 렌더해 텍스트 input·버튼보다 낮게 나온다.
+  // appearance:none으로 input과 동일한 박스(같은 padding/border/box-sizing)로 만들어
+  // 버튼 높이에 맞추고, 커스텀 chevron을 배경으로 얹는다.
+  select: {
+    boxSizing: "border-box",
+    padding: "12px 34px 12px 13px",
+    borderRadius: "var(--ys-radius-control)",
+    color: "var(--ys-text-body)",
+    backgroundColor: "var(--ys-bg-app)",
+    border: "1px solid var(--ys-border-strong)",
+    outline: "none",
+    cursor: "pointer",
+    appearance: "none",
+    WebkitAppearance: "none",
+    backgroundImage:
+      "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
+    backgroundRepeat: "no-repeat",
+    backgroundPosition: "right 12px center",
   },
   row: {
     display: "grid",

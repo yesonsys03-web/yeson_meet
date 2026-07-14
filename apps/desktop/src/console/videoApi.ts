@@ -76,6 +76,56 @@ export async function deleteVideoModel(name: string): Promise<void> {
     { method: "DELETE" });
 }
 
+// 로컬 번역 모델(Qwen) — 런타임(mlx/ollama)은 서버 플랫폼이 결정한다.
+export type TranslateModelInfo = {
+  name: string;
+  label: string;
+  runtime: "mlx" | "ollama";
+  approx_bytes: number;
+  downloaded: boolean;
+  downloading: boolean;
+  progress: number | null;
+  downloadable: boolean;
+};
+
+export type OllamaInstallStatus = {
+  supported: boolean;
+  downloading: boolean;
+  progress: number;
+  launched: boolean;
+  last_error: string | null;
+};
+
+export type TranslateModelsResponse = {
+  models: TranslateModelInfo[];
+  runtime: "mlx" | "ollama";
+  ollama_installed: boolean;
+  ollama_running: boolean;
+  // ollama 런타임에서만 non-null. 미설치 시 클라가 '설치' 버튼을 표시한다.
+  ollama_install: OllamaInstallStatus | null;
+};
+
+export async function listTranslateModels(): Promise<TranslateModelsResponse> {
+  // 구버전 서버 번들에는 /translate-models 라우트가 없다 — 호출부에서 404를 잡아 탭만 숨긴다.
+  return request(`${apiBase()}/api/v1/translate-models`, {});
+}
+
+// 공식 Ollama 설치 프로그램을 서버 머신에 받아 실행(반자동). 설치는 서버 컴퓨터에서 진행된다.
+export async function installOllama(): Promise<void> {
+  await request(`${apiBase()}/api/v1/translate-models/ollama/install`,
+    { method: "POST" });
+}
+
+export async function downloadTranslateModel(name: string): Promise<void> {
+  await request(`${apiBase()}/api/v1/translate-models/${name}/download`,
+    { method: "POST" });
+}
+
+export async function deleteTranslateModel(name: string): Promise<void> {
+  await request(`${apiBase()}/api/v1/translate-models/${name}`,
+    { method: "DELETE" });
+}
+
 export type GpuStatus = {
   supported: boolean;
   gpu_name: string | null;

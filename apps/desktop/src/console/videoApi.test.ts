@@ -12,8 +12,10 @@ vi.mock("../diagnostics/appLog", () => ({
 }));
 
 import {
-  burnVideoJob, cancelAllVideoJobs, cancelVideoJob, createYoutubeJob, downloadGpuPack,
-  getGpuStatus, getVideoStorage, listTranslateEngines, listVideoModels, rebuildVideoJob,
+  burnVideoJob, cancelAllVideoJobs, cancelVideoJob, createYoutubeJob,
+  deleteTranslateModel, downloadGpuPack, downloadTranslateModel,
+  getGpuStatus, getVideoStorage, installOllama, listTranslateEngines, listTranslateModels,
+  listVideoModels, rebuildVideoJob,
   setGpuEnabled, uploadVideoJob, videoMediaUrl,
 } from "./videoApi";
 
@@ -38,6 +40,41 @@ describe("videoApi", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(String(url)).toBe("http://localhost:8000/api/v1/video-models");
     expect((init.headers as Record<string, string> | undefined)?.Authorization).toBeUndefined();
+  });
+
+  it("listTranslateModels GETs /api/v1/translate-models", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ models: [], runtime: "ollama", ollama_installed: true, ollama_running: true }),
+    });
+    const out = await listTranslateModels();
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:8000/api/v1/translate-models");
+    expect(out.runtime).toBe("ollama");
+  });
+
+  it("downloadTranslateModel POSTs /{name}/download", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 202, json: async () => ({ status: "started" }) });
+    await downloadTranslateModel("qwen");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:8000/api/v1/translate-models/qwen/download");
+    expect(init.method).toBe("POST");
+  });
+
+  it("deleteTranslateModel DELETEs /{name}", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 204, json: async () => ({}) });
+    await deleteTranslateModel("qwen_hifi");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:8000/api/v1/translate-models/qwen_hifi");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("installOllama POSTs /translate-models/ollama/install", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 202, json: async () => ({ status: "started" }) });
+    await installOllama();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:8000/api/v1/translate-models/ollama/install");
+    expect(init.method).toBe("POST");
   });
 
   it("createYoutubeJob POSTs JSON body", async () => {

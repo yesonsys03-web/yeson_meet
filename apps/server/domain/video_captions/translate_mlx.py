@@ -4,7 +4,9 @@
 라이브 자막용 MLX 워커(mlx_worker.run_worker)를 잡당 1회 기동·유지하며,
 build_translation_prompt(글로서리+의성어+간결 자막 지시)를 raw 프롬프트로 보내
 JSON 배열 KO를 받는다. 서브프로세스 격리(크래시·메모리)로 라이브와 동일 아키텍처.
-실리콘맥 전용 — mlx-lm/모델은 워커 안에서만 로드된다.
+실리콘맥 전용 백엔드 — mlx-lm/모델은 워커 안에서만 로드된다. 그 외 플랫폼(윈도·
+인텔맥)의 로컬 Qwen은 translate_ollama가 담당하며, 티어 값(qwen/qwen_lite/
+qwen_hifi)은 공유하고 백엔드 선택은 translate_cli.create_translator가 한다.
 
 QWEN_MLX_MODELS는 serverConfig.ts의 MLX_MODELS와 동일하게 유지해야 한다.
 """
