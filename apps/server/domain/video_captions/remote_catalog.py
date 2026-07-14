@@ -102,7 +102,11 @@ def _write_cache(models: list[RemoteModel]) -> None:
 
 def get_remote_models(force: bool = False) -> list[RemoteModel]:
     """원격 카탈로그의 검증된 모델 목록. 네트워크/파싱 실패 시 캐시→빈 목록으로 폴백(예외 없음)."""
-    cached = _read_cache()
+    try:
+        cached = _read_cache()
+    except Exception as exc:  # 캐시 읽기 실패도 "캐시 없음"으로 취급 — 절대 raise 금지
+        logger.warning("remote_catalog: cache read failed: %s", exc)
+        cached = None
     if not force and cached is not None:
         fetched_at, models = cached
         if _now() - fetched_at < CACHE_TTL_SECONDS:
