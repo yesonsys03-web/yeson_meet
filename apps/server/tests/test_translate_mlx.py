@@ -77,6 +77,23 @@ async def test_start_failure_raises_translation_error():
         await t.translate_batch(["hello"])
 
 
+async def test_start_oserror_falls_back_to_translation_error():
+    """client.start()이 MlxWorkerUnavailable 이외(예: OSError=spawn 실패)를 던져도
+    TranslationError로 감싸져야 한다 — 원문 유지 폴백 계약 유지(하드 실패 금지)."""
+    class _CrashingClient:
+        def __init__(self, *, model_id=None, **kw):
+            self.model_id = model_id
+
+        async def start(self):
+            raise OSError("spawn failed")
+
+    t = tm.QwenMlxTranslator(
+        "mlx-community/Qwen3.5-9B-4bit", client_factory=_CrashingClient,
+    )
+    with pytest.raises(TranslationError):
+        await t.translate_batch(["hello"])
+
+
 async def test_guard_reject_keeps_source():
     # 반복 환각(같은 10자+ 구절 3회) → guard 리젝트 → 원문(EN) 유지
     bad = "가나다라마바사아자차" * 3

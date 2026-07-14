@@ -58,7 +58,7 @@ class QwenMlxTranslator:
         try:
             client = self._client_factory(model_id=self._model_id)
             await client.start()
-        except MlxWorkerUnavailable as exc:
+        except Exception as exc:  # noqa: BLE001 — 어떤 워커 기동 실패든 원문 유지로 폴백(자막 무중단)
             raise TranslationError(f"MLX 워커 기동 실패: {exc}") from exc
         self._client = client
         return client

@@ -4,8 +4,6 @@ import json
 import subprocess
 import sys
 
-import pytest
-
 
 def _run_fake_worker(requests: list[dict]) -> list[dict]:
     """YESON_MLX_FAKE=1 워커를 서브프로세스로 띄워 요청들을 보내고 응답 JSON들을 모은다."""
