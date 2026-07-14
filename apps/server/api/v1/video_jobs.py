@@ -36,7 +36,7 @@ from apps.server.domain.video_captions.pipeline import \
     _INFLIGHT_STATUSES as INFLIGHT_STATUSES
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
 from apps.server.domain.video_captions.translate_cli import list_translate_engines
-from apps.server.domain.video_captions.whisper_models import CATALOG, is_downloaded
+from apps.server.domain.video_captions.whisper_models import get_catalog, is_downloaded
 
 router = APIRouter(tags=["video-jobs"], prefix="/video-jobs")
 
@@ -112,7 +112,7 @@ def _require_model(name: str) -> None:
                 status.HTTP_409_CONFLICT,
                 "Apple 온디바이스 전사는 실리콘맥(macOS 26+) 서버에서만 사용할 수 있습니다.")
         return
-    if name not in CATALOG:
+    if name not in get_catalog():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown whisper model")
     if not is_downloaded(name):
         raise HTTPException(

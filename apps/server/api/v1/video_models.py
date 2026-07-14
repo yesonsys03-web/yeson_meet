@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from apps.server.ai.apple_native import APPLE_TRANSCRIBE_MODEL, apple_stt_available
 from apps.server.domain.video_captions import gpu_pack
 from apps.server.domain.video_captions import whisper_models as wm
+from apps.server.domain.video_captions import remote_catalog
 
 router = APIRouter(tags=["video-models"], prefix="/video-models")
 
@@ -27,7 +28,10 @@ def _spawn_gpu_pack_download() -> None:  # test seam
 
 
 @router.get("")
-async def list_video_models() -> dict:
+async def list_video_models(refresh: bool = False) -> dict:
+    if refresh:
+        # TTL 무시하고 원격 재조회(수동 새로고침). 실패해도 예외 없음.
+        remote_catalog.get_remote_models(force=True)
     models = wm.list_models()
     # Apple 온디바이스 전사 모델은 항상 목록에 노출한다(번역 엔진과 동일 정책).
     # 인텔맥/윈도우/구버전 macOS에서는 available=False로만 표시돼 클라가 회색
@@ -82,7 +86,7 @@ async def set_gpu_enabled(body: GpuEnableIn) -> dict:
 
 @router.post("/{name}/download", status_code=status.HTTP_202_ACCEPTED)
 async def download_video_model(name: str) -> dict:
-    if name not in wm.CATALOG:
+    if name not in wm.get_catalog():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown model")
     if wm.is_downloaded(name):
         return {"status": "already_downloaded"}
@@ -94,7 +98,7 @@ async def download_video_model(name: str) -> dict:
 
 @router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_video_model(name: str) -> None:
-    if name not in wm.CATALOG:
+    if name not in wm.get_catalog():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown model")
     try:
         wm.delete_model(name)
