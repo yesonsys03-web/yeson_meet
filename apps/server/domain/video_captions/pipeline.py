@@ -30,6 +30,14 @@ from .translate_cli import create_translator
 
 logger = logging.getLogger("yeson.video.pipeline")
 
+
+async def _maybe_aclose_translator(translator) -> None:
+    """서브프로세스 워커를 쓰는 번역기(QwenMlxTranslator)는 잡 종료 시 정리한다.
+    aclose가 없는 번역기(gemini/CLI/apple)는 무시한다."""
+    aclose = getattr(translator, "aclose", None)
+    if aclose is not None:
+        await aclose()
+
 # 계측되는 단계(전사/번역/굽기)는 단계 진입 시 0에서 시작해 단계 내부에서
 # 0→100%로 채워진다 — UI 라벨이 단계명을 보여주므로 절대 % 의미는 없다.
 # queued: 0 — 재생성(rebuild) 직후 목록에 옛 진행률(예: 77%)이 잠깐이라도
@@ -286,8 +294,11 @@ async def run_video_job(external_id: UUID) -> None:
 
         translator = create_translator(
             provider=translate_provider, cli_model=translate_cli_model)
-        ko_segments = await translate_segments(
-            en_segments, translator, progress_cb=on_translate_progress)
+        try:
+            ko_segments = await translate_segments(
+                en_segments, translator, progress_cb=on_translate_progress)
+        finally:
+            await _maybe_aclose_translator(translator)
 
         async with AsyncSessionLocal() as db:
             await db.execute(delete(VideoSegment).where(VideoSegment.job_id == job_id))
