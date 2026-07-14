@@ -21,8 +21,7 @@ import logging
 import os
 import time
 
-from apps.server.ai.mlx_live_translate import guard_mlx_ko
-from .translate import TranslationError, build_translation_prompt
+from .translate import TranslationError, apply_ko_guard, build_translation_prompt
 from .translate_cli import _extract_json_array
 
 logger = logging.getLogger("yeson.video.translate_ollama")
@@ -41,8 +40,8 @@ DEFAULT_BATCH_TIMEOUT = 300.0
 _TAGS_TIMEOUT = 0.5  # 검증 경로 — 로컬 :11434는 즉답 또는 즉거부
 _AVAIL_TTL = 5.0     # list_translate_engines가 검증마다 호출 → 짧은 캐시로 폭주 방지
 
-# /api/tags 결과 캐시 (monotonic 타임스탬프 + pull된 모델명 집합)
-_avail_cache: dict = {"at": -_AVAIL_TTL, "models": frozenset()}
+# /api/tags 결과 캐시 (monotonic 타임스탬프 + 서버 응답 여부 + pull된 모델명 집합)
+_avail_cache: dict = {"at": -_AVAIL_TTL, "up": False, "models": frozenset()}
 
 
 def ollama_base_url() -> str:
@@ -58,48 +57,41 @@ def qwen_ollama_model(provider: str) -> str | None:
     return (os.environ.get(env_key) or "").strip() or default_tag
 
 
-def _pulled_models() -> frozenset[str]:
-    """Ollama가 로컬에 pull해 둔 모델명 집합. 서버 down/미설치/타임아웃이면 빈 집합.
+def _get_tags() -> tuple[bool, frozenset[str]]:
+    """(서버 응답 여부, pull된 모델명 집합)을 /api/tags 1회 호출로 얻어 5s 캐시한다.
 
-    httpx는 함수 내 지연 import — 미설치 환경(가벼운 사이드카/테스트)에서 모듈 import가
-    깨지지 않도록(gpu_pack의 requests 지연 import 관례와 동일).
+    ollama_running·ollama_installed·qwen_ollama_available가 공유해 폴링당 중복 HTTP를
+    없앤다. httpx는 함수 내 지연 import — 미설치 환경(가벼운 사이드카/테스트)에서 모듈
+    import가 깨지지 않도록(gpu_pack의 requests 지연 import 관례와 동일).
     """
     now = time.monotonic()
     if now - _avail_cache["at"] < _AVAIL_TTL:
-        return _avail_cache["models"]
+        return _avail_cache["up"], _avail_cache["models"]
+    up = False
     models: frozenset[str] = frozenset()
     try:
         import httpx
 
         resp = httpx.get(f"{ollama_base_url()}/api/tags", timeout=_TAGS_TIMEOUT)
         resp.raise_for_status()
-        data = resp.json()
+        up = True
         models = frozenset(
-            m["name"] for m in data.get("models", []) if m.get("name")
+            m["name"] for m in resp.json().get("models", []) if m.get("name")
         )
     except Exception as exc:  # noqa: BLE001 — 서버 down/httpx 미설치/타임아웃 = 미가용
         logger.debug("ollama /api/tags unavailable: %s", exc)
-    _avail_cache["at"] = now
-    _avail_cache["models"] = models
-    return models
+    _avail_cache.update(at=now, up=up, models=models)
+    return up, models
 
 
 def qwen_ollama_available(model_id: str | None) -> bool:
     """Ollama 서버가 살아 있고 해당 태그가 pull되어 있는가."""
-    if not model_id:
-        return False
-    return model_id in _pulled_models()
+    return bool(model_id) and model_id in _get_tags()[1]
 
 
 def ollama_running() -> bool:
     """Ollama 서버가 :11434에서 응답하는가 (모델 유무와 무관)."""
-    try:
-        import httpx
-
-        resp = httpx.get(f"{ollama_base_url()}/api/tags", timeout=_TAGS_TIMEOUT)
-        return resp.status_code == 200
-    except Exception:  # noqa: BLE001 — 연결 거부/타임아웃/httpx 미설치 = 미실행
-        return False
+    return _get_tags()[0]
 
 
 def ollama_installed() -> bool:
@@ -190,14 +182,5 @@ class OllamaTranslator:
         out = _extract_json_array(raw, len(texts))
         if out is None:
             raise TranslationError(f"Ollama 번역 출력 파싱 실패: {raw[:200]!r}")
-        # 환각 가드: 불합격 줄은 원문(EN) 유지(MLX 경로와 동일 정책).
-        guarded: list[str] = []
-        for src, ko in zip(texts, out):
-            reason = guard_mlx_ko(src, ko)
-            if reason is not None:
-                logger.info("ollama_video_guard_reject reason=%s src=%r", reason, src[:60])
-                guarded.append(src)
-            else:
-                guarded.append(ko)
-        return guarded
+        return apply_ko_guard(texts, out, marker="ollama_video_guard_reject")
 # === ANCHOR: TRANSLATE_OLLAMA_END ===

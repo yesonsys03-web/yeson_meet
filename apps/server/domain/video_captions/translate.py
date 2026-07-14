@@ -54,6 +54,24 @@ def build_translation_prompt(texts: list[str]) -> str:
     )
 
 
+def apply_ko_guard(texts: list[str], out: list[str], *, marker: str) -> list[str]:
+    """번역 결과를 환각 가드(guard_mlx_ko)로 검증 — 불합격 줄은 원문(EN)을 유지한다
+    (검수 단계에서 눈에 띄게). MLX·Ollama 로컬 배치 번역이 공유한다. ``marker``는
+    로깅용 provider 태그(예: ``mlx_video_guard_reject``).
+    """
+    from apps.server.ai.mlx_live_translate import guard_mlx_ko
+
+    guarded: list[str] = []
+    for src, ko in zip(texts, out):
+        reason = guard_mlx_ko(src, ko)
+        if reason is not None:
+            logger.info("%s reason=%s src=%r", marker, reason, src[:60])
+            guarded.append(src)
+        else:
+            guarded.append(ko)
+    return guarded
+
+
 class GeminiFlashTranslator:
     def __init__(self, api_key: str | None = None, model: str | None = None):
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
