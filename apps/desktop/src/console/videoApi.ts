@@ -66,6 +66,12 @@ export async function listVideoModels(): Promise<VideoModelInfo[]> {
   return out.models;
 }
 
+export async function refreshVideoModels(): Promise<VideoModelInfo[]> {
+  const out = await request<{ models: VideoModelInfo[] }>(
+    `${apiBase()}/api/v1/video-models?refresh=1`, {});
+  return out.models;
+}
+
 export async function downloadVideoModel(name: string): Promise<void> {
   await request(`${apiBase()}/api/v1/video-models/${name}/download`,
     { method: "POST" });
