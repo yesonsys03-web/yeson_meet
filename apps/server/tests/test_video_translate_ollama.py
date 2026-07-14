@@ -82,6 +82,7 @@ async def test_translate_batch_parses_array(monkeypatch):
     def fake_post(url, json, timeout):
         seen["url"] = url
         seen["model"] = json["model"]
+        seen["think"] = json.get("think")
         seen["format"] = json.get("format")
         return FakeResponse({"response": '["안녕","잘 가"]'})
 
@@ -90,7 +91,9 @@ async def test_translate_batch_parses_array(monkeypatch):
     assert out == ["안녕", "잘 가"]
     assert seen["url"].endswith("/api/generate")
     assert seen["model"] == "qwen3.5:9b"
-    assert seen["format"] == "json"
+    # thinking OFF(빈 response 방지) + format:json 미사용(배열 계약 유지) — 2026-07-14 실측
+    assert seen["think"] is False
+    assert seen["format"] is None
 
 
 async def test_translate_batch_object_wrapped_array(monkeypatch):

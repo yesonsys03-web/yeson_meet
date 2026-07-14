@@ -106,7 +106,12 @@ class OllamaTranslator:
             "model": self._model_id,
             "prompt": prompt,
             "stream": False,
-            "format": "json",  # 로컬 모델의 프롬프트 이탈(잡담) 억제. 배열 추출은 아래서.
+            # Qwen3.5/3.6은 thinking 모델 — 끄지 않으면 추론이 thinking 필드로 가고
+            # response가 빈 문자열로 온다(2026-07-14 실측). 배치 번역엔 추론 불필요.
+            "think": False,
+            # format:"json"은 쓰지 않는다 — Qwen이 배열 대신 원문 키 객체
+            # ({"hello": "..."})로 응답해 JSON 배열 계약을 깬다(실측). 프롬프트가
+            # 이미 "JSON 배열만" 지시하고 _extract_json_array가 펜스/프로즈를 회수한다.
             "options": {"temperature": 0},
         }
         try:
