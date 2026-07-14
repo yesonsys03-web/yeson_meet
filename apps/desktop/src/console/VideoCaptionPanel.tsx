@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { consoleStyles } from "./consoleStyles";
 import {
   burnVideoJob, cancelAllVideoJobs, cancelVideoJob, createYoutubeJob, deleteVideoJob,
-  deleteVideoModel, downloadGpuPack, downloadVideoModel, getGpuStatus, getVideoStorage,
-  listTranslateEngines, listVideoJobs, listVideoModels, rebuildVideoJob, setGpuEnabled,
+  deleteTranslateModel, deleteVideoModel, downloadGpuPack, downloadTranslateModel,
+  downloadVideoModel, getGpuStatus, getVideoStorage, listTranslateEngines,
+  listTranslateModels, listVideoJobs, listVideoModels, rebuildVideoJob, setGpuEnabled,
   uploadVideoJob, videoDownloadUrl, videoUploadUrl,
 } from "./videoApi";
 import type {
-  BurnStyle, GpuStatus, TranslateEngineInfo, VideoJobSummary, VideoModelInfo,
-  VideoStorageInfo,
+  BurnStyle, GpuStatus, TranslateEngineInfo, TranslateModelInfo, TranslateModelsResponse,
+  VideoJobSummary, VideoModelInfo, VideoStorageInfo,
 } from "./videoApi";
 import {
   abortBatchThenCancelAll, filterVideoFiles, uploadBatch, uploadBatchNative, VIDEO_EXT_LIST,
@@ -74,6 +75,15 @@ function formatBytes(n: number): string {
   return `${Math.round(n / 1_000_000)}MB`;
 }
 
+function modelTabStyle(active: boolean): CSSProperties {
+  return {
+    background: "none", border: 0, padding: "4px 10px", cursor: "pointer",
+    font: "inherit", fontSize: 13, color: active ? "inherit" : "rgba(255,255,255,0.55)",
+    borderBottom: active ? "2px solid #7cc4ff" : "2px solid transparent",
+    fontWeight: active ? 600 : 400,
+  };
+}
+
 type VideoCaptionPanelProps = {
   active: boolean;
 };
@@ -111,6 +121,10 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const batchPromiseRef = useRef<Promise<unknown> | null>(null);
   const [batchStatus, setBatchStatus] = useState<string | null>(null);
   const [modelMgmtOpen, setModelMgmtOpen] = useState(false);
+  const [modelTab, setModelTab] = useState<"transcribe" | "translate">("transcribe");
+  const [translateModels, setTranslateModels] = useState<TranslateModelInfo[]>([]);
+  // null = /translate-models 라우트 없음(구버전 번들) → 번역 모델 탭 자체를 숨긴다.
+  const [translateMeta, setTranslateMeta] = useState<TranslateModelsResponse | null>(null);
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(0);
   const [confirmBatchBurn, setConfirmBatchBurn] = useState(false);
@@ -131,13 +145,17 @@ function VideoCaptionInner({ active }: { active: boolean }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [m, j, e, s, g] = await Promise.all([
+      const [m, j, e, s, g, tm] = await Promise.all([
         listVideoModels(), listVideoJobs(), listTranslateEngines(), getVideoStorage(),
         // 구버전 서버 번들에는 /gpu 라우트가 없다 — GPU 카드만 숨기고 패널은 살린다
         getGpuStatus().catch(() => null),
+        // 구버전 번들엔 /translate-models도 없다 — null이면 번역 모델 탭을 숨긴다
+        listTranslateModels().catch(() => null),
       ]);
       setModels(m);
       setJobs(j);
+      setTranslateMeta(tm);
+      setTranslateModels(tm?.models ?? []);
       const options = toEngineOptions(e);
       setEngineOptions(options);
       if (!appleHifiDefaultTriedRef.current) {
@@ -763,9 +781,24 @@ function VideoCaptionInner({ active }: { active: boolean }) {
           <span aria-hidden style={{ fontSize: 12, opacity: 0.7, width: 12, display: "inline-block" }}>
             {modelMgmtOpen ? "▾" : "▸"}
           </span>
-          <h3 style={{ margin: 0 }}>전사 모델 관리</h3>
+          <h3 style={{ margin: 0 }}>모델 관리</h3>
         </button>
         {modelMgmtOpen ? (
+        <>
+        {/* 전사 모델 | 로컬 번역 모델 탭 (번역 탭은 /translate-models 지원 서버에서만) */}
+        <div style={{ display: "flex", gap: 4, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>
+          <button type="button" onClick={() => setModelTab("transcribe")}
+            style={modelTabStyle(!(modelTab === "translate" && translateMeta !== null))}>
+            전사 모델
+          </button>
+          {translateMeta ? (
+            <button type="button" onClick={() => setModelTab("translate")}
+              style={modelTabStyle(modelTab === "translate")}>
+              로컬 번역 모델
+            </button>
+          ) : null}
+        </div>
+        {!(modelTab === "translate" && translateMeta !== null) ? (
         <>
         <p style={{ margin: 0, fontSize: 13, opacity: 0.75 }}>
           모델은 서버에 저장됩니다. 큰 모델일수록 정확하지만 전사가 느려집니다.
@@ -857,6 +890,56 @@ function VideoCaptionInner({ active }: { active: boolean }) {
             GPU 가속은 전사에 적용됩니다. 굽기는 CPU 인코딩이 더 빨라 항상 CPU로, 번역은 외부 AI(Claude/Gemini)라 GPU와 무관합니다.
           </div>
         ) : null}
+        </>
+        ) : (
+        <>
+          {translateMeta && translateMeta.runtime === "ollama" && !translateMeta.ollama_running ? (
+            <div style={{ fontSize: 13, padding: "8px 12px", borderRadius: 8,
+                          border: "1px solid rgba(229,72,77,0.4)", background: "rgba(229,72,77,0.08)" }}>
+              {translateMeta.ollama_installed
+                ? "Ollama가 실행 중이 아닙니다 — Ollama를 실행한 뒤 새로고침하세요."
+                : "로컬 번역 모델을 받으려면 Ollama가 필요합니다."}{" "}
+              <a href="https://ollama.com/download" target="_blank" rel="noreferrer"
+                 style={{ color: "#7cc4ff" }}>ollama.com에서 설치</a>
+            </div>
+          ) : null}
+          <p style={{ margin: 0, fontSize: 13, opacity: 0.75 }}>
+            {translateMeta?.runtime === "mlx"
+              ? "실리콘맥 로컬 번역 모델(MLX)입니다. 서버에 저장되며, 받은 뒤 번역 엔진에서 선택하세요."
+              : "Ollama 로컬 번역 모델입니다. 큰 모델일수록 정확하지만 번역이 느립니다."}
+          </p>
+          {translateModels.map((m) => (
+            <div key={m.name}
+              style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 12px",
+                       border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8 }}>
+              <div style={{ flex: 1 }}>
+                <strong>{m.label}</strong>
+                <span style={{ fontSize: 12, opacity: 0.7, marginLeft: 8 }}>
+                  {formatBytes(m.approx_bytes)} · {m.runtime === "mlx" ? "MLX" : "Ollama"}
+                </span>
+              </div>
+              {m.downloading ? (
+                <span style={{ fontSize: 13 }}>다운로드 중… {m.progress ?? 0}%</span>
+              ) : m.downloaded ? (
+                <>
+                  <span style={{ fontSize: 13, color: "#30a46c" }}>설치됨</span>
+                  <button type="button" style={consoleStyles.mutedAction}
+                    onClick={() => void deleteTranslateModel(m.name).then(refresh)
+                      .catch((e) => setError(e instanceof Error ? e.message : String(e)))}>
+                    삭제
+                  </button>
+                </>
+              ) : (
+                <button type="button" style={consoleStyles.mutedAction} disabled={!m.downloadable}
+                  onClick={() => void downloadTranslateModel(m.name).then(refresh)
+                    .catch((e) => setError(e instanceof Error ? e.message : String(e)))}>
+                  다운로드
+                </button>
+              )}
+            </div>
+          ))}
+        </>
+        )}
         </>
         ) : null}
       </section>

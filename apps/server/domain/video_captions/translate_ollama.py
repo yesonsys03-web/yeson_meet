@@ -91,6 +91,67 @@ def qwen_ollama_available(model_id: str | None) -> bool:
     return model_id in _pulled_models()
 
 
+def ollama_running() -> bool:
+    """Ollama 서버가 :11434에서 응답하는가 (모델 유무와 무관)."""
+    try:
+        import httpx
+
+        resp = httpx.get(f"{ollama_base_url()}/api/tags", timeout=_TAGS_TIMEOUT)
+        return resp.status_code == 200
+    except Exception:  # noqa: BLE001 — 연결 거부/타임아웃/httpx 미설치 = 미실행
+        return False
+
+
+def ollama_installed() -> bool:
+    """Ollama가 설치되어 있는가 — PATH의 CLI 또는 실행 중 서버로 판정."""
+    import shutil
+
+    return shutil.which("ollama") is not None or ollama_running()
+
+
+def pull_model(tag: str, on_progress=None) -> None:
+    """`ollama pull` 동등 — /api/pull 스트리밍. on_progress(pct:int)로 진행률 콜백.
+
+    블로킹 — 호출부(다운로드 스레드)에서 돌린다. httpx 지연 import.
+    """
+    import json
+
+    import httpx
+
+    url = f"{ollama_base_url()}/api/pull"
+    try:
+        with httpx.stream(
+            "POST", url, json={"model": tag, "stream": True}, timeout=None
+        ) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                total = d.get("total")
+                completed = d.get("completed")
+                if on_progress is not None and total:
+                    pct = min(99, int((completed or 0) * 100 / total))
+                    on_progress(pct)
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Ollama pull 실패({tag}): {exc}") from exc
+
+
+def delete_model(tag: str) -> None:
+    """`ollama rm` 동등 — /api/delete."""
+    import httpx
+
+    url = f"{ollama_base_url()}/api/delete"
+    try:
+        resp = httpx.request("DELETE", url, json={"model": tag}, timeout=10.0)
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Ollama 삭제 실패({tag}): {exc}") from exc
+
+
 class OllamaTranslator:
     """TranslationProvider — 로컬 Ollama Qwen 배치 번역 (:11434 /api/generate)."""
 

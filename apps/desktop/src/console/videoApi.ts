@@ -76,6 +76,40 @@ export async function deleteVideoModel(name: string): Promise<void> {
     { method: "DELETE" });
 }
 
+// 로컬 번역 모델(Qwen) — 런타임(mlx/ollama)은 서버 플랫폼이 결정한다.
+export type TranslateModelInfo = {
+  name: string;
+  label: string;
+  runtime: "mlx" | "ollama";
+  approx_bytes: number;
+  downloaded: boolean;
+  downloading: boolean;
+  progress: number | null;
+  downloadable: boolean;
+};
+
+export type TranslateModelsResponse = {
+  models: TranslateModelInfo[];
+  runtime: "mlx" | "ollama";
+  ollama_installed: boolean;
+  ollama_running: boolean;
+};
+
+export async function listTranslateModels(): Promise<TranslateModelsResponse> {
+  // 구버전 서버 번들에는 /translate-models 라우트가 없다 — 호출부에서 404를 잡아 탭만 숨긴다.
+  return request(`${apiBase()}/api/v1/translate-models`, {});
+}
+
+export async function downloadTranslateModel(name: string): Promise<void> {
+  await request(`${apiBase()}/api/v1/translate-models/${name}/download`,
+    { method: "POST" });
+}
+
+export async function deleteTranslateModel(name: string): Promise<void> {
+  await request(`${apiBase()}/api/v1/translate-models/${name}`,
+    { method: "DELETE" });
+}
+
 export type GpuStatus = {
   supported: boolean;
   gpu_name: string | null;
