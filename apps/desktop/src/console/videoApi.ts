@@ -92,6 +92,14 @@ export type TranslateModelInfo = {
   downloading: boolean;
   progress: number | null;
   downloadable: boolean;
+  // 이 서버의 런타임을 아예 지원하지 않는 티어에만 채워진다(예: "실리콘맥 전용").
+  // null인데 downloaded=false면 그냥 미설치 — 다운로드하면 쓸 수 있다.
+  reason: string | null;
+  mlx_repo: string | null;
+  // MLX 리포 용량(≈RAM). approx_bytes는 이 서버의 런타임 기준값이라, Ollama
+  // 서버에서는 MLX 용량을 알 수 없어 서버가 별도로 싣는다(라이브 자막 패널용).
+  mlx_bytes: number;
+  ollama_tag: string | null;
 };
 
 export type OllamaInstallStatus = {
@@ -114,6 +122,10 @@ export type TranslateModelsResponse = {
 export async function listTranslateModels(): Promise<TranslateModelsResponse> {
   // 구버전 서버 번들에는 /translate-models 라우트가 없다 — 호출부에서 404를 잡아 탭만 숨긴다.
   return request(`${apiBase()}/api/v1/translate-models`, {});
+}
+
+export async function refreshTranslateModels(): Promise<TranslateModelsResponse> {
+  return request(`${apiBase()}/api/v1/translate-models?refresh=1`, {});
 }
 
 // 공식 Ollama 설치 프로그램을 서버 머신에 받아 실행(반자동). 설치는 서버 컴퓨터에서 진행된다.
