@@ -166,3 +166,31 @@ def test_engines_qwen_available_via_ollama(monkeypatch):
     for v in ("qwen", "qwen_lite", "qwen_hifi"):
         assert engines[v]["available"] is True
         assert "MLX" not in engines[v]["label"]
+
+
+# ── catalog 기반 파생 테스트 ──────────────────────────────────────────────────
+def test_qwen_ollama_model_reads_catalog(monkeypatch):
+    from apps.server.domain.video_captions import catalog_fetch as cf
+    from apps.server.domain.video_captions import translate_ollama as to
+
+    monkeypatch.setattr(cf, "cached_entries", lambda *a, **k: [])
+    assert to.qwen_ollama_model("qwen") == "qwen3.5:9b"
+    assert to.qwen_ollama_model("qwen_lite") == "qwen3.5:4b"
+    assert to.qwen_ollama_model("qwen_hifi") == "qwen3.5:9b-q8_0"
+    assert to.qwen_ollama_model("nope") is None
+
+
+def test_qwen_ollama_model_env_override_catalog(monkeypatch):
+    from apps.server.domain.video_captions import translate_ollama as to
+
+    monkeypatch.setenv("YESON_OLLAMA_QWEN_LITE_MODEL", "qwen3.6:4b")
+    assert to.qwen_ollama_model("qwen_lite") == "qwen3.6:4b"
+
+
+def test_qwen_ollama_model_none_for_mlx_only_tier(monkeypatch):
+    from apps.server.domain.video_captions import translate_catalog as tc
+    from apps.server.domain.video_captions import translate_ollama as to
+
+    mlx_only = tc.TranslateModel("qwen_x", "x", "a/b", 10, None, 0)
+    monkeypatch.setattr(tc, "get_catalog", lambda: {"qwen_x": mlx_only})
+    assert to.qwen_ollama_model("qwen_x") is None
