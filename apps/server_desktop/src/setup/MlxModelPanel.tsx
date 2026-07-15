@@ -11,6 +11,7 @@ export function MlxModelPanel(props: {
   selectedModel: string;
   onSelectModel: (id: string) => void;
   port: number;
+  running: boolean;
 }) {
   const [models, setModels] = useState<LiveMlxModel[]>(BUILTIN_MLX_MODELS);
   const [installed, setInstalled] = useState<Record<string, boolean>>({});
@@ -28,14 +29,22 @@ export function MlxModelPanel(props: {
     setInstalled(Object.fromEntries(entries));
   };
 
+  // Tauri 진행률 리스너는 세션당 한 번만 등록한다(포트/running 변경마다 갈아끼우면
+  // 다운로드 도중 이벤트를 놓칠 위험이 있다).
   useEffect(() => {
-    void refresh();
     const unlisten = listen<string>("mlx-download-progress", (e) => setProgress(e.payload));
     return () => {
       void unlisten.then((fn) => fn());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 서버가 뒤늦게 뜨거나(초기 설정 단계에는 항상 다운 상태) 포트가 바뀌면 목록을
+  // 다시 받아온다 — 그렇지 않으면 원격 카탈로그가 이 세션 내내 반영되지 않는다.
+  useEffect(() => {
+    void refresh();
+    // refresh는 매 렌더 새로 만들어지는 클로저라 deps에 넣으면 무한 루프가 된다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.port, props.running]);
 
   const download = async (id: string) => {
     setBusy(id);

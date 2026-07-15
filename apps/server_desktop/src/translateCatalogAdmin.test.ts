@@ -36,4 +36,21 @@ describe("listLiveMlxModels", () => {
       "mlx-community/Qwen3.5-9B-8bit",
     ]);
   });
+
+  it("카탈로그가 전부 Ollama 전용(mlx_repo 없음)이어도 빌트인으로 폴백한다", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      models: [
+        { name: "only_ollama_a", label: "Ollama A", mlx_repo: null, mlx_bytes: 0, ollama_tag: "a:1b" },
+        { name: "only_ollama_b", label: "Ollama B", mlx_repo: null, mlx_bytes: 0, ollama_tag: "b:1b" },
+      ],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    expect(await listLiveMlxModels(8000)).toEqual(BUILTIN_MLX_MODELS);
+  });
+
+  it("200 응답 본문이 JSON이 아니면(파싱 에러) 빌트인으로 폴백한다", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("not json", {
+      status: 200, headers: { "content-type": "application/json" },
+    })));
+    expect(await listLiveMlxModels(8000)).toEqual(BUILTIN_MLX_MODELS);
+  });
 });
