@@ -35,7 +35,7 @@ const PROVIDERS = [
 ] as const;
 const SUMMARY_BACKENDS = ["auto", "claude", "codex"] as const;
 
-export default function ServerConfigPanel() {
+export default function ServerConfigPanel(props: { port: number }) {
   const [meta, setMeta] = useState<ServerConfigMeta>(EMPTY_META);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -250,7 +250,7 @@ export default function ServerConfigPanel() {
       ) : null}
 
       {provider === "apple_mlx_live_translate" ? (
-        <MlxModelPanel selectedModel={mlxModel} onSelectModel={setMlxModel} />
+        <MlxModelPanel selectedModel={mlxModel} onSelectModel={setMlxModel} port={props.port} />
       ) : null}
 
       <Field label="요약 백엔드 (summary backend)">

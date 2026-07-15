@@ -4,17 +4,26 @@
 // 없이 로컬 styles 객체로 복제 — 파일 간 결합을 늘리지 않기 위함).
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
-import { MLX_MODELS, downloadMlxModel, mlxModelStatus } from "./serverConfig";
+import { downloadMlxModel, mlxModelStatus } from "./serverConfig";
+import { BUILTIN_MLX_MODELS, type LiveMlxModel, listLiveMlxModels } from "../translateCatalogAdmin";
 
-export function MlxModelPanel(props: { selectedModel: string; onSelectModel: (id: string) => void }) {
+export function MlxModelPanel(props: {
+  selectedModel: string;
+  onSelectModel: (id: string) => void;
+  port: number;
+}) {
+  const [models, setModels] = useState<LiveMlxModel[]>(BUILTIN_MLX_MODELS);
   const [installed, setInstalled] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
 
   const refresh = async () => {
+    // 목록은 서버 카탈로그(빌트인+원격), 설치 여부는 Tauri — 서버가 없어도 동작한다.
+    const list = await listLiveMlxModels(props.port);
+    setModels(list);
     const entries = await Promise.all(
-      MLX_MODELS.map(async (m) => [m.id, await mlxModelStatus(m.id)] as const),
+      list.map(async (m) => [m.id, await mlxModelStatus(m.id)] as const),
     );
     setInstalled(Object.fromEntries(entries));
   };
@@ -45,16 +54,16 @@ export function MlxModelPanel(props: { selectedModel: string; onSelectModel: (id
   return (
     <div style={styles.wrap}>
       <span style={styles.fieldLabel}>로컬 번역 모델 (MLX — 실리콘맥 전용)</span>
-      {MLX_MODELS.map((m) => (
+      {models.map((m) => (
         <div key={m.id} style={styles.row}>
           <label style={styles.radioLabel}>
             <input
               type="radio"
               name="mlx-model"
-              checked={(props.selectedModel || MLX_MODELS[0].id) === m.id}
+              checked={(props.selectedModel || models[0]?.id) === m.id}
               onChange={() => props.onSelectModel(m.id)}
             />
-            <span>{m.label}</span>
+            <span>{m.label} · 약 {(m.bytes / 1_000_000_000).toFixed(1)}GB</span>
             <span style={installed[m.id] ? styles.chipOn : styles.chipOff}>
               {installed[m.id] ? "설치됨" : "미설치"}
             </span>

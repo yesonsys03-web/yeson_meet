@@ -83,14 +83,6 @@ export async function installFastTranslation(): Promise<string> {
   return invoke<string>("install_fast_translation");
 }
 
-// MLX 온디바이스 번역 모델 목록. apple_mlx_live_translate provider 전용 — 실리콘맥 번들에서만
-// 의미가 있다(다운로드/상태 확인은 Rust 쪽에서 실리콘맥 여부와 무관하게 파일 존재만 본다).
-export const MLX_MODELS = [
-  { id: "mlx-community/Qwen3.5-9B-4bit", label: "Qwen3.5 9B (기본 — 품질 우선, RAM ~5GB)" },
-  { id: "mlx-community/Qwen3.5-4B-4bit", label: "Qwen3.5 4B (저사양 — 지연 절반, RAM ~2.3GB)" },
-  { id: "mlx-community/Qwen3.5-9B-8bit", label: "Qwen3.5 9B 8bit (고품질 — RAM ~10GB, 느림)" },
-] as const;
-
 export async function mlxModelStatus(modelId: string): Promise<boolean> {
   if (!hasTauriRuntime()) return false;
   return invoke<boolean>("mlx_model_status", { modelId });
