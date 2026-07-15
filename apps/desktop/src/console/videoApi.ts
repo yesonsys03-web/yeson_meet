@@ -44,6 +44,10 @@ export type TranslateEngineInfo = {
   value: string;
   label: string;
   available: boolean;
+  // 카탈로그 티어에서만 채워진다(정적 엔진에는 이 키 자체가 없다). 이 서버가
+  // 해당 런타임(mlx/ollama)을 아예 지원하지 않을 때만 값이 온다 — 미설치와는
+  // 다른 상태이므로 optional로 유지한다.
+  reason?: string | null;
 };
 
 export type BurnStyle = {

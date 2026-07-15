@@ -54,11 +54,15 @@ const DEFAULT_ENGINE_OPTIONS: EngineOption[] = [
 ];
 
 // 서버의 gemini(값 없음=기본)를 클라 상태값 ""와 맞추고, 미설치 엔진은 disabled 처리
-function toEngineOptions(engines: TranslateEngineInfo[]): EngineOption[] {
+export function toEngineOptions(engines: TranslateEngineInfo[]): EngineOption[] {
   return engines.map((engine) => {
     const isGemini = engine.value === "gemini";
     let label = `번역: ${engine.label}`;
-    if (!engine.available) {
+    if (engine.reason) {
+      // 이 서버가 런타임 자체를 지원 못하는 티어 — "미설치" 문구는 오히려
+      // 오해를 부른다(설치해도 못 쓴다는 뜻이므로 사유를 그대로 보여준다).
+      label += ` (${engine.reason})`;
+    } else if (!engine.available) {
       label += isGemini ? " (서버에 키 없음)" : " (서버에 미설치)";
     }
     return {
