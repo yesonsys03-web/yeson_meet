@@ -582,7 +582,7 @@ export default function ServerConsole() {
             </div>
           </section>
           <section hidden={activeView !== "config"} style={activeView === "config" ? styles.viewScroll : undefined}>
-            <ServerConfigPanel port={port} running={running} />
+            <ServerConfigPanel port={status?.port ?? port} running={running} />
           </section>
           <section hidden={activeView !== "devices"} style={activeView === "devices" ? styles.viewScroll : undefined}>
             <DevicePanel serverPort={status?.port ?? null} running={running} />
