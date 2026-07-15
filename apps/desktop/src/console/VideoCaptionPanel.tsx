@@ -4,7 +4,7 @@ import {
   burnVideoJob, cancelAllVideoJobs, cancelVideoJob, createYoutubeJob, deleteVideoJob,
   deleteTranslateModel, deleteVideoModel, downloadGpuPack, downloadTranslateModel,
   downloadVideoModel, getGpuStatus, getVideoStorage, installOllama, listTranslateEngines,
-  listTranslateModels, listVideoJobs, listVideoModels, rebuildVideoJob, setGpuEnabled,
+  listTranslateModels, listVideoJobs, listVideoModels, rebuildVideoJob, refreshVideoModels, setGpuEnabled,
   uploadVideoJob, videoDownloadUrl, videoUploadUrl,
 } from "./videoApi";
 import type {
@@ -94,6 +94,7 @@ export function VideoCaptionPanel({ active }: VideoCaptionPanelProps) {
 
 function VideoCaptionInner({ active }: { active: boolean }) {
   const [models, setModels] = useState<VideoModelInfo[]>([]);
+  const [refreshingCatalog, setRefreshingCatalog] = useState(false);
   const [gpu, setGpu] = useState<GpuStatus | null>(null);
   const [jobs, setJobs] = useState<VideoJobSummary[]>([]);
   const [storage, setStorage] = useState<VideoStorageInfo | null>(null);
@@ -167,6 +168,17 @@ function VideoCaptionInner({ active }: { active: boolean }) {
       setGpu(g);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  const refreshCatalog = useCallback(async () => {
+    setRefreshingCatalog(true);
+    try {
+      setModels(await refreshVideoModels());
+    } catch {
+      // 실패해도 기존 목록 유지(원격은 부가 정보)
+    } finally {
+      setRefreshingCatalog(false);
     }
   }, []);
 
@@ -803,6 +815,11 @@ function VideoCaptionInner({ active }: { active: boolean }) {
         <p style={{ margin: 0, fontSize: 13, opacity: 0.75 }}>
           모델은 서버에 저장됩니다. 큰 모델일수록 정확하지만 전사가 느려집니다.
         </p>
+        <button type="button" style={{ ...consoleStyles.mutedAction, alignSelf: "flex-start" }}
+          disabled={refreshingCatalog}
+          onClick={() => void refreshCatalog()}>
+          {refreshingCatalog ? "새로고침 중…" : "카탈로그 새로고침"}
+        </button>
         {models.map((m) => (
           <div key={m.name}
             style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 12px",

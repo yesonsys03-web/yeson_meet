@@ -21,7 +21,7 @@ async def test_list_models(client, monkeypatch):
     resp = await client.get("/api/v1/video-models")
     assert resp.status_code == 200
     names = [m["name"] for m in resp.json()["models"]]
-    assert names == ["apple", "tiny", "base", "small", "medium", "large-v3"]
+    assert names == ["apple", "tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"]
 
 
 async def test_apple_model_shown_but_unavailable_on_non_silicon(client, monkeypatch):
@@ -134,3 +134,33 @@ async def test_gpu_enable_disable_roundtrip(client):
     resp = await client.post("/api/v1/video-models/gpu/enable",
                              json={"enabled": False})
     assert resp.json()["enabled"] is False
+
+
+async def test_refresh_forces_remote_fetch(client, monkeypatch):
+    from apps.server.api.v1 import video_models as api_vm
+    from apps.server.domain.video_captions import remote_catalog as rc
+    monkeypatch.setattr(api_vm, "apple_stt_available", lambda: False)
+    # get_catalog()가 목록 조립 시 항상 한 번 더(기본 force=False) 호출하므로,
+    # 마지막 호출값을 덮어쓰지 않고 True를 한 번이라도 봤는지만 래치한다.
+    seen = {"force": None}
+    def _fake_get_remote_models(force=False):
+        if force:
+            seen["force"] = True
+        return []
+    monkeypatch.setattr(rc, "get_remote_models", _fake_get_remote_models)
+    resp = await client.get("/api/v1/video-models?refresh=1")
+    assert resp.status_code == 200
+    assert seen["force"] is True
+
+
+async def test_list_without_refresh_does_not_force(client, monkeypatch):
+    from apps.server.api.v1 import video_models as api_vm
+    from apps.server.domain.video_captions import remote_catalog as rc
+    monkeypatch.setattr(api_vm, "apple_stt_available", lambda: False)
+    seen = {"force": "unset"}
+    monkeypatch.setattr(rc, "get_remote_models",
+                        lambda force=False: seen.__setitem__("force", force) or [])
+    resp = await client.get("/api/v1/video-models")
+    assert resp.status_code == 200
+    # list_models 내부(get_catalog)에서만 호출되므로 force=True는 오지 않는다
+    assert seen["force"] in (False, "unset")

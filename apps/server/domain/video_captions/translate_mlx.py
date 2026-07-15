@@ -12,19 +12,14 @@ QWEN_MLX_MODELS는 serverConfig.ts의 MLX_MODELS와 동일하게 유지해야 �
 """
 from __future__ import annotations
 
-import logging
-
 from apps.server.ai.apple_native import _is_apple_silicon_mac
 from apps.server.ai.mlx_live_translate import (
     MlxWorkerClient,
     MlxWorkerUnavailable,
-    guard_mlx_ko,
     mlx_model_installed,
 )
-from .translate import TranslationError, build_translation_prompt
+from .translate import TranslationError, apply_ko_guard, build_translation_prompt
 from .translate_cli import _extract_json_array
-
-logger = logging.getLogger("yeson.video.translate_mlx")
 
 # provider 값 → MLX model id. serverConfig.ts MLX_MODELS와 동기화.
 QWEN_MLX_MODELS: dict[str, str] = {
@@ -78,16 +73,7 @@ class QwenMlxTranslator:
         out = _extract_json_array(raw, len(texts))
         if out is None:
             raise TranslationError(f"MLX 번역 출력 파싱 실패: {raw[:200]!r}")
-        # 환각 가드: 불합격 줄은 원문(EN) 유지(검수 단계에서 눈에 띄게).
-        guarded: list[str] = []
-        for src, ko in zip(texts, out):
-            reason = guard_mlx_ko(src, ko)
-            if reason is not None:
-                logger.info("mlx_video_guard_reject reason=%s src=%r", reason, src[:60])
-                guarded.append(src)
-            else:
-                guarded.append(ko)
-        return guarded
+        return apply_ko_guard(texts, out, marker="mlx_video_guard_reject")
 
     async def aclose(self) -> None:
         client, self._client = self._client, None
