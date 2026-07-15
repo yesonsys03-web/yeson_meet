@@ -689,8 +689,35 @@ def test_qwen_ollama_model_none_for_mlx_only_tier(monkeypatch):
 
 - [ ] **Step 2: 실패 확인**
 
-Run: `uv run pytest apps/server/tests/test_video_translate_ollama.py -q -k qwen_ollama_model`
-Expected: FAIL — `test_qwen_ollama_model_none_for_mlx_only_tier`가 `_QWEN_OLLAMA_DEFAULTS`를 보므로 `None` 대신 KeyError 경로/기존 값 반환
+Run: `uv run pytest apps/server/tests/test_video_translate_ollama.py -q -k "uses_catalog_tag_not_hardcoded or serves_remote_added_tier"`
+Expected: FAIL — 2개 실패. 구 구현은 카탈로그를 아예 조회하지 않으므로 오버라이드된 태그(`qwen9.9:catalog-only`) 대신 하드코딩 `qwen3.5:9b`를 반환하고, 원격 추가 티어(`qwen_next`)에는 `None`을 반환한다.
+
+> **주의 — 위 Step 1의 세 테스트만으로는 RED가 성립하지 않는다.** 구 구현의 `_QWEN_OLLAMA_DEFAULTS.get(provider)`는 미지 provider에 KeyError가 아니라 **`None`을 반환**하고, 기본 태그·env 오버라이드 동작도 신 구현과 값이 같다. 즉 세 테스트는 구·신 양쪽에서 통과해 리팩터링을 검증하지 못한다(하드코딩으로 회귀해도 못 잡는다). **구·신을 가르는 테스트 2개를 반드시 함께 추가한다** — 카탈로그가 빌트인과 *다른* 태그를 줄 때 그 값이 나오는지, 그리고 원격이 추가한 새 티어의 태그가 나오는지.
+
+```python
+def test_qwen_ollama_model_uses_catalog_tag_not_hardcoded(monkeypatch):
+    """카탈로그가 태그의 단일 출처임을 증명 — 하드코딩 상수로 회귀하면 실패한다."""
+    from apps.server.domain.video_captions import translate_catalog as tc
+    from apps.server.domain.video_captions import translate_ollama as to
+
+    overridden = tc.TranslateModel(
+        "qwen", "Qwen 9B (로컬)", "mlx-community/Qwen3.5-9B-4bit", 10,
+        "qwen9.9:catalog-only", 20)
+    monkeypatch.setattr(tc, "get_catalog", lambda: {"qwen": overridden})
+    monkeypatch.delenv("YESON_OLLAMA_QWEN_MODEL", raising=False)
+    assert to.qwen_ollama_model("qwen") == "qwen9.9:catalog-only"
+
+
+def test_qwen_ollama_model_serves_remote_added_tier(monkeypatch):
+    """원격 카탈로그가 추가한 새 티어도 태그를 돌려준다(이 기능의 존재 이유)."""
+    from apps.server.domain.video_captions import translate_catalog as tc
+    from apps.server.domain.video_captions import translate_ollama as to
+
+    extra = tc.TranslateModel("qwen_next", "Qwen 12B (로컬)", None, 0, "qwen3.6:12b", 30)
+    monkeypatch.setattr(tc, "get_catalog", lambda: {"qwen_next": extra})
+    monkeypatch.delenv("YESON_OLLAMA_QWEN_NEXT_MODEL", raising=False)
+    assert to.qwen_ollama_model("qwen_next") == "qwen3.6:12b"
+```
 
 - [ ] **Step 3: 구현 — 상수 제거 후 카탈로그 조회**
 
