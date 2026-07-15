@@ -1,4 +1,4 @@
-"""原远程カタログ fetch/캐시 코어 — 스키마 비의존.
+"""원격 카탈로그 fetch/캐시 코어 — 스키마 비의존.
 
 whisper(remote_catalog.py)와 번역(translate_catalog.py)이 공유한다. 스키마는
 parse_fn/dump_fn 주입으로 분리하고, 이 모듈은 네트워크·TTL 캐시·https 가드·
