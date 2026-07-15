@@ -12,7 +12,8 @@
 
 ## Global Constraints
 
-- **최소 패치 원칙** — 요청한 파일만, 파일 전체 재작성 금지, 임포트 구조 임의 변경 금지 (`CLAUDE.md`).
+- **최소 패치 원칙** — 요청한 파일만, 임포트 구조 임의 변경 금지 (`CLAUDE.md`).
+- **파일 전체 재작성은 금지하되, 다음 두 파일은 명시적 예외다** — `remote_catalog.py`(Task 1)와 `translate_models.py`(Task 5). 둘 다 로직의 대부분이 이동/치환되어 부분 편집이 오히려 더 큰 diff와 어수선한 중간 상태를 낳는다. 이 경우엔 재작성이 곧 최소 패치다. **그 외 모든 파일은 부분 편집만** 한다.
 - **앵커 경계 준수** — `translate_mlx.py`는 `ANCHOR: TRANSLATE_MLX_START`~`_END`, `translate_ollama.py`는 `ANCHOR: TRANSLATE_OLLAMA_START`~`_END`, `MlxModelPanel.tsx`는 `ANCHOR: MLX_MODEL_PANEL_START`~`_END` 안에서만 편집.
 - **회귀 기준선** — 빌트인 3종의 값이 그대로이므로, 원격 JSON이 빈 초기 상태에서 사용자 눈에 보이는 변화가 없어야 한다.
 - **원격 카탈로그는 예외를 절대 전파하지 않는다** — 원격 실패 → 캐시 → 빌트인. 잘못된 항목은 경고 로그 후 스킵(다른 항목은 생존).
