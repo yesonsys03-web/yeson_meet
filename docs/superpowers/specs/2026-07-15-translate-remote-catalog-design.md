@@ -200,7 +200,7 @@ whisper와 동일한 계약:
 - 신규 `test_api_translate_models.py` — `?refresh` 동작, 404(미지 모델), 409(Ollama 미기동).
 - **`available` / `reason` 분리 회귀** — 미설치 티어는 `available: false` + `reason: None`(다운로드 가능), 지원 런타임이 없는 티어만 `reason` 채워짐. 이 둘이 섞이면 정상 티어의 다운로드 버튼이 죽는다.
 - **미지원 런타임 다운로드 거부** — MLX 전용 티어를 `runtime()=="ollama"`로 모킹하고 `POST /{name}/download` → 409, `pull_model`이 **호출되지 않음**을 단언(`{"model": null}` 요청 방지).
-- **`mlx_repo=None` 가드** — `_is_apple_silicon_mac()`을 True로 모킹하고 Ollama 전용 티어에 대해 `list_translate_engines`·`list_models`가 터지지 않는지(실리콘맥 크래시 회귀).
+- **`mlx_repo=None` 가드** — `_is_apple_silicon_mac()`을 True로 모킹하고 Ollama 전용 티어에 대해 `list_models`(`is_installed`를 직접 호출하는 경로)가 터지지 않는지 확인한다(실리콘맥 크래시 회귀 — 여기선 실제로 살아있는 방어선). `list_translate_engines`에도 같은 모양의 가드가 `_qwen_available` 내부에 있지만, `reason`이 이미 있으면 `_qwen_available` 자체를 호출하지 않으므로 그 가드는 도달 불가능한 죽은 방어다 — 진짜 방어선은 `create_translator`에 있고, 그건 `test_create_translator_no_crash_for_ollama_only_tier_on_silicon`이 별도로 커버한다.
 - 기존 `test_video_translate_*.py` / `test_api_video_jobs.py` — 상수 몽키패치가 있으면 카탈로그 패치로 전환.
 - 신규 `translateCatalogAdmin.test.ts` — 서버 다운 시 빌트인 폴백.
 

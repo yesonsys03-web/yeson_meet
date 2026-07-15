@@ -384,9 +384,13 @@ def test_engines_reason_set_for_unsupported_runtime(monkeypatch):
     assert entry["available"] is False
 
 
-def test_engines_no_crash_for_ollama_only_tier_on_silicon(monkeypatch):
-    # mlx_repo=None을 qwen_mlx_available에 넘기면 mlx_model_installed가
-    # None.replace()로 터진다 — 실리콘맥에서만 재현되는 크래시.
+def test_engines_reason_set_for_ollama_only_tier_on_silicon(monkeypatch):
+    # list_translate_engines의 available 삼항식은 reason이 있으면
+    # _qwen_available을 아예 호출하지 않는다 — 실리콘맥에서 Ollama 전용 티어를
+    # 만나도 mlx_repo=None 가드(_qwen_available 내부)까지 도달하지 않는다.
+    # 이 테스트는 크래시 회피가 아니라 reason이 정확히 채워지는지만 검증한다.
+    # 그 가드가 실제로 방어하는 크래시 경로는 create_translator에 있고,
+    # 그건 test_create_translator_no_crash_for_ollama_only_tier_on_silicon이 커버한다.
     from apps.server.domain.video_captions import translate_catalog as tc
     from apps.server.domain.video_captions import translate_cli as tcli
 
