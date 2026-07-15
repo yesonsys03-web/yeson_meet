@@ -94,17 +94,25 @@ def resolve_cli(name: str) -> str | None:
 def list_translate_engines() -> list[dict]:
     """클라 드롭다운용 — 서버에서 사용 가능한 번역 엔진과 설치 여부.
 
-    qwen 계열은 실리콘맥(MLX) 또는 그 외 플랫폼(Ollama) 중 설치된 런타임이 있으면
-    활성. 라벨에서 MLX를 노출하지 않는다 — 런타임 선택은 create_translator가 자동.
+    qwen 계열 티어는 translate_catalog가 단일 출처다(빌트인 + 원격 오버레이).
+    라벨에서 MLX를 노출하지 않는다 — 런타임 선택은 create_translator가 자동.
+
+    available: 지금 실제로 선택 가능한가(설치 여부).
+    reason: 이 서버의 런타임을 아예 지원하지 않는 티어에만 채워진다. reason이
+      None인데 available=False면 그냥 미설치이므로 다운로드하면 쓸 수 있다.
     """
-    from .translate_mlx import QWEN_MLX_MODELS, qwen_mlx_available
+    from .translate_catalog import get_catalog, unsupported_reason
+    from .translate_mlx import qwen_mlx_available
     from .translate_ollama import qwen_ollama_available, qwen_ollama_model
 
-    def _qwen_available(provider: str) -> bool:
-        return (qwen_mlx_available(QWEN_MLX_MODELS[provider])
-                or qwen_ollama_available(qwen_ollama_model(provider)))
+    def _qwen_available(entry) -> bool:
+        # mlx_repo가 None이면 qwen_mlx_available에 넘기지 않는다 — 실리콘맥에서
+        # mlx_model_installed(None)이 None.replace()로 터진다.
+        if entry.mlx_repo and qwen_mlx_available(entry.mlx_repo):
+            return True
+        return qwen_ollama_available(qwen_ollama_model(entry.name))
 
-    return [
+    engines = [
         {"value": "gemini", "label": "Gemini",
          "available": bool(os.environ.get("GEMINI_API_KEY"))},
         {"value": "claude", "label": "Claude 구독",
@@ -119,13 +127,16 @@ def list_translate_engines() -> list[dict]:
          "available": apple_mt_available()},
         {"value": "apple_hifi", "label": "Apple 온디바이스 (고품질·느림)",
          "available": apple_mt_available()},
-        {"value": "qwen", "label": "Qwen 9B (로컬)",
-         "available": _qwen_available("qwen")},
-        {"value": "qwen_lite", "label": "Qwen 4B (로컬·빠름)",
-         "available": _qwen_available("qwen_lite")},
-        {"value": "qwen_hifi", "label": "Qwen 9B (로컬·고품질 8bit)",
-         "available": _qwen_available("qwen_hifi")},
     ]
+    for entry in get_catalog().values():
+        reason = unsupported_reason(entry)
+        engines.append({
+            "value": entry.name,
+            "label": entry.label,
+            "available": False if reason else _qwen_available(entry),
+            "reason": reason,
+        })
+    return engines
 
 
 @dataclass(frozen=True)
@@ -273,7 +284,6 @@ def create_translator(
     """
     provider = (provider or "").strip().lower() or os.environ.get(PROVIDER_ENV, "gemini").strip().lower()
     timeout = _timeout_from_env()
-    from .translate_mlx import QWEN_MLX_MODELS
 
     if provider in ("", "gemini"):
         return GeminiFlashTranslator()
@@ -286,7 +296,10 @@ def create_translator(
         from .translate_apple import AppleTranslator
         return AppleTranslator(strategy="high")
 
-    if provider in QWEN_MLX_MODELS:
+    from .translate_catalog import get_catalog
+
+    entry = get_catalog().get(provider)
+    if entry is not None:
         # 런타임 자동 선택: 실리콘맥 + MLX 모델 설치 → MLX(더 빠름). 그 외(윈도·인텔맥)
         # 또는 MLX 미설치 → Ollama. 둘 다 없으면 설치 안내와 함께 실패.
         from .translate_mlx import QwenMlxTranslator, qwen_mlx_available
@@ -296,8 +309,8 @@ def create_translator(
             qwen_ollama_model,
         )
 
-        if qwen_mlx_available(QWEN_MLX_MODELS[provider]):
-            return QwenMlxTranslator(QWEN_MLX_MODELS[provider])
+        if entry.mlx_repo and qwen_mlx_available(entry.mlx_repo):
+            return QwenMlxTranslator(entry.mlx_repo)
         ollama_tag = qwen_ollama_model(provider)
         if qwen_ollama_available(ollama_tag):
             return OllamaTranslator(ollama_tag)
