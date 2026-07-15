@@ -1268,7 +1268,7 @@ Task 4·5로 모든 소비자가 카탈로그를 보게 됐으므로 상수가 �
 
 **Files:**
 - Modify: `apps/server/domain/video_captions/translate_mlx.py:12, 24-28` (앵커 내부)
-- Modify: `apps/server_desktop/src/setup/serverConfig.ts:87` (동기화 주석)
+- (변경 없음) `apps/server_desktop/src/setup/serverConfig.ts` — 동기화 문구가 애초에 없음(실행 중 확인)
 
 **Interfaces:**
 - Produces: `translate_mlx`는 `qwen_mlx_available(model_id)`·`QwenMlxTranslator`만 노출(`QWEN_MLX_MODELS` 삭제)
@@ -1293,15 +1293,18 @@ docstring 12행 `QWEN_MLX_MODELS는 serverConfig.ts의 MLX_MODELS와 동일하�
 
 docstring 8-10행의 `티어 값(qwen/qwen_lite/qwen_hifi)은 공유하고` → `티어 값은 translate_catalog가 정의하고`로 갱신한다.
 
-- [ ] **Step 3: `serverConfig.ts` 동기화 주석 정정**
+- [ ] **Step 3: `serverConfig.ts` — 변경 없음 (확인만)**
 
-`apps/server_desktop/src/setup/serverConfig.ts:86-87`의 주석에서 서버 상수와의 수동 동기화 언급을 제거한다. 87행을 다음으로 교체:
+> **정정(실행 중 발견)**: 이 계획은 원래 `serverConfig.ts:86-87`의 주석에서 "서버 상수와의 수동 동기화 언급을 제거"하라고 지시했으나, **그 문구는 그 파일에 애초에 없다.** 수동 동기화 주장은 `translate_mlx.py` 쪽에만 있었다(docstring 11행 + 상수 위 주석) — 둘 다 Step 2에서 제거된다. `serverConfig.ts`의 주석은 이미 정확하므로 **건드리지 않는다.**
+>
+> (`MLX_MODELS` 상수 자체는 Task 9에서 `translateCatalogAdmin.ts`의 `BUILTIN_MLX_MODELS`로 이관된다. 그 예고를 코드 주석으로 남기지 않는다 — 코드가 계획의 태스크 번호를 참조하면 계획이 사라진 뒤 무의미해지고, 어차피 Task 9이 이 상수를 통째로 지운다.)
 
-```ts
-// MLX 온디바이스 번역 모델 목록. apple_mlx_live_translate provider 전용 — 실리콘맥 번들에서만
-// 의미가 있다(다운로드/상태 확인은 Rust 쪽에서 실리콘맥 여부와 무관하게 파일 존재만 본다).
-// NOTE: 이 상수는 Task 9에서 translateCatalogAdmin.ts의 BUILTIN_MLX_MODELS로 이관된다.
+확인만 한다:
+
+```bash
+grep -n "동기화" apps/server_desktop/src/setup/serverConfig.ts
 ```
+Expected: 매치 없음.
 
 - [ ] **Step 4: 서버 테스트 전체 통과 확인**
 
