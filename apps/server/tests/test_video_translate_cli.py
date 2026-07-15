@@ -342,3 +342,97 @@ def test_create_translator_qwen_hifi(monkeypatch):
     translator = tc.create_translator(provider="qwen_hifi")
     assert isinstance(translator, QwenMlxTranslator)
     assert translator._model_id == "mlx-community/Qwen3.5-9B-8bit"
+
+
+def test_engines_include_remote_tier(monkeypatch):
+    from apps.server.domain.video_captions import translate_catalog as tc
+    from apps.server.domain.video_captions import translate_cli as tcli
+
+    extra = tc.TranslateModel("qwen_next", "Qwen 12B (로컬)", "a/b", 10, "x:12b", 10)
+    monkeypatch.setattr(tc, "get_catalog", lambda: {**tc.BUILTIN, "qwen_next": extra})
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: False)
+    values = [e["value"] for e in tcli.list_translate_engines()]
+    assert "qwen_next" in values
+    assert values.index("gemini") == 0  # 정적 엔진 순서 유지
+
+
+def test_engines_reason_none_for_supported_but_uninstalled(monkeypatch):
+    from apps.server.domain.video_captions import translate_catalog as tc
+    from apps.server.domain.video_captions import translate_cli as tcli
+
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: False)
+    monkeypatch.setattr(
+        "apps.server.domain.video_captions.translate_ollama.qwen_ollama_available",
+        lambda tag: False)
+    monkeypatch.setattr(
+        "apps.server.domain.video_captions.translate_mlx.qwen_mlx_available",
+        lambda repo: False)
+    qwen = next(e for e in tcli.list_translate_engines() if e["value"] == "qwen")
+    assert qwen["available"] is False   # 미설치
+    assert qwen["reason"] is None       # 그러나 다운로드하면 쓸 수 있다
+
+
+def test_engines_reason_set_for_unsupported_runtime(monkeypatch):
+    from apps.server.domain.video_captions import translate_catalog as tc
+    from apps.server.domain.video_captions import translate_cli as tcli
+
+    mlx_only = tc.TranslateModel("qwen_x", "MLX 전용", "a/b", 10, None, 0)
+    monkeypatch.setattr(tc, "get_catalog", lambda: {"qwen_x": mlx_only})
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: False)  # 윈도·인텔맥
+    entry = next(e for e in tcli.list_translate_engines() if e["value"] == "qwen_x")
+    assert entry["reason"] == "실리콘맥 전용"
+    assert entry["available"] is False
+
+
+def test_engines_reason_set_for_ollama_only_tier_on_silicon(monkeypatch):
+    # list_translate_engines의 available 삼항식은 reason이 있으면
+    # _qwen_available을 아예 호출하지 않는다 — 실리콘맥에서 Ollama 전용 티어를
+    # 만나도 mlx_repo=None 가드(_qwen_available 내부)까지 도달하지 않는다.
+    # 이 테스트는 크래시 회피가 아니라 reason이 정확히 채워지는지만 검증한다.
+    # 그 가드가 실제로 방어하는 크래시 경로는 create_translator에 있고,
+    # 그건 test_create_translator_no_crash_for_ollama_only_tier_on_silicon이 커버한다.
+    from apps.server.domain.video_captions import translate_catalog as tc
+    from apps.server.domain.video_captions import translate_cli as tcli
+
+    ollama_only = tc.TranslateModel("qwen_y", "Ollama 전용", None, 0, "y:1b", 10)
+    monkeypatch.setattr(tc, "get_catalog", lambda: {"qwen_y": ollama_only})
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: True)
+    entry = next(e for e in tcli.list_translate_engines() if e["value"] == "qwen_y")
+    assert entry["reason"] == "Ollama 전용"
+
+
+def test_create_translator_routes_remote_tier_to_ollama(monkeypatch):
+    from apps.server.domain.video_captions import translate_catalog as tc
+    from apps.server.domain.video_captions import translate_cli as tcli
+    from apps.server.domain.video_captions.translate_ollama import OllamaTranslator
+
+    extra = tc.TranslateModel("qwen_next", "Qwen 12B", "a/b", 10, "x:12b", 10)
+    monkeypatch.setattr(tc, "get_catalog", lambda: {"qwen_next": extra})
+    monkeypatch.setattr(
+        "apps.server.domain.video_captions.translate_mlx.qwen_mlx_available",
+        lambda repo: False)
+    monkeypatch.setattr(
+        "apps.server.domain.video_captions.translate_ollama.qwen_ollama_available",
+        lambda tag: True)
+    t = tcli.create_translator("qwen_next")
+    assert isinstance(t, OllamaTranslator)
+
+
+def test_create_translator_no_crash_for_ollama_only_tier_on_silicon(monkeypatch):
+    # create_translator에는 list_translate_engines와 달리 reason 게이트가 없다 —
+    # 실리콘맥에서 mlx_repo=None인 티어를 고르면 가드가 없을 때 qwen_mlx_available(None)
+    # → mlx_model_installed(None)이 None.replace()로 터진다. 이 크래시는 위의
+    # engines 테스트가 잡지 못한다(reason이 _qwen_available 호출을 단락시키므로).
+    from apps.server.domain.video_captions import translate_catalog as tcat
+    from apps.server.domain.video_captions import translate_cli as tcli
+    from apps.server.domain.video_captions import translate_mlx as tm
+    from apps.server.domain.video_captions.translate_ollama import OllamaTranslator
+
+    ollama_only = tcat.TranslateModel("qwen_y", "Ollama 전용", None, 0, "y:1b", 10)
+    monkeypatch.setattr(tcat, "get_catalog", lambda: {"qwen_y": ollama_only})
+    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: True)  # 실리콘맥
+    monkeypatch.setattr(
+        "apps.server.domain.video_captions.translate_ollama.qwen_ollama_available",
+        lambda tag: True)
+    t = tcli.create_translator("qwen_y")
+    assert isinstance(t, OllamaTranslator)

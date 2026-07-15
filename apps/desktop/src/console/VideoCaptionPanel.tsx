@@ -4,7 +4,8 @@ import {
   burnVideoJob, cancelAllVideoJobs, cancelVideoJob, createYoutubeJob, deleteVideoJob,
   deleteTranslateModel, deleteVideoModel, downloadGpuPack, downloadTranslateModel,
   downloadVideoModel, getGpuStatus, getVideoStorage, installOllama, listTranslateEngines,
-  listTranslateModels, listVideoJobs, listVideoModels, rebuildVideoJob, refreshVideoModels, setGpuEnabled,
+  listTranslateModels, listVideoJobs, listVideoModels, rebuildVideoJob, refreshTranslateModels,
+  refreshVideoModels, setGpuEnabled,
   uploadVideoJob, videoDownloadUrl, videoUploadUrl,
 } from "./videoApi";
 import type {
@@ -53,11 +54,15 @@ const DEFAULT_ENGINE_OPTIONS: EngineOption[] = [
 ];
 
 // 서버의 gemini(값 없음=기본)를 클라 상태값 ""와 맞추고, 미설치 엔진은 disabled 처리
-function toEngineOptions(engines: TranslateEngineInfo[]): EngineOption[] {
+export function toEngineOptions(engines: TranslateEngineInfo[]): EngineOption[] {
   return engines.map((engine) => {
     const isGemini = engine.value === "gemini";
     let label = `번역: ${engine.label}`;
-    if (!engine.available) {
+    if (engine.reason) {
+      // 이 서버가 런타임 자체를 지원 못하는 티어 — "미설치" 문구는 오히려
+      // 오해를 부른다(설치해도 못 쓴다는 뜻이므로 사유를 그대로 보여준다).
+      label += ` (${engine.reason})`;
+    } else if (!engine.available) {
       label += isGemini ? " (서버에 키 없음)" : " (서버에 미설치)";
     }
     return {
@@ -174,13 +179,19 @@ function VideoCaptionInner({ active }: { active: boolean }) {
   const refreshCatalog = useCallback(async () => {
     setRefreshingCatalog(true);
     try {
-      setModels(await refreshVideoModels());
+      if (modelTab === "translate" && translateMeta !== null) {
+        const tm = await refreshTranslateModels();
+        setTranslateMeta(tm);
+        setTranslateModels(tm.models);
+      } else {
+        setModels(await refreshVideoModels());
+      }
     } catch {
       // 실패해도 기존 목록 유지(원격은 부가 정보)
     } finally {
       setRefreshingCatalog(false);
     }
-  }, []);
+  }, [modelTab, translateMeta]);
 
   // 선택된 번역 엔진이 서버에 없으면(미설치) Gemini("")로 폴백 — 기본값이
   // claude라서 claude CLI 없는 서버에서도 업로드가 막히지 않게 한다.
@@ -950,6 +961,11 @@ function VideoCaptionInner({ active }: { active: boolean }) {
               ? "실리콘맥 로컬 번역 모델(MLX)입니다. 서버에 저장되며, 받은 뒤 번역 엔진에서 선택하세요."
               : "Ollama 로컬 번역 모델입니다. 큰 모델일수록 정확하지만 번역이 느립니다."}
           </p>
+          <button type="button" style={{ ...consoleStyles.mutedAction, alignSelf: "flex-start" }}
+            disabled={refreshingCatalog}
+            onClick={() => void refreshCatalog()}>
+            {refreshingCatalog ? "새로고침 중…" : "카탈로그 새로고침"}
+          </button>
           {translateModels.map((m) => (
             <div key={m.name}
               style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 12px",
@@ -960,7 +976,9 @@ function VideoCaptionInner({ active }: { active: boolean }) {
                   {formatBytes(m.approx_bytes)} · {m.runtime === "mlx" ? "MLX" : "Ollama"}
                 </span>
               </div>
-              {m.downloading ? (
+              {m.reason ? (
+                <span style={{ fontSize: 13, opacity: 0.7 }}>{m.reason}</span>
+              ) : m.downloading ? (
                 <span style={{ fontSize: 13 }}>다운로드 중… {m.progress ?? 0}%</span>
               ) : m.downloaded ? (
                 <>

@@ -9,8 +9,10 @@ from __future__ import annotations
 import threading
 
 from fastapi import APIRouter, HTTPException, status
+from starlette.concurrency import run_in_threadpool
 
 from apps.server.domain.video_captions import ollama_install as oinst
+from apps.server.domain.video_captions import translate_catalog as tcat
 from apps.server.domain.video_captions import translate_models as tmods
 
 router = APIRouter(tags=["translate-models"], prefix="/translate-models")
@@ -38,14 +40,25 @@ async def install_ollama() -> dict:
 
 
 @router.get("")
-async def list_translate_models() -> dict:
+async def list_translate_models(refresh: bool = False) -> dict:
+    # 원격 카탈로그 갱신은 블로킹 requests.get이므로 스레드풀로 오프로드(루프 정지 방지).
+    # force=False면 TTL 캐시가 신선할 때 네트워크를 타지 않는다(탭 열 때 갱신).
+    await run_in_threadpool(tcat.get_remote_models, refresh)
     return tmods.list_models()
 
 
 @router.post("/{name}/download", status_code=status.HTTP_202_ACCEPTED)
 async def download_translate_model(name: str) -> dict:
-    if name not in tmods._TIER_BY_NAME:
+    catalog = tcat.get_catalog()
+    if name not in catalog:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown model")
+    # 이 서버의 런타임을 지원하지 않는 티어는 거부 — 무인증 API라 UI 비활성에만
+    # 의존할 수 없다. 통과시키면 tag=None이 pull_model까지 흘러간다.
+    reason = tcat.unsupported_reason(catalog[name])
+    if reason:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"모델 '{name}'은(는) 이 서버에서 사용할 수 없습니다({reason}).")
     if tmods.is_installed(name):
         return {"status": "already_downloaded"}
     if tmods._downloading.get(name):
@@ -61,9 +74,9 @@ async def download_translate_model(name: str) -> dict:
 
 @router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_translate_model(name: str) -> None:
-    if name not in tmods._TIER_BY_NAME:
+    if name not in tcat.get_catalog():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown model")
     try:
-        tmods.delete_model(name)
+        tmods.delete_model(name)   # 미지원 런타임·다운로드 중이면 RuntimeError
     except RuntimeError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

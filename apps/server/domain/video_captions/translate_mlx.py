@@ -5,10 +5,11 @@
 build_translation_prompt(글로서리+의성어+간결 자막 지시)를 raw 프롬프트로 보내
 JSON 배열 KO를 받는다. 서브프로세스 격리(크래시·메모리)로 라이브와 동일 아키텍처.
 실리콘맥 전용 백엔드 — mlx-lm/모델은 워커 안에서만 로드된다. 그 외 플랫폼(윈도·
-인텔맥)의 로컬 Qwen은 translate_ollama가 담당하며, 티어 값(qwen/qwen_lite/
-qwen_hifi)은 공유하고 백엔드 선택은 translate_cli.create_translator가 한다.
+인텔맥)의 로컬 Qwen은 translate_ollama가 담당하며, 티어 값은 translate_catalog가
+정의하고 백엔드 선택은 translate_cli.create_translator가 한다.
 
-QWEN_MLX_MODELS는 serverConfig.ts의 MLX_MODELS와 동일하게 유지해야 한다.
+티어 정의(MLX 리포 id)는 translate_catalog가 단일 출처다 — 이 모듈은 리포 id를
+받아 번역만 수행한다.
 """
 from __future__ import annotations
 
@@ -20,13 +21,6 @@ from apps.server.ai.mlx_live_translate import (
 )
 from .translate import TranslationError, apply_ko_guard, build_translation_prompt
 from .translate_cli import _extract_json_array
-
-# provider 값 → MLX model id. serverConfig.ts MLX_MODELS와 동기화.
-QWEN_MLX_MODELS: dict[str, str] = {
-    "qwen": "mlx-community/Qwen3.5-9B-4bit",
-    "qwen_lite": "mlx-community/Qwen3.5-4B-4bit",
-    "qwen_hifi": "mlx-community/Qwen3.5-9B-8bit",
-}
 
 DEFAULT_BATCH_TIMEOUT = 300.0
 

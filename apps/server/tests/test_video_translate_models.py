@@ -5,6 +5,7 @@ import pytest
 
 from apps.server.api.v1 import translate_models as router
 from apps.server.domain.video_captions import ollama_install as oi
+from apps.server.domain.video_captions import translate_catalog as tc
 from apps.server.domain.video_captions import translate_models as tm
 from apps.server.domain.video_captions import translate_ollama as to
 
@@ -46,18 +47,18 @@ class FakeResp:
 
 # ── runtime() ───────────────────────────────────────────────────────────────
 def test_runtime_silicon(monkeypatch):
-    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: True)
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: True)
     assert tm.runtime() == "mlx"
 
 
 def test_runtime_other(monkeypatch):
-    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: False)
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: False)
     assert tm.runtime() == "ollama"
 
 
 # ── list_models ─────────────────────────────────────────────────────────────
 def test_list_models_ollama(monkeypatch):
-    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: False)
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: False)
     monkeypatch.setattr(to, "ollama_running", lambda: True)
     monkeypatch.setattr(to, "ollama_installed", lambda: True)
     monkeypatch.setattr(to, "qwen_ollama_available", lambda tag: tag == "qwen3.5:9b")
@@ -73,7 +74,7 @@ def test_list_models_ollama(monkeypatch):
 
 
 def test_list_models_ollama_down_blocks_download(monkeypatch):
-    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: False)
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: False)
     monkeypatch.setattr(to, "ollama_running", lambda: False)
     monkeypatch.setattr(to, "ollama_installed", lambda: False)
     monkeypatch.setattr(to, "qwen_ollama_available", lambda tag: False)
@@ -83,7 +84,7 @@ def test_list_models_ollama_down_blocks_download(monkeypatch):
 
 
 def test_list_models_mlx(monkeypatch):
-    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: True)
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: True)
     monkeypatch.setattr(tm, "mlx_model_installed", lambda repo: "9B-4bit" in repo)
     out = tm.list_models()
     assert out["runtime"] == "mlx"
@@ -95,7 +96,7 @@ def test_list_models_mlx(monkeypatch):
 
 # ── download_model ──────────────────────────────────────────────────────────
 def test_download_ollama_calls_pull(monkeypatch):
-    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: False)
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: False)
     called = {}
     monkeypatch.setattr(to, "qwen_ollama_model", lambda name: "qwen3.5:9b")
     monkeypatch.setattr(to, "pull_model", lambda tag, on_progress=None: called.setdefault("tag", tag))
@@ -105,7 +106,7 @@ def test_download_ollama_calls_pull(monkeypatch):
 
 
 def test_download_mlx_calls_snapshot(monkeypatch, tmp_path):
-    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: True)
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: True)
     monkeypatch.setattr(tm, "mlx_model_dir", lambda repo: tmp_path / repo.replace("/", "--"))
     called = {}
     monkeypatch.setattr(tm, "_snapshot_download", lambda repo, d: called.setdefault("repo", repo))
@@ -115,7 +116,7 @@ def test_download_mlx_calls_snapshot(monkeypatch, tmp_path):
 
 
 def test_download_duplicate_is_noop(monkeypatch):
-    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: False)
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: False)
     tm._downloading["qwen"] = True
     hit = {"n": 0}
     monkeypatch.setattr(to, "pull_model", lambda *a, **k: hit.__setitem__("n", hit["n"] + 1))
@@ -130,7 +131,7 @@ def test_download_unknown_raises_keyerror():
 
 # ── delete_model ────────────────────────────────────────────────────────────
 def test_delete_ollama(monkeypatch):
-    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: False)
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: False)
     monkeypatch.setattr(to, "qwen_ollama_model", lambda name: "qwen3.5:9b")
     seen = {}
     monkeypatch.setattr(to, "delete_model", lambda tag: seen.setdefault("tag", tag))
@@ -139,7 +140,7 @@ def test_delete_ollama(monkeypatch):
 
 
 def test_delete_while_downloading_raises(monkeypatch):
-    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: False)
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: False)
     tm._downloading["qwen"] = True
     with pytest.raises(RuntimeError):
         tm.delete_model("qwen")
@@ -291,7 +292,7 @@ def test_install_download_error_surfaced(monkeypatch, tmp_path):
 
 
 def test_list_models_includes_install_status(monkeypatch):
-    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: False)
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: False)
     monkeypatch.setattr(to, "ollama_running", lambda: False)
     monkeypatch.setattr(to, "ollama_installed", lambda: False)
     monkeypatch.setattr(to, "qwen_ollama_available", lambda tag: False)
@@ -301,7 +302,7 @@ def test_list_models_includes_install_status(monkeypatch):
 
 
 def test_list_models_mlx_no_install_status(monkeypatch):
-    monkeypatch.setattr(tm, "_is_apple_silicon_mac", lambda: True)
+    monkeypatch.setattr(tc, "_is_apple_silicon_mac", lambda: True)
     monkeypatch.setattr(tm, "mlx_model_installed", lambda repo: False)
     out = tm.list_models()
     assert out["ollama_install"] is None  # mlx 런타임엔 설치 UI 불필요

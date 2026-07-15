@@ -8,11 +8,12 @@ Ollama를 설치하고 모델을 pull해 두면(claude/codex CLI provider와 동
 
 build_translation_prompt(글로서리+의성어+간결 자막 지시)를 공유하고, JSON 배열 KO를
 받아 guard_mlx_ko 환각 가드를 통과시킨다(불합격 줄은 원문 EN 유지 — 검수 단계에서
-눈에 띄게). 티어 값(qwen/qwen_lite/qwen_hifi)은 translate_mlx.QWEN_MLX_MODELS와
-공유하며, 백엔드(MLX vs Ollama) 선택은 translate_cli.create_translator가 담당한다.
+눈에 띄게). 티어 값(qwen/qwen_lite/qwen_hifi)은 translate_catalog.get_catalog()가
+단일 출처이며, 백엔드(MLX vs Ollama) 선택은 translate_cli.create_translator가 담당한다.
 
 기본 태그는 Qwen3.5(4B/9B) — RTX 2080(8GB)급에도 올라간다. 더 큰 카드로 업그레이드
-후 Qwen3.6 등으로 바꾸려면 각 티어의 env(YESON_OLLAMA_QWEN_MODEL 등)로 태그만 교체.
+후 Qwen3.6 등으로 바꾸려면 각 티어의 env(YESON_OLLAMA_{티어}_MODEL)로 태그만 교체하거나
+원격 카탈로그로 티어를 추가.
 """
 from __future__ import annotations
 
@@ -29,13 +30,6 @@ logger = logging.getLogger("yeson.video.translate_ollama")
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 _URL_ENV = "YESON_OLLAMA_URL"
 
-# provider 값 → (기본 Ollama 태그, env 오버라이드 키). QWEN_MLX_MODELS와 티어 1:1 대응.
-_QWEN_OLLAMA_DEFAULTS: dict[str, tuple[str, str]] = {
-    "qwen": ("qwen3.5:9b", "YESON_OLLAMA_QWEN_MODEL"),
-    "qwen_lite": ("qwen3.5:4b", "YESON_OLLAMA_QWEN_LITE_MODEL"),
-    "qwen_hifi": ("qwen3.5:9b-q8_0", "YESON_OLLAMA_QWEN_HIFI_MODEL"),
-}
-
 DEFAULT_BATCH_TIMEOUT = 300.0
 _TAGS_TIMEOUT = 0.5  # 검증 경로 — 로컬 :11434는 즉답 또는 즉거부
 _AVAIL_TTL = 5.0     # list_translate_engines가 검증마다 호출 → 짧은 캐시로 폭주 방지
@@ -50,11 +44,12 @@ def ollama_base_url() -> str:
 
 def qwen_ollama_model(provider: str) -> str | None:
     """provider 값 → 실제 Ollama 태그(env 오버라이드 적용). 미지원 값은 None."""
-    entry = _QWEN_OLLAMA_DEFAULTS.get(provider)
-    if entry is None:
+    from .translate_catalog import get_catalog, ollama_env_key
+
+    entry = get_catalog().get(provider)
+    if entry is None or not entry.ollama_tag:
         return None
-    default_tag, env_key = entry
-    return (os.environ.get(env_key) or "").strip() or default_tag
+    return (os.environ.get(ollama_env_key(provider)) or "").strip() or entry.ollama_tag
 
 
 def _get_tags() -> tuple[bool, frozenset[str]]:

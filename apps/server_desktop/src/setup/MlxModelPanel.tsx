@@ -4,29 +4,78 @@
 // 없이 로컬 styles 객체로 복제 — 파일 간 결합을 늘리지 않기 위함).
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
-import { MLX_MODELS, downloadMlxModel, mlxModelStatus } from "./serverConfig";
+import { downloadMlxModel, mlxModelStatus } from "./serverConfig";
+import {
+  BUILTIN_MLX_MODELS,
+  type LiveMlxModel,
+  listLiveMlxModels,
+  listLiveMlxModelsWithRetry,
+} from "../translateCatalogAdmin";
 
-export function MlxModelPanel(props: { selectedModel: string; onSelectModel: (id: string) => void }) {
+export function MlxModelPanel(props: {
+  selectedModel: string;
+  onSelectModel: (id: string) => void;
+  port: number;
+  running: boolean;
+}) {
+  const [models, setModels] = useState<LiveMlxModel[]>(BUILTIN_MLX_MODELS);
   const [installed, setInstalled] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
 
   const refresh = async () => {
+    // 목록은 서버 카탈로그(빌트인+원격), 설치 여부는 Tauri — 서버가 없어도 동작한다.
+    // (다운로드 직후 호출 경로 — 서버가 이미 응답 중이므로 재시도 없이 단발 조회한다.)
+    const { models: list } = await listLiveMlxModels(props.port);
+    setModels(list);
     const entries = await Promise.all(
-      MLX_MODELS.map(async (m) => [m.id, await mlxModelStatus(m.id)] as const),
+      list.map(async (m) => [m.id, await mlxModelStatus(m.id)] as const),
     );
     setInstalled(Object.fromEntries(entries));
   };
 
+  // Tauri 진행률 리스너는 세션당 한 번만 등록한다(포트/running 변경마다 갈아끼우면
+  // 다운로드 도중 이벤트를 놓칠 위험이 있다).
   useEffect(() => {
-    void refresh();
     const unlisten = listen<string>("mlx-download-progress", (e) => setProgress(e.payload));
     return () => {
       void unlisten.then((fn) => fn());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 서버가 뒤늦게 뜨거나(초기 설정 단계에는 항상 다운 상태) 포트가 바뀌면 목록을
+  // 다시 받아온다 — 그렇지 않으면 원격 카탈로그가 이 세션 내내 반영되지 않는다.
+  //
+  // running=true로 바뀌는 시점(서버가 포트를 바인딩한 직후)에는 uvicorn이 아직 HTTP를
+  // 받지 못하는 ~1초 창이 있어 첫 조회가 폴백(fromServer:false)으로 끝날 수 있다. 이
+  // effect는 그 순간에만 한 번 실행되고 다시 실행되지 않으므로(deps가 안 바뀜), 재시도
+  // 없이 폴백을 받으면 세션 내내 빌트인에 갇힌다 — 그래서 running일 때만
+  // listLiveMlxModelsWithRetry로 서버가 실제로 응답할 때까지 재시도한다. running이
+  // false면(정상적인 초기 설정 대기 상태) 재시도하지 않고 단발 조회만 한다.
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      const { models: list } = props.running
+        ? await listLiveMlxModelsWithRetry(props.port, () => cancelled)
+        : await listLiveMlxModels(props.port);
+      if (cancelled) return;
+      setModels(list);
+      const entries = await Promise.all(
+        list.map(async (m) => [m.id, await mlxModelStatus(m.id)] as const),
+      );
+      if (cancelled) return;
+      setInstalled(Object.fromEntries(entries));
+    };
+    void run();
+    // 언마운트되거나 port/running이 다시 바뀌면 진행 중인 재시도 루프의 결과가
+    // 낡은 상태를 최신 상태 위에 덮어쓰지 않도록 취소한다.
+    return () => {
+      cancelled = true;
+    };
+    // refresh/run은 매 렌더 새로 만들어지는 클로저라 deps에 넣으면 무한 루프가 된다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.port, props.running]);
 
   const download = async (id: string) => {
     setBusy(id);
@@ -45,16 +94,16 @@ export function MlxModelPanel(props: { selectedModel: string; onSelectModel: (id
   return (
     <div style={styles.wrap}>
       <span style={styles.fieldLabel}>로컬 번역 모델 (MLX — 실리콘맥 전용)</span>
-      {MLX_MODELS.map((m) => (
+      {models.map((m) => (
         <div key={m.id} style={styles.row}>
           <label style={styles.radioLabel}>
             <input
               type="radio"
               name="mlx-model"
-              checked={(props.selectedModel || MLX_MODELS[0].id) === m.id}
+              checked={(props.selectedModel || models[0]?.id) === m.id}
               onChange={() => props.onSelectModel(m.id)}
             />
-            <span>{m.label}</span>
+            <span>{m.label} · 약 {(m.bytes / 1_000_000_000).toFixed(1)}GB</span>
             <span style={installed[m.id] ? styles.chipOn : styles.chipOff}>
               {installed[m.id] ? "설치됨" : "미설치"}
             </span>

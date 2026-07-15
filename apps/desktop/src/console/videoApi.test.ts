@@ -15,7 +15,7 @@ import {
   burnVideoJob, cancelAllVideoJobs, cancelVideoJob, createYoutubeJob,
   deleteTranslateModel, downloadGpuPack, downloadTranslateModel,
   getGpuStatus, getVideoStorage, installOllama, listTranslateEngines, listTranslateModels,
-  listVideoModels, rebuildVideoJob,
+  listVideoModels, rebuildVideoJob, refreshTranslateModels,
   setGpuEnabled, uploadVideoJob, videoMediaUrl,
 } from "./videoApi";
 
@@ -236,5 +236,15 @@ describe("videoApi", () => {
   it("throws on non-ok responses", async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 409, json: async () => ({ detail: "x" }) });
     await expect(listVideoModels()).rejects.toThrow(/409/);
+  });
+
+  it("refreshTranslateModels가 refresh=1로 호출한다", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ models: [], runtime: "ollama", ollama_installed: true, ollama_running: true }),
+    });
+    await refreshTranslateModels();
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toContain("/api/v1/translate-models?refresh=1");
   });
 });
