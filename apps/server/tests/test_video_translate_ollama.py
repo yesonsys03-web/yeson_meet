@@ -181,8 +181,10 @@ def test_qwen_ollama_model_reads_catalog(monkeypatch):
 
 
 def test_qwen_ollama_model_env_override_catalog(monkeypatch):
+    from apps.server.domain.video_captions import catalog_fetch as cf
     from apps.server.domain.video_captions import translate_ollama as to
 
+    monkeypatch.setattr(cf, "cached_entries", lambda *a, **k: [])
     monkeypatch.setenv("YESON_OLLAMA_QWEN_LITE_MODEL", "qwen3.6:4b")
     assert to.qwen_ollama_model("qwen_lite") == "qwen3.6:4b"
 
@@ -194,3 +196,34 @@ def test_qwen_ollama_model_none_for_mlx_only_tier(monkeypatch):
     mlx_only = tc.TranslateModel("qwen_x", "x", "a/b", 10, None, 0)
     monkeypatch.setattr(tc, "get_catalog", lambda: {"qwen_x": mlx_only})
     assert to.qwen_ollama_model("qwen_x") is None
+
+
+def test_qwen_ollama_model_uses_catalog_tag_not_hardcoded(monkeypatch):
+    """카탈로그가 태그의 단일 출처임을 증명 — 하드코딩 상수로 회귀하면 실패한다.
+
+    빌트인 qwen의 태그(qwen3.5:9b)와 다른 값을 카탈로그가 주도록 오버라이드하고,
+    그 값이 그대로 나오는지 본다. 구 구현(하드코딩)은 qwen3.5:9b를 반환해 실패한다.
+    """
+    from apps.server.domain.video_captions import translate_catalog as tc
+    from apps.server.domain.video_captions import translate_ollama as to
+
+    overridden = tc.TranslateModel(
+        "qwen", "Qwen 9B (로컬)", "mlx-community/Qwen3.5-9B-4bit", 10,
+        "qwen9.9:catalog-only", 20)
+    monkeypatch.setattr(tc, "get_catalog", lambda: {"qwen": overridden})
+    monkeypatch.delenv("YESON_OLLAMA_QWEN_MODEL", raising=False)
+    assert to.qwen_ollama_model("qwen") == "qwen9.9:catalog-only"
+
+
+def test_qwen_ollama_model_serves_remote_added_tier(monkeypatch):
+    """원격 카탈로그가 추가한 새 티어도 태그를 돌려준다(이 기능의 존재 이유).
+
+    구 구현은 하드코딩 3종만 알아서 None을 반환해 실패한다.
+    """
+    from apps.server.domain.video_captions import translate_catalog as tc
+    from apps.server.domain.video_captions import translate_ollama as to
+
+    extra = tc.TranslateModel("qwen_next", "Qwen 12B (로컬)", None, 0, "qwen3.6:12b", 30)
+    monkeypatch.setattr(tc, "get_catalog", lambda: {"qwen_next": extra})
+    monkeypatch.delenv("YESON_OLLAMA_QWEN_NEXT_MODEL", raising=False)
+    assert to.qwen_ollama_model("qwen_next") == "qwen3.6:12b"
