@@ -96,6 +96,13 @@ def ollama_env_key(name) -> str                  # YESON_OLLAMA_{NAME.upper()}_M
 
 **원격은 추가·오버라이드만 가능하고 빌트인 삭제는 불가** — 원격 카탈로그가 깨져도 기본 3종은 항상 남는다.
 
+**캐시 경로**: `{STORAGE_ROOT}/translate_catalog.cache.json` — whisper처럼 모델 디렉터리 밑이 아니라 **STORAGE_ROOT 직하**에 둔다. 번역엔 대응하는 단일 모델 디렉터리가 없다(MLX는 `mlx_models/`, Ollama는 Ollama 자체 저장소). `mlx_models/` 밑에 두면 MLX가 존재하지 않는 윈도우 서버에 `mlx_models` 디렉터리가 생긴다(`_write_cache`가 `parents=True`로 mkdir하므로 조용히 성공한다). `STORAGE_ROOT`는 Tauri가 전 플랫폼에 주입한다(`server_process.rs:287`, `<app_data_dir>/storage`).
+
+**`None` 런타임 가드**: `mlx_repo` / `ollama_tag`가 `None`일 수 있으므로 호출 전 반드시 확인한다.
+
+- `qwen_mlx_available(entry.mlx_repo)` — `mlx_repo`가 `None`이면 `mlx_model_installed`가 `None.replace()`로 터진다. **실리콘맥에서만** 터진다(윈도우·인텔맥은 `_is_apple_silicon_mac()`에서 단락되어 도달하지 않음).
+- `qwen_ollama_model(name)`은 `ollama_tag`가 없으면 `None`을 반환하고, `qwen_ollama_available(None)`은 `bool(None)`으로 안전하게 `False`다(가드 불필요).
+
 **env 키 규칙**: 기존 세 키(`YESON_OLLAMA_QWEN_MODEL` / `YESON_OLLAMA_QWEN_LITE_MODEL` / `YESON_OLLAMA_QWEN_HIFI_MODEL`)가 `YESON_OLLAMA_{name.upper()}_MODEL` 규칙과 정확히 일치하므로, 규칙 파생으로 하위호환이 그대로 유지된다.
 
 ### 신규 `translate_catalog.remote.json`
@@ -147,6 +154,8 @@ URL 기본값은 whisper와 같은 관례(`raw.githubusercontent.com/.../main/ap
 
 - `GET /translate-models?refresh=false` → `await run_in_threadpool(translate_catalog.get_remote_models, refresh)` 후 목록 반환. 블로킹 `requests.get`의 스레드풀 오프로드까지 동일(v1.3.8에서 한 번 밟은 함정).
 - `POST /{name}/download`, `DELETE /{name}` → `tmods._TIER_BY_NAME` 대신 `get_catalog()`. `/ollama/install`이 `/{name}` 앞에 선언된 순서 규약 유지.
+- **`POST /{name}/download`에 "현재 런타임 미지원" 409를 추가한다** — `reason`이 있는 티어(= 이 서버의 런타임을 지원하지 않는 티어)는 거부한다. UI 비활성에만 의존하면 안 된다: MLX 전용 티어(`ollama_tag` 없음)를 윈도우 서버에 POST하면 `qwen_ollama_model()`이 `None`을 반환하고 그대로 `pull_model(None)`까지 흘러가 `{"model": null}`로 Ollama에 요청이 나간다. 이 API는 무인증(LAN 신뢰경계)이라 UI를 거치지 않는 호출이 정상 경로다.
+- 방어 심층화로 `translate_models.download_model(name)`도 미지원 런타임이면 `RuntimeError`를 던진다(API가 409로 변환). `delete_model`도 동일.
 - `video_jobs.py` — **변경 없음**(list_translate_engines 파생이라 자동).
 
 ## 클라이언트
@@ -190,10 +199,28 @@ whisper와 동일한 계약:
 - 신규 `test_translate_catalog.py` — 병합·오버라이드, 빌트인 삭제 불가, 한쪽 런타임만 있는 항목, 잘못된 항목 스킵, **env 키 규칙이 기존 3키를 그대로 재현하는지**(하위호환 회귀 방지).
 - 신규 `test_api_translate_models.py` — `?refresh` 동작, 404(미지 모델), 409(Ollama 미기동).
 - **`available` / `reason` 분리 회귀** — 미설치 티어는 `available: false` + `reason: None`(다운로드 가능), 지원 런타임이 없는 티어만 `reason` 채워짐. 이 둘이 섞이면 정상 티어의 다운로드 버튼이 죽는다.
+- **미지원 런타임 다운로드 거부** — MLX 전용 티어를 `runtime()=="ollama"`로 모킹하고 `POST /{name}/download` → 409, `pull_model`이 **호출되지 않음**을 단언(`{"model": null}` 요청 방지).
+- **`mlx_repo=None` 가드** — `_is_apple_silicon_mac()`을 True로 모킹하고 Ollama 전용 티어에 대해 `list_translate_engines`·`list_models`가 터지지 않는지(실리콘맥 크래시 회귀).
 - 기존 `test_video_translate_*.py` / `test_api_video_jobs.py` — 상수 몽키패치가 있으면 카탈로그 패치로 전환.
 - 신규 `translateCatalogAdmin.test.ts` — 서버 다운 시 빌트인 폴백.
 
 **회귀 기준선**: 빌트인 3종의 값이 그대로 유지되므로, 원격 JSON이 비어 있는 초기 상태에서 사용자 눈에 보이는 변화가 없어야 한다.
+
+## 플랫폼 점검 (윈도우·인텔맥)
+
+설계 확정 후 윈도우 경로를 코드로 확인한 결과 — 차단 이슈 없음.
+
+| 항목 | 상태 |
+|---|---|
+| **cp949 subprocess 함정** | 무관. `translate_ollama.py`는 전부 httpx HTTP(`/api/tags`·`/api/pull`·`/api/delete`·`/api/generate`)이고, `ollama_install.py`의 윈도 분기는 `os.startfile`이라 stdout을 디코딩하는 경로가 없다 |
+| **`STORAGE_ROOT`** | Tauri가 전 플랫폼 주입(`server_process.rs:287`) → 캐시 경로 유효 |
+| **의존성** | `catalog_fetch`의 `requests`는 v1.3.8이 이미 윈도우 3플랫폼 CI로 검증 — 신규 의존성 없음 |
+| **런타임 구조** | `runtime()` → ollama 유지. GPU 선택(CUDA/Metal/CPU)은 Ollama가 자동 처리 |
+| **`os.startfile` 반자동 설치** | 변경 없음 |
+
+이 점검에서 위의 3개 갭(캐시 경로 / 미지원 런타임 409 / `mlx_repo=None` 가드)이 드러나 스펙에 반영했다.
+
+**서버 콘솔의 `MlxModelPanel`이 윈도우에서도 MLX 모델을 나열하는 것은 기존 동작이다** — 현재도 하드코딩 3종을 플랫폼 무관하게 렌더한다. 카탈로그로 바뀌어도 동일하며, 이 설계가 만드는 회귀가 아니다.
 
 ## 범위 밖 / 후속
 
