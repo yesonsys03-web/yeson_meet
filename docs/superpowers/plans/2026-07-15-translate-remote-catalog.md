@@ -618,7 +618,7 @@ Create `apps/server/domain/video_captions/translate_catalog.remote.json`:
 - [ ] **Step 5: 테스트 통과 확인**
 
 Run: `uv run pytest apps/server/tests/test_translate_catalog.py -q`
-Expected: PASS — 11개 테스트 전부 통과
+Expected: PASS — 10개 테스트 전부 통과
 
 - [ ] **Step 6: 커밋**
 
