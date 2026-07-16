@@ -242,12 +242,22 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
 
   return (
     <div style={{ ...consoleStyles.panel, display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <button type="button" style={consoleStyles.mutedAction} onClick={onBack}>
+      {/* 좁은 폭에서 무너지지 않게: 버튼·전사모델 표기는 flexShrink:0 + nowrap이라
+          찌그러지지 않고(안 그러면 flex가 버튼을 내용 폭 아래로 눌러 "목록으로"가
+          한 글자씩 세로로 쪼개진다), 타이틀만 남는 폭을 먹으며 줄바꿈한다.
+          flex:1에는 minWidth:0이 필수 — 없으면 긴 파일명이 컨테이너를 밀어내
+          잘려 나간다(파일명은 공백이 없어 overflowWrap:anywhere가 있어야 끊긴다). */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <button type="button"
+          style={{ ...consoleStyles.mutedAction, flexShrink: 0, whiteSpace: "nowrap" }}
+          onClick={onBack}>
           ← 목록으로
         </button>
-        <h2 style={{ ...consoleStyles.title, margin: 0, flex: 1 }}>{job.title}</h2>
-        <span style={{ fontSize: 13, opacity: 0.75 }}>{job.whisper_model} 모델로 전사됨</span>
+        <h2 style={{ ...consoleStyles.title, margin: 0, flex: 1, minWidth: 0,
+                     overflowWrap: "anywhere" }}>{job.title}</h2>
+        <span style={{ fontSize: 13, opacity: 0.75, flexShrink: 0, whiteSpace: "nowrap" }}>
+          {job.whisper_model} 모델로 전사됨
+        </span>
       </div>
       {error ? <p style={{ color: "#e5484d", margin: 0 }}>{error}</p> : null}
       {notice ? <p style={consoleStyles.statusInfo}>{notice}</p> : null}
@@ -369,17 +379,19 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
         </div>
 
         {/* ---- 세그먼트 편집 리스트 ---- */}
-        <div style={{ flex: "1 1 360px", maxHeight: 520, overflowY: "auto",
+        <div style={{ flex: "1 1 360px", maxHeight: 520,
                       display: "flex", flexDirection: "column", gap: 6 }}>
+          {/* 툴바는 스크롤 영역 **밖**이다 — 안에 두면 자막을 내릴 때 같이 밀려
+              올라가 재번역 버튼이 사라진다(실사용에서 발견). 스크롤은 아래
+              세그먼트 목록만 담당한다. */}
           <div style={{ display: "flex", gap: 8, alignItems: "center",
                         flexWrap: "wrap", paddingBottom: 4 }}>
-            <span style={{ fontSize: 12, opacity: 0.75 }}>
-              {untranslatedSeqs.size > 0
-                ? `영문 잔존 ${untranslatedSeqs.size}구간`
-                : "영문 잔존 없음"}
-            </span>
+            {/* consoleStyles.select를 쓴다(input 아님) — native select는 WebKit이
+                고유 높이로 렌더해 input·버튼보다 낮게 나오고, 그 보정이 이미
+                select 스타일에 들어있다. 폭도 형제 화면(VideoCaptionPanel의
+                번역 엔진 select)과 같은 200으로 맞춘다. */}
             <select
-              style={{ ...consoleStyles.input, width: "auto", fontSize: 12 }}
+              style={{ ...consoleStyles.select, width: 200 }}
               value={retProvider}
               disabled={retranslating}
               onChange={(e) => setRetProvider(e.target.value)}>
@@ -395,7 +407,7 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
             </select>
             {retProvider === "opencode" ? (
               <input
-                style={{ ...consoleStyles.input, width: 180, fontSize: 12 }}
+                style={{ ...consoleStyles.input, width: 180 }}
                 value={retCliModel}
                 disabled={retranslating}
                 placeholder="모델명"
@@ -405,8 +417,7 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
                 409로 막지만(무인증 API라 서버 가드는 필수), UI가 누를 수 있게
                 두면 사용자는 에러만 받는다. 폴백 effect가 보통 가용 엔진으로
                 옮겨주므로 이 조건은 "가용 엔진이 하나도 없는 서버"의 backstop이다.
-                스타일도 이 파일의 관례(굽기 317-322, 다운로드 332-343)대로
-                actionDisabled를 병합한다. */}
+                스타일은 이 파일의 관례(굽기·다운로드 버튼)대로 actionDisabled를 병합. */}
             <button type="button"
               style={{ ...consoleStyles.mutedAction,
                        ...(retranslateDisabled ? consoleStyles.actionDisabled : null) }}
@@ -414,7 +425,16 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
               onClick={() => void runRetranslate()}>
               {retranslating ? "재번역 중…" : "영문 구간 일괄 재번역"}
             </button>
+            {/* 개수는 버튼 바로 옆 — 왼쪽 끝에 떨어져 있으면 버튼이 무엇을 몇 개
+                고칠지가 안 읽힌다. */}
+            <span style={{ fontSize: 12, opacity: 0.75 }}>
+              {untranslatedSeqs.size > 0
+                ? `영문 잔존 ${untranslatedSeqs.size}구간`
+                : "영문 잔존 없음"}
+            </span>
           </div>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto",
+                        display: "flex", flexDirection: "column", gap: 6 }}>
           {segments.map((seg, idx) => (
             <div key={seg.seq}
               style={{ padding: "6px 10px", borderRadius: 6,
@@ -448,6 +468,7 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
               수정 저장 ({Object.keys(edits).length}건)
             </button>
           ) : null}
+          </div>
         </div>
       </div>
     </div>
