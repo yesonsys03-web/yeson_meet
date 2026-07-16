@@ -141,7 +141,7 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
     setError(null);
     setNotice(null);
     try {
-      // ★파괴적 동작 전에 편집을 먼저 저장한다 — startBurn(148행)과 같은 이유.
+      // ★파괴적 동작 전에 편집을 먼저 저장한다 — startBurn과 같은 이유.
       // 이게 없으면 (a) 미저장 편집이 refresh()로 조용히 날아가고,
       // (b) 배지는 koOf(편집 인식)라 방금 타이핑한 줄을 "처리됨"으로 보여주는데
       // 서버는 DB(text_ko == text_en)를 보므로 그 줄을 대상에 넣어 덮어쓴다.
