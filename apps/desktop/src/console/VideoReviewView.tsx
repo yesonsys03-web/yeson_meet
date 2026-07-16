@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import {
-  burnVideoJob, getVideoJob, patchSegments, videoDownloadUrl, videoMediaUrl,
+  burnVideoJob, getVideoJob, listTranslateEngines, patchSegments, retranslateSegments,
+  videoDownloadUrl, videoMediaUrl,
 } from "./videoApi";
-import type { BurnStyle, VideoJobDetail } from "./videoApi";
-import { activeSegmentIndex, overlayStyleFor, sanitizeFilename } from "./videoReviewLogic";
+import type { BurnStyle, TranslateEngineInfo, VideoJobDetail } from "./videoApi";
+import { engineLabel } from "./VideoCaptionPanel";
+import {
+  activeSegmentIndex, isSourceCopy, overlayStyleFor, sanitizeFilename,
+} from "./videoReviewLogic";
 import { captionedFileName } from "./videoBatchOps";
 
 type VideoReviewViewProps = {
@@ -40,6 +44,12 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
   const [downloading, setDownloading] = useState<null | "video" | "srt">(null);
   const [videoHeight, setVideoHeight] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [engines, setEngines] = useState<TranslateEngineInfo[]>([]);
+  // 로컬 엔진 재시도는 같은 실패가 반복될 수 있으므로 기본값은 작업이 쓰던
+  // 엔진이 아니라 Claude 구독이다.
+  const [retProvider, setRetProvider] = useState("claude");
+  const [retCliModel, setRetCliModel] = useState("");
+  const [retranslating, setRetranslating] = useState(false);
 
   // burn(ffmpeg subtitles 필터)이 SRT를 ASS로 변환할 때 PlayResY=288 기준
   // Fontsize/MarginV를 실제 렌더 높이로 스케일하므로, 미리보기도 실제 표시
@@ -74,6 +84,10 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
     return () => clearInterval(timer);
   }, [job?.status, refresh]);
 
+  useEffect(() => {
+    void listTranslateEngines().then(setEngines).catch(() => setEngines([]));
+  }, []);
+
   if (!job) {
     return (
       <div style={consoleStyles.panel}>
@@ -91,6 +105,10 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
   const activeSeg = activeIdx >= 0 ? segments[activeIdx] : undefined;
   const activeText = activeSeg ? koOf(activeSeg.seq, activeSeg.text_ko) : "";
 
+  const untranslatedSeqs = new Set(
+    segments.filter((s) => isSourceCopy(s.text_en, koOf(s.seq, s.text_ko)))
+            .map((s) => s.seq));
+
   const saveEdits = async () => {
     const payload = Object.entries(edits).map(([seq, text_ko]) => ({
       seq: Number(seq), text_ko,
@@ -99,6 +117,28 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
     await patchSegments(jobId, payload);
     await refresh();
     setEdits({});
+  };
+
+  const runRetranslate = async () => {
+    setRetranslating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const r = await retranslateSegments(
+        jobId, retProvider,
+        retProvider === "opencode" ? retCliModel : undefined);
+      setNotice(r.remaining > 0
+        ? `${r.total}개 중 ${r.retranslated}개 해결, ${r.remaining}개 남음`
+        : `${r.retranslated}개 재번역 완료`);
+      // 서버가 text_ko를 바꿨으므로 미저장 편집 버퍼를 비우고 다시 읽는다.
+      // refresh()는 이미 있는 useCallback — getVideoJob을 직접 부르지 않는다.
+      setEdits({});
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRetranslating(false);
+    }
   };
 
   const startBurn = async () => {
@@ -309,11 +349,47 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
         {/* ---- 세그먼트 편집 리스트 ---- */}
         <div style={{ flex: "1 1 360px", maxHeight: 520, overflowY: "auto",
                       display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center",
+                        flexWrap: "wrap", paddingBottom: 4 }}>
+            <span style={{ fontSize: 12, opacity: 0.75 }}>
+              {untranslatedSeqs.size > 0
+                ? `영문 잔존 ${untranslatedSeqs.size}구간`
+                : "영문 잔존 없음"}
+            </span>
+            <select
+              style={{ ...consoleStyles.input, width: "auto", fontSize: 12 }}
+              value={retProvider}
+              onChange={(e) => setRetProvider(e.target.value)}>
+              {/* 라벨 규칙은 engineLabel이 단일 출처 — 여기서 다시 짜지 않는다.
+                  gemini는 value를 ""로 바꾸지 않는다: toEngineOptions의 ""는
+                  VideoCaptionPanel 상태 규약이고, 이 엔드포인트는 provider를
+                  그대로 받으므로 ""는 검증 패턴에서 거부된다. */}
+              {engines.map((e) => (
+                <option key={e.value} value={e.value} disabled={!e.available}>
+                  {engineLabel(e)}
+                </option>
+              ))}
+            </select>
+            {retProvider === "opencode" ? (
+              <input
+                style={{ ...consoleStyles.input, width: 180, fontSize: 12 }}
+                value={retCliModel}
+                placeholder="모델명"
+                onChange={(e) => setRetCliModel(e.target.value)} />
+            ) : null}
+            <button type="button" style={consoleStyles.mutedAction}
+              disabled={untranslatedSeqs.size === 0 || retranslating}
+              onClick={() => void runRetranslate()}>
+              {retranslating ? "재번역 중…" : "영문 구간 일괄 재번역"}
+            </button>
+          </div>
           {segments.map((seg, idx) => (
             <div key={seg.seq}
               style={{ padding: "6px 10px", borderRadius: 6,
-                       border: `1px solid ${idx === activeIdx
-                         ? "rgba(48,164,108,0.9)" : "rgba(255,255,255,0.12)"}` }}>
+                       border: `1px solid ${
+                         idx === activeIdx ? "rgba(48,164,108,0.9)"
+                         : untranslatedSeqs.has(seg.seq) ? "rgba(230,145,56,0.9)"
+                         : "rgba(255,255,255,0.12)"}` }}>
               <button type="button"
                 style={{ background: "none", border: "none", color: "inherit",
                          cursor: "pointer", padding: 0, fontSize: 12, opacity: 0.7 }}
