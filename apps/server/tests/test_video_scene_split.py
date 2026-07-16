@@ -4,6 +4,7 @@ from apps.server.domain.video_captions.scene_split import (
     FrameSample, Segment, SlateRule, build_label, compute_boundaries,
     grouping_key, hold_keys, tokenize,
 )
+from apps.server.domain.video_captions.slate_ocr import pick_slate_line
 
 DELIMS = ["_", " ", "-"]
 
@@ -91,3 +92,18 @@ def test_compute_boundaries_absorbs_sub_min_blips():
     segs = compute_boundaries(keyed, total_ms=5000, min_ms=2000)
     # 2초 미만 구간은 인접(직전) 구간에 흡수 → 단일 세그먼트
     assert segs == [Segment("HH0307_020_0150", 0, 5000)]
+
+
+def test_pick_slate_line_prefers_most_tokens():
+    lines = [
+        ("cleanup", 0.99),
+        ("HH0307_020_0150_AC_v01", 0.97),
+        ("00:02:50:00", 0.98),
+    ]
+    assert pick_slate_line(lines, ["_", " ", "-"], min_tokens=3) == \
+        "HH0307_020_0150_AC_v01"
+
+
+def test_pick_slate_line_returns_empty_when_no_candidate():
+    lines = [("1", 0.99), ("x", 0.5)]
+    assert pick_slate_line(lines, ["_", " ", "-"], min_tokens=3) == ""
