@@ -12,11 +12,13 @@
 
 | # | 위치 | 조건 | 대상 |
 |---|---|---|---|
-| 1 | `translate_mlx.py:85` | 환각 가드 `guard_mlx_ko` 불합격 (`english_leak`/`length_ratio`/`repetition`/`invented_number`/`foreign_script`/`empty`) | qwen |
-| 2 | `translate.py:110` | `_translate_resilient`가 1줄까지 쪼개도 `TranslationError` | 전 provider |
-| 3 | Apple EN→KO 언어팩 미설치 | Apple이 원문을 그대로 반환(오류 없음) | apple/apple_hifi |
+| 1 | `translate.py::apply_ko_guard` (57-72, `guarded.append(src)` at 69) | 환각 가드 `guard_mlx_ko` 불합격 (`english_leak`/`length_ratio`/`repetition`/`invented_number`/`foreign_script`/`empty`) | qwen — MLX(`translate_mlx.py:70`)와 Ollama(`translate_ollama.py:180`)가 **이 함수를 공유** |
+| 2 | `translate.py:128` | `_translate_resilient`가 1줄까지 쪼개도 `TranslationError` | 전 provider |
+| 3 | Apple EN→KO 언어팩 미설치 | Apple이 원문을 그대로 반환(오류 없음, `translate_apple.py:78`) | apple/apple_hifi |
 
-경로 1은 **의도된 설계**다 — `translate_mlx.py:79` 주석이 명시한다: *"환각 가드: 불합격 줄은 원문(EN) 유지(검수 단계에서 눈에 띄게)"*. 이 기능은 그 설계가 전제한 검수 단계를 실제로 완성하는 것이다.
+경로 1은 **의도된 설계**다 — `apply_ko_guard` 독스트링(58-61)이 명시한다: *"불합격 줄은 원문(EN)을 유지한다(검수 단계에서 눈에 띄게)"*. 이 기능은 그 설계가 전제한 검수 단계를 실제로 완성하는 것이다.
+
+경로 1의 폴백이 **이미 한 함수로 공통화돼 있다**는 점이 유리하다 — 판별 규칙이 겨냥할 동작이 한 곳에 정의돼 있다.
 
 **셋 다 흔적을 저장하지 않는다** — 로그로만 남는다. 따라서 판별은 저장된 텍스트에서 해야 한다.
 
@@ -42,7 +44,7 @@
 
 요청: `{"provider": "claude", "cli_model": "..." | null}`
 
-- `provider` 검증은 **`list_translate_engines()`에서 자동 도출한 기존 `_TRANSLATE_PROVIDER_PATTERN` 재사용**. v1.3.6의 qwen 422 사고(작업생성 검증 패턴에 새 엔진 추가를 빠뜨림)를 반복하지 않기 위한 필수 조건 — 패턴을 새로 하드코딩하지 않는다.
+- `provider` 검증은 **`list_translate_engines()`에서 자동 도출한 기존 `_TRANSLATE_PROVIDER_PATTERN`(`video_jobs.py:63`) 재사용**. v1.3.6의 qwen 422 사고(작업생성 검증 패턴에 새 엔진 추가를 빠뜨림)를 반복하지 않기 위한 필수 조건 — 패턴을 새로 하드코딩하지 않는다. v1.3.9에서 qwen 티어가 **원격 카탈로그 파생**이 되어 엔진 목록이 런타임에 늘 수 있으므로 재사용이 더욱 중요하다.
 - `cli_model`은 기존 관례를 따라 opencode에서만 의미를 갖는다.
 
 가드:
@@ -67,6 +69,7 @@
 상단 바에 추가:
 - `영문 잔존 N구간` 배지 (클라가 판별식으로 계산)
 - 엔진 `select` — `list_translate_engines()`의 `available`만 활성, 기본값 = 작업의 `translate_provider`가 아니라 **Claude 구독**(로컬 엔진 재시도는 같은 실패가 반복될 수 있으므로). opencode 선택 시 `cliModel` 입력 노출(기존 `VideoCaptionPanel` 관례).
+  - 엔진 목록의 `reason` 필드를 **반드시 소비**한다: `reason`이 있으면 이 서버 런타임이 아예 지원하지 않는 티어이므로 "(서버에 미설치)"가 아니라 `reason`을 표시한다. v1.3.9 최종리뷰가 잡은 오안내와 같은 클래스의 실수를 반복하지 않기 위함(`VideoCaptionPanel`이 이미 이 처리를 하고 있으므로 그 관례를 따른다).
 - `[일괄 재번역]` 버튼 — N=0이면 비활성 + "영문 잔존 없음"
 - 실행 중 스피너·버튼 비활성, 완료 후 `N개 중 M개 해결, K개 남음` + 세그먼트 재조회
 
