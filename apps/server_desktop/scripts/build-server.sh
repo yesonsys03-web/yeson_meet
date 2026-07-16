@@ -33,6 +33,13 @@ uv venv --clear --python "${PY_VERSION}" "${BUILD_VENV}"
 VIRTUAL_ENV="${BUILD_VENV}" uv pip install --python "${BUILD_VENV}/bin/python" \
     ./apps/server "pyinstaller>=6.21"
 
+# RapidOCR가 끌어온 opencv-python(비-headless)은 Linux에서 libGL.so.1을 요구해
+# 서버 번들에서 import cv2가 즉사한다. 같은 cv2 모듈을 제공하는 headless로 교체.
+VIRTUAL_ENV="${BUILD_VENV}" uv pip install --python "${BUILD_VENV}/bin/python" \
+    opencv-python-headless
+VIRTUAL_ENV="${BUILD_VENV}" uv pip uninstall --python "${BUILD_VENV}/bin/python" \
+    opencv-python || true
+
 # 하이브리드 B: 실리콘맥 번들에만 mlx-lm 포함 (인텔맥 회귀 방지 — 510741b 방침).
 # macOS bash 3.2 + set -u에서 빈 배열 확장이 unbound variable 처리 → 아래 pyinstaller 호출에서 ${arr[@]+...} 가드 필수.
 MLX_COLLECT_FLAGS=()
@@ -79,6 +86,11 @@ echo "Building yeson-server (PyInstaller --onedir, Gemini-only)…"
     --collect-all ctranslate2 \
     --collect-all av \
     --collect-all onnxruntime \
+    --collect-all rapidocr_onnxruntime \
+    --collect-all shapely \
+    --collect-all pyclipper \
+    --collect-all cv2 \
+    --collect-all PIL \
     --collect-all yt_dlp \
     ${MLX_COLLECT_FLAGS[@]+"${MLX_COLLECT_FLAGS[@]}"} \
     --add-data "$(pwd)/apps/web/dist:web_dist" \

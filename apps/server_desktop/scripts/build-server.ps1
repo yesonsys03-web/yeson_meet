@@ -39,6 +39,13 @@ uv venv --clear --python $PyVersion $BuildVenv
 $env:VIRTUAL_ENV = $BuildVenv
 uv pip install --python $VenvPython ./apps/server "pyinstaller>=6.21"
 
+# RapidOCR가 끌어온 opencv-python(비-headless)은 Linux에서 libGL.so.1을 요구해
+# 서버 번들에서 import cv2가 즉사한다. 같은 cv2 모듈을 제공하는 headless로 교체.
+uv pip install --python $VenvPython `
+    opencv-python-headless
+uv pip uninstall --python $VenvPython `
+    opencv-python
+
 # Build the viewer SPA so the frozen server serves it under the same :8000 origin
 # as /api + /ws (replacing the old Docker-path Caddy). Staged via --add-data.
 Write-Host "Building viewer SPA (apps/web -> dist)..."
@@ -68,6 +75,11 @@ $WebDist = (Resolve-Path "apps/web/dist").Path
     --collect-all ctranslate2 `
     --collect-all av `
     --collect-all onnxruntime `
+    --collect-all rapidocr_onnxruntime `
+    --collect-all shapely `
+    --collect-all pyclipper `
+    --collect-all cv2 `
+    --collect-all PIL `
     --collect-all yt_dlp `
     --add-data "$WebDist;web_dist" `
     --distpath $Dist `
