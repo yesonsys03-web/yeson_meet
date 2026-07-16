@@ -583,9 +583,11 @@ async def run_scene_scan(external_id: UUID, interval_s: float = 1.0) -> None:
                 samples.append(FrameSample(index=i, t_ms=i * interval_ms, text=text))
             return samples
 
-        samples = await asyncio.to_thread(_work)
-        # OCR용 원본 프레임은 크므로 제거(썸네일만 남긴다)
-        shutil.rmtree(frames_dir, ignore_errors=True)
+        try:
+            samples = await asyncio.to_thread(_work)
+        finally:
+            # OCR용 원본 프레임은 크므로 제거(썸네일만 남긴다) — 실패해도 제거한다.
+            shutil.rmtree(frames_dir, ignore_errors=True)
 
         save_scenes(external_id, {
             "interval_ms": int(interval_s * 1000),
@@ -595,6 +597,13 @@ async def run_scene_scan(external_id: UUID, interval_s: float = 1.0) -> None:
     except StaleRunCancelled:
         logger.info("scene scan %s cancelled (gen %d)", external_id, generation)
     except Exception:  # noqa: BLE001
+        if generation != _current_generation(external_id):
+            # kill_active로 죽은 ffmpeg(extract_frames/extract_thumbnails)가
+            # FfmpegError로 표면화된 경우 — 세대가 이미 넘어갔으면(취소·재생성)
+            # 실패가 아니라 취소이므로 조용히 정리한다.
+            logger.info("scene scan %s cancelled mid-ffmpeg (gen %d)",
+                        external_id, generation)
+            return
         logger.exception("scene scan %s failed", external_id)
         raise
     finally:
@@ -640,6 +649,18 @@ async def run_scene_export(external_id: UUID, mode: str,
         return await asyncio.to_thread(_work)
     except StaleRunCancelled:
         logger.info("scene export %s cancelled (gen %d)", external_id, generation)
+        return []
+    except Exception:  # noqa: BLE001
+        if generation != _current_generation(external_id):
+            # kill_active로 죽은 ffmpeg(cut_segment)가 FfmpegError로 표면화된
+            # 경우 — 세대가 이미 넘어갔으면(취소·재생성) 실패가 아니라 취소이다.
+            logger.info("scene export %s cancelled mid-ffmpeg (gen %d)",
+                        external_id, generation)
+            return []
+        # fire-and-forget 태스크(start_job_task)라 재발생시키지 않는다 —
+        # unretrieved task exception 경고를 피하고, run_burn_job과 달리 여기는
+        # 반환값(경로 목록)이 실패 신호를 이미 겸한다.
+        logger.exception("scene export %s failed", external_id)
         return []
     finally:
         _BURN_SEMAPHORE.release()
