@@ -11,6 +11,7 @@ from sqlalchemy import select
 from apps.server.db import session as session_mod
 from apps.server.db.models import AppUser, VideoJob, VideoSegment
 from apps.server.domain.video_captions import pipeline as pl
+from apps.server.domain.video_captions import translate as tl
 from apps.server.domain.video_captions.ffmpeg import FfmpegError
 from apps.server.domain.video_captions.srt import SubSegment
 
@@ -686,7 +687,7 @@ async def test_maybe_aclose_translator_calls_when_present():
             self.closed = True
 
     t1 = WithAclose()
-    await pl._maybe_aclose_translator(t1)
+    await tl.maybe_aclose_translator(t1)
     assert t1.closed is True
 
 
@@ -696,7 +697,7 @@ async def test_maybe_aclose_translator_noop_when_absent():
     class WithoutAclose:
         pass
 
-    await pl._maybe_aclose_translator(WithoutAclose())
+    await tl.maybe_aclose_translator(WithoutAclose())
 
 
 async def test_run_burn_job_stale_generation_stops_and_keeps_cancelled(

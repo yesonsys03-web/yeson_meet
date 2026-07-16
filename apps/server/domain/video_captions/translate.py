@@ -112,6 +112,16 @@ def is_untranslated(text_en: str, text_ko: str) -> bool:
     return is_english_leak(ko)
 
 
+async def maybe_aclose_translator(translator) -> None:
+    """번역기가 들고 있는 자원을 닫는다(MLX는 워커 프로세스를 붙든다).
+
+    aclose가 없는 번역기(gemini/CLI/apple)는 무시한다.
+    """
+    aclose = getattr(translator, "aclose", None)
+    if aclose is not None:
+        await aclose()
+
+
 class GeminiFlashTranslator:
     def __init__(self, api_key: str | None = None, model: str | None = None):
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY")

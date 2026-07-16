@@ -117,3 +117,21 @@ def test_is_untranslated():
     # is_source_copy와 갈리는 지점 — 원문과 달라도 영어면 "아직 번역 안 됨"
     assert is_untranslated(src, "Margarita mood, girl!") is True
     assert is_untranslated(src, "") is False
+
+
+async def test_maybe_aclose_translator():
+    from apps.server.domain.video_captions.translate import maybe_aclose_translator
+
+    closed = []
+
+    class WithAclose:
+        async def aclose(self):
+            closed.append(True)
+
+    class WithoutAclose:
+        pass
+
+    await maybe_aclose_translator(WithAclose())
+    assert closed == [True]
+    # aclose가 없는 번역기(gemini/CLI/apple)는 조용히 무시된다
+    await maybe_aclose_translator(WithoutAclose())
