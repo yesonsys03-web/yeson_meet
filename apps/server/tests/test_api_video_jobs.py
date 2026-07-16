@@ -594,7 +594,14 @@ async def test_retranslate_only_touches_untranslated(client, db_session, admin_u
     db_session.add(VideoSegment(job_id=job_id, seq=1, start_ms=0, end_ms=900,
                                 text_en="Hello there", text_ko="Hello there"))  # 영문 잔존
     db_session.add(VideoSegment(job_id=job_id, seq=2, start_ms=900, end_ms=1800,
-                                text_en="Good morning", text_ko="좋은 아침"))    # 사용자 편집
+                                text_en="Good morning", text_ko="좋은 아침"))    # 사용자 편집(한글)
+    # ★판별 테스트: 사용자가 일부러 영문으로 남긴 편집. 이 행이 있어야
+    # 대상 선정을 is_untranslated로 바꿔치기했을 때 테스트가 실패한다
+    # (is_english_leak("Margarita")=True라 잘못 대상에 포함됨).
+    # seq=2가 순한글이라 두 선택자가 우연히 같은 답을 내서, 그것만으로는
+    # 이 회귀를 못 잡는다 — 실제로 Task 4 리뷰가 이 구멍을 적발했다.
+    db_session.add(VideoSegment(job_id=job_id, seq=3, start_ms=1800, end_ms=2700,
+                                text_en="Margarita vibes", text_ko="Margarita"))
     await db_session.commit()
 
     class FakeTranslator:
@@ -609,6 +616,7 @@ async def test_retranslate_only_touches_untranslated(client, db_session, admin_u
     resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/retranslate",
                              json={"provider": "claude"})
     assert resp.status_code == 200
+    # seq=1만 대상. seq=3이 대상에 섞이면 total=2가 되어 여기서 먼저 실패한다.
     assert resp.json() == {"total": 1, "retranslated": 1, "remaining": 0}
 
     db_session.expire_all()
@@ -616,7 +624,10 @@ async def test_retranslate_only_touches_untranslated(client, db_session, admin_u
         select(VideoSegment).where(VideoSegment.job_id == job_id)
         .order_by(VideoSegment.seq))).scalars().all()
     assert rows[0].text_ko == "안녕하세요"   # 영문 잔존만 갱신
-    assert rows[1].text_ko == "좋은 아침"     # 편집 보존
+    assert rows[1].text_ko == "좋은 아침"     # 한글 편집 보존
+    # ★이 단언이 회귀 잠금이다: 대상 선정을 is_untranslated로 바꾸면 이 줄이
+    # "안녕하세요"로 덮여 실패한다.
+    assert rows[2].text_ko == "Margarita"     # 의도적 영문 편집 보존
 
 
 async def test_retranslate_rejects_unavailable_engine(client, db_session, admin_user,
