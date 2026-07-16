@@ -72,6 +72,26 @@ def apply_ko_guard(texts: list[str], out: list[str], *, marker: str) -> list[str
     return guarded
 
 
+def is_untranslated(text_en: str, text_ko: str) -> bool:
+    """검수용 — 번역이 안 되고 영문이 남은 줄인가.
+
+    영문이 남는 폴백 3경로(apply_ko_guard 불합격 / _translate_resilient 1줄
+    실패 / Apple 언어팩 미설치)가 전부 원문을 그대로 복사하므로, 동일 비교가
+    오탐 없는 1차 판별이다. 2차는 원문과 다르지만 여전히 영어인 경우(가드가
+    없는 provider).
+
+    빈 줄은 대상이 아니다 — 사용자가 의도적으로 비운 자막을 되살리면 안 된다.
+    """
+    from apps.server.ai.mlx_live_translate import is_english_leak
+
+    ko = text_ko.strip()
+    if not ko:
+        return False
+    if ko == text_en.strip():
+        return True
+    return is_english_leak(ko)
+
+
 class GeminiFlashTranslator:
     def __init__(self, api_key: str | None = None, model: str | None = None):
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY")

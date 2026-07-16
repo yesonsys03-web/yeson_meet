@@ -87,3 +87,19 @@ async def test_gemini_translator_rejects_bad_json(monkeypatch):
     monkeypatch.setattr(tl.GeminiFlashTranslator, "_generate", fake_generate)
     with pytest.raises(tl.TranslationError):
         await tl.GeminiFlashTranslator(api_key="k").translate_batch(["hello"])
+
+
+def test_is_untranslated():
+    from apps.server.domain.video_captions.translate import is_untranslated
+
+    src = "Margarita vibes, baby girl!"
+    # 폴백 3경로는 전부 원문을 그대로 복사한다 — 1차 판별
+    assert is_untranslated(src, src) is True
+    assert is_untranslated(src, f"  {src}  ") is True  # 공백 차이 무시
+    # 정상 번역
+    assert is_untranslated(src, "마르가리타 분위기야, 자기!") is False
+    # 원문과 다르지만 여전히 영어 — 2차 판별
+    assert is_untranslated(src, "Margarita mood, girl!") is True
+    # 사용자가 의도적으로 비운 줄은 건드리지 않는다
+    assert is_untranslated(src, "") is False
+    assert is_untranslated(src, "   ") is False
