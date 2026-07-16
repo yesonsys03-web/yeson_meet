@@ -88,9 +88,9 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
   }, []);
 
   // 기본값 claude가 이 서버에 없으면 쓸 수 있는 첫 엔진으로 폴백 —
-  // VideoCaptionPanel:201-207이 같은 이유로 하는 것(그쪽은 자기 기본값인
-  // gemini "")의 결과보기 판이다. 없으면 사용자가 "Claude 구독 (서버에 미설치)"가
-  // 선택된 채인 버튼을 눌러 서버 409만 받는다.
+  // VideoCaptionPanel이 같은 이유로 하는 것(그쪽은 자기 기본값인 gemini "")의
+  // 결과보기 판이다. 없으면 사용자가 "Claude 구독 (서버에 미설치)"가 선택된
+  // 채인 버튼을 눌러 서버 409만 받는다.
   // 폴백 대상이 gemini 고정이 아닌 이유: 이 엔드포인트는 provider를 그대로 받아
   // ""가 없고, gemini도 API 키가 없으면 미가용일 수 있다.
   useEffect(() => {
