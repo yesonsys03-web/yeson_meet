@@ -732,18 +732,35 @@ import { isSourceCopy } from "./videoReviewLogic";
   useEffect(() => {
     void listTranslateEngines().then(setEngines).catch(() => setEngines([]));
   }, []);
+
+  // 기본값 claude가 이 서버에 없으면 쓸 수 있는 첫 엔진으로 폴백 —
+  // VideoCaptionPanel:201-207이 같은 이유로 하는 것(그쪽은 자기 기본값인
+  // gemini "")의 결과보기 판이다. 없으면 사용자가 "Claude 구독 (서버에 미설치)"가
+  // 선택된 채인 버튼을 눌러 서버 409만 받는다.
+  // 폴백 대상이 gemini 고정이 아닌 이유: 이 엔드포인트는 provider를 그대로 받아
+  // ""가 없고, gemini도 API 키가 없으면 미가용일 수 있다.
+  useEffect(() => {
+    if (engines.length === 0) return;
+    const cur = engines.find((e) => e.value === retProvider);
+    if (cur && cur.available) return;
+    const first = engines.find((e) => e.available);
+    if (first) setRetProvider(first.value);
+  }, [engines, retProvider]);
 ```
 
 - [ ] **Step 2: 영문 잔존 카운트 + 재번역 핸들러**
 
 ⚠️ `segments`·`koOf`·`activeIdx`는 **이미 88-90행에 선언돼 있다**(`if (!job) return` 조기 반환 뒤). 재선언하면 컴파일이 깨진다. 아래 `untranslatedSeqs`는 **`activeText` 선언(92행) 바로 뒤**에 넣고, `runRetranslate`는 `saveEdits`(94-102행) 뒤에 넣는다.
 
-92행 뒤에 추가:
+92행 뒤에 추가 (`burnDisabled`(219행)가 같은 자리의 파생값 선례다):
 
 ```ts
   const untranslatedSeqs = new Set(
     segments.filter((s) => isSourceCopy(s.text_en, koOf(s.seq, s.text_ko)))
             .map((s) => s.seq));
+  const retEngineOk = engines.some((e) => e.value === retProvider && e.available);
+  const retranslateDisabled =
+    untranslatedSeqs.size === 0 || retranslating || !retEngineOk;
 ```
 
 `saveEdits` 뒤에 추가:
@@ -754,15 +771,21 @@ import { isSourceCopy } from "./videoReviewLogic";
     setError(null);
     setNotice(null);
     try {
+      // ★파괴적 동작 전에 편집을 먼저 저장한다 — startBurn(148행)과 같은 이유.
+      // 이게 없으면 (a) 미저장 편집이 refresh()로 조용히 날아가고,
+      // (b) 배지는 koOf(편집 인식)라 방금 타이핑한 줄을 "처리됨"으로 보여주는데
+      // 서버는 DB(text_ko == text_en)를 보므로 그 줄을 대상에 넣어 덮어쓴다.
+      // 저장하면 DB == 클라 상태가 되어 배지와 서버 판정이 정확히 일치한다.
+      // saveEdits는 편집이 없으면 즉시 반환하고, 내부에서 refresh + setEdits({})를 한다.
+      await saveEdits();
       const r = await retranslateSegments(
         jobId, retProvider,
         retProvider === "opencode" ? retCliModel : undefined);
       setNotice(r.remaining > 0
         ? `${r.total}개 중 ${r.retranslated}개 해결, ${r.remaining}개 남음`
         : `${r.retranslated}개 재번역 완료`);
-      // 서버가 text_ko를 바꿨으므로 미저장 편집 버퍼를 비우고 다시 읽는다.
-      // refresh()는 이미 있는 useCallback — getVideoJob을 직접 부르지 않는다.
-      setEdits({});
+      // 서버가 text_ko를 바꿨으므로 다시 읽는다. refresh()는 이미 있는
+      // useCallback — getVideoJob을 직접 부르지 않는다.
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -787,6 +810,7 @@ import { isSourceCopy } from "./videoReviewLogic";
             <select
               style={{ ...consoleStyles.input, width: "auto", fontSize: 12 }}
               value={retProvider}
+              disabled={retranslating}
               onChange={(e) => setRetProvider(e.target.value)}>
               {/* 라벨 규칙은 engineLabel이 단일 출처 — 여기서 다시 짜지 않는다.
                   gemini는 value를 ""로 바꾸지 않는다: toEngineOptions의 ""는
@@ -802,11 +826,20 @@ import { isSourceCopy } from "./videoReviewLogic";
               <input
                 style={{ ...consoleStyles.input, width: 180, fontSize: 12 }}
                 value={retCliModel}
+                disabled={retranslating}
                 placeholder="모델명"
                 onChange={(e) => setRetCliModel(e.target.value)} />
             ) : null}
-            <button type="button" style={consoleStyles.mutedAction}
-              disabled={untranslatedSeqs.size === 0 || retranslating}
+            {/* disabled 조건에 엔진 가용성도 포함한다 — 서버가 미가용 엔진을
+                409로 막지만(무인증 API라 서버 가드는 필수), UI가 누를 수 있게
+                두면 사용자는 에러만 받는다. 폴백 effect가 보통 가용 엔진으로
+                옮겨주므로 이 조건은 "가용 엔진이 하나도 없는 서버"의 backstop이다.
+                스타일도 이 파일의 관례(굽기 317-322, 다운로드 332-343)대로
+                actionDisabled를 병합한다. */}
+            <button type="button"
+              style={{ ...consoleStyles.mutedAction,
+                       ...(retranslateDisabled ? consoleStyles.actionDisabled : null) }}
+              disabled={retranslateDisabled}
               onClick={() => void runRetranslate()}>
               {retranslating ? "재번역 중…" : "영문 구간 일괄 재번역"}
             </button>
