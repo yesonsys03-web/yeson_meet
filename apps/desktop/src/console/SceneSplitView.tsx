@@ -43,6 +43,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   };
 
   const applyRule = async () => {
+    if (!data) return;
     setBusy(true); setError(null);
     try {
       const res = await setSceneRule(jobId, {
@@ -76,8 +77,19 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
 
   const segments: SceneSegment[] = data
     ? (mode === "sequence" ? data.segments_sequence : data.segments_scene) : [];
-  const toggle = (arr: number[], i: number, set: (v: number[]) => void) =>
-    set(arr.includes(i) ? arr.filter((x) => x !== i) : [...arr, i].sort((a, b) => a - b));
+
+  const toggleSeq = (i: number) => {
+    setSeqIdx((prev) =>
+      prev.includes(i) ? prev.filter((x) => x !== i)
+                       : [...prev, i].sort((a, b) => a - b));
+    setSceneIdx((prev) => prev.filter((x) => x !== i)); // 같은 토큰을 씬에서 제외 (상호배타)
+  };
+  const toggleScene = (i: number) => {
+    setSceneIdx((prev) =>
+      prev.includes(i) ? prev.filter((x) => x !== i)
+                       : [...prev, i].sort((a, b) => a - b));
+    setSeqIdx((prev) => prev.filter((x) => x !== i)); // 같은 토큰을 시퀀스에서 제외 (상호배타)
+  };
 
   return (
     <div style={{ ...consoleStyles.panel, display: "flex", flexDirection: "column", gap: 16 }}>
@@ -111,9 +123,9 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                 }}>
                   {tok}
                   <button type="button" style={{ marginLeft: 6, fontSize: 11 }}
-                    onClick={() => toggle(seqIdx, i, setSeqIdx)}>SEQ</button>
+                    onClick={() => toggleSeq(i)}>SEQ</button>
                   <button type="button" style={{ marginLeft: 4, fontSize: 11 }}
-                    onClick={() => toggle(sceneIdx, i, setSceneIdx)}>SCENE</button>
+                    onClick={() => toggleScene(i)}>SCENE</button>
                 </span>
               ))}
             </div>
