@@ -1,0 +1,23 @@
+// 슬레이트 씬 분할 규칙 UI의 순수 계산. 백엔드 scene_split.tokenize와 동일 규칙
+// (미리보기 일치 — 실제 경계 계산은 서버가 단일 출처).
+const DEFAULT_DELIMITERS = ["_", " ", "-"];
+
+export function tokenizeSlate(
+  text: string, delimiters: string[] = DEFAULT_DELIMITERS,
+): string[] {
+  const escaped = delimiters.map((d) => d.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const parts = escaped.length ? text.split(new RegExp(escaped.join("|"))) : [text];
+  return parts.map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+export function previewLabel(tokens: string[], uptoIndex: number): string {
+  if (uptoIndex < 0 || uptoIndex >= tokens.length) return "";
+  return tokens.slice(0, uptoIndex + 1).join("_");
+}
+
+export function formatMs(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
