@@ -1143,9 +1143,21 @@ git commit -m "test(video): 씬 분할 API 엔드포인트 테스트"
 
 ---
 
-### Task 8: 번들 배선 (RapidOCR collect-all)
+### Task 8: 번들 배선 (RapidOCR + 네이티브 의존성)
 
-PyInstaller freeze에 RapidOCR + 모델 파일을 포함한다.
+PyInstaller freeze에 RapidOCR + 모델 파일 + **네이티브 의존성**을 포함한다.
+
+> ⚠️ **RapidOCR은 순수 파이썬이 아니다.** rapidocr-onnxruntime 1.4.x 의존성:
+> `onnxruntime`(이미 번들 ✓), `opencv-python`(네이티브 DLL/so), `Shapely`(GEOS),
+> `pyclipper`(C++), `Pillow`(네이티브), `PyYAML`, `numpy`(이미 번들), `six`, `tqdm`.
+> `--collect-all rapidocr_onnxruntime` **한 줄로는 부족하다** — 네이티브 의존성의
+> 바이너리와 RapidOCR의 `.onnx` 모델·`config.yaml`(패키지 상대경로 로드 — 프로즌에서
+> 어긋나기 쉬움, MLX metallib 함정과 동류)을 모두 수집·검증해야 한다.
+>
+> **Linux 서버 함정:** `opencv-python`(비-headless)은 `import cv2` 시 `libGL.so.1`을
+> 요구해 GUI 없는 서버에서 즉사한다. **빌드 venv에서 `opencv-python`을
+> `opencv-python-headless`로 교체**한다(같은 `cv2` 모듈을 libGL 없이 제공 — RapidOCR은
+> `import cv2`만 하므로 무손실). 이는 전 플랫폼에 안전하다.
 
 **Files:**
 - Modify: `apps/server_desktop/scripts/build-server.sh`
@@ -1153,35 +1165,65 @@ PyInstaller freeze에 RapidOCR + 모델 파일을 포함한다.
 
 **Interfaces:** 없음 (빌드 스크립트)
 
-- [ ] **Step 1: Add collect-all to build-server.sh**
+- [ ] **Step 1: 빌드 venv 의존성 설치에 headless opencv 교체 추가 (build-server.sh)**
 
-`--collect-all onnxruntime \` 다음 줄에 추가:
+build-server.sh의 `uv pip install ... ./apps/server "pyinstaller>=6.21"` 단계 **뒤**에, opencv를 headless로 교체하는 라인을 추가한다(rapidocr가 opencv-python을 끌어온 뒤 덮어쓴다):
+
+```bash
+# RapidOCR가 끌어온 opencv-python(비-headless)은 Linux에서 libGL.so.1을 요구해
+# 서버 번들에서 import cv2가 즉사한다. 같은 cv2 모듈을 제공하는 headless로 교체.
+VIRTUAL_ENV="${BUILD_VENV}" uv pip install --python "${BUILD_VENV}/bin/python" \
+    opencv-python-headless
+VIRTUAL_ENV="${BUILD_VENV}" uv pip uninstall --python "${BUILD_VENV}/bin/python" \
+    opencv-python || true
+```
+
+- [ ] **Step 2: pyinstaller 인자에 collect-all 추가 (build-server.sh)**
+
+`--collect-all onnxruntime \` 다음 줄들에 추가(네이티브 의존성 명시 수집):
 
 ```bash
     --collect-all onnxruntime \
     --collect-all rapidocr_onnxruntime \
+    --collect-all shapely \
+    --collect-all pyclipper \
+    --collect-all cv2 \
+    --collect-all PIL \
 ```
 
-- [ ] **Step 2: Mirror in build-server.ps1**
+- [ ] **Step 3: build-server.ps1 미러링**
 
-`build-server.ps1`에서 pyinstaller 인자 중 `--collect-all onnxruntime`에 대응하는 라인을 찾아 바로 뒤에 `--collect-all rapidocr_onnxruntime` 를 동일 형식으로 추가.
+`build-server.ps1`에서 (a) 빌드 venv 설치 단계 뒤에 opencv headless 교체, (b) `--collect-all onnxruntime` 뒤에 동일한 5개 collect-all 라인을 추가한다.
+
+> Windows는 `libGL` 문제가 없어 opencv 교체가 필수는 아니지만, **전 플랫폼 동일 의존성 그래프**를 유지하려면 headless로 통일하는 게 안전하다(headless는 Windows에서도 정상 동작).
 
 Run: `grep -n "collect-all onnxruntime" apps/server_desktop/scripts/build-server.ps1`
-Expected: 라인 위치 확인 후 동일 패턴으로 rapidocr 라인 삽입.
+Expected: 라인 위치 확인 후 동일 패턴으로 5개 라인 삽입.
 
-- [ ] **Step 3: Verify pyinstaller can see the package**
+- [ ] **Step 4: 로컬 import 스모크 (비-프로즌)**
 
-Run: `cd apps/server && python -c "import rapidocr_onnxruntime, os; print(os.path.dirname(rapidocr_onnxruntime.__file__))"`
-Expected: 패키지 경로 출력 (모델 파일이 이 트리 안에 있어 `--collect-all`이 함께 수집).
+Run:
+```bash
+cd apps/server && .venv/bin/python -c "import cv2, shapely, pyclipper, PIL, rapidocr_onnxruntime; print('deps ok')"
+.venv/bin/python -c "from rapidocr_onnxruntime import RapidOCR; RapidOCR(); print('engine init ok')"
+```
+Expected: `deps ok` / `engine init ok` (모델 로드 성공 — 경로 해석 정상)
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add apps/server_desktop/scripts/build-server.sh apps/server_desktop/scripts/build-server.ps1
-git commit -m "build(video): RapidOCR 모델 번들 collect-all"
+git commit -m "build(video): RapidOCR + 네이티브 의존성 번들(headless opencv/shapely/pyclipper)"
 ```
 
-> 실제 freeze 빌드 검증(Mac/Win)은 릴리스 절차(release 스킬)에서 수행 — 이 태스크는 스크립트 배선까지.
+- [ ] **Step 6: 프로즌 스모크 (플랫폼별 — 릴리스 검증 항목)**
+
+각 플랫폼에서 번들 빌드 후, 번들 파이썬으로 RapidOCR가 실제 초기화·판독되는지 확인한다. 이것이 "모델 경로가 프로즌에서 풀리는가"를 잡는 유일한 관문이다:
+
+- **Mac/Linux:** `build-server.sh`로 빌드 → `dist/yeson-server/`에서 서버 기동 후 실제 씬 스캔 1회(Task 12에서 통합). 최소한 번들 내 `_internal/rapidocr_onnxruntime/` 에 `.onnx` 모델이 있는지 확인.
+- **Windows:** `build-server.ps1`로 빌드 → 번들에서 `import cv2` + RapidOCR 초기화 성공 + 테스트 이미지 1장 OCR 확인.
+
+> 프로즌 빌드 검증은 릴리스 절차(release 스킬)와 Task 12 실기 검증에서 수행 — 이 태스크는 스크립트 배선 + 로컬 import 스모크까지. **모델 경로가 프로즌에서 안 풀리면**(로그에 `.onnx not found`/`config.yaml not found`), `--add-data`로 `rapidocr_onnxruntime/models`·`config.yaml`을 명시 경로에 복사하는 폴백이 필요하다.
 
 ---
 
