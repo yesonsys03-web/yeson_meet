@@ -20,7 +20,7 @@ import {
   actionableJobIds, canRebuild, captionedFileName, isSelectableStatus, overallProgress,
   partitionSelection,
 } from "./videoBatchOps";
-import { shouldShowCudaWarning } from "./videoReviewLogic";
+import { engineLabel, shouldShowCudaWarning } from "./videoReviewLogic";
 import { VideoReviewView } from "./VideoReviewView";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -52,19 +52,6 @@ const DEFAULT_ENGINE_OPTIONS: EngineOption[] = [
   { value: "agy", label: "번역: Antigravity", available: true },
   { value: "opencode", label: "번역: OpenCode (딥시크 등)", available: true },
 ];
-
-// 엔진 표시 라벨 — 결과보기 재번역 드롭다운도 같은 규칙을 쓴다(규칙 복제 금지).
-export function engineLabel(engine: TranslateEngineInfo): string {
-  let label = engine.label;
-  if (engine.reason) {
-    // 이 서버가 런타임 자체를 지원 못하는 티어 — "미설치" 문구는 오히려
-    // 오해를 부른다(설치해도 못 쓴다는 뜻이므로 사유를 그대로 보여준다).
-    label += ` (${engine.reason})`;
-  } else if (!engine.available) {
-    label += engine.value === "gemini" ? " (서버에 키 없음)" : " (서버에 미설치)";
-  }
-  return label;
-}
 
 // 서버의 gemini(값 없음=기본)를 클라 상태값 ""와 맞추고, 미설치 엔진은 disabled 처리
 export function toEngineOptions(engines: TranslateEngineInfo[]): EngineOption[] {

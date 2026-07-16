@@ -5,9 +5,8 @@ import {
   videoDownloadUrl, videoMediaUrl,
 } from "./videoApi";
 import type { BurnStyle, TranslateEngineInfo, VideoJobDetail } from "./videoApi";
-import { engineLabel } from "./VideoCaptionPanel";
 import {
-  activeSegmentIndex, isSourceCopy, overlayStyleFor, sanitizeFilename,
+  activeSegmentIndex, engineLabel, isSourceCopy, overlayStyleFor, sanitizeFilename,
 } from "./videoReviewLogic";
 import { captionedFileName } from "./videoBatchOps";
 
@@ -239,7 +238,7 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
     }
   };
 
-  const burnDisabled = busy || job.status === "burning";
+  const burnDisabled = busy || retranslating || job.status === "burning";
 
   return (
     <div style={{ ...consoleStyles.panel, display: "flex", flexDirection: "column", gap: 16 }}>
