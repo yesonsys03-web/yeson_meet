@@ -14,6 +14,8 @@
 - 브랜치 `feature/video-retranslate-passthrough`, base `origin/main` = `76f3191`.
 - **provider 검증 패턴을 새로 하드코딩하지 않는다** — `video_jobs.py:63`의 `_TRANSLATE_PROVIDER_PATTERN`(= `list_translate_engines()`에서 자동 도출)을 재사용한다. v1.3.6 qwen 422 사고의 재발 방지 조건.
 - **판별 상수를 복제하지 않는다** — ascii 임계는 `ai/mlx_live_translate.py`의 `_ASCII_LEAK_MAX`(=0.6) 하나만 존재해야 한다.
+- **엔진 라벨 규칙을 복제하지 않는다** — `reason` → `available` → gemini 특례 순서의 라벨 규칙은 `VideoCaptionPanel.tsx:57-73` `toEngineOptions`에 이미 있다(v1.3.9 최종 리뷰가 "(서버에 미설치)" 오안내를 고친 코드). Task 6이 공유 헬퍼로 추출해 양쪽이 쓴다.
+- **apps/desktop에 testing-library/jsdom이 없다** — 컴포넌트 렌더 테스트 불가. 이 리포 관례는 `.tsx`에서 **순수 함수를 export해 vitest로 단위 테스트**하는 것이다(`toEngineOptions` ← `VideoCaptionPanel.test.ts`).
 - **번역은 `translate_segments`를 거친다** — `_translate_resilient`를 직접 부르면 글로서리 보정(`apply_ko_corrections`)과 50줄 청킹이 빠져 기존 번역과 불일치한다.
 - 사용자 수동 편집 줄(`text_ko != text_en`)은 어떤 경우에도 덮어쓰지 않는다.
 - 서버 테스트 실행: 이 인텔맥은 워크스페이스 `uv.lock`에 onnxruntime x86_64 휠이 없어 full deps 설치가 안 된다. 스크래치 venv를 쓴다(기존 관례).
@@ -567,11 +569,81 @@ git commit -m "feat(video): 클라 영문 잔존 판별 + 재번역 API"
 ### Task 6: 결과보기 UI
 
 **Files:**
+- Modify: `apps/desktop/src/console/VideoCaptionPanel.tsx:56-73` (`engineLabel` 추출)
 - Modify: `apps/desktop/src/console/VideoReviewView.tsx` (상태 27-41행, 툴바 183행, 세그먼트 렌더 312-336행)
+- Test: `apps/desktop/src/console/VideoCaptionPanel.test.ts`
 
 **Interfaces:**
 - Consumes: `isUntranslated` (Task 5), `retranslateSegments`, `RetranslateResult`, `listTranslateEngines`, `TranslateEngineInfo` (기존)
-- Produces: 없음(최종 UI)
+- Produces: `engineLabel(engine: TranslateEngineInfo): string` — `"번역: "` 접두 **없는** 엔진 표시 라벨
+
+- [ ] **Step 0: 라벨 규칙을 공유 헬퍼로 추출 (RED 먼저)**
+
+결과보기 드롭다운도 같은 라벨 규칙이 필요하다. 규칙을 복제하지 않도록 `toEngineOptions`에서 추출한다. `toEngineOptions`의 기존 동작은 **한 글자도 바뀌면 안 된다**(기존 테스트가 고정).
+
+`apps/desktop/src/console/VideoCaptionPanel.test.ts`에 추가:
+
+```ts
+describe("engineLabel", () => {
+  it("reason이 있으면 reason을 붙인다 — '번역: ' 접두는 붙이지 않는다", () => {
+    expect(engineLabel({ value: "qwen_x", label: "Qwen 12B", available: false,
+                         reason: "실리콘맥 전용" })).toBe("Qwen 12B (실리콘맥 전용)");
+  });
+  it("gemini 미가용은 키 없음으로 구분한다", () => {
+    expect(engineLabel({ value: "gemini", label: "Gemini", available: false }))
+      .toBe("Gemini (서버에 키 없음)");
+  });
+  it("그 외 미가용은 미설치", () => {
+    expect(engineLabel({ value: "claude", label: "Claude 구독", available: false }))
+      .toBe("Claude 구독 (서버에 미설치)");
+  });
+  it("가용하면 라벨 그대로", () => {
+    expect(engineLabel({ value: "claude", label: "Claude 구독", available: true }))
+      .toBe("Claude 구독");
+  });
+});
+```
+
+Run: `cd apps/desktop && pnpm vitest run src/console/VideoCaptionPanel.test.ts`
+Expected: FAIL — `engineLabel is not exported`
+
+`VideoCaptionPanel.tsx`의 `toEngineOptions`를 다음으로 교체(로직 이동일 뿐, 동작 동일):
+
+```ts
+// 엔진 표시 라벨 — 결과보기 재번역 드롭다운도 같은 규칙을 쓴다(규칙 복제 금지).
+export function engineLabel(engine: TranslateEngineInfo): string {
+  let label = engine.label;
+  if (engine.reason) {
+    // 이 서버가 런타임 자체를 지원 못하는 티어 — "미설치" 문구는 오히려
+    // 오해를 부른다(설치해도 못 쓴다는 뜻이므로 사유를 그대로 보여준다).
+    label += ` (${engine.reason})`;
+  } else if (!engine.available) {
+    label += engine.value === "gemini" ? " (서버에 키 없음)" : " (서버에 미설치)";
+  }
+  return label;
+}
+
+// 서버의 gemini(값 없음=기본)를 클라 상태값 ""와 맞추고, 미설치 엔진은 disabled 처리
+export function toEngineOptions(engines: TranslateEngineInfo[]): EngineOption[] {
+  return engines.map((engine) => {
+    const isGemini = engine.value === "gemini";
+    return {
+      value: isGemini ? "" : engine.value,
+      label: `번역: ${engineLabel(engine)}`,
+      available: isGemini ? true : engine.available, // 기본값이므로 gemini는 항상 선택 허용
+    };
+  });
+```
+
+Run: `cd apps/desktop && pnpm vitest run src/console/VideoCaptionPanel.test.ts`
+Expected: PASS — 신규 `engineLabel` 4건 + **기존 `toEngineOptions` 테스트 전부 그대로**
+
+Commit:
+
+```bash
+git add apps/desktop/src/console/VideoCaptionPanel.tsx apps/desktop/src/console/VideoCaptionPanel.test.ts
+git commit -m "refactor(video): engineLabel 추출 — 결과보기와 라벨 규칙 공유"
+```
 
 - [ ] **Step 1: 엔진 목록 로드 + 상태 추가**
 
@@ -580,6 +652,7 @@ git commit -m "feat(video): 클라 영문 잔존 판별 + 재번역 API"
 ```ts
 import { listTranslateEngines, retranslateSegments } from "./videoApi";
 import type { TranslateEngineInfo } from "./videoApi";
+import { engineLabel } from "./VideoCaptionPanel";
 import { isUntranslated } from "./videoReviewLogic";
 ```
 
@@ -656,11 +729,13 @@ import { isUntranslated } from "./videoReviewLogic";
               style={{ ...consoleStyles.input, width: "auto", fontSize: 12 }}
               value={retProvider}
               onChange={(e) => setRetProvider(e.target.value)}>
+              {/* 라벨 규칙은 engineLabel이 단일 출처 — 여기서 다시 짜지 않는다.
+                  gemini는 value를 ""로 바꾸지 않는다: toEngineOptions의 ""는
+                  VideoCaptionPanel 상태 규약이고, 이 엔드포인트는 provider를
+                  그대로 받으므로 ""는 검증 패턴에서 거부된다. */}
               {engines.map((e) => (
                 <option key={e.value} value={e.value} disabled={!e.available}>
-                  {/* reason이 있으면 이 서버가 그 런타임을 아예 지원하지 않는
-                      것이므로 '미설치'가 아니라 사유를 보여준다. */}
-                  {e.label}{e.available ? "" : ` (${e.reason ?? "서버에 미설치"})`}
+                  {engineLabel(e)}
                 </option>
               ))}
             </select>
