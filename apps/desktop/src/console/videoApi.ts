@@ -261,6 +261,23 @@ export async function burnVideoJob(
   });
 }
 
+export type RetranslateResult = {
+  total: number;
+  retranslated: number;
+  remaining: number;
+};
+
+export async function retranslateSegments(
+  jobId: string, provider: string, cliModel?: string,
+): Promise<RetranslateResult> {
+  return request<RetranslateResult>(
+    `${apiBase()}/api/v1/video-jobs/${jobId}/retranslate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, cli_model: cliModel ?? null }),
+    });
+}
+
 export async function deleteVideoJob(jobId: string): Promise<void> {
   await request(`${apiBase()}/api/v1/video-jobs/${jobId}`,
     { method: "DELETE" });

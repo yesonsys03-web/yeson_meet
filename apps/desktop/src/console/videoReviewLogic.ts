@@ -29,6 +29,19 @@ export function activeSegmentIndex(
   );
 }
 
+/** 번역기가 원문을 그대로 복사한 줄인가 — 서버 is_source_copy와 같은 규칙.
+ *
+ * 서버의 재번역 대상 선정과 **같은 규칙이어야 한다**: 배지에 표시한 수와 버튼이
+ * 실제로 고치는 수가 어긋나면 안 된다. 서버의 english_leak(ascii 비율) 쪽은
+ * 사후 확인 전용이므로 여기 재현하지 않는다 — 그래서 클라에 임계 상수가 없고,
+ * 드리프트할 것도 없다.
+ */
+export function isSourceCopy(textEn: string, textKo: string): boolean {
+  const ko = textKo.trim();
+  if (!ko) return false;   // 사용자가 의도적으로 비운 줄
+  return ko === textEn.trim();
+}
+
 /**
  * burn(ffmpeg subtitles 필터가 SRT→ASS 변환 시 사용하는 libass PlayResY=288
  * 캔버스)과 같은 좌표계로 미리보기 오버레이를 배치한다. ASS의
