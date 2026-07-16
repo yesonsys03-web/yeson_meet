@@ -35,7 +35,12 @@ from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
 from apps.server.domain.video_captions.pipeline import \
     _INFLIGHT_STATUSES as INFLIGHT_STATUSES
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
-from apps.server.domain.video_captions.translate_cli import list_translate_engines
+from apps.server.domain.video_captions.translate import (is_source_copy,
+                                                         is_untranslated,
+                                                         maybe_aclose_translator,
+                                                         translate_segments)
+from apps.server.domain.video_captions.translate_cli import (create_translator,
+                                                             list_translate_engines)
 from apps.server.domain.video_captions.whisper_models import get_catalog, is_downloaded
 
 router = APIRouter(tags=["video-jobs"], prefix="/video-jobs")
@@ -415,6 +420,74 @@ async def rebuild_video_job(
     await db.commit()
     _start_pipeline(external_id)
     return {"status": "queued"}
+
+
+class RetranslateIn(BaseModel):
+    provider: str = Field(pattern=_TRANSLATE_PROVIDER_PATTERN)
+    cli_model: str | None = None
+
+
+@router.post("/{external_id}/retranslate")
+async def retranslate_video_job(
+    external_id: UUID,
+    body: RetranslateIn,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """영문으로 남은 세그먼트만 골라 지정 엔진으로 다시 번역한다.
+
+    대상은 is_source_copy(원문을 그대로 복사한 줄)뿐이다 — 사용자가 손댄 줄은
+    정의상 text_ko != text_en이라 절대 덮어쓰지 않는다. 검수 편집을 통째로
+    폐기하는 rebuild와 다른 점이다. is_untranslated(english_leak 포함)를 대상
+    선정에 쓰면 이 안전 속성이 깨진다 — 사후 확인에만 쓴다.
+    번역은 translate_segments를 거쳐 글로서리 보정·청킹을 그대로 탄다.
+    """
+    job = await _get_job_or_404(db, external_id)
+    if job.status not in ("review", "done", "error", "cancelled"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"진행 중인 작업은 재번역할 수 없습니다 (status={job.status})")
+    engine = next(
+        (e for e in list_translate_engines() if e["value"] == body.provider), None)
+    if engine is None or not engine["available"]:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"이 서버에서 사용할 수 없는 번역 엔진입니다: {body.provider}")
+
+    rows = (await db.execute(
+        select(VideoSegment)
+        .where(VideoSegment.job_id == job.id)
+        .order_by(VideoSegment.seq)
+    )).scalars().all()
+    # 대상 선정은 is_source_copy만 — is_untranslated를 쓰면 사용자가 일부러
+    # 영문으로 남긴 편집을 덮어쓴다.
+    targets = [r for r in rows if is_source_copy(r.text_en, r.text_ko)]
+    if not targets:
+        return {"total": 0, "retranslated": 0, "remaining": 0}
+
+    translator = create_translator(body.provider, body.cli_model)
+    try:
+        out = await translate_segments(
+            [SubSegment(seq=r.seq, start_ms=r.start_ms, end_ms=r.end_ms,
+                        text=r.text_en) for r in targets],
+            translator,
+        )
+    finally:
+        await maybe_aclose_translator(translator)
+
+    by_seq = {s.seq: s.text for s in out}
+    retranslated = 0
+    for row in targets:
+        ko = by_seq.get(row.seq)
+        # 사후 확인은 is_untranslated(english_leak 포함) — 방금 모델이 뱉은
+        # 출력을 보는 것이라 안전 문제가 없고, 영어면 저장하지 않고 remaining으로
+        # 보고해 카운트를 정직하게 만든다.
+        if ko is None or is_untranslated(row.text_en, ko):
+            continue
+        row.text_ko = ko
+        retranslated += 1
+    await db.commit()
+    return {"total": len(targets), "retranslated": retranslated,
+            "remaining": len(targets) - retranslated}
 
 
 @router.get("/{external_id}/download")

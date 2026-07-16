@@ -87,3 +87,51 @@ async def test_gemini_translator_rejects_bad_json(monkeypatch):
     monkeypatch.setattr(tl.GeminiFlashTranslator, "_generate", fake_generate)
     with pytest.raises(tl.TranslationError):
         await tl.GeminiFlashTranslator(api_key="k").translate_batch(["hello"])
+
+
+def test_is_source_copy():
+    """대상 선정용 — 번역기가 원문을 그대로 복사한 줄만 잡는다."""
+    from apps.server.domain.video_captions.translate import is_source_copy
+
+    src = "Margarita vibes, baby girl!"
+    # 폴백 3경로는 전부 원문을 정확히 복사한다
+    assert is_source_copy(src, src) is True
+    assert is_source_copy(src, f"  {src}  ") is True  # 공백 차이 무시
+    # 정상 번역
+    assert is_source_copy(src, "마르가리타 분위기야, 자기!") is False
+    # ★핵심 안전 속성: 사용자가 일부러 영문으로 남긴 편집은 대상이 아니다.
+    # 여기서 True가 나오면 재번역이 사용자 작업을 지운다.
+    assert is_source_copy(src, "Margarita mood, girl!") is False
+    # 사용자가 의도적으로 비운 줄도 건드리지 않는다
+    assert is_source_copy(src, "") is False
+    assert is_source_copy(src, "   ") is False
+
+
+def test_is_untranslated():
+    """사후 확인용 — 재번역 결과가 여전히 영문인가(대상 선정에 쓰지 말 것)."""
+    from apps.server.domain.video_captions.translate import is_untranslated
+
+    src = "Margarita vibes, baby girl!"
+    assert is_untranslated(src, src) is True
+    assert is_untranslated(src, "마르가리타 분위기야, 자기!") is False
+    # is_source_copy와 갈리는 지점 — 원문과 달라도 영어면 "아직 번역 안 됨"
+    assert is_untranslated(src, "Margarita mood, girl!") is True
+    assert is_untranslated(src, "") is False
+
+
+async def test_maybe_aclose_translator():
+    from apps.server.domain.video_captions.translate import maybe_aclose_translator
+
+    closed = []
+
+    class WithAclose:
+        async def aclose(self):
+            closed.append(True)
+
+    class WithoutAclose:
+        pass
+
+    await maybe_aclose_translator(WithAclose())
+    assert closed == [True]
+    # aclose가 없는 번역기(gemini/CLI/apple)는 조용히 무시된다
+    await maybe_aclose_translator(WithoutAclose())

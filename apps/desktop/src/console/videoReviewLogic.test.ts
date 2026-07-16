@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  activeSegmentIndex, overlayStyleFor, sanitizeFilename, shouldShowCudaWarning,
+  activeSegmentIndex, engineLabel, isSourceCopy, overlayStyleFor, sanitizeFilename,
+  shouldShowCudaWarning,
 } from "./videoReviewLogic";
 
 const segs = [
@@ -74,5 +75,47 @@ describe("shouldShowCudaWarning", () => {
   });
   it("stays quiet when cuda_ok is undefined (older server response — no spurious warning)", () => {
     expect(shouldShowCudaWarning({ enabled: true, installed: true, cuda_ok: undefined })).toBe(false);
+  });
+});
+
+describe("isSourceCopy", () => {
+  const src = "Margarita vibes, baby girl!";
+
+  it("원문을 그대로 복사한 줄을 잡는다", () => {
+    expect(isSourceCopy(src, src)).toBe(true);
+    expect(isSourceCopy(src, `  ${src}  `)).toBe(true);
+  });
+
+  it("정상 번역은 통과시킨다", () => {
+    expect(isSourceCopy(src, "마르가리타 분위기야, 자기!")).toBe(false);
+  });
+
+  it("사용자가 일부러 영문으로 남긴 편집은 대상이 아니다", () => {
+    // 서버 대상 선정과 같은 규칙이어야 배지 수 == 실제 고쳐질 수.
+    expect(isSourceCopy(src, "Margarita mood, girl!")).toBe(false);
+  });
+
+  it("의도적으로 비운 줄은 건드리지 않는다", () => {
+    expect(isSourceCopy(src, "")).toBe(false);
+    expect(isSourceCopy(src, "   ")).toBe(false);
+  });
+});
+
+describe("engineLabel", () => {
+  it("reason이 있으면 reason을 붙인다 — '번역: ' 접두는 붙이지 않는다", () => {
+    expect(engineLabel({ value: "qwen_x", label: "Qwen 12B", available: false,
+                         reason: "실리콘맥 전용" })).toBe("Qwen 12B (실리콘맥 전용)");
+  });
+  it("gemini 미가용은 키 없음으로 구분한다", () => {
+    expect(engineLabel({ value: "gemini", label: "Gemini", available: false }))
+      .toBe("Gemini (서버에 키 없음)");
+  });
+  it("그 외 미가용은 미설치", () => {
+    expect(engineLabel({ value: "claude", label: "Claude 구독", available: false }))
+      .toBe("Claude 구독 (서버에 미설치)");
+  });
+  it("가용하면 라벨 그대로", () => {
+    expect(engineLabel({ value: "claude", label: "Claude 구독", available: true }))
+      .toBe("Claude 구독");
   });
 });

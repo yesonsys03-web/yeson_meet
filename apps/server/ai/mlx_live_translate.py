@@ -45,6 +45,19 @@ _LEN_RATIO_MAX = 3.0
 _ASCII_LEAK_MAX = 0.6
 
 
+def is_english_leak(text: str) -> bool:
+    """ascii 알파벳 비율이 임계를 넘으면 영어 누수로 본다.
+
+    guard_mlx_ko(생성 시점)와 검수 단계의 영문 잔존 판별이 같은 기준을 쓰도록
+    공개한다 — 임계값이 두 곳에 복제되면 두 정의가 갈라진다.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    ascii_alpha = len(_ASCII_ALPHA_RE.findall(stripped))
+    return ascii_alpha / max(1, len(stripped)) > _ASCII_LEAK_MAX
+
+
 def guard_mlx_ko(en: str, ko: str) -> str | None:
     """MLX 번역 결과 검증. 통과 시 None, 불합격 시 사유 문자열."""
     ko_stripped = ko.strip()
@@ -59,8 +72,7 @@ def guard_mlx_ko(en: str, ko: str) -> str | None:
     ratio = len(ko_stripped) / max(1, len(en.strip()))
     if not (_LEN_RATIO_MIN <= ratio <= _LEN_RATIO_MAX):
         return "length_ratio"
-    ascii_alpha = len(_ASCII_ALPHA_RE.findall(ko_stripped))
-    if ascii_alpha / max(1, len(ko_stripped)) > _ASCII_LEAK_MAX:
+    if is_english_leak(ko_stripped):
         return "english_leak"
     if _REPEAT_RE.search(ko_stripped):
         return "repetition"

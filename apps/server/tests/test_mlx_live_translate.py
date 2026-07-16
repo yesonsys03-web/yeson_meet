@@ -495,4 +495,14 @@ class TestProviderRegistration:
         monkeypatch.setattr(
             "apps.server.ai.mlx_live_translate.mlx_live_available", lambda: False)
         assert create_ai_provider() is None
+
+
+def test_is_english_leak():
+    from apps.server.ai.mlx_live_translate import is_english_leak
+
+    assert is_english_leak("Margarita vibes, baby girl!") is True
+    assert is_english_leak("마르가리타 분위기야!") is False
+    assert is_english_leak("") is False
+    # 한글에 고유명사가 섞인 정도는 누수가 아니다
+    assert is_english_leak("Margarita 한 잔 하자") is False
 # === ANCHOR: TEST_MLX_LIVE_TRANSLATE_END ===

@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import {
-  burnVideoJob, getVideoJob, patchSegments, videoDownloadUrl, videoMediaUrl,
+  burnVideoJob, getVideoJob, listTranslateEngines, patchSegments, retranslateSegments,
+  videoDownloadUrl, videoMediaUrl,
 } from "./videoApi";
-import type { BurnStyle, VideoJobDetail } from "./videoApi";
-import { activeSegmentIndex, overlayStyleFor, sanitizeFilename } from "./videoReviewLogic";
+import type { BurnStyle, TranslateEngineInfo, VideoJobDetail } from "./videoApi";
+import {
+  activeSegmentIndex, engineLabel, isSourceCopy, overlayStyleFor, sanitizeFilename,
+} from "./videoReviewLogic";
 import { captionedFileName } from "./videoBatchOps";
 
 type VideoReviewViewProps = {
@@ -40,6 +43,12 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
   const [downloading, setDownloading] = useState<null | "video" | "srt">(null);
   const [videoHeight, setVideoHeight] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [engines, setEngines] = useState<TranslateEngineInfo[]>([]);
+  // 로컬 엔진 재시도는 같은 실패가 반복될 수 있으므로 기본값은 작업이 쓰던
+  // 엔진이 아니라 Claude 구독이다.
+  const [retProvider, setRetProvider] = useState("claude");
+  const [retCliModel, setRetCliModel] = useState("");
+  const [retranslating, setRetranslating] = useState(false);
 
   // burn(ffmpeg subtitles 필터)이 SRT를 ASS로 변환할 때 PlayResY=288 기준
   // Fontsize/MarginV를 실제 렌더 높이로 스케일하므로, 미리보기도 실제 표시
@@ -74,6 +83,24 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
     return () => clearInterval(timer);
   }, [job?.status, refresh]);
 
+  useEffect(() => {
+    void listTranslateEngines().then(setEngines).catch(() => setEngines([]));
+  }, []);
+
+  // 기본값 claude가 이 서버에 없으면 쓸 수 있는 첫 엔진으로 폴백 —
+  // VideoCaptionPanel이 같은 이유로 하는 것(그쪽은 자기 기본값인 gemini "")의
+  // 결과보기 판이다. 없으면 사용자가 "Claude 구독 (서버에 미설치)"가 선택된
+  // 채인 버튼을 눌러 서버 409만 받는다.
+  // 폴백 대상이 gemini 고정이 아닌 이유: 이 엔드포인트는 provider를 그대로 받아
+  // ""가 없고, gemini도 API 키가 없으면 미가용일 수 있다.
+  useEffect(() => {
+    if (engines.length === 0) return;
+    const cur = engines.find((e) => e.value === retProvider);
+    if (cur && cur.available) return;
+    const first = engines.find((e) => e.available);
+    if (first) setRetProvider(first.value);
+  }, [engines, retProvider]);
+
   if (!job) {
     return (
       <div style={consoleStyles.panel}>
@@ -91,6 +118,13 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
   const activeSeg = activeIdx >= 0 ? segments[activeIdx] : undefined;
   const activeText = activeSeg ? koOf(activeSeg.seq, activeSeg.text_ko) : "";
 
+  const untranslatedSeqs = new Set(
+    segments.filter((s) => isSourceCopy(s.text_en, koOf(s.seq, s.text_ko)))
+            .map((s) => s.seq));
+  const retEngineOk = engines.some((e) => e.value === retProvider && e.available);
+  const retranslateDisabled =
+    untranslatedSeqs.size === 0 || retranslating || !retEngineOk;
+
   const saveEdits = async () => {
     const payload = Object.entries(edits).map(([seq, text_ko]) => ({
       seq: Number(seq), text_ko,
@@ -99,6 +133,34 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
     await patchSegments(jobId, payload);
     await refresh();
     setEdits({});
+  };
+
+  const runRetranslate = async () => {
+    setRetranslating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      // ★파괴적 동작 전에 편집을 먼저 저장한다 — startBurn과 같은 이유.
+      // 이게 없으면 (a) 미저장 편집이 refresh()로 조용히 날아가고,
+      // (b) 배지는 koOf(편집 인식)라 방금 타이핑한 줄을 "처리됨"으로 보여주는데
+      // 서버는 DB(text_ko == text_en)를 보므로 그 줄을 대상에 넣어 덮어쓴다.
+      // 저장하면 DB == 클라 상태가 되어 배지와 서버 판정이 정확히 일치한다.
+      // saveEdits는 편집이 없으면 즉시 반환하고, 내부에서 refresh + setEdits({})를 한다.
+      await saveEdits();
+      const r = await retranslateSegments(
+        jobId, retProvider,
+        retProvider === "opencode" ? retCliModel : undefined);
+      setNotice(r.remaining > 0
+        ? `${r.total}개 중 ${r.retranslated}개 해결, ${r.remaining}개 남음`
+        : `${r.retranslated}개 재번역 완료`);
+      // 서버가 text_ko를 바꿨으므로 다시 읽는다. refresh()는 이미 있는
+      // useCallback — getVideoJob을 직접 부르지 않는다.
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRetranslating(false);
+    }
   };
 
   const startBurn = async () => {
@@ -176,16 +238,26 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
     }
   };
 
-  const burnDisabled = busy || job.status === "burning";
+  const burnDisabled = busy || retranslating || job.status === "burning";
 
   return (
     <div style={{ ...consoleStyles.panel, display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <button type="button" style={consoleStyles.mutedAction} onClick={onBack}>
+      {/* 좁은 폭에서 무너지지 않게: 버튼·전사모델 표기는 flexShrink:0 + nowrap이라
+          찌그러지지 않고(안 그러면 flex가 버튼을 내용 폭 아래로 눌러 "목록으로"가
+          한 글자씩 세로로 쪼개진다), 타이틀만 남는 폭을 먹으며 줄바꿈한다.
+          flex:1에는 minWidth:0이 필수 — 없으면 긴 파일명이 컨테이너를 밀어내
+          잘려 나간다(파일명은 공백이 없어 overflowWrap:anywhere가 있어야 끊긴다). */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <button type="button"
+          style={{ ...consoleStyles.mutedAction, flexShrink: 0, whiteSpace: "nowrap" }}
+          onClick={onBack}>
           ← 목록으로
         </button>
-        <h2 style={{ ...consoleStyles.title, margin: 0, flex: 1 }}>{job.title}</h2>
-        <span style={{ fontSize: 13, opacity: 0.75 }}>{job.whisper_model} 모델로 전사됨</span>
+        <h2 style={{ ...consoleStyles.title, margin: 0, flex: 1, minWidth: 0,
+                     overflowWrap: "anywhere" }}>{job.title}</h2>
+        <span style={{ fontSize: 13, opacity: 0.75, flexShrink: 0, whiteSpace: "nowrap" }}>
+          {job.whisper_model} 모델로 전사됨
+        </span>
       </div>
       {error ? <p style={{ color: "#e5484d", margin: 0 }}>{error}</p> : null}
       {notice ? <p style={consoleStyles.statusInfo}>{notice}</p> : null}
@@ -307,13 +379,69 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
         </div>
 
         {/* ---- 세그먼트 편집 리스트 ---- */}
-        <div style={{ flex: "1 1 360px", maxHeight: 520, overflowY: "auto",
+        <div style={{ flex: "1 1 360px", maxHeight: 520,
                       display: "flex", flexDirection: "column", gap: 6 }}>
+          {/* 툴바는 스크롤 영역 **밖**이다 — 안에 두면 자막을 내릴 때 같이 밀려
+              올라가 재번역 버튼이 사라진다(실사용에서 발견). 스크롤은 아래
+              세그먼트 목록만 담당한다. */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center",
+                        flexWrap: "wrap", paddingBottom: 4 }}>
+            {/* consoleStyles.select를 쓴다(input 아님) — native select는 WebKit이
+                고유 높이로 렌더해 input·버튼보다 낮게 나오고, 그 보정이 이미
+                select 스타일에 들어있다. 폭도 형제 화면(VideoCaptionPanel의
+                번역 엔진 select)과 같은 200으로 맞춘다. */}
+            <select
+              style={{ ...consoleStyles.select, width: 200 }}
+              value={retProvider}
+              disabled={retranslating}
+              onChange={(e) => setRetProvider(e.target.value)}>
+              {/* 라벨 규칙은 engineLabel이 단일 출처 — 여기서 다시 짜지 않는다.
+                  gemini는 value를 ""로 바꾸지 않는다: toEngineOptions의 ""는
+                  VideoCaptionPanel 상태 규약이고, 이 엔드포인트는 provider를
+                  그대로 받으므로 ""는 검증 패턴에서 거부된다. */}
+              {engines.map((e) => (
+                <option key={e.value} value={e.value} disabled={!e.available}>
+                  {engineLabel(e)}
+                </option>
+              ))}
+            </select>
+            {retProvider === "opencode" ? (
+              <input
+                style={{ ...consoleStyles.input, width: 180 }}
+                value={retCliModel}
+                disabled={retranslating}
+                placeholder="모델명"
+                onChange={(e) => setRetCliModel(e.target.value)} />
+            ) : null}
+            {/* disabled 조건에 엔진 가용성도 포함한다 — 서버가 미가용 엔진을
+                409로 막지만(무인증 API라 서버 가드는 필수), UI가 누를 수 있게
+                두면 사용자는 에러만 받는다. 폴백 effect가 보통 가용 엔진으로
+                옮겨주므로 이 조건은 "가용 엔진이 하나도 없는 서버"의 backstop이다.
+                스타일은 이 파일의 관례(굽기·다운로드 버튼)대로 actionDisabled를 병합. */}
+            <button type="button"
+              style={{ ...consoleStyles.mutedAction,
+                       ...(retranslateDisabled ? consoleStyles.actionDisabled : null) }}
+              disabled={retranslateDisabled}
+              onClick={() => void runRetranslate()}>
+              {retranslating ? "재번역 중…" : "영문 구간 일괄 재번역"}
+            </button>
+            {/* 개수는 버튼 바로 옆 — 왼쪽 끝에 떨어져 있으면 버튼이 무엇을 몇 개
+                고칠지가 안 읽힌다. */}
+            <span style={{ fontSize: 12, opacity: 0.75 }}>
+              {untranslatedSeqs.size > 0
+                ? `영문 잔존 ${untranslatedSeqs.size}구간`
+                : "영문 잔존 없음"}
+            </span>
+          </div>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto",
+                        display: "flex", flexDirection: "column", gap: 6 }}>
           {segments.map((seg, idx) => (
             <div key={seg.seq}
               style={{ padding: "6px 10px", borderRadius: 6,
-                       border: `1px solid ${idx === activeIdx
-                         ? "rgba(48,164,108,0.9)" : "rgba(255,255,255,0.12)"}` }}>
+                       border: `1px solid ${
+                         idx === activeIdx ? "rgba(48,164,108,0.9)"
+                         : untranslatedSeqs.has(seg.seq) ? "rgba(230,145,56,0.9)"
+                         : "rgba(255,255,255,0.12)"}` }}>
               <button type="button"
                 style={{ background: "none", border: "none", color: "inherit",
                          cursor: "pointer", padding: 0, fontSize: 12, opacity: 0.7 }}
@@ -340,6 +468,7 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
               수정 저장 ({Object.keys(edits).length}건)
             </button>
           ) : null}
+          </div>
         </div>
       </div>
     </div>
