@@ -25,7 +25,9 @@ from .ffmpeg import (
     wav_duration_seconds,
 )
 from .ingest import download_youtube
-from .scene_split import FrameSample, SlateRule, compute_boundaries, hold_keys
+from .scene_split import (
+    FrameSample, SlateRule, compute_boundaries, dedupe_labels, hold_keys,
+)
 from .slate_ocr import read_slate_line
 from .srt import SubSegment, build_force_style, segments_to_srt
 from .transcribe import StaleRunCancelled, transcribe_audio
@@ -605,7 +607,7 @@ async def run_scene_scan(external_id: UUID, interval_s: float = 1.0) -> None:
                         external_id, generation)
             return
         logger.exception("scene scan %s failed", external_id)
-        raise
+        return
     finally:
         _BURN_SEMAPHORE.release()
 
@@ -635,11 +637,15 @@ async def run_scene_export(external_id: UUID, mode: str,
 
         def _work() -> list[str]:
             written: list[str] = []
-            for seg in segments:
+            # 비단조 슬레이트 순서(예: 020→021→020)에서 같은 라벨이 인접하지
+            # 않은 채로 두 번 나올 수 있다 — 전체 세그먼트를 미리 dedupe해
+            # 파일명 충돌(덮어쓰기로 인한 데이터 손실)을 막는다.
+            deduped = dedupe_labels(
+                [_sanitize_label(seg["label"]) for seg in segments])
+            for i, seg in enumerate(segments):
                 if generation != _current_generation(external_id):
                     raise StaleRunCancelled(external_id)
-                safe = _sanitize_label(seg["label"])
-                out_path = dest / f"{safe}.mp4"
+                out_path = dest / f"{deduped[i]}.mp4"
                 cut_segment(ffmpeg, burned, out_path,
                             seg["start_ms"], seg["end_ms"],
                             proc_key=str(external_id))

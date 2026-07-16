@@ -140,6 +140,14 @@ def test_save_and_load_scenes_roundtrip(monkeypatch, tmp_path):
     assert loaded["rule"]["seq_tokens"] == [1]
 
 
+def test_dedupe_labels_suffixes_collisions():
+    from apps.server.domain.video_captions.scene_split import dedupe_labels
+    assert dedupe_labels(["HH0307_020", "HH0307_021", "HH0307_020"]) == \
+        ["HH0307_020", "HH0307_021", "HH0307_020_02"]
+    assert dedupe_labels(["a", "a", "a"]) == ["a", "a_02", "a_03"]
+    assert dedupe_labels([]) == []
+
+
 def test_build_scene_data_produces_both_modes():
     from apps.server.domain.video_captions.scene_split import FrameSample
     samples = [

@@ -135,3 +135,15 @@ def compute_boundaries(
         merged = final
 
     return [Segment(label=lbl, start_ms=st, end_ms=en) for _, lbl, st, en in merged]
+
+
+def dedupe_labels(labels: list[str]) -> list[str]:
+    """중복 라벨에 _02, _03 … 접미사를 붙여 파일명 충돌을 막는다. 첫 등장은
+    그대로 두고, 이후 같은 라벨만 순번을 붙인다(비단조 슬레이트 순서 대비)."""
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    for label in labels:
+        n = seen.get(label, 0) + 1
+        seen[label] = n
+        out.append(label if n == 1 else f"{label}_{n:02d}")
+    return out
