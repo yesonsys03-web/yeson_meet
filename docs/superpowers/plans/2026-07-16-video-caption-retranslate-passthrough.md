@@ -4,7 +4,7 @@
 
 **Goal:** 결과보기에서 번역이 안 되고 영문으로 남은 구간을 자동 판별해, 사용자가 고른 엔진으로 한 번에 재번역한다.
 
-**Architecture:** 판별은 `text_ko == text_en`(원문 유지 폴백 3경로가 전부 원문을 복사하므로 정확) + ascii 비율 보조. 서버가 대상 세그먼트만 골라 기존 `translate_segments`(글로서리·청킹 포함)로 다시 번역하고 `text_ko`를 갱신한다. 스키마 변경이 없어 기존 작업에 소급 적용된다. 동기 호출.
+**Architecture:** 대상 판별은 `text_ko == text_en`(원문 유지 폴백 3경로가 전부 원문을 **정확히** 복사하므로 이 하나로 충분·오탐 없음). 서버가 대상 세그먼트만 골라 기존 `translate_segments`(글로서리·청킹 포함)로 다시 번역하고 `text_ko`를 갱신한다. ascii 비율 판별은 **재번역 결과 사후 확인 전용**(대상 선정에 쓰면 사용자 편집을 덮어씀). 스키마 변경이 없어 기존 작업에 소급 적용된다. 동기 호출.
 
 **Tech Stack:** FastAPI + SQLAlchemy(async) + Pydantic / React + TypeScript(Tauri) / pytest + vitest
 
@@ -18,6 +18,10 @@
 - **apps/desktop에 testing-library/jsdom이 없다** — 컴포넌트 렌더 테스트 불가. 이 리포 관례는 `.tsx`에서 **순수 함수를 export해 vitest로 단위 테스트**하는 것이다(`toEngineOptions` ← `VideoCaptionPanel.test.ts`).
 - **번역은 `translate_segments`를 거친다** — `_translate_resilient`를 직접 부르면 글로서리 보정(`apply_ko_corrections`)과 50줄 청킹이 빠져 기존 번역과 불일치한다.
 - 사용자 수동 편집 줄(`text_ko != text_en`)은 어떤 경우에도 덮어쓰지 않는다.
+- **판별 규칙 2개를 용도별로 엄격히 분리한다** (Task 2 리뷰가 잡은 설계 모순의 해소책, 사용자 판정):
+  - `is_source_copy(en, ko)` = `ko.strip() == en.strip()` → **재번역 대상 선정 + 클라 배지/시각표시**는 오직 이것만.
+  - `is_untranslated(en, ko)` = `is_source_copy` **or** `is_english_leak(ko)` → **재번역 결과 사후 확인 전용.**
+  - 이유: 폴백 3경로가 전부 원문을 정확히 복사하므로 `is_source_copy`가 전부 잡는다. `is_english_leak` 쪽은 실익이 사실상 0인데, 사용자가 일부러 영문으로 남긴 편집(`ko != en`)을 덮어쓸 수 있는 **유일한 경로**다. 사후 확인은 모델 출력을 보는 것이라 안전 문제가 없다.
 - 서버 테스트 실행: 이 인텔맥은 워크스페이스 `uv.lock`에 onnxruntime x86_64 휠이 없어 full deps 설치가 안 된다. 스크래치 venv를 쓴다(기존 관례).
 
 ---
@@ -101,7 +105,9 @@ git commit -m "refactor(translate): is_english_leak 공개 — 가드와 검수 
 
 ---
 
-### Task 2: `is_untranslated` 판별 함수
+### Task 2: 판별 함수 2개 (`is_source_copy` / `is_untranslated`)
+
+두 규칙을 **용도별로 분리**한다. 왜 분리해야 하는지는 Global Constraints를 볼 것 — 섞으면 사용자 편집이 지워진다.
 
 **Files:**
 - Modify: `apps/server/domain/video_captions/translate.py` (`apply_ko_guard` 뒤, 72행 이후)
@@ -109,69 +115,103 @@ git commit -m "refactor(translate): is_english_leak 공개 — 가드와 검수 
 
 **Interfaces:**
 - Consumes: `is_english_leak(text: str) -> bool` (Task 1)
-- Produces: `is_untranslated(text_en: str, text_ko: str) -> bool`
+- Produces: `is_source_copy(text_en: str, text_ko: str) -> bool` (대상 선정), `is_untranslated(text_en: str, text_ko: str) -> bool` (사후 확인)
 
 - [ ] **Step 1: Write the failing test**
 
 `apps/server/tests/test_video_translate.py` 끝에 추가:
 
 ```python
+def test_is_source_copy():
+    """대상 선정용 — 번역기가 원문을 그대로 복사한 줄만 잡는다."""
+    from apps.server.domain.video_captions.translate import is_source_copy
+
+    src = "Margarita vibes, baby girl!"
+    # 폴백 3경로는 전부 원문을 정확히 복사한다
+    assert is_source_copy(src, src) is True
+    assert is_source_copy(src, f"  {src}  ") is True  # 공백 차이 무시
+    # 정상 번역
+    assert is_source_copy(src, "마르가리타 분위기야, 자기!") is False
+    # ★핵심 안전 속성: 사용자가 일부러 영문으로 남긴 편집은 대상이 아니다.
+    # 여기서 True가 나오면 재번역이 사용자 작업을 지운다.
+    assert is_source_copy(src, "Margarita mood, girl!") is False
+    # 사용자가 의도적으로 비운 줄도 건드리지 않는다
+    assert is_source_copy(src, "") is False
+    assert is_source_copy(src, "   ") is False
+
+
 def test_is_untranslated():
+    """사후 확인용 — 재번역 결과가 여전히 영문인가(대상 선정에 쓰지 말 것)."""
     from apps.server.domain.video_captions.translate import is_untranslated
 
     src = "Margarita vibes, baby girl!"
-    # 폴백 3경로는 전부 원문을 그대로 복사한다 — 1차 판별
     assert is_untranslated(src, src) is True
-    assert is_untranslated(src, f"  {src}  ") is True  # 공백 차이 무시
-    # 정상 번역
     assert is_untranslated(src, "마르가리타 분위기야, 자기!") is False
-    # 원문과 다르지만 여전히 영어 — 2차 판별
+    # is_source_copy와 갈리는 지점 — 원문과 달라도 영어면 "아직 번역 안 됨"
     assert is_untranslated(src, "Margarita mood, girl!") is True
-    # 사용자가 의도적으로 비운 줄은 건드리지 않는다
     assert is_untranslated(src, "") is False
-    assert is_untranslated(src, "   ") is False
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest apps/server/tests/test_video_translate.py::test_is_untranslated -v`
-Expected: FAIL — `ImportError: cannot import name 'is_untranslated'`
+Run: `pytest apps/server/tests/test_video_translate.py::test_is_source_copy -v`
+Expected: FAIL — `ImportError: cannot import name 'is_source_copy'`
 
 - [ ] **Step 3: Write minimal implementation**
 
 `apps/server/domain/video_captions/translate.py`의 `apply_ko_guard` 정의 **바로 뒤**에 추가:
 
 ```python
-def is_untranslated(text_en: str, text_ko: str) -> bool:
-    """검수용 — 번역이 안 되고 영문이 남은 줄인가.
+def is_source_copy(text_en: str, text_ko: str) -> bool:
+    """번역기가 원문(EN)을 그대로 복사한 줄인가 — **재번역 대상 선정용**.
 
     영문이 남는 폴백 3경로(apply_ko_guard 불합격 / _translate_resilient 1줄
-    실패 / Apple 언어팩 미설치)가 전부 원문을 그대로 복사하므로, 동일 비교가
-    오탐 없는 1차 판별이다. 2차는 원문과 다르지만 여전히 영어인 경우(가드가
-    없는 provider).
+    실패 / Apple 언어팩 미설치)가 전부 원문을 **정확히** 복사하므로, 동일 비교
+    하나로 셋 다 오탐 없이 잡는다.
 
-    빈 줄은 대상이 아니다 — 사용자가 의도적으로 비운 자막을 되살리면 안 된다.
+    ★이 함수가 대상 선정의 단일 진실인 이유: 사용자가 손댄 줄은 정의상
+    text_ko != text_en이 되어 여기서 False가 된다 = 재번역이 사용자 편집을
+    절대 덮어쓰지 않는다. is_untranslated(english_leak 포함)를 대상 선정에
+    쓰면 사용자가 일부러 영문으로 남긴 편집이 지워진다.
+
+    빈 줄은 대상이 아니다 — 의도적으로 비운 자막을 되살리면 안 된다.
+    """
+    ko = text_ko.strip()
+    if not ko:
+        return False
+    return ko == text_en.strip()
+
+
+def is_untranslated(text_en: str, text_ko: str) -> bool:
+    """이 줄이 여전히 영문인가 — **재번역 결과 사후 확인 전용**.
+
+    is_source_copy에 더해, 원문과는 다르지만 여전히 영어인 출력(가드가 없는
+    provider가 영어로 의역해 반환)까지 잡는다.
+
+    ★대상 선정에 쓰지 말 것 — 사용자 편집을 덮어쓴다. 사후 확인은 방금 모델이
+    뱉은 출력을 보는 것이라 안전 문제가 없고, 영어면 저장하지 않고 remaining으로
+    보고해 카운트를 정직하게 만든다.
     """
     from apps.server.ai.mlx_live_translate import is_english_leak
 
     ko = text_ko.strip()
     if not ko:
         return False
-    if ko == text_en.strip():
+    if is_source_copy(text_en, text_ko):
         return True
     return is_english_leak(ko)
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pytest apps/server/tests/test_video_translate.py::test_is_untranslated -v`
-Expected: PASS
+Run: `pytest apps/server/tests/test_video_translate.py -v`
+Expected: PASS (기존 테스트 포함 전부)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add apps/server/domain/video_captions/translate.py apps/server/tests/test_video_translate.py
-git commit -m "feat(translate): is_untranslated — 영문 잔존 구간 판별"
+git commit -m "feat(translate): is_source_copy(대상 선정) / is_untranslated(사후 확인) 분리"
 ```
 
 ---
@@ -267,7 +307,7 @@ git commit -m "refactor(translate): maybe_aclose_translator 공개 — 파이프
 - Test: `apps/server/tests/test_api_video_jobs.py`
 
 **Interfaces:**
-- Consumes: `is_untranslated(text_en, text_ko) -> bool` (Task 2), `maybe_aclose_translator(translator)` (Task 3)
+- Consumes: `is_source_copy(text_en, text_ko) -> bool` (대상 선정) 및 `is_untranslated(text_en, text_ko) -> bool` (사후 확인) (Task 2), `maybe_aclose_translator(translator)` (Task 3)
 - Produces: `POST /api/v1/video-jobs/{external_id}/retranslate` — body `{"provider": str, "cli_model": str | None}`, 응답 `{"total": int, "retranslated": int, "remaining": int}`
 
 - [ ] **Step 1: Write the failing test**
@@ -378,7 +418,8 @@ Expected: FAIL — 404 (라우트 없음)
 `apps/server/api/v1/video_jobs.py` import에 추가:
 
 ```python
-from apps.server.domain.video_captions.translate import (is_untranslated,
+from apps.server.domain.video_captions.translate import (is_source_copy,
+                                                         is_untranslated,
                                                          maybe_aclose_translator,
                                                          translate_segments)
 from apps.server.domain.video_captions.translate_cli import (create_translator,
@@ -403,8 +444,10 @@ async def retranslate_video_job(
 ) -> dict:
     """영문으로 남은 세그먼트만 골라 지정 엔진으로 다시 번역한다.
 
-    대상이 is_untranslated를 만족하는 줄로 한정되므로 사용자가 직접 수정한 줄은
-    덮어쓰지 않는다 — 검수 편집을 통째로 폐기하는 rebuild와 다른 점이다.
+    대상은 is_source_copy(원문을 그대로 복사한 줄)뿐이다 — 사용자가 손댄 줄은
+    정의상 text_ko != text_en이라 절대 덮어쓰지 않는다. 검수 편집을 통째로
+    폐기하는 rebuild와 다른 점이다. is_untranslated(english_leak 포함)를 대상
+    선정에 쓰면 이 안전 속성이 깨진다 — 사후 확인에만 쓴다.
     번역은 translate_segments를 거쳐 글로서리 보정·청킹을 그대로 탄다.
     """
     job = await _get_job_or_404(db, external_id)
@@ -424,7 +467,9 @@ async def retranslate_video_job(
         .where(VideoSegment.job_id == job.id)
         .order_by(VideoSegment.seq)
     )).scalars().all()
-    targets = [r for r in rows if is_untranslated(r.text_en, r.text_ko)]
+    # 대상 선정은 is_source_copy만 — is_untranslated를 쓰면 사용자가 일부러
+    # 영문으로 남긴 편집을 덮어쓴다.
+    targets = [r for r in rows if is_source_copy(r.text_en, r.text_ko)]
     if not targets:
         return {"total": 0, "retranslated": 0, "remaining": 0}
 
@@ -442,6 +487,9 @@ async def retranslate_video_job(
     retranslated = 0
     for row in targets:
         ko = by_seq.get(row.seq)
+        # 사후 확인은 is_untranslated(english_leak 포함) — 방금 모델이 뱉은
+        # 출력을 보는 것이라 안전 문제가 없고, 영어면 저장하지 않고 remaining으로
+        # 보고해 카운트를 정직하게 만든다.
         if ko is None or is_untranslated(row.text_en, ko):
             continue
         row.text_ko = ko
@@ -474,60 +522,60 @@ git commit -m "feat(video): 영문 잔존 구간 일괄 재번역 엔드포인�
 
 **Interfaces:**
 - Consumes: 없음
-- Produces: `isUntranslated(textEn: string, textKo: string): boolean`, `retranslateSegments(jobId: string, provider: string, cliModel?: string): Promise<RetranslateResult>`, `type RetranslateResult = { total: number; retranslated: number; remaining: number }`
+- Produces: `isSourceCopy(textEn: string, textKo: string): boolean`, `retranslateSegments(jobId: string, provider: string, cliModel?: string): Promise<RetranslateResult>`, `type RetranslateResult = { total: number; retranslated: number; remaining: number }`
 
 - [ ] **Step 1: Write the failing test**
 
 `apps/desktop/src/console/videoReviewLogic.test.ts` 끝에 추가:
 
 ```ts
-describe("isUntranslated", () => {
+describe("isSourceCopy", () => {
   const src = "Margarita vibes, baby girl!";
 
   it("원문을 그대로 복사한 줄을 잡는다", () => {
-    expect(isUntranslated(src, src)).toBe(true);
-    expect(isUntranslated(src, `  ${src}  `)).toBe(true);
+    expect(isSourceCopy(src, src)).toBe(true);
+    expect(isSourceCopy(src, `  ${src}  `)).toBe(true);
   });
 
   it("정상 번역은 통과시킨다", () => {
-    expect(isUntranslated(src, "마르가리타 분위기야, 자기!")).toBe(false);
+    expect(isSourceCopy(src, "마르가리타 분위기야, 자기!")).toBe(false);
   });
 
-  it("원문과 달라도 여전히 영어면 잡는다", () => {
-    expect(isUntranslated(src, "Margarita mood, girl!")).toBe(true);
+  it("사용자가 일부러 영문으로 남긴 편집은 대상이 아니다", () => {
+    // 서버 대상 선정과 같은 규칙이어야 배지 수 == 실제 고쳐질 수.
+    expect(isSourceCopy(src, "Margarita mood, girl!")).toBe(false);
   });
 
   it("의도적으로 비운 줄은 건드리지 않는다", () => {
-    expect(isUntranslated(src, "")).toBe(false);
-    expect(isUntranslated(src, "   ")).toBe(false);
+    expect(isSourceCopy(src, "")).toBe(false);
+    expect(isSourceCopy(src, "   ")).toBe(false);
   });
 });
 ```
 
-파일 상단 import에 `isUntranslated`를 추가한다.
+파일 상단 import에 `isSourceCopy`를 추가한다.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd apps/desktop && pnpm vitest run src/console/videoReviewLogic.test.ts`
-Expected: FAIL — `isUntranslated is not exported`
+Expected: FAIL — `isSourceCopy is not exported`
 
 - [ ] **Step 3: Write minimal implementation**
 
 `apps/desktop/src/console/videoReviewLogic.ts`에 추가:
 
 ```ts
-// 서버 ai/mlx_live_translate.py의 _ASCII_LEAK_MAX와 같은 값. 서버가 최종
-// 판정자이고 이 함수는 배지 카운트·표시용이다 — 값이 갈라져도 저장되는
-// 데이터는 서버 규칙을 따른다.
-const ASCII_LEAK_MAX = 0.6;
-
-/** 번역이 안 되고 영문이 남은 줄인가 — 서버 is_untranslated와 같은 규칙. */
-export function isUntranslated(textEn: string, textKo: string): boolean {
+/** 번역기가 원문을 그대로 복사한 줄인가 — 서버 is_source_copy와 같은 규칙.
+ *
+ * 서버의 재번역 대상 선정과 **같은 규칙이어야 한다**: 배지에 표시한 수와 버튼이
+ * 실제로 고치는 수가 어긋나면 안 된다. 서버의 english_leak(ascii 비율) 쪽은
+ * 사후 확인 전용이므로 여기 재현하지 않는다 — 그래서 클라에 임계 상수가 없고,
+ * 드리프트할 것도 없다.
+ */
+export function isSourceCopy(textEn: string, textKo: string): boolean {
   const ko = textKo.trim();
-  if (!ko) return false;
-  if (ko === textEn.trim()) return true;
-  const asciiAlpha = (ko.match(/[A-Za-z]/g) ?? []).length;
-  return asciiAlpha / Math.max(1, ko.length) > ASCII_LEAK_MAX;
+  if (!ko) return false;   // 사용자가 의도적으로 비운 줄
+  return ko === textEn.trim();
 }
 ```
 
@@ -574,7 +622,7 @@ git commit -m "feat(video): 클라 영문 잔존 판별 + 재번역 API"
 - Test: `apps/desktop/src/console/VideoCaptionPanel.test.ts`
 
 **Interfaces:**
-- Consumes: `isUntranslated` (Task 5), `retranslateSegments`, `RetranslateResult`, `listTranslateEngines`, `TranslateEngineInfo` (기존)
+- Consumes: `isSourceCopy` (Task 5), `retranslateSegments`, `RetranslateResult`, `listTranslateEngines`, `TranslateEngineInfo` (기존)
 - Produces: `engineLabel(engine: TranslateEngineInfo): string` — `"번역: "` 접두 **없는** 엔진 표시 라벨
 
 - [ ] **Step 0: 라벨 규칙을 공유 헬퍼로 추출 (RED 먼저)**
@@ -653,7 +701,7 @@ git commit -m "refactor(video): engineLabel 추출 — 결과보기와 라벨 �
 import { listTranslateEngines, retranslateSegments } from "./videoApi";
 import type { TranslateEngineInfo } from "./videoApi";
 import { engineLabel } from "./VideoCaptionPanel";
-import { isUntranslated } from "./videoReviewLogic";
+import { isSourceCopy } from "./videoReviewLogic";
 ```
 
 상태 선언부(41행 뒤)에 추가:
@@ -683,7 +731,7 @@ import { isUntranslated } from "./videoReviewLogic";
 
 ```ts
   const untranslatedSeqs = new Set(
-    segments.filter((s) => isUntranslated(s.text_en, koOf(s.seq, s.text_ko)))
+    segments.filter((s) => isSourceCopy(s.text_en, koOf(s.seq, s.text_ko)))
             .map((s) => s.seq));
 ```
 
