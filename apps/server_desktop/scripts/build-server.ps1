@@ -117,26 +117,63 @@ if (Test-Path $CfBin) {
 }
 
 # Task 14: vendor the Windows ffmpeg binary so the tauri.conf binaries/ffmpeg-*
-# resource glob is satisfied at `tauri build`. Idempotent (skips if present).
-# BtbN win64-gpl static build — same source as fetch-ffmpeg.sh's MINGW branch,
-# but fetched natively in PowerShell so CI (and local Windows builds) need no
-# Git Bash step. Without this, `tauri build` fails on the unmatched glob
-# (v1.0.0 Windows CI에서 실제 발생).
-$FfDir = "apps/server_desktop/src-tauri/binaries/ffmpeg-$Triple"
-$FfBin = Join-Path $FfDir "ffmpeg.exe"
-if (Test-Path $FfBin) {
-    Write-Host "ffmpeg already vendored: $FfBin"
+# resource glob is satisfied at `tauri build`. Without this, `tauri build` fails
+# on the unmatched glob (v1.0.0 Windows CI에서 실제 발생). Fetched natively in
+# PowerShell so CI (and local Windows builds) need no Git Bash step.
+#
+# The version/url/sha256 come from ffmpeg.lock.json — the SAME manifest
+# fetch-ffmpeg.sh reads — so this path and the POSIX one cannot drift onto
+# different ffmpeg builds. This used to hardcode its own URL to the rolling
+# ffmpeg-master-latest (FFmpeg git trunk nightlies) with no integrity check.
+# Idempotent via the .pinned stamp: a manifest bump re-pulls automatically.
+$FfManifest = "apps/server_desktop/ffmpeg.lock.json"
+if (-not (Test-Path $FfManifest)) { throw "manifest not found: $FfManifest" }
+$FfPin = (Get-Content $FfManifest -Raw | ConvertFrom-Json).triples.$Triple
+if (-not $FfPin) { throw "no ffmpeg pin for triple $Triple in $FfManifest" }
+
+$FfDir   = "apps/server_desktop/src-tauri/binaries/ffmpeg-$Triple"
+$FfBin   = Join-Path $FfDir $FfPin.bin
+$FfStamp = Join-Path $FfDir ".pinned"
+$FfWant  = "$($FfPin.version) $($FfPin.sha256)"
+
+# The stamp may have been written by either fetcher, so normalise before
+# comparing rather than depending on a trailing newline either way.
+if ((Test-Path $FfBin) -and (Test-Path $FfStamp) -and
+    ("$(Get-Content $FfStamp -Raw)".Trim() -eq $FfWant)) {
+    Write-Host "ffmpeg already vendored at pinned $($FfPin.version): $FfBin"
 } else {
-    Write-Host "Vendoring ffmpeg (win64-gpl)..."
+    Write-Host "Vendoring ffmpeg $($FfPin.version) for $Triple..."
     New-Item -ItemType Directory -Force -Path $FfDir | Out-Null
     $FfTmp = Join-Path ([System.IO.Path]::GetTempPath()) "ffmpeg-dl-$PID"
     New-Item -ItemType Directory -Force -Path $FfTmp | Out-Null
-    $FfZip = Join-Path $FfTmp "ffmpeg.zip"
-    Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip" -OutFile $FfZip
-    Expand-Archive -Path $FfZip -DestinationPath $FfTmp -Force
-    $FfExe = Get-ChildItem -Path $FfTmp -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
-    if (-not $FfExe) { throw "ffmpeg.exe not found in downloaded archive" }
-    Copy-Item $FfExe.FullName $FfBin
-    Remove-Item -Recurse -Force $FfTmp
+    try {
+        $FfZip = Join-Path $FfTmp "pkg.zip"
+        # Invoke-WebRequest's progress bar makes large downloads crawl in CI.
+        $OldProgress = $ProgressPreference
+        $ProgressPreference = "SilentlyContinue"
+        try { Invoke-WebRequest -Uri $FfPin.url -OutFile $FfZip }
+        finally { $ProgressPreference = $OldProgress }
+
+        $FfActual = (Get-FileHash -Path $FfZip -Algorithm SHA256).Hash.ToLower()
+        if ($FfActual -ne $FfPin.sha256.ToLower()) {
+            throw ("sha256 mismatch — refusing to vendor $($FfPin.url)`n" +
+                   "  expected: $($FfPin.sha256)`n  actual:   $FfActual`n" +
+                   "The pinned artifact changed upstream, or the download was tampered with.`n" +
+                   "If this is an intentional upgrade, bump version+url+sha256 in $FfManifest.")
+        }
+
+        Expand-Archive -Path $FfZip -DestinationPath $FfTmp -Force
+        # `member` is the exact path inside the archive — the pin makes it
+        # deterministic, so we no longer guess with a recursive filename search.
+        $FfSrc = Join-Path $FfTmp ($FfPin.member -replace '/', '\')
+        if (-not (Test-Path $FfSrc)) {
+            throw "'$($FfPin.member)' not found inside the archive from $($FfPin.url)"
+        }
+        Copy-Item $FfSrc $FfBin -Force
+        Set-Content -Path $FfStamp -Value $FfWant -NoNewline
+    } finally {
+        Remove-Item -Recurse -Force $FfTmp -ErrorAction SilentlyContinue
+    }
     Write-Host "-> $FfBin"
+    Write-Host "   pinned: $($FfPin.version) (sha256 verified)"
 }
