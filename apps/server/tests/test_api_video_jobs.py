@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from apps.server.api.v1 import video_jobs as api_vj
 from apps.server.db.models import VideoJob, VideoSegment
+from apps.server.domain.video_captions import pipeline as pl
 
 
 @pytest.fixture(autouse=True)
@@ -680,3 +681,81 @@ async def test_retranslate_reports_remaining(client, db_session, admin_user,
     resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/retranslate",
                              json={"provider": "claude"})
     assert resp.json() == {"total": 1, "retranslated": 0, "remaining": 1}
+
+
+async def _new_scene_job(db_session, admin_user, status="done"):
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mp4",
+                   whisper_model="small", status=status)
+    db_session.add(job)
+    await db_session.commit()
+    return job
+
+
+async def test_scan_scenes_requires_done_status(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="review")
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan")
+    assert resp.status_code == 409
+
+
+async def test_scan_scenes_starts_task_when_done(client, db_session, admin_user,
+                                                 monkeypatch):
+    started = {}
+    monkeypatch.setattr(api_vj, "_start_scene_scan",
+                        lambda eid: started.setdefault("eid", eid))
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    # scan endpoint also requires burned.mp4 to exist on disk
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan")
+    assert resp.status_code == 202
+    assert started["eid"] == job.external_id
+
+
+async def test_get_scenes_empty_before_scan(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    resp = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")
+    assert resp.status_code == 200
+    assert resp.json()["scanned"] is False
+
+
+async def test_set_rule_computes_boundaries(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {"interval_ms": 1000, "frames": [
+        {"t_ms": 0, "text": "HH0307_020_0150_AC_v01"},
+        {"t_ms": 1000, "text": "HH0307_020_0170_AC_v01"},
+        {"t_ms": 2000, "text": "HH0307_021_0010_AC_v01"},
+    ]})
+    resp = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/rule",
+        json={"seq_tokens": [1], "scene_tokens": [2], "min_ms": 0})
+    assert resp.status_code == 200
+    labels = [s["label"] for s in resp.json()["segments_scene"]]
+    assert labels == ["HH0307_020_0150", "HH0307_020_0170", "HH0307_021_0010"]
+    seq_labels = [s["label"] for s in resp.json()["segments_sequence"]]
+    assert seq_labels == ["HH0307_020", "HH0307_021"]
+
+
+async def test_export_starts_task(client, db_session, admin_user, monkeypatch):
+    started = {}
+    monkeypatch.setattr(api_vj, "_start_scene_export",
+                        lambda eid, mode, out: started.update(eid=eid, mode=mode))
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {"segments_scene": [
+        {"label": "HH0307_020_0150", "start_ms": 0, "end_ms": 3000}]})
+    resp = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export",
+        json={"mode": "scene"})
+    assert resp.status_code == 202
+    assert started["mode"] == "scene"
+
+
+async def test_export_rejects_without_segments(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    resp = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export",
+        json={"mode": "scene"})
+    assert resp.status_code == 409
