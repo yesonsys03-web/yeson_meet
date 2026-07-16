@@ -312,3 +312,64 @@ export function videoMediaUrl(jobId: string): string {
 export function videoDownloadUrl(jobId: string, kind: "video" | "srt"): string {
   return `${apiBase()}/api/v1/video-jobs/${jobId}/download?kind=${kind}`;
 }
+
+export type SceneSegment = { label: string; start_ms: number; end_ms: number };
+
+export type ScenesData = {
+  scanned: boolean;
+  frames: Array<{ t_ms: number; text: string }>;
+  segments_scene: SceneSegment[];
+  segments_sequence: SceneSegment[];
+  rule: SlateRuleInput | null;
+  interval_ms?: number;
+};
+
+export type SlateRuleInput = {
+  delimiters?: string[];
+  seq_tokens: number[];
+  scene_tokens?: number[];
+  min_ms?: number;
+};
+
+export async function scanScenes(jobId: string): Promise<void> {
+  await request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/scan`,
+    { method: "POST" });
+}
+
+export async function getScenes(jobId: string): Promise<ScenesData> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes`, {});
+}
+
+export async function setSceneRule(
+  jobId: string, rule: SlateRuleInput,
+): Promise<{ segments_scene: SceneSegment[]; segments_sequence: SceneSegment[] }> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/rule`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(rule),
+  });
+}
+
+export async function overrideSceneSegments(
+  jobId: string, mode: "scene" | "sequence", segments: SceneSegment[],
+): Promise<void> {
+  await request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/segments`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, segments }),
+  });
+}
+
+export async function exportScenes(
+  jobId: string, mode: "scene" | "sequence", outDir?: string,
+): Promise<{ status: string; count: number }> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/export`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, out_dir: outDir ?? null }),
+  });
+}
+
+export function sceneThumbUrl(jobId: string, index: number): string {
+  return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/thumb/${index}`;
+}
