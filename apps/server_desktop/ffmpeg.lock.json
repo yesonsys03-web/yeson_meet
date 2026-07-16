@@ -1,0 +1,107 @@
+{
+  "_readme": [
+    "Pinned ffmpeg binaries, per host triple. Read by BOTH scripts/fetch-ffmpeg.sh",
+    "(POSIX + Git Bash) and scripts/build-server.ps1 (native Windows CI) so the two",
+    "fetch paths cannot drift apart.",
+    "",
+    "Why pinned: every source here used to be a 'latest' moving target with no",
+    "integrity check, so two builds of the same commit could ship different ffmpeg",
+    "binaries. Windows was worst — it pulled ffmpeg-master-latest, i.e. FFmpeg git",
+    "trunk nightlies, into shipped installers.",
+    "",
+    "To upgrade: bump version + url + sha256 together. The fetchers re-download",
+    "automatically when this file changes (the .pinned stamp beside the binary is",
+    "compared against version+sha256), and abort on a hash mismatch.",
+    "",
+    "Requirements every entry must keep:",
+    "  - libass + libfreetype + fontconfig  -> subtitle burn-in ('subtitles' filter)",
+    "  - NO --enable-nonfree                -> nonfree builds are not redistributable",
+    "  - static (no non-system dylibs)      -> bundles as a single file resource",
+    "ffprobe is deliberately not vendored: nothing in the codebase invokes it.",
+    "",
+    "`bin` is NOT free to rename: server_process.rs::locate_bundled_ffmpeg()",
+    "derives the same 'ffmpeg{.exe}' name from target_os independently of this",
+    "file. They agree today; changing `bin` alone would vendor a name the locator",
+    "cannot find, and burn-in would fail to locate ffmpeg at runtime."
+  ],
+  "triples": {
+    "aarch64-apple-darwin": {
+      "version": "8.1",
+      "url": "https://www.osxexperts.net/ffmpeg81arm.zip",
+      "sha256": "ebb82529562b71170807bbc6b0e7eb4f0b13af8cbb0e085bb9e8f6fe709598ad",
+      "archive": "zip",
+      "member": "ffmpeg",
+      "bin": "ffmpeg",
+      "license": "gpl",
+      "provenance": "tofu",
+      "_notes": [
+        "arm64-NATIVE, so Apple Silicon needs no Rosetta. evermeet (used for the",
+        "x86_64 triple) ships x86_64 only; running that under Rosetta on arm64 was",
+        "the previous behaviour, and it fails outright on a Silicon Mac without",
+        "Rosetta — an exec'd subprocess gets EBADARCH with no install prompt, so",
+        "burn-in just silently stops working.",
+        "provenance=tofu: osxexperts publishes no checksums, so this sha256 is our",
+        "own first-fetch value (verified: arm64, static, libass, GPL, no nonfree).",
+        "Unlike the evermeet and BtbN URLs, this one is NOT version-exact — the",
+        "filename carries the major version only (8.1), so osxexperts can rebuild",
+        "8.1.x in place. A sha256 mismatch on THIS triple therefore most likely",
+        "means an upstream rebuild, not tampering: re-verify the new binary still",
+        "meets the requirements above, then re-pin. The fetchers fail closed, so a",
+        "rebuild surfaces as a hard macOS CI failure rather than a silent swap.",
+        "Version reads 8.1 while x86_64 reads 8.1.2 — the two builders publish on",
+        "their own cadences, so the mac triples are not kept in version lockstep",
+        "(unlike Windows/Linux, which share one BtbN tag)."
+      ]
+    },
+    "x86_64-apple-darwin": {
+      "version": "8.1.2",
+      "url": "https://evermeet.cx/ffmpeg/ffmpeg-8.1.2.zip",
+      "sha256": "e91df72a1ee7c26606f90dd2dd4dcccc6a75140ff9ea6fdd50faae828b82ba69",
+      "archive": "zip",
+      "member": "ffmpeg",
+      "bin": "ffmpeg",
+      "license": "gpl-version3",
+      "provenance": "tofu",
+      "_notes": [
+        "Was https://evermeet.cx/ffmpeg/getrelease/zip — a 'latest' alias that",
+        "silently rolls. Same publisher, now pinned to the exact version URL.",
+        "provenance=tofu: evermeet publishes GPG .sig files but no sha256; this is",
+        "our own first-fetch value."
+      ]
+    },
+    "x86_64-pc-windows-msvc": {
+      "version": "n8.1.2-22-g94138f6973",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-15-14-01/ffmpeg-n8.1.2-22-g94138f6973-win64-gpl-8.1.zip",
+      "sha256": "0af1621d3a2e418b86d8ff4704f5d5a70bcce611edd6c5110d092533b170952c",
+      "archive": "zip",
+      "member": "ffmpeg-n8.1.2-22-g94138f6973-win64-gpl-8.1/bin/ffmpeg.exe",
+      "bin": "ffmpeg.exe",
+      "license": "gpl",
+      "provenance": "upstream-checksums",
+      "_notes": [
+        "Was ffmpeg-master-latest-win64-gpl.zip from the rolling 'latest' tag —",
+        "FFmpeg git TRUNK, rebuilt daily, shipped to users. Now pinned to a dated",
+        "autobuild tag serving the 8.1.2 RELEASE branch (+22 commits).",
+        "provenance=upstream-checksums: matches BtbN's published checksums.sha256",
+        "for this tag, so it is not a trust-on-first-use value.",
+        "BtbN prunes old autobuild tags eventually; a 404 here means re-pin to a",
+        "current tag rather than a hash problem."
+      ]
+    },
+    "x86_64-unknown-linux-gnu": {
+      "version": "n8.1.2-22-g94138f6973",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-15-14-01/ffmpeg-n8.1.2-22-g94138f6973-linux64-gpl-8.1.tar.xz",
+      "sha256": "68e304f5518d3e22cd825e6fb738d0d9a04a8f36127873a18fc6646457e95b92",
+      "archive": "tar.xz",
+      "member": "ffmpeg-n8.1.2-22-g94138f6973-linux64-gpl-8.1/bin/ffmpeg",
+      "bin": "ffmpeg",
+      "license": "gpl",
+      "provenance": "upstream-checksums",
+      "_notes": [
+        "Dev-convenience triple — no Linux installer ships. Moved off johnvansickle",
+        "(which deletes older versioned tarballs, so a pinned URL there would 404)",
+        "onto the same BtbN tag as Windows, keeping both on one version."
+      ]
+    }
+  }
+}
