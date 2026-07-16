@@ -7,6 +7,7 @@ the report FTS background task. CPU-bound stages go through asyncio.to_thread.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -150,6 +151,23 @@ def video_jobs_root() -> Path:
 
 def job_dir(external_id: UUID | str) -> Path:
     return video_jobs_root() / str(external_id)
+
+
+def scenes_json_path(external_id: UUID | str) -> Path:
+    return job_dir(external_id) / "scenes.json"
+
+
+def save_scenes(external_id: UUID | str, data: dict) -> None:
+    path = scenes_json_path(external_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def load_scenes(external_id: UUID | str) -> dict | None:
+    path = scenes_json_path(external_id)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 async def _load_job(db, external_id: UUID) -> VideoJob:

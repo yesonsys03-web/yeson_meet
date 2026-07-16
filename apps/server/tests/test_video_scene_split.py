@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
+from apps.server.domain.video_captions import pipeline as pl
 from apps.server.domain.video_captions.scene_split import (
     FrameSample, Segment, SlateRule, build_label, compute_boundaries,
     grouping_key, hold_keys, tokenize,
@@ -125,3 +128,13 @@ def test_read_slate_line_swallows_unparseable_score(monkeypatch):
     monkeypatch.setattr(slate_ocr, "_get_engine",
                         lambda: (lambda _p: ([["box", "text", "not-a-number"]], 0.0)))
     assert slate_ocr.read_slate_line("x.png", ["_", " ", "-"]) == ""
+
+
+def test_save_and_load_scenes_roundtrip(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    ext = uuid4()
+    (tmp_path / "video_jobs" / str(ext)).mkdir(parents=True)
+    assert pl.load_scenes(ext) is None
+    pl.save_scenes(ext, {"rule": {"seq_tokens": [1]}, "segments_scene": []})
+    loaded = pl.load_scenes(ext)
+    assert loaded["rule"]["seq_tokens"] == [1]
