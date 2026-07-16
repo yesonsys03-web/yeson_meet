@@ -72,22 +72,42 @@ def apply_ko_guard(texts: list[str], out: list[str], *, marker: str) -> list[str
     return guarded
 
 
-def is_untranslated(text_en: str, text_ko: str) -> bool:
-    """검수용 — 번역이 안 되고 영문이 남은 줄인가.
+def is_source_copy(text_en: str, text_ko: str) -> bool:
+    """번역기가 원문(EN)을 그대로 복사한 줄인가 — **재번역 대상 선정용**.
 
     영문이 남는 폴백 3경로(apply_ko_guard 불합격 / _translate_resilient 1줄
-    실패 / Apple 언어팩 미설치)가 전부 원문을 그대로 복사하므로, 동일 비교가
-    오탐 없는 1차 판별이다. 2차는 원문과 다르지만 여전히 영어인 경우(가드가
-    없는 provider).
+    실패 / Apple 언어팩 미설치)가 전부 원문을 **정확히** 복사하므로, 동일 비교
+    하나로 셋 다 오탐 없이 잡는다.
 
-    빈 줄은 대상이 아니다 — 사용자가 의도적으로 비운 자막을 되살리면 안 된다.
+    ★이 함수가 대상 선정의 단일 진실인 이유: 사용자가 손댄 줄은 정의상
+    text_ko != text_en이 되어 여기서 False가 된다 = 재번역이 사용자 편집을
+    절대 덮어쓰지 않는다. is_untranslated(english_leak 포함)를 대상 선정에
+    쓰면 사용자가 일부러 영문으로 남긴 편집이 지워진다.
+
+    빈 줄은 대상이 아니다 — 의도적으로 비운 자막을 되살리면 안 된다.
+    """
+    ko = text_ko.strip()
+    if not ko:
+        return False
+    return ko == text_en.strip()
+
+
+def is_untranslated(text_en: str, text_ko: str) -> bool:
+    """이 줄이 여전히 영문인가 — **재번역 결과 사후 확인 전용**.
+
+    is_source_copy에 더해, 원문과는 다르지만 여전히 영어인 출력(가드가 없는
+    provider가 영어로 의역해 반환)까지 잡는다.
+
+    ★대상 선정에 쓰지 말 것 — 사용자 편집을 덮어쓴다. 사후 확인은 방금 모델이
+    뱉은 출력을 보는 것이라 안전 문제가 없고, 영어면 저장하지 않고 remaining으로
+    보고해 카운트를 정직하게 만든다.
     """
     from apps.server.ai.mlx_live_translate import is_english_leak
 
     ko = text_ko.strip()
     if not ko:
         return False
-    if ko == text_en.strip():
+    if is_source_copy(text_en, text_ko):
         return True
     return is_english_leak(ko)
 
