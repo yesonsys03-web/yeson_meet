@@ -47,11 +47,11 @@ def read_slate_line(
     """이미지 한 장 OCR → 슬레이트 라인. 판독 실패/후보 없음은 "" 반환."""
     try:
         result, _elapse = _get_engine()(str(image_path))
+        if not result:
+            return ""
+        # RapidOCR 반환: [[box, text, score], ...]
+        lines = [(item[1], float(item[2])) for item in result]
+        return pick_slate_line(lines, delimiters, min_tokens)
     except Exception:  # noqa: BLE001 — 한 프레임 판독 실패가 전체 스캔을 막지 않게
         logger.exception("OCR failed for %s", image_path)
         return ""
-    if not result:
-        return ""
-    # RapidOCR 반환: [[box, text, score], ...]
-    lines = [(item[1], float(item[2])) for item in result]
-    return pick_slate_line(lines, delimiters, min_tokens)

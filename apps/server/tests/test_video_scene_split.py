@@ -107,3 +107,21 @@ def test_pick_slate_line_prefers_most_tokens():
 def test_pick_slate_line_returns_empty_when_no_candidate():
     lines = [("1", 0.99), ("x", 0.5)]
     assert pick_slate_line(lines, ["_", " ", "-"], min_tokens=3) == ""
+
+
+def test_read_slate_line_swallows_malformed_result(monkeypatch):
+    """회귀: OCR 결과가 파싱 불가능한 형태여도 예외를 삼키고 '' 반환."""
+    from apps.server.domain.video_captions import slate_ocr
+    # 2개 원소 리스트를 반환하는 가짜 엔진 (item[2] 접근 시 IndexError 발생)
+    monkeypatch.setattr(slate_ocr, "_get_engine",
+                        lambda: (lambda _p: ([["box", "two-only"]], 0.0)))
+    assert slate_ocr.read_slate_line("x.png", ["_", " ", "-"]) == ""
+
+
+def test_read_slate_line_swallows_unparseable_score(monkeypatch):
+    """회귀: OCR 결과의 스코어가 float로 파싱 불가능해도 예외를 삼키고 '' 반환."""
+    from apps.server.domain.video_captions import slate_ocr
+    # 스코어가 float 파싱 불가능한 값
+    monkeypatch.setattr(slate_ocr, "_get_engine",
+                        lambda: (lambda _p: ([["box", "text", "not-a-number"]], 0.0)))
+    assert slate_ocr.read_slate_line("x.png", ["_", " ", "-"]) == ""
