@@ -43,8 +43,11 @@ uv pip install --python $VenvPython ./apps/server "pyinstaller>=6.21"
 # 서버 번들에서 import cv2가 즉사한다. 같은 cv2 모듈을 제공하는 headless로 교체.
 uv pip install --python $VenvPython `
     opencv-python-headless
-uv pip uninstall --python $VenvPython `
-    opencv-python
+# opencv-python이 이미 없을 수도 있으니 실패해도 계속 진행(bash의 `|| true` 대응).
+# $ErrorActionPreference=Stop + PowerShell 7.4의 네이티브 명령 오류 전파가 켜지면
+# uninstall 비정상 종료가 스크립트를 중단시킬 수 있어 try/catch로 감싼다.
+try { uv pip uninstall --python $VenvPython opencv-python } catch { }
+$global:LASTEXITCODE = 0
 
 # Build the viewer SPA so the frozen server serves it under the same :8000 origin
 # as /api + /ws (replacing the old Docker-path Caddy). Staged via --add-data.
