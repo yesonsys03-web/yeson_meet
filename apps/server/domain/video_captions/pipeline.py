@@ -20,10 +20,13 @@ from apps.server.db.models import VideoJob, VideoSegment
 from apps.server.db.session import AsyncSessionLocal
 from . import gpu_pack
 from .ffmpeg import (
-    burn_subtitles, ensure_preview, extract_audio, kill_active, locate_ffmpeg,
+    burn_subtitles, cut_segment, ensure_preview, extract_audio,
+    extract_frames, extract_thumbnails, kill_active, locate_ffmpeg,
     wav_duration_seconds,
 )
 from .ingest import download_youtube
+from .scene_split import FrameSample, SlateRule, compute_boundaries, hold_keys
+from .slate_ocr import read_slate_line
 from .srt import SubSegment, build_force_style, segments_to_srt
 from .transcribe import StaleRunCancelled, transcribe_audio
 from .translate import maybe_aclose_translator, translate_segments
@@ -512,3 +515,139 @@ async def run_burn_job(external_id: UUID, position: str, margin_v: int,
         await _try_set_error(external_id, str(exc)[:1000])
     finally:
         _BURN_SEMAPHORE.release()
+
+
+def build_scene_data(samples: list[FrameSample], rule_dict: dict,
+                     total_ms: int, min_ms: int = 2000) -> dict:
+    """프레임 샘플 + 규칙 → scenes.json 본문(양 모드 경계 포함). 순수 함수."""
+    rule = SlateRule(
+        delimiters=rule_dict.get("delimiters", ["_", " ", "-"]),
+        seq_tokens=rule_dict["seq_tokens"],
+        scene_tokens=rule_dict.get("scene_tokens", []),
+    )
+    scene_keyed = hold_keys(samples, rule, "scene")
+    seq_keyed = hold_keys(samples, rule, "sequence")
+    seg_scene = compute_boundaries(scene_keyed, total_ms, min_ms)
+    seg_seq = compute_boundaries(seq_keyed, total_ms, min_ms)
+    return {
+        "rule": rule_dict,
+        "frames": [{"t_ms": s.t_ms, "text": s.text} for s in samples],
+        "segments_scene": [
+            {"label": s.label, "start_ms": s.start_ms, "end_ms": s.end_ms}
+            for s in seg_scene],
+        "segments_sequence": [
+            {"label": s.label, "start_ms": s.start_ms, "end_ms": s.end_ms}
+            for s in seg_seq],
+    }
+
+
+# 슬레이트 스캔 기본 규칙 — 사용자가 규칙 지정 전, 첫 스캔은 규칙 없이 프레임
+# 텍스트만 수집한다(경계는 규칙 확정 시 계산한다). 구분자는 관측된 두 포맷 커버.
+_DEFAULT_DELIMS = ["_", " ", "-"]
+
+
+async def run_scene_scan(external_id: UUID, interval_s: float = 1.0) -> None:
+    """burned.mp4에서 프레임을 추출·OCR해 프레임별 슬레이트 텍스트를 모아
+    scenes.json(frames만)에 저장한다. 경계는 규칙 확정(run_scene_export 전
+    /scenes/rule) 때 계산한다. 진행률은 burning 채널을 재사용하지 않고
+    별도 상태 없이 scenes.json 존재로 완료를 판단한다(스캔은 굽기와 배타)."""
+    await _BURN_SEMAPHORE.acquire()
+    generation = _bump_generation(external_id)
+    try:
+        workdir = job_dir(external_id)
+        burned = workdir / "burned.mp4"
+        if not burned.exists():
+            raise RuntimeError("굽기 완료본(burned.mp4)이 없습니다.")
+        ffmpeg = locate_ffmpeg()
+        if ffmpeg is None:
+            raise RuntimeError("ffmpeg를 찾을 수 없습니다.")
+
+        frames_dir = workdir / "scene_frames"
+        thumbs_dir = workdir / "scene_thumbs"
+        # 이전 스캔 잔여 제거
+        for d in (frames_dir, thumbs_dir):
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
+
+        def _work() -> list[FrameSample]:
+            extract_frames(ffmpeg, burned, frames_dir, interval_s,
+                           proc_key=str(external_id))
+            extract_thumbnails(ffmpeg, burned, thumbs_dir, interval_s,
+                               proc_key=str(external_id))
+            samples: list[FrameSample] = []
+            interval_ms = int(interval_s * 1000)
+            for i, png in enumerate(sorted(frames_dir.glob("frame_*.png"))):
+                if generation != _current_generation(external_id):
+                    raise StaleRunCancelled(external_id)
+                text = read_slate_line(png, _DEFAULT_DELIMS)
+                samples.append(FrameSample(index=i, t_ms=i * interval_ms, text=text))
+            return samples
+
+        samples = await asyncio.to_thread(_work)
+        # OCR용 원본 프레임은 크므로 제거(썸네일만 남긴다)
+        shutil.rmtree(frames_dir, ignore_errors=True)
+
+        save_scenes(external_id, {
+            "interval_ms": int(interval_s * 1000),
+            "frame_count": len(samples),
+            "frames": [{"t_ms": s.t_ms, "text": s.text} for s in samples],
+        })
+    except StaleRunCancelled:
+        logger.info("scene scan %s cancelled (gen %d)", external_id, generation)
+    except Exception:  # noqa: BLE001
+        logger.exception("scene scan %s failed", external_id)
+        raise
+    finally:
+        _BURN_SEMAPHORE.release()
+
+
+async def run_scene_export(external_id: UUID, mode: str,
+                           out_dir: str | None = None) -> list[str]:
+    """확정된 scenes.json 경계로 세그먼트를 재인코딩해 out_dir(미지정 시 잡
+    디렉토리 scene_out/)에 슬레이트 라벨 파일명으로 저장한다. 저장 경로 목록 반환."""
+    await _BURN_SEMAPHORE.acquire()
+    generation = _bump_generation(external_id)
+    try:
+        data = load_scenes(external_id)
+        if not data:
+            raise RuntimeError("먼저 씬 스캔을 실행하세요.")
+        key = "segments_sequence" if mode == "sequence" else "segments_scene"
+        segments = data.get(key) or []
+        if not segments:
+            raise RuntimeError("자를 세그먼트가 없습니다 — 규칙을 확정하세요.")
+
+        workdir = job_dir(external_id)
+        burned = workdir / "burned.mp4"
+        ffmpeg = locate_ffmpeg()
+        if ffmpeg is None:
+            raise RuntimeError("ffmpeg를 찾을 수 없습니다.")
+        dest = Path(out_dir) if out_dir else (workdir / "scene_out")
+        dest.mkdir(parents=True, exist_ok=True)
+
+        def _work() -> list[str]:
+            written: list[str] = []
+            for seg in segments:
+                if generation != _current_generation(external_id):
+                    raise StaleRunCancelled(external_id)
+                safe = _sanitize_label(seg["label"])
+                out_path = dest / f"{safe}.mp4"
+                cut_segment(ffmpeg, burned, out_path,
+                            seg["start_ms"], seg["end_ms"],
+                            proc_key=str(external_id))
+                written.append(str(out_path))
+            return written
+
+        return await asyncio.to_thread(_work)
+    except StaleRunCancelled:
+        logger.info("scene export %s cancelled (gen %d)", external_id, generation)
+        return []
+    finally:
+        _BURN_SEMAPHORE.release()
+
+
+def _sanitize_label(label: str) -> str:
+    """파일명 안전화 — 경로 구분자·제어문자 제거. 공백은 유지(슬레이트 원문 존중),
+    빈 라벨은 'segment'로 폴백."""
+    bad = '/\\:*?"<>|\n\r\t'
+    cleaned = "".join("_" if c in bad else c for c in label).strip()
+    return cleaned or "segment"

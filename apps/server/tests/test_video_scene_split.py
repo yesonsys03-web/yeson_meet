@@ -138,3 +138,19 @@ def test_save_and_load_scenes_roundtrip(monkeypatch, tmp_path):
     pl.save_scenes(ext, {"rule": {"seq_tokens": [1]}, "segments_scene": []})
     loaded = pl.load_scenes(ext)
     assert loaded["rule"]["seq_tokens"] == [1]
+
+
+def test_build_scene_data_produces_both_modes():
+    from apps.server.domain.video_captions.scene_split import FrameSample
+    samples = [
+        FrameSample(0, 0, "HH0307_020_0150_AC_v01"),
+        FrameSample(1, 1000, "HH0307_020_0170_AC_v01"),
+        FrameSample(2, 2000, "HH0307_021_0010_AC_v01"),
+    ]
+    rule = {"delimiters": ["_", " ", "-"], "seq_tokens": [1], "scene_tokens": [2]}
+    data = pl.build_scene_data(samples, rule, total_ms=3000, min_ms=0)
+    scene_labels = [s["label"] for s in data["segments_scene"]]
+    seq_labels = [s["label"] for s in data["segments_sequence"]]
+    assert scene_labels == ["HH0307_020_0150", "HH0307_020_0170", "HH0307_021_0010"]
+    assert seq_labels == ["HH0307_020", "HH0307_021"]
+    assert len(data["frames"]) == 3
