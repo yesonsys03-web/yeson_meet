@@ -580,3 +580,92 @@ async def test_job_created_at_serialized_with_utc_offset(client, db_session, adm
     resp = await client.get("/api/v1/video-jobs")
     created = resp.json()["items"][0]["created_at"]
     assert created.endswith("+00:00") or created.endswith("Z")
+
+
+async def test_retranslate_only_touches_untranslated(client, db_session, admin_user,
+                                                     monkeypatch):
+    """핵심 안전 속성: 수동 편집 줄은 절대 덮어쓰지 않는다."""
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mp4",
+                   whisper_model="small", status="review")
+    db_session.add(job)
+    await db_session.flush()
+    job_id = job.id
+    db_session.add(VideoSegment(job_id=job_id, seq=1, start_ms=0, end_ms=900,
+                                text_en="Hello there", text_ko="Hello there"))  # 영문 잔존
+    db_session.add(VideoSegment(job_id=job_id, seq=2, start_ms=900, end_ms=1800,
+                                text_en="Good morning", text_ko="좋은 아침"))    # 사용자 편집
+    await db_session.commit()
+
+    class FakeTranslator:
+        async def translate_batch(self, texts):
+            return ["안녕하세요"] * len(texts)
+
+    monkeypatch.setattr(api_vj, "create_translator", lambda p, m: FakeTranslator())
+    monkeypatch.setattr(api_vj, "list_translate_engines",
+                        lambda: [{"value": "claude", "label": "Claude 구독",
+                                  "available": True}])
+
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/retranslate",
+                             json={"provider": "claude"})
+    assert resp.status_code == 200
+    assert resp.json() == {"total": 1, "retranslated": 1, "remaining": 0}
+
+    db_session.expire_all()
+    rows = (await db_session.execute(
+        select(VideoSegment).where(VideoSegment.job_id == job_id)
+        .order_by(VideoSegment.seq))).scalars().all()
+    assert rows[0].text_ko == "안녕하세요"   # 영문 잔존만 갱신
+    assert rows[1].text_ko == "좋은 아침"     # 편집 보존
+
+
+async def test_retranslate_rejects_unavailable_engine(client, db_session, admin_user,
+                                                      monkeypatch):
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mp4",
+                   whisper_model="small", status="review")
+    db_session.add(job)
+    await db_session.commit()
+    monkeypatch.setattr(api_vj, "list_translate_engines",
+                        lambda: [{"value": "claude", "label": "Claude 구독",
+                                  "available": False}])
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/retranslate",
+                             json={"provider": "claude"})
+    assert resp.status_code == 409
+
+
+async def test_retranslate_rejects_running_job(client, db_session, admin_user):
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mp4",
+                   whisper_model="small", status="transcribing")
+    db_session.add(job)
+    await db_session.commit()
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/retranslate",
+                             json={"provider": "claude"})
+    assert resp.status_code == 409
+
+
+async def test_retranslate_reports_remaining(client, db_session, admin_user,
+                                             monkeypatch):
+    """재번역해도 여전히 영문이면 remaining으로 보고한다."""
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mp4",
+                   whisper_model="small", status="review")
+    db_session.add(job)
+    await db_session.flush()
+    db_session.add(VideoSegment(job_id=job.id, seq=1, start_ms=0, end_ms=900,
+                                text_en="Hello there", text_ko="Hello there"))
+    await db_session.commit()
+
+    class EchoTranslator:
+        async def translate_batch(self, texts):
+            return list(texts)   # 영문 그대로 반환
+
+    monkeypatch.setattr(api_vj, "create_translator", lambda p, m: EchoTranslator())
+    monkeypatch.setattr(api_vj, "list_translate_engines",
+                        lambda: [{"value": "claude", "label": "Claude 구독",
+                                  "available": True}])
+
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/retranslate",
+                             json={"provider": "claude"})
+    assert resp.json() == {"total": 1, "retranslated": 0, "remaining": 1}
