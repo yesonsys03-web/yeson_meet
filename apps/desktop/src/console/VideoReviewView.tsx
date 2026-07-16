@@ -9,6 +9,7 @@ import {
   activeSegmentIndex, engineLabel, isSourceCopy, overlayStyleFor, sanitizeFilename,
 } from "./videoReviewLogic";
 import { captionedFileName } from "./videoBatchOps";
+import { SceneSplitView } from "./SceneSplitView";
 
 type VideoReviewViewProps = {
   jobId: string;
@@ -49,6 +50,7 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
   const [retProvider, setRetProvider] = useState("claude");
   const [retCliModel, setRetCliModel] = useState("");
   const [retranslating, setRetranslating] = useState(false);
+  const [sceneSplit, setSceneSplit] = useState(false);
 
   // burn(ffmpeg subtitles 필터)이 SRT를 ASS로 변환할 때 PlayResY=288 기준
   // Fontsize/MarginV를 실제 렌더 높이로 스케일하므로, 미리보기도 실제 표시
@@ -100,6 +102,10 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
     const first = engines.find((e) => e.available);
     if (first) setRetProvider(first.value);
   }, [engines, retProvider]);
+
+  if (sceneSplit) {
+    return <SceneSplitView jobId={jobId} onBack={() => setSceneSplit(false)} />;
+  }
 
   if (!job) {
     return (
@@ -372,6 +378,10 @@ export function VideoReviewView({ jobId, onBack }: VideoReviewViewProps) {
                   disabled={downloading !== null}
                   onClick={() => void download("srt")}>
                   {downloading === "srt" ? "SRT 준비 중…" : "SRT 다운로드"}
+                </button>
+                <button type="button" style={consoleStyles.mutedAction}
+                  onClick={() => setSceneSplit(true)}>
+                  씬별 분할
                 </button>
               </>
             ) : null}
