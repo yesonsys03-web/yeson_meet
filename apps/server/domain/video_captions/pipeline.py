@@ -545,14 +545,30 @@ def build_scene_data(samples: list[FrameSample], rule_dict: dict,
 
 # 슬레이트 스캔 기본 규칙 — 사용자가 규칙 지정 전, 첫 스캔은 규칙 없이 프레임
 # 텍스트만 수집한다(경계는 규칙 확정 시 계산한다). 구분자는 관측된 두 포맷 커버.
-_DEFAULT_DELIMS = ["_", " ", "-"]
+# 기본 구분자에서 공백은 제외한다(`_`, `-`만). 슬레이트 필드 구분은 `_`/`-`이고
+# 공백은 필드 "안"에 들어가는 경우가 많다(예: "Seq 11B", "Panel 3"). OCR이 같은
+# 슬레이트에서 공백을 들쭉날쭉 읽으면("Seq01A" vs "Seq 11B") 공백 분해 시 토큰
+# 인덱스가 프레임마다 어긋나 고정 인덱스 규칙이 깨진다(실기 관측). 공백을 필드
+# 구분자로 쓰는 슬레이트는 규칙의 delimiters로 명시 지정한다(UI 토글).
+_DEFAULT_DELIMS = ["_", "-"]
+
+# 스캔 프레임 샘플 간격(초). 슬레이트는 한 샷 내내 떠 있으므로 촘촘히 볼 필요가
+# 없다. 2초면 경계 정밀도는 충분하고 긴 영상의 OCR 프레임 수를 절반으로 줄인다
+# (22분 영상 실측: 1초=1316프레임 → 2초=658프레임). 경계는 필름스트립에서 수동
+# 조정 가능하고, 후속으로 경계 근처만 프레임 단위 재탐색할 수 있다.
+_SCAN_INTERVAL_S = 2.0
 
 
-async def run_scene_scan(external_id: UUID, interval_s: float = 1.0) -> None:
+async def run_scene_scan(external_id: UUID,
+                         interval_s: float = _SCAN_INTERVAL_S) -> None:
     """burned.mp4에서 프레임을 추출·OCR해 프레임별 슬레이트 텍스트를 모아
-    scenes.json(frames만)에 저장한다. 경계는 규칙 확정(run_scene_export 전
-    /scenes/rule) 때 계산한다. 진행률은 burning 채널을 재사용하지 않고
-    별도 상태 없이 scenes.json 존재로 완료를 판단한다(스캔은 굽기와 배타)."""
+    scenes.json에 저장한다. 경계는 규칙 확정(/scenes/rule) 때 계산한다.
+
+    긴 영상은 OCR이 오래 걸리므로 진행률을 scenes.json에 증분 기록한다
+    (`scanning`/`total_frames`/`ocr_done`) — 프론트가 폴링하며 표시하고, 완료 시
+    `scanning=False`로 전환한다. 진짜 실패 시 `error`를 기록해 프론트 폴링을
+    멈춘다. 취소(세대 변경)는 아무 것도 기록하지 않는다(다음 실행이 덮어씀).
+    스캔은 굽기와 세마포어를 공유해 배타적으로 돈다."""
     await _BURN_SEMAPHORE.acquire()
     generation = _bump_generation(external_id)
     try:
@@ -571,18 +587,31 @@ async def run_scene_scan(external_id: UUID, interval_s: float = 1.0) -> None:
             if d.exists():
                 shutil.rmtree(d, ignore_errors=True)
 
+        interval_ms = int(interval_s * 1000)
+
         def _work() -> list[FrameSample]:
             extract_frames(ffmpeg, burned, frames_dir, interval_s,
                            proc_key=str(external_id))
             extract_thumbnails(ffmpeg, burned, thumbs_dir, interval_s,
                                proc_key=str(external_id))
+            pngs = sorted(frames_dir.glob("frame_*.png"))
+            total = len(pngs)
+            # 진행률 초기화 — 긴 영상은 OCR이 오래 걸려 프론트가 폴링하며 표시한다.
+            save_scenes(external_id, {"scanning": True, "interval_ms": interval_ms,
+                                      "total_frames": total, "ocr_done": 0,
+                                      "frames": []})
             samples: list[FrameSample] = []
-            interval_ms = int(interval_s * 1000)
-            for i, png in enumerate(sorted(frames_dir.glob("frame_*.png"))):
+            for i, png in enumerate(pngs):
                 if generation != _current_generation(external_id):
                     raise StaleRunCancelled(external_id)
                 text = read_slate_line(png, _DEFAULT_DELIMS)
                 samples.append(FrameSample(index=i, t_ms=i * interval_ms, text=text))
+                # 증분 진행률 — 매 프레임 쓰면 I/O 과다라 10개마다(+마지막).
+                if (i + 1) % 10 == 0 or (i + 1) == total:
+                    save_scenes(external_id, {"scanning": True,
+                                              "interval_ms": interval_ms,
+                                              "total_frames": total,
+                                              "ocr_done": i + 1, "frames": []})
             return samples
 
         try:
@@ -592,7 +621,8 @@ async def run_scene_scan(external_id: UUID, interval_s: float = 1.0) -> None:
             shutil.rmtree(frames_dir, ignore_errors=True)
 
         save_scenes(external_id, {
-            "interval_ms": int(interval_s * 1000),
+            "scanning": False,
+            "interval_ms": interval_ms,
             "frame_count": len(samples),
             "frames": [{"t_ms": s.t_ms, "text": s.text} for s in samples],
         })
@@ -607,6 +637,12 @@ async def run_scene_scan(external_id: UUID, interval_s: float = 1.0) -> None:
                         external_id, generation)
             return
         logger.exception("scene scan %s failed", external_id)
+        # 진짜 실패 — error를 기록해 프론트 폴링이 멈추게 한다(3분 헛대기 방지).
+        try:
+            save_scenes(external_id, {"scanning": False, "frames": [],
+                                      "error": "스캔에 실패했습니다. 서버 로그를 확인하세요."})
+        except Exception:  # noqa: BLE001
+            pass
         return
     finally:
         _BURN_SEMAPHORE.release()

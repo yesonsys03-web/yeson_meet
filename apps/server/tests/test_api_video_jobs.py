@@ -759,3 +759,26 @@ async def test_export_rejects_without_segments(client, db_session, admin_user):
         f"/api/v1/video-jobs/{job.external_id}/scenes/export",
         json={"mode": "scene"})
     assert resp.status_code == 409
+
+
+async def test_get_scenes_reports_scan_progress(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    from apps.server.domain.video_captions import pipeline as pl
+    pl.save_scenes(job.external_id, {"scanning": True, "interval_ms": 2000,
+                                     "total_frames": 658, "ocr_done": 240,
+                                     "frames": []})
+    r = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")
+    body = r.json()
+    assert r.status_code == 200
+    assert body["scanning"] is True and body["scanned"] is False
+    assert body["ocr_done"] == 240 and body["total_frames"] == 658
+
+
+async def test_get_scenes_reports_scan_error(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    from apps.server.domain.video_captions import pipeline as pl
+    pl.save_scenes(job.external_id, {"scanning": False, "frames": [],
+                                     "error": "스캔에 실패했습니다."})
+    r = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")
+    body = r.json()
+    assert body["scanned"] is False and body["error"] == "스캔에 실패했습니다."

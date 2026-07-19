@@ -18,23 +18,43 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const [mode, setMode] = useState<Mode>("scene");
   const [seqIdx, setSeqIdx] = useState<number[]>([]);
   const [sceneIdx, setSceneIdx] = useState<number[]>([]);
+  // 공백을 필드 구분자로 쓰는 슬레이트 대응(기본은 공백 비분해 — 백엔드와 동일).
+  const [spaceDelim, setSpaceDelim] = useState(false);
+
+  const delimiters = spaceDelim ? ["_", " ", "-"] : ["_", "-"];
 
   const refresh = async () => setData(await getScenes(jobId));
   useEffect(() => { void refresh(); }, [jobId]);
 
   // 대표 프레임 = 첫 비어있지 않은 OCR 텍스트
   const sample = data?.frames.find((f) => f.text)?.text ?? "";
-  const tokens = tokenizeSlate(sample);
+  const tokens = tokenizeSlate(sample, delimiters);
 
   const runScan = async () => {
-    setBusy(true); setError(null); setNotice("프레임 스캔·OCR 중…");
+    setBusy(true); setError(null); setNotice("프레임 추출 중…");
     try {
       await scanScenes(jobId);
-      // 스캔은 비동기 — 폴링으로 완료 대기
-      for (let i = 0; i < 120; i++) {
+      // 스캔은 비동기 — 진행률(ocr_done/total_frames)을 폴링하며 표시한다.
+      // 긴 영상은 OCR이 수 분 걸릴 수 있어 고정 타임아웃 대신 서버의 scanning/
+      // error 신호로 종료를 판단한다(무진척이 오래 지속될 때만 포기).
+      let stalled = 0;
+      let lastDone = -1;
+      for (let i = 0; i < 1200; i++) {
         await new Promise((r) => setTimeout(r, 1500));
         const d = await getScenes(jobId);
+        if (d.error) { setError(`스캔 실패: ${d.error}`); return; }
         if (d.scanned) { setData(d); setNotice("스캔 완료 — 토큰을 지정하세요."); return; }
+        if (d.scanning) {
+          const done = d.ocr_done ?? 0;
+          const total = d.total_frames ?? 0;
+          setNotice(total > 0
+            ? `슬레이트 판독 중… ${done}/${total} 프레임`
+            : "프레임 추출 중…");
+          stalled = done === lastDone ? stalled + 1 : 0;
+          lastDone = done;
+          // 진척이 200초(133회) 넘게 멈춰 있으면 포기(서버 이상).
+          if (stalled > 133) { setError("스캔이 진행되지 않습니다. 서버 상태를 확인하세요."); return; }
+        }
       }
       setError("스캔이 시간 내 끝나지 않았습니다.");
     } catch (e) {
@@ -47,7 +67,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setBusy(true); setError(null);
     try {
       const res = await setSceneRule(jobId, {
-        seq_tokens: seqIdx, scene_tokens: sceneIdx,
+        delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx,
       });
       setData({ ...(data as ScenesData), scanned: true,
                 segments_scene: res.segments_scene,
@@ -113,6 +133,16 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
             <p style={{ fontSize: 13, opacity: 0.75, margin: "0 0 6px" }}>
               대표 슬레이트: <code>{sample || "(판독 실패)"}</code> — 시퀀스/씬 토큰을 고르세요.
             </p>
+            <label style={{ fontSize: 12, opacity: 0.8, display: "inline-flex",
+                            alignItems: "center", gap: 5, marginBottom: 8 }}>
+              <input type="checkbox" checked={spaceDelim}
+                onChange={(e) => {
+                  // 구분자가 바뀌면 토큰 경계가 달라져 인덱스 의미가 바뀐다 → 선택 초기화.
+                  setSpaceDelim(e.target.checked);
+                  setSeqIdx([]); setSceneIdx([]);
+                }} />
+              공백도 구분자로 나누기 (기본: 공백은 필드 안에 유지)
+            </label>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {tokens.map((tok, i) => (
                 <span key={i} style={{

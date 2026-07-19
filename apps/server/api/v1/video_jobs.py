@@ -98,7 +98,7 @@ class BurnIn(BaseModel):
 
 
 class SlateRuleIn(BaseModel):
-    delimiters: list[str] = Field(default_factory=lambda: ["_", " ", "-"])
+    delimiters: list[str] = Field(default_factory=lambda: ["_", "-"])
     seq_tokens: list[int]
     scene_tokens: list[int] = Field(default_factory=list)
     min_ms: int = Field(default=2000, ge=0, le=60000)
@@ -546,15 +546,24 @@ async def get_scenes(
     await _get_job_or_404(db, external_id)
     data = load_scenes(external_id)
     if not data:
-        return {"scanned": False, "frames": [], "segments_scene": [],
-                "segments_sequence": [], "rule": None}
+        return {"scanned": False, "scanning": False, "error": None,
+                "ocr_done": 0, "total_frames": 0, "frames": [],
+                "segments_scene": [], "segments_sequence": [], "rule": None}
+    # scanned = 스캔 진행중 아님 + 에러 없음(+frames 확정). 진행중이면 프론트가
+    # ocr_done/total_frames로 진척을 표시하고, error면 폴링을 멈춘다.
+    scanning = bool(data.get("scanning"))
+    error = data.get("error")
     return {
-        "scanned": True,
+        "scanned": (not scanning) and error is None and "frames" in data,
+        "scanning": scanning,
+        "error": error,
+        "ocr_done": data.get("ocr_done", 0),
+        "total_frames": data.get("total_frames", 0),
         "frames": data.get("frames", []),
         "segments_scene": data.get("segments_scene", []),
         "segments_sequence": data.get("segments_sequence", []),
         "rule": data.get("rule"),
-        "interval_ms": data.get("interval_ms", 1000),
+        "interval_ms": data.get("interval_ms", 2000),
     }
 
 

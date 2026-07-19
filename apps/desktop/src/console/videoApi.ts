@@ -317,6 +317,12 @@ export type SceneSegment = { label: string; start_ms: number; end_ms: number };
 
 export type ScenesData = {
   scanned: boolean;
+  // 긴 영상 스캔 진행 상태(백엔드가 증분 기록). scanning 중이면 ocr_done/total_frames로
+  // 진척을 표시하고, error가 있으면 폴링을 멈춘다.
+  scanning?: boolean;
+  ocr_done?: number;
+  total_frames?: number;
+  error?: string | null;
   frames: Array<{ t_ms: number; text: string }>;
   segments_scene: SceneSegment[];
   segments_sequence: SceneSegment[];

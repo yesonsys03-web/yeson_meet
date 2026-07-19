@@ -1,6 +1,10 @@
 // 슬레이트 씬 분할 규칙 UI의 순수 계산. 백엔드 scene_split.tokenize와 동일 규칙
 // (미리보기 일치 — 실제 경계 계산은 서버가 단일 출처).
-const DEFAULT_DELIMITERS = ["_", " ", "-"];
+// 기본 구분자에서 공백 제외(`_`, `-`만) — 백엔드 _DEFAULT_DELIMS와 동일. 공백은
+// 슬레이트 필드 "안"에 들어가는 경우가 많고(예: "Seq 11B"), OCR이 같은 슬레이트에서
+// 공백을 들쭉날쭉 읽으면 토큰 인덱스가 프레임마다 어긋난다. 공백을 필드 구분자로
+// 쓰는 슬레이트는 UI의 "공백도 구분자로" 토글로 명시 지정한다.
+const DEFAULT_DELIMITERS = ["_", "-"];
 
 export function tokenizeSlate(
   text: string, delimiters: string[] = DEFAULT_DELIMITERS,
