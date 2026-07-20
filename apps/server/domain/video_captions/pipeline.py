@@ -20,13 +20,14 @@ from apps.server.db.models import VideoJob, VideoSegment
 from apps.server.db.session import AsyncSessionLocal
 from . import gpu_pack
 from .ffmpeg import (
-    burn_subtitles, cut_segment, ensure_preview, extract_audio,
+    burn_subtitles, cut_segment, ensure_preview, extract_audio, extract_frame,
     extract_frames, extract_thumbnails, kill_active, locate_ffmpeg,
     wav_duration_seconds,
 )
 from .ingest import download_youtube
 from .scene_split import (
-    FrameSample, SlateRule, compute_boundaries, dedupe_labels, hold_keys,
+    FrameSample, SlateRule, build_label, compute_boundaries, dedupe_labels,
+    hold_keys, tokenize,
 )
 from .slate_ocr import read_slate_line
 from .srt import SubSegment, build_force_style, segments_to_srt
@@ -746,6 +747,115 @@ async def run_scene_export(external_id: UUID, mode: str,
         except Exception:  # noqa: BLE001
             pass
         return []
+    finally:
+        _BURN_SEMAPHORE.release()
+
+
+def refine_status_path(external_id: UUID | str) -> Path:
+    return job_dir(external_id) / "refine_status.json"
+
+
+def save_refine_status(external_id: UUID | str, data: dict) -> None:
+    path = refine_status_path(external_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def load_refine_status(external_id: UUID | str) -> dict | None:
+    path = refine_status_path(external_id)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+async def run_scene_refine(external_id: UUID, mode: str) -> None:
+    """현재 모드 세그먼트의 각 경계를 이진탐색 OCR로 실제 전환 프레임까지 좁힌다.
+
+    2초 샘플링 격자로는 컷이 ±1초 어긋나(이웃 시퀀스가 클립에 남음), 중앙정렬로
+    반감해도 잔여가 있다. 경계마다 [b-half, b+half] 창을 이진탐색해 라벨이 next로
+    바뀌는 지점(≤250ms 정밀도)을 찾아 경계를 그 프레임으로 옮긴다. 진행률은
+    refine_status.json에 증분 기록한다(refining/done/total/error)."""
+    await _BURN_SEMAPHORE.acquire()
+    generation = _bump_generation(external_id)
+    try:
+        data = load_scenes(external_id)
+        if not data or not data.get("rule"):
+            raise RuntimeError("먼저 규칙을 확정하세요.")
+        seg_key = "segments_sequence" if mode == "sequence" else "segments_scene"
+        segments = [dict(s) for s in (data.get(seg_key) or [])]
+        total = len(segments) - 1
+        if total < 1:
+            save_refine_status(external_id, {"refining": False, "done": 0,
+                                             "total": 0, "error": None})
+            return
+        rd = data["rule"]
+        delimiters = rd.get("delimiters", ["_", "-"])
+        indices = (rd["seq_tokens"] if mode == "sequence"
+                   else rd["seq_tokens"] + rd.get("scene_tokens", []))
+        upto = max(indices) if indices else -1
+        interval_ms = data.get("interval_ms", 2000)
+        burned = job_dir(external_id) / "burned.mp4"
+        ffmpeg = locate_ffmpeg()
+        if ffmpeg is None:
+            raise RuntimeError("ffmpeg를 찾을 수 없습니다.")
+        tmpdir = job_dir(external_id) / "refine_tmp"
+        save_refine_status(external_id, {"refining": True, "done": 0,
+                                         "total": total, "error": None})
+
+        def label_at(t_ms: int) -> str:
+            dst = tmpdir / f"r_{t_ms}.png"
+            extract_frame(ffmpeg, burned, t_ms, dst, proc_key=str(external_id))
+            text = read_slate_line(dst, delimiters)
+            try:
+                dst.unlink()
+            except OSError:
+                pass
+            toks = tokenize(text, delimiters) if text else []
+            return build_label(toks, upto)
+
+        def _work() -> list[dict]:
+            tmpdir.mkdir(parents=True, exist_ok=True)
+            for i in range(1, len(segments)):
+                if generation != _current_generation(external_id):
+                    raise StaleRunCancelled(external_id)
+                b = segments[i]["start_ms"]
+                next_label = segments[i]["label"]
+                # 창을 ±interval로 넓힌다 — 스캔 프레임시각(fps 필터)과 컷/정밀화가
+                # 쓰는 -ss 시각이 최대 ~1.5초 어긋나므로, ±half(±1초)로는 실제 전환을
+                # 못 담는다(실측). 이웃 구간 범위로 클램프해 next-next로 넘치지 않게.
+                lo = max(segments[i - 1]["start_ms"], b - interval_ms)
+                hi = min(segments[i]["end_ms"], b + interval_ms)
+                # 창 끝=next, 창 시작≠next 여야 전환이 창 안에 있다(아니면 중앙정렬 유지).
+                if label_at(hi) == next_label and label_at(lo) != next_label:
+                    while hi - lo > 150:
+                        mid = (lo + hi) // 2
+                        if label_at(mid) == next_label:
+                            hi = mid
+                        else:
+                            lo = mid
+                    segments[i]["start_ms"] = hi
+                    segments[i - 1]["end_ms"] = hi
+                save_refine_status(external_id, {"refining": True, "done": i,
+                                                 "total": total, "error": None})
+            return segments
+
+        refined = await asyncio.to_thread(_work)
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        data[seg_key] = refined
+        save_scenes(external_id, data)
+        save_refine_status(external_id, {"refining": False, "done": total,
+                                         "total": total, "error": None})
+    except StaleRunCancelled:
+        logger.info("scene refine %s cancelled (gen %d)", external_id, generation)
+    except Exception:  # noqa: BLE001
+        if generation != _current_generation(external_id):
+            return
+        logger.exception("scene refine %s failed", external_id)
+        try:
+            save_refine_status(external_id, {"refining": False, "error":
+                                             "경계 정밀화에 실패했습니다. 서버 로그를 확인하세요."})
+        except Exception:  # noqa: BLE001
+            pass
     finally:
         _BURN_SEMAPHORE.release()
 

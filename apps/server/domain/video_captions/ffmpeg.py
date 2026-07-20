@@ -334,3 +334,12 @@ def cut_segment(ffmpeg: str, src: Path, dst: Path, start_ms: int, end_ms: int,
           "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
           "-c:a", "aac", "-movflags", "+faststart", str(dst)],
          proc_key=proc_key)
+
+
+def extract_frame(ffmpeg: str, src: Path, t_ms: int, dst: Path,
+                  proc_key: str | None = None) -> None:
+    """t_ms 시각의 단일 프레임을 dst로 추출(경계 정밀화용). -ss를 -i 앞에 둬
+    입력 시킹으로 빠르게 접근한다(OCR 판독용이라 프레임 미세오차는 무방)."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    _run([ffmpeg, "-y", "-ss", f"{t_ms / 1000:.3f}", "-i", str(src),
+          "-frames:v", "1", str(dst)], proc_key=proc_key)

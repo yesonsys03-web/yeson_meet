@@ -392,3 +392,24 @@ export type ExportStatus = {
 export async function getExportStatus(jobId: string): Promise<ExportStatus> {
   return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/export/status`, {});
 }
+
+export type RefineStatus = {
+  refining: boolean;
+  done: number;
+  total: number;
+  error: string | null;
+};
+
+export async function refineScenes(
+  jobId: string, mode: "scene" | "sequence",
+): Promise<{ status: string; total: number }> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/refine`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+}
+
+export async function getRefineStatus(jobId: string): Promise<RefineStatus> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/refine/status`, {});
+}

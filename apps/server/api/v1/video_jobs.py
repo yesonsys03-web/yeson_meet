@@ -30,11 +30,14 @@ from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
                                                         build_scene_data,
                                                         cancel_job_task, job_dir,
                                                         load_export_status,
+                                                        load_refine_status,
                                                         load_scenes,
                                                         prune_old_video_jobs,
                                                         run_burn_job, run_scene_export,
+                                                        run_scene_refine,
                                                         run_scene_scan, run_video_job,
                                                         save_export_status,
+                                                        save_refine_status,
                                                         save_scenes, start_job_task,
                                                         start_task, video_jobs_root)
 from apps.server.domain.video_captions.pipeline import \
@@ -68,6 +71,10 @@ def _start_scene_scan(external_id: UUID) -> None:  # test seam
 
 def _start_scene_export(external_id: UUID, mode: str, out_dir: str | None) -> None:  # test seam
     start_job_task(external_id, run_scene_export(external_id, mode, out_dir))
+
+
+def _start_scene_refine(external_id: UUID, mode: str) -> None:  # test seam
+    start_job_task(external_id, run_scene_refine(external_id, mode))
 
 
 def _prune_old_jobs() -> None:  # test seam
@@ -642,6 +649,40 @@ async def scene_export_status(
     return {"exporting": bool(st.get("exporting")), "done": st.get("done", 0),
             "total": st.get("total", 0), "error": st.get("error"),
             "out_dir": st.get("out_dir"), "files": st.get("files", [])}
+
+
+class SceneRefineIn(BaseModel):
+    mode: str = Field(pattern="^(scene|sequence)$")
+
+
+@router.post("/{external_id}/scenes/refine", status_code=status.HTTP_202_ACCEPTED)
+async def refine_scenes(
+    external_id: UUID,
+    body: SceneRefineIn,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    await _get_job_or_404(db, external_id)
+    data = load_scenes(external_id)
+    key = "segments_sequence" if body.mode == "sequence" else "segments_scene"
+    if not data or not data.get("rule") or len(data.get(key) or []) < 2:
+        raise HTTPException(status.HTTP_409_CONFLICT, "먼저 규칙을 확정하세요.")
+    save_refine_status(external_id, {"refining": True, "done": 0,
+                                     "total": len(data[key]) - 1, "error": None})
+    _start_scene_refine(external_id, body.mode)
+    return {"status": "refining", "total": len(data[key]) - 1}
+
+
+@router.get("/{external_id}/scenes/refine/status")
+async def scene_refine_status(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    await _get_job_or_404(db, external_id)
+    st = load_refine_status(external_id)
+    if not st:
+        return {"refining": False, "done": 0, "total": 0, "error": None}
+    return {"refining": bool(st.get("refining")), "done": st.get("done", 0),
+            "total": st.get("total", 0), "error": st.get("error")}
 
 
 @router.get("/{external_id}/scenes/thumb/{index}")

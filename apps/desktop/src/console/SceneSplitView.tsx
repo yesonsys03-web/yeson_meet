@@ -7,9 +7,10 @@ import {
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
-  exportScenes, getExportStatus, getScenes, overrideSceneSegments, scanScenes,
+  exportScenes, getExportStatus, getRefineStatus, getScenes,
+  overrideSceneSegments, refineScenes, scanScenes,
   setSceneRule, videoMediaUrl,
-  type ExportStatus, type ScenesData, type SceneSegment,
+  type ExportStatus, type RefineStatus, type ScenesData, type SceneSegment,
 } from "./videoApi";
 
 type Mode = "scene" | "sequence";
@@ -91,6 +92,34 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
+  };
+
+  const [refineProg, setRefineProg] = useState<RefineStatus | null>(null);
+
+  const doRefine = async () => {
+    setError(null); setNotice(null); setBusy(true);
+    setRefineProg({ refining: true, done: 0, total: segments.length - 1, error: null });
+    try {
+      await refineScenes(jobId, mode);
+      // 경계마다 이진탐색 OCR이라 시간이 걸린다 — 진행률 폴링.
+      for (let i = 0; i < 3600; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const st = await getRefineStatus(jobId);
+        setRefineProg(st);
+        if (st.error) { setError(`정밀화 실패: ${st.error}`); return; }
+        if (!st.refining) {
+          const d = await getScenes(jobId);  // 정밀화된 경계 다시 불러오기
+          setData(d);
+          setNotice("경계 정밀화 완료 — 이제 프레임 단위로 잘립니다. 재익스포트하세요.");
+          return;
+        }
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      setRefineProg(null);
+    }
   };
 
   const [exportProg, setExportProg] = useState<ExportStatus | null>(null);
@@ -253,7 +282,24 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
             <label><input type="radio" checked={mode === "sequence"}
               onChange={() => setMode("sequence")} /> 시퀀스별</label>
             <span style={{ opacity: 0.7 }}>{segments.length}개 구간</span>
+            {/* 경계 정밀화 — 2초 샘플링의 ±1초 잔여를 프레임 단위로 좁힌다(경계마다
+                이진탐색 OCR이라 수 분 소요, 현재 모드만). */}
+            <button type="button" style={consoleStyles.mutedAction}
+              disabled={busy || segments.length < 2}
+              onClick={() => void doRefine()}>
+              {refineProg?.refining
+                ? `정밀화 중… ${refineProg.done}/${refineProg.total}`
+                : "경계 정밀화 (프레임 단위)"}
+            </button>
           </div>
+          {refineProg?.refining ? (
+            <div style={{ height: 6, borderRadius: 3, background: "rgba(255,255,255,0.12)" }}>
+              <div style={{ height: 6, borderRadius: 3,
+                            width: `${refineProg.total > 0
+                              ? Math.round((refineProg.done / refineProg.total) * 100) : 0}%`,
+                            background: "#4a9eda", transition: "width 0.3s" }} />
+            </div>
+          ) : null}
           <SceneFilmstrip jobId={jobId} segments={segments}
             thumbCount={data.frames.length}
             intervalMs={intervalMs}
