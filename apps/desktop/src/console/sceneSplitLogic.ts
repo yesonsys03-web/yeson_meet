@@ -23,6 +23,32 @@ export function previewLabel(tokens: string[], uptoIndex: number): string {
   return tokens.slice(0, uptoIndex + 1).map(squashWs).join("_");
 }
 
+// ── 슬레이트 구역 드래그 ──────────────────────────────────────────────────────
+// 화면에 표시된 프레임 위의 드래그를 프레임 대비 비율로 바꾼다. 비율로 저장해야
+// 표시 크기·원본 해상도가 달라도 같은 구역을 가리킨다.
+export type DragPoint = { x: number; y: number };
+export type DisplayBox = { left: number; top: number; width: number; height: number };
+
+const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
+const round4 = (v: number): number => Math.round(v * 10000) / 10000;
+
+export function regionFromDrag(
+  from: DragPoint, to: DragPoint, box: DisplayBox,
+): { x: number; y: number; w: number; h: number } | null {
+  if (box.width <= 0 || box.height <= 0) return null;
+  const fx = clamp01((from.x - box.left) / box.width);
+  const fy = clamp01((from.y - box.top) / box.height);
+  const tx = clamp01((to.x - box.left) / box.width);
+  const ty = clamp01((to.y - box.top) / box.height);
+  const x = Math.min(fx, tx);
+  const y = Math.min(fy, ty);
+  const w = Math.abs(tx - fx);
+  const h = Math.abs(ty - fy);
+  // 클릭이나 미세 흔들림은 구역으로 보지 않는다(실수로 전체가 지워지는 것 방지).
+  if (w < 0.01 || h < 0.01) return null;
+  return { x: round4(x), y: round4(y), w: round4(w), h: round4(h) };
+}
+
 // ── OCR 오독 검출 ────────────────────────────────────────────────────────────
 // 씬 모드는 구간이 수백 개라 눈으로 훑기 어렵다. 오독은 대개 구분자 유실로
 // 토큰이 붙는 형태라(실기: 040_0080_AC_v01 → 0400080_ACV01) 라벨의 "모양"이

@@ -9,10 +9,12 @@ import {
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
   exportScenes, getExportStatus, getRefineStatus, getScenes,
-  overrideSceneSegments, refineScenes, scanScenes,
-  setSceneRule, videoMediaUrl,
-  type ExportStatus, type RefineStatus, type ScenesData, type SceneSegment,
+  listSlateTemplates, overrideSceneSegments, refineScenes, scanScenes,
+  setOcrRegion as setOcrRegionApi, setSceneRule, videoMediaUrl,
+  type ExportStatus, type OcrRegion, type RefineStatus, type ScenesData,
+  type SceneSegment, type SlateTemplate,
 } from "./videoApi";
+import { SlateRegionPicker } from "./SlateRegionPicker";
 
 type Mode = "scene" | "sequence";
 
@@ -240,6 +242,34 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setSelectedSeg(null);
   }, [mode]);
 
+  // 슬레이트 구역 — 쇼마다 위치가 달라 사용자가 드래그로 지정한다. 스캔 전에도
+  // 스캔 후에도 다시 잡을 수 있다(다시 잡으면 재스캔해야 반영된다).
+  const [ocrRegion, setOcrRegion] = useState<OcrRegion | null>(null);
+  const [templates, setTemplates] = useState<SlateTemplate[]>([]);
+  const [showPicker, setShowPicker] = useState(false);
+  useEffect(() => {
+    void (async () => {
+      try {
+        setTemplates((await listSlateTemplates()).templates);
+      } catch { /* 템플릿은 편의 기능 — 실패해도 화면은 살아 있어야 한다 */ }
+    })();
+  }, []);
+  useEffect(() => { setOcrRegion(data?.ocr_region ?? null); }, [data?.ocr_region]);
+
+  // 템플릿을 고르면 구역과 토큰 규칙을 한 번에 적용한다(같은 쇼면 포맷도 같다).
+  const applyTemplate = (t: SlateTemplate) => {
+    setOcrRegion(t.region);
+    setSeqIdx(t.seq_tokens ?? []);
+    setSceneIdx(t.scene_tokens ?? []);
+    setSpaceDelim((t.delimiters ?? []).includes(" "));
+    void setOcrRegionApi(jobId, t.region).catch(() => undefined);
+    setNotice(`'${t.name}' 템플릿을 적용했습니다 — 구역과 토큰 규칙이 설정됐습니다.`);
+  };
+
+  // 구역 확인용 샘플 시각 = 슬레이트가 읽힌 첫 프레임(없으면 영상 중반).
+  const sampleMs = data?.frames.find((f) => f.text)?.t_ms
+    ?? Math.floor(((data?.frames.at(-1)?.t_ms ?? 0)) / 2);
+
   const openFixPreview = () => {
     const fixes = confidentFixes(segments.map((s) => s.label), delimiters);
     setPendingFixes(fixes);
@@ -297,6 +327,27 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       </div>
       {error ? <p style={{ color: "#e5484d", margin: 0 }}>{error}</p> : null}
       {notice ? <p style={consoleStyles.statusInfo}>{notice}</p> : null}
+
+      {/* 슬레이트 구역 — 쇼마다 위치가 다르므로 스캔 전에 잡아두면 판독이 빠르고
+          정확하다. 스캔 후에도 다시 잡을 수 있다(다시 스캔해야 반영). */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <button type="button" style={consoleStyles.mutedAction}
+          onClick={() => setShowPicker((v) => !v)}>
+          {showPicker ? "구역 지정 닫기" : "슬레이트 구역 지정"}
+        </button>
+        <span style={{ fontSize: 12, opacity: 0.7 }}>
+          {ocrRegion
+            ? `지정됨 — 가로 ${(ocrRegion.w * 100).toFixed(0)}% · 세로 ${(ocrRegion.h * 100).toFixed(0)}%`
+            : "미지정 — 전체 프레임에서 상단을 훑습니다(느리고 쇼에 따라 실패)"}
+        </span>
+      </div>
+      {showPicker ? (
+        <SlateRegionPicker jobId={jobId} sampleMs={sampleMs} region={ocrRegion}
+          onChange={setOcrRegion} templates={templates}
+          onTemplatesChange={setTemplates}
+          rule={{ delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx }}
+          onApplyTemplate={applyTemplate} />
+      ) : null}
 
       {!data?.scanned ? (
         <button type="button" style={consoleStyles.action} disabled={busy}

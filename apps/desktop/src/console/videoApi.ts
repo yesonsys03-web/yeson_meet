@@ -328,6 +328,8 @@ export type ScenesData = {
   segments_sequence: SceneSegment[];
   rule: SlateRuleInput | null;
   interval_ms?: number;
+  // 사용자가 지정한 슬레이트 구역(비율). 없으면 전체 프레임 + 상단 밴드 가정.
+  ocr_region?: OcrRegion | null;
 };
 
 export type SlateRuleInput = {
@@ -383,6 +385,51 @@ export function sceneThumbUrl(jobId: string, index: number): string {
 // 임의 시각 썸네일 — 정밀화된 구간 시작(2초 격자 밖) 프레임 확인용.
 export function sceneThumbAtUrl(jobId: string, tMs: number): string {
   return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/thumb-at?t_ms=${tMs}`;
+}
+
+// 슬레이트 구역(프레임 대비 비율) — 쇼마다 위치가 달라 사용자가 드래그로 지정한다.
+export type OcrRegion = { x: number; y: number; w: number; h: number };
+
+export type SlateTemplate = {
+  name: string;
+  region: OcrRegion;
+  delimiters: string[];
+  seq_tokens: number[];
+  scene_tokens: number[];
+};
+
+export async function setOcrRegion(
+  jobId: string, region: OcrRegion,
+): Promise<{ ocr_region: OcrRegion }> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/ocr-region`,
+    { method: "POST", body: JSON.stringify(region) });
+}
+
+// 지정한 구역으로 한 프레임만 읽어본다 — 긴 스캔 전에 구역이 맞는지 확인.
+export async function testOcrRegion(
+  jobId: string, tMs: number, region: OcrRegion | null,
+): Promise<{ text: string; tokens: string[] }> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/ocr-test`,
+    { method: "POST", body: JSON.stringify({ t_ms: tMs, region }) });
+}
+
+export async function listSlateTemplates(): Promise<{ templates: SlateTemplate[] }> {
+  return request(`${apiBase()}/api/v1/video-jobs/slate-templates`, {});
+}
+
+export async function saveSlateTemplate(
+  t: SlateTemplate,
+): Promise<{ templates: SlateTemplate[] }> {
+  return request(`${apiBase()}/api/v1/video-jobs/slate-templates`,
+    { method: "POST", body: JSON.stringify(t) });
+}
+
+export async function deleteSlateTemplate(
+  name: string,
+): Promise<{ templates: SlateTemplate[] }> {
+  return request(
+    `${apiBase()}/api/v1/video-jobs/slate-templates/${encodeURIComponent(name)}`,
+    { method: "DELETE" });
 }
 
 export type ExportStatus = {

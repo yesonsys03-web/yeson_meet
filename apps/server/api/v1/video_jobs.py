@@ -48,6 +48,7 @@ from apps.server.domain.video_captions.ffmpeg import (extract_frame,
                                                       locate_ffmpeg)
 from apps.server.domain.video_captions.scene_split import FrameSample, tokenize
 from apps.server.domain.video_captions.slate_ocr import read_slate_line
+from apps.server.domain.video_captions.slate_templates import (delete_template, list_templates, upsert_template)
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
 from apps.server.domain.video_captions.translate import (is_source_copy,
                                                          is_untranslated,
@@ -109,6 +110,15 @@ class BurnIn(BaseModel):
     margin_v: int = Field(ge=0, le=300)
     font_size: int = Field(ge=8, le=72)
     color: str = Field(default="#FFFFFF", pattern="^#[0-9a-fA-F]{6}$")
+
+
+class OcrRegionIn(BaseModel):
+    """슬레이트 구역(프레임 대비 비율). 쇼마다 위치가 달라 사용자가 드래그로
+    지정한다. 비율이라 해상도가 달라도 같은 값을 쓸 수 있다."""
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+    w: float = Field(gt=0.0, le=1.0)
+    h: float = Field(gt=0.0, le=1.0)
 
 
 class SlateRuleIn(BaseModel):
@@ -288,6 +298,34 @@ async def list_video_jobs(
             out["size_bytes"] = _job_dir_size(job.external_id)
         items.append(out)
     return {"items": items}
+
+
+class SlateTemplateIn(BaseModel):
+    """쇼 템플릿 — 슬레이트 구역 + 토큰 규칙. 같은 쇼는 에피소드가 바뀌어도
+    슬레이트 위치와 포맷이 같으므로 한 벌로 묶어 저장한다."""
+    name: str = Field(min_length=1, max_length=80)
+    region: OcrRegionIn
+    delimiters: list[str] = Field(default_factory=lambda: ["_", "-"])
+    seq_tokens: list[int] = Field(default_factory=list)
+    scene_tokens: list[int] = Field(default_factory=list)
+
+
+@router.get("/slate-templates")
+async def get_slate_templates() -> dict:
+    # /{external_id}보다 먼저 선언 — 선언 순서 매칭이라 뒤에 두면 UUID 파싱 422.
+    return {"templates": list_templates()}
+
+
+@router.post("/slate-templates")
+async def save_slate_template(body: SlateTemplateIn) -> dict:
+    return {"templates": upsert_template(body.model_dump())}
+
+
+@router.delete("/slate-templates/{name}")
+async def remove_slate_template(name: str) -> dict:
+    if not delete_template(name):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "템플릿을 찾을 수 없습니다.")
+    return {"templates": list_templates()}
 
 
 @router.get("/translate-engines")
@@ -708,15 +746,6 @@ async def scene_thumbnail(
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "thumbnail not found")
     return FileResponse(path, media_type="image/jpeg")
-
-
-class OcrRegionIn(BaseModel):
-    """슬레이트 구역(프레임 대비 비율). 쇼마다 위치가 달라 사용자가 드래그로
-    지정한다. 비율이라 해상도가 달라도 같은 값을 쓸 수 있다."""
-    x: float = Field(ge=0.0, le=1.0)
-    y: float = Field(ge=0.0, le=1.0)
-    w: float = Field(gt=0.0, le=1.0)
-    h: float = Field(gt=0.0, le=1.0)
 
 
 @router.post("/{external_id}/scenes/ocr-region")

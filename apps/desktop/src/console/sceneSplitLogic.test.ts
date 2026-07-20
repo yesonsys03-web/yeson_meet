@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { anomalousLabels, applyFixes, confidentFixes, formatMs, labelTemplate, mergeSegment, previewLabel, renameSegment, segmentThumbRange, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
+import { anomalousLabels, applyFixes, confidentFixes, formatMs, regionFromDrag, labelTemplate, mergeSegment, previewLabel, renameSegment, segmentThumbRange, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -65,6 +65,27 @@ describe("segment editing", () => {
     expect(mergeSegment(segs, 0, "prev")).toEqual(segs);
     expect(mergeSegment(segs, 2, "next")).toEqual(segs);
     expect(mergeSegment(segs, 9, "prev")).toEqual(segs);
+  });
+});
+
+describe("regionFromDrag", () => {
+  const box = { left: 100, top: 50, width: 640, height: 360 };
+  it("converts a drag on the displayed frame to frame-relative fractions", () => {
+    // 표시 크기와 원본 해상도가 달라도 비율이라 그대로 쓸 수 있다.
+    expect(regionFromDrag({ x: 132, y: 68 }, { x: 452, y: 104 }, box)).toEqual(
+      { x: 0.05, y: 0.05, w: 0.5, h: 0.1 });
+  });
+  it("normalizes a drag made in any direction", () => {
+    // 오른쪽아래→왼쪽위로 끌어도 같은 사각형이어야 한다.
+    expect(regionFromDrag({ x: 452, y: 104 }, { x: 132, y: 68 }, box)).toEqual(
+      { x: 0.05, y: 0.05, w: 0.5, h: 0.1 });
+  });
+  it("clamps a drag that leaves the frame", () => {
+    const r = regionFromDrag({ x: -50, y: -20 }, { x: 9999, y: 9999 }, box);
+    expect(r).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+  });
+  it("returns null for a click without meaningful drag", () => {
+    expect(regionFromDrag({ x: 200, y: 100 }, { x: 202, y: 101 }, box)).toBeNull();
   });
 });
 

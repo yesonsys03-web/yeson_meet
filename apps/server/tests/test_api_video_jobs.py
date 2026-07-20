@@ -775,6 +775,30 @@ async def test_scene_thumb_at_404_without_burned(client, db_session, admin_user)
     assert r.status_code == 404
 
 
+async def test_slate_template_crud(client, monkeypatch, tmp_path):
+    """쇼 템플릿 CRUD — 구역과 토큰 규칙을 쇼 이름으로 저장해 다음 작품에서
+    골라 쓴다. 잡에 속하지 않는 전역 목록이다."""
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    payload = {"name": "HZBN307",
+               "region": {"x": 0.02, "y": 0.03, "w": 0.5, "h": 0.08},
+               "delimiters": ["_", "-"], "seq_tokens": [1], "scene_tokens": [2]}
+    r = await client.post("/api/v1/video-jobs/slate-templates", json=payload)
+    assert r.status_code == 200
+    got = (await client.get("/api/v1/video-jobs/slate-templates")).json()
+    assert [t["name"] for t in got["templates"]] == ["HZBN307"]
+    assert got["templates"][0]["seq_tokens"] == [1]
+    d = await client.delete("/api/v1/video-jobs/slate-templates/HZBN307")
+    assert d.status_code == 200
+    assert (await client.get(
+        "/api/v1/video-jobs/slate-templates")).json()["templates"] == []
+
+
+async def test_slate_template_delete_unknown_is_404(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    r = await client.delete("/api/v1/video-jobs/slate-templates/none")
+    assert r.status_code == 404
+
+
 async def test_set_and_keep_ocr_region(client, db_session, admin_user):
     """OCR 영역(비율)은 잡에 저장되고, 재스캔해도 유지돼야 한다 — 쇼마다 슬레이트
     위치가 달라 이 지정이 곧 그 작품의 설정이다."""
