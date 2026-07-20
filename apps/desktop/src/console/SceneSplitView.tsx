@@ -229,6 +229,17 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const [fixChecked, setFixChecked] = useState<Set<number>>(new Set());
   const [undoSnapshot, setUndoSnapshot] = useState<SceneSegment[] | null>(null);
 
+  // 모드가 바뀌면 구간 목록 자체가 달라진다 — 이전 모드에서 만든 미리보기·되돌리기
+  // 스냅샷·필터·선택은 모두 무의미해지므로 지운다(씬별 목록이 시퀀스별 화면에
+  // 남아 보이던 문제). applyFixes의 from 검사가 2차 방어선이다.
+  useEffect(() => {
+    setPendingFixes(null);
+    setFixChecked(new Set());
+    setUndoSnapshot(null);
+    setOnlyAnomalies(false);
+    setSelectedSeg(null);
+  }, [mode]);
+
   const openFixPreview = () => {
     const fixes = confidentFixes(segments.map((s) => s.label), delimiters);
     setPendingFixes(fixes);

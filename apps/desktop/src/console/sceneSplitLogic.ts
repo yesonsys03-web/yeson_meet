@@ -181,12 +181,15 @@ export function confidentFixes(
 
 // 선택된 교정만 적용한다(시간은 건드리지 않는다). 원본 배열은 변경하지 않는다 —
 // 호출자가 적용 전 스냅샷을 그대로 들고 있다가 되돌릴 수 있어야 한다.
+// from이 현재 라벨과 다르면 건너뛴다: 씬별에서 만든 목록이 시퀀스별에 적용돼
+// 엉뚱한 라벨을 덮어쓰는 사고를 막는다(UI 초기화와 별개의 구조적 안전장치).
 export function applyFixes(
   segs: SceneSegment[], fixes: LabelFix[], selected: Set<number>,
 ): SceneSegment[] {
   let out = segs;
   for (const f of fixes) {
     if (!selected.has(f.index)) continue;
+    if (out[f.index]?.label !== f.from) continue;
     out = renameSegment(out, f.index, f.to);
   }
   return out;

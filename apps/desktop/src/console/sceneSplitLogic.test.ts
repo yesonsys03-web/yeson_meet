@@ -148,10 +148,18 @@ describe("confidentFixes / applyFixes", () => {
       { index: 1, from: "HH0307_0400080_ACV01", to: "HH0307_040_0080" },
     ]);
   });
+  it("ignores a fix whose 'from' no longer matches that row", () => {
+    // 회귀(실기): 씬별에서 미리보기를 연 뒤 시퀀스별로 바꾸면 옛 목록이 남는데,
+    // 인덱스만 보고 적용하면 시퀀스 구간에 씬 라벨을 덮어쓴다. from이 현재
+    // 라벨과 다르면(=다른 목록) 건너뛴다 — UI 초기화와 무관한 구조적 안전장치.
+    const stale = [{ index: 0, from: "HH0307_040_0060", to: "HH0307_999_9999" }];
+    const other = [{ label: "HH0307_010", start_ms: 0, end_ms: 9000 }];
+    expect(applyFixes(other, stale, new Set([0]))[0]!.label).toBe("HH0307_010");
+  });
   it("applies only the selected fixes and leaves the rest untouched", () => {
     const fixes = [
-      { index: 1, from: "x", to: "HH0307_040_0080" },
-      { index: 3, from: "y", to: "HH0307_040_0999" },
+      { index: 1, from: "HH0307_0400080_ACV01", to: "HH0307_040_0080" },
+      { index: 3, from: "HH0307_040_0110", to: "HH0307_040_0999" },
     ];
     const out = applyFixes(segs, fixes, new Set([1]));  // 1번만 체크
     expect(out[1]!.label).toBe("HH0307_040_0080");
