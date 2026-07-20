@@ -775,6 +775,57 @@ async def test_scene_thumb_at_404_without_burned(client, db_session, admin_user)
     assert r.status_code == 404
 
 
+async def test_set_and_keep_ocr_region(client, db_session, admin_user):
+    """OCR 영역(비율)은 잡에 저장되고, 재스캔해도 유지돼야 한다 — 쇼마다 슬레이트
+    위치가 달라 이 지정이 곧 그 작품의 설정이다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    pl.save_scenes(job.external_id, {"scanning": False, "interval_ms": 2000,
+                                     "frames": [{"t_ms": 0, "text": "A_B_C"}]})
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/ocr-region",
+        json={"x": 0.02, "y": 0.03, "w": 0.5, "h": 0.08})
+    assert r.status_code == 200
+    body = (await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes")).json()
+    assert body["ocr_region"] == {"x": 0.02, "y": 0.03, "w": 0.5, "h": 0.08}
+    assert body["frames"], "영역 저장이 스캔 결과를 지우면 안 된다"
+    assert pl.load_ocr_region(job.external_id) == (0.02, 0.03, 0.5, 0.08)
+
+
+async def test_ocr_region_rejects_out_of_range(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/ocr-region",
+        json={"x": 0.0, "y": 0.0, "w": 1.5, "h": 0.1})
+    assert r.status_code == 422
+
+
+async def test_ocr_test_read_returns_text(client, db_session, admin_user,
+                                          monkeypatch):
+    """드래그한 영역이 맞는지 25분 스캔 전에 확인하는 미리읽기."""
+    monkeypatch.setattr(api_vj, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(api_vj, "extract_frame",
+                        lambda *a, **k: Path(a[3]).write_bytes(b"x"))
+    monkeypatch.setattr(api_vj, "read_slate_line",
+                        lambda *a, **k: "HH0307_010_0010_AC_v01")
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/ocr-test",
+        json={"t_ms": 6000, "region": {"x": 0.0, "y": 0.0, "w": 0.5, "h": 0.1}})
+    assert r.status_code == 200
+    assert r.json()["text"] == "HH0307_010_0010_AC_v01"
+
+
 async def test_get_scenes_empty_before_scan(client, db_session, admin_user):
     job = await _new_scene_job(db_session, admin_user, status="done")
     resp = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")

@@ -301,15 +301,31 @@ def ensure_preview(ffmpeg: str, src: Path, dst: Path,
     return dst
 
 
+# OCR 영역 = (x, y, w, h) 프레임 대비 비율. 비율이라 해상도가 달라도 그대로 쓰고,
+# 쇼마다 다른 슬레이트 위치를 코드 가정 없이 처리한다(사용자가 드래그로 지정).
+OcrRegion = tuple[float, float, float, float]
+
+
+def crop_filter(region: OcrRegion) -> str:
+    """비율 영역 → ffmpeg crop 필터. in_w/in_h 식이라 해상도에 무관하다."""
+    x, y, w, h = region
+    return (f"crop=in_w*{w:.4f}:in_h*{h:.4f}:in_w*{x:.4f}:in_h*{y:.4f}")
+
+
 def extract_frames(ffmpeg: str, src: Path, out_dir: Path,
-                   interval_s: float = 1.0, proc_key: str | None = None) -> None:
+                   interval_s: float = 1.0, proc_key: str | None = None,
+                   region: OcrRegion | None = None) -> None:
     """OCR용 프레임을 interval_s 간격으로 out_dir/frame_%05d.png에 추출.
 
     frame_00001.png ≈ t=0, frame_00002.png ≈ t=interval_s … (fps 필터 기준).
     호출자는 인덱스(1-based)로 t_ms = (index-1)*interval_ms를 부여한다.
+    region을 주면 그 영역만 잘라 판독 입력을 줄인다(속도↑, 무관한 텍스트 배제).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    _run([ffmpeg, "-y", "-i", str(src), "-vf", f"fps=1/{interval_s}",
+    vf = f"fps=1/{interval_s}"
+    if region:
+        vf += "," + crop_filter(region)
+    _run([ffmpeg, "-y", "-i", str(src), "-vf", vf,
           str(out_dir / "frame_%05d.png")], proc_key=proc_key)
 
 
@@ -351,9 +367,15 @@ def extract_thumbnail_at(ffmpeg: str, src: Path, t_ms: int, dst: Path,
 
 
 def extract_frame(ffmpeg: str, src: Path, t_ms: int, dst: Path,
-                  proc_key: str | None = None) -> None:
+                  proc_key: str | None = None,
+                  region: OcrRegion | None = None) -> None:
     """t_ms 시각의 단일 프레임을 dst로 추출(경계 정밀화용). -ss를 -i 앞에 둬
-    입력 시킹으로 빠르게 접근한다(OCR 판독용이라 프레임 미세오차는 무방)."""
+    입력 시킹으로 빠르게 접근한다(OCR 판독용이라 프레임 미세오차는 무방).
+    region은 스캔과 같은 값을 써야 한다 — 판독 조건이 다르면 경계가 흔들린다."""
     dst.parent.mkdir(parents=True, exist_ok=True)
-    _run([ffmpeg, "-y", "-ss", f"{t_ms / 1000:.3f}", "-i", str(src),
-          "-frames:v", "1", str(dst)], proc_key=proc_key)
+    cmd = [ffmpeg, "-y", "-ss", f"{t_ms / 1000:.3f}", "-i", str(src),
+           "-frames:v", "1"]
+    if region:
+        cmd += ["-vf", crop_filter(region)]
+    cmd.append(str(dst))
+    _run(cmd, proc_key=proc_key)

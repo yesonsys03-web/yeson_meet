@@ -39,6 +39,39 @@ def test_extract_thumbnails_scales_by_height(monkeypatch, tmp_path: Path):
     assert calls[0][-1].endswith("thumb_%05d.jpg")
 
 
+def test_extract_frames_crops_to_ocr_region(monkeypatch, tmp_path: Path):
+    """OCR 영역(비율)을 주면 ffmpeg 단계에서 잘라낸다 — 판독 입력이 작아져 빠르고,
+    쇼마다 다른 슬레이트 위치를 코드 가정 없이 처리한다. 비율이라 해상도 무관."""
+    calls: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: (calls.append(cmd), _Result())[1])
+    ff.extract_frames("ffmpeg", tmp_path / "in.mp4", tmp_path / "f",
+                      interval_s=2.0, region=(0.02, 0.03, 0.5, 0.08))
+    vf = calls[0][calls[0].index("-vf") + 1]
+    assert vf == ("fps=1/2.0,"
+                  "crop=in_w*0.5000:in_h*0.0800:in_w*0.0200:in_h*0.0300")
+
+
+def test_extract_frames_without_region_is_unchanged(monkeypatch, tmp_path: Path):
+    """영역 미지정은 기존 동작 그대로(전체 프레임) — 하위 호환."""
+    calls: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: (calls.append(cmd), _Result())[1])
+    ff.extract_frames("ffmpeg", tmp_path / "in.mp4", tmp_path / "f", interval_s=2.0)
+    assert calls[0][calls[0].index("-vf") + 1] == "fps=1/2.0"
+
+
+def test_extract_frame_crops_to_ocr_region(monkeypatch, tmp_path: Path):
+    """정밀화용 단일 프레임도 같은 영역을 쓴다(스캔과 판독 조건이 같아야 한다)."""
+    calls: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: (calls.append(cmd), _Result())[1])
+    ff.extract_frame("ffmpeg", tmp_path / "in.mp4", 4968, tmp_path / "r.png",
+                     region=(0.0, 0.0, 1.0, 0.2))
+    vf = calls[0][calls[0].index("-vf") + 1]
+    assert vf == "crop=in_w*1.0000:in_h*0.2000:in_w*0.0000:in_h*0.0000"
+
+
 def test_extract_thumbnail_at_seeks_and_scales(monkeypatch, tmp_path: Path):
     """경계 썸네일: 임의 시각 1프레임을 필름스트립 높이로 축소해 저장.
     -ss는 -i 앞(cut_segment/extract_frame와 같은 시간축) — 그래야 썸네일이

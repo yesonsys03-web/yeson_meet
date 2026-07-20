@@ -43,9 +43,11 @@ from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
                                                         start_task, video_jobs_root)
 from apps.server.domain.video_captions.pipeline import \
     _INFLIGHT_STATUSES as INFLIGHT_STATUSES
-from apps.server.domain.video_captions.ffmpeg import (extract_thumbnail_at,
+from apps.server.domain.video_captions.ffmpeg import (extract_frame,
+                                                      extract_thumbnail_at,
                                                       locate_ffmpeg)
-from apps.server.domain.video_captions.scene_split import FrameSample
+from apps.server.domain.video_captions.scene_split import FrameSample, tokenize
+from apps.server.domain.video_captions.slate_ocr import read_slate_line
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
 from apps.server.domain.video_captions.translate import (is_source_copy,
                                                          is_untranslated,
@@ -581,6 +583,7 @@ async def get_scenes(
         "segments_sequence": data.get("segments_sequence", []),
         "rule": data.get("rule"),
         "interval_ms": data.get("interval_ms", 2000),
+        "ocr_region": data.get("ocr_region"),
     }
 
 
@@ -705,6 +708,70 @@ async def scene_thumbnail(
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "thumbnail not found")
     return FileResponse(path, media_type="image/jpeg")
+
+
+class OcrRegionIn(BaseModel):
+    """슬레이트 구역(프레임 대비 비율). 쇼마다 위치가 달라 사용자가 드래그로
+    지정한다. 비율이라 해상도가 달라도 같은 값을 쓸 수 있다."""
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+    w: float = Field(gt=0.0, le=1.0)
+    h: float = Field(gt=0.0, le=1.0)
+
+
+@router.post("/{external_id}/scenes/ocr-region")
+async def set_ocr_region(
+    external_id: UUID,
+    body: OcrRegionIn,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """OCR 영역 저장 — 스캔/정밀화가 이 영역만 잘라 판독한다(속도↑, 무관한
+    텍스트 배제). 스캔 결과는 건드리지 않고 영역만 갱신한다."""
+    await _get_job_or_404(db, external_id)
+    data = load_scenes(external_id) or {}
+    data["ocr_region"] = body.model_dump()
+    save_scenes(external_id, data)
+    return {"ocr_region": data["ocr_region"]}
+
+
+class OcrTestIn(BaseModel):
+    t_ms: int = Field(ge=0)
+    region: OcrRegionIn | None = None
+
+
+@router.post("/{external_id}/scenes/ocr-test")
+async def test_ocr_region(
+    external_id: UUID,
+    body: OcrTestIn,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """지정한 영역으로 한 프레임만 읽어본다 — 25분짜리 스캔을 돌리기 전에
+    영역이 맞는지 즉시 확인하기 위한 미리읽기."""
+    await _get_job_or_404(db, external_id)
+    burned = job_dir(external_id) / "burned.mp4"
+    if not burned.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "burned video not found")
+    ffmpeg = locate_ffmpeg()
+    if ffmpeg is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "ffmpeg를 찾을 수 없습니다.")
+    region = None
+    if body.region is not None:
+        r = body.region
+        region = (r.x, r.y, r.w, r.h)
+    tmp = job_dir(external_id) / "ocr_test.png"
+
+    def _read() -> str:
+        extract_frame(ffmpeg, burned, body.t_ms, tmp,
+                      proc_key=str(external_id), region=region)
+        try:
+            return read_slate_line(tmp, ["_", "-"],
+                                   top_frac=1.0 if region else 0.35)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    text = await asyncio.to_thread(_read)
+    return {"text": text, "tokens": tokenize(text, ["_", "-"]) if text else []}
 
 
 @router.get("/{external_id}/scenes/thumb-at")

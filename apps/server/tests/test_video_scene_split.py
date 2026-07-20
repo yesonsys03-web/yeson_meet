@@ -132,6 +132,28 @@ def test_pick_slate_line_no_top_band_candidate_returns_empty():
     assert pick_slate_line(lines, ["_", " ", "-"], min_tokens=2) == ""
 
 
+def test_read_slate_line_full_band_when_region_cropped(monkeypatch, tmp_path):
+    """사용자가 OCR 영역을 지정하면 프레임이 그 영역으로 잘려 들어온다 — 크롭
+    자체가 영역 필터이므로 상단 밴드 가정을 적용하면 안 된다(잘린 이미지에서는
+    슬레이트가 세로 중앙·하단에 올 수 있다). top_frac=1.0으로 전 영역 허용."""
+    from PIL import Image
+
+    from apps.server.domain.video_captions import slate_ocr
+    png = tmp_path / "c.png"
+    Image.new("RGB", (640, 80)).save(png)
+    result = [
+        [[[10, 50], [400, 50], [400, 75], [10, 75]],  # y중심 0.78 — 밴드 밖
+         "HH0307_010_0010_AC_v01", 0.95],
+    ]
+    monkeypatch.setattr(slate_ocr, "_get_engine",
+                        lambda: (lambda _p: (result, 0.0)))
+    # 기본(전체 프레임 가정)에서는 걸러지고
+    assert slate_ocr.read_slate_line(png, ["_", "-"]) == ""
+    # 크롭된 입력에서는 그대로 읽힌다
+    assert slate_ocr.read_slate_line(png, ["_", "-"], top_frac=1.0) == \
+        "HH0307_010_0010_AC_v01"
+
+
 def test_read_slate_line_maps_box_y_to_fraction(monkeypatch, tmp_path):
     """read_slate_line이 박스 y중심/이미지 높이 → y_frac으로 환산해 상단
     슬레이트를 고르는지 엔드투엔드 확인(가짜 엔진 + 실제 PNG)."""
@@ -206,10 +228,10 @@ def test_refine_first_segment_start(monkeypatch, tmp_path):
 
     calls: dict[str, int] = {}
 
-    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None):
+    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
         calls[str(dst)] = t_ms
 
-    def fake_read(dst, delimiters):
+    def fake_read(dst, delimiters, top_frac=1.0):
         return ("HH_010_0010_AC" if frame_pts(calls[str(dst)]) >= t_cut
                 else "")  # 타이틀 카드 = 판독실패
 
@@ -264,10 +286,10 @@ def test_refine_recovers_boundary_outside_window_with_misreads(monkeypatch, tmp_
 
     calls: dict[str, int] = {}
 
-    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None):
+    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
         calls[str(dst)] = t_ms
 
-    def fake_read(dst, delimiters):
+    def fake_read(dst, delimiters, top_frac=1.0):
         pts = frame_pts(calls[str(dst)])
         if pts < t_cut:
             return "HH_110_0310_AC"
@@ -313,10 +335,10 @@ def test_refine_boundary_is_frame_exact(monkeypatch, tmp_path):
 
     calls: dict[str, int] = {}
 
-    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None):
+    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
         calls[str(dst)] = t_ms
 
-    def fake_read(dst, delimiters):
+    def fake_read(dst, delimiters, top_frac=1.0):
         return ("HH_new_x" if frame_pts(calls[str(dst)]) >= t_cut
                 else "HH_old_x")
 

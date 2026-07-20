@@ -54,8 +54,14 @@ def pick_slate_line(
 
 def read_slate_line(
     image_path: str | Path, delimiters: list[str], min_tokens: int = 2,
+    top_frac: float = _TOP_BAND_FRAC,
 ) -> str:
-    """이미지 한 장 OCR → 슬레이트 라인. 판독 실패/후보 없음은 "" 반환."""
+    """이미지 한 장 OCR → 슬레이트 라인. 판독 실패/후보 없음은 "" 반환.
+
+    top_frac은 슬레이트로 인정할 상단 밴드 비율. 사용자가 OCR 영역을 지정해
+    프레임이 이미 잘려 들어온 경우 1.0을 줘야 한다 — 크롭 자체가 영역 필터라
+    잘린 이미지 안에서는 슬레이트가 어디에 있어도 정상이다.
+    """
     try:
         result, _elapse = _get_engine()(str(image_path))
         if not result:
@@ -69,7 +75,7 @@ def read_slate_line(
             ys = [float(p[1]) for p in item[0]]
             y_frac = (sum(ys) / len(ys)) / height if height else 1.0
             lines.append((item[1], float(item[2]), y_frac))
-        return pick_slate_line(lines, delimiters, min_tokens)
+        return pick_slate_line(lines, delimiters, min_tokens, top_frac)
     except Exception:  # noqa: BLE001 — 한 프레임 판독 실패가 전체 스캔을 막지 않게
         logger.exception("OCR failed for %s", image_path)
         return ""

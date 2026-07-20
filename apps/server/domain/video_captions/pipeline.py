@@ -566,6 +566,27 @@ _DEFAULT_DELIMS = ["_", "-"]
 _SCAN_INTERVAL_S = 2.0
 
 
+def load_ocr_region(external_id: UUID | str) -> tuple | None:
+    """저장된 OCR 영역(비율 x,y,w,h) — 사용자가 드래그로 지정한 슬레이트 구역.
+    없으면 None(전체 프레임 + 상단 밴드 가정, 기존 동작)."""
+    data = load_scenes(external_id) or {}
+    r = data.get("ocr_region")
+    if not r:
+        return None
+    try:
+        return (float(r["x"]), float(r["y"]), float(r["w"]), float(r["h"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+# 크롭된 입력에서는 상단 밴드 가정을 쓰지 않는다 — 크롭 자체가 영역 필터다.
+def _band_for(region: tuple | None) -> float:
+    return 1.0 if region else _TOP_BAND_DEFAULT
+
+
+_TOP_BAND_DEFAULT = 0.35
+
+
 async def run_scene_scan(external_id: UUID,
                          interval_s: float = _SCAN_INTERVAL_S) -> None:
     """burned.mp4에서 프레임을 추출·OCR해 프레임별 슬레이트 텍스트를 모아
@@ -595,10 +616,16 @@ async def run_scene_scan(external_id: UUID,
                 shutil.rmtree(d, ignore_errors=True)
 
         interval_ms = int(interval_s * 1000)
+        # 사용자가 지정한 슬레이트 구역 — scenes.json을 덮어쓰기 전에 읽어두고,
+        # 이후 모든 저장에 되실어 재스캔해도 지정이 사라지지 않게 한다.
+        region = load_ocr_region(external_id)
+        band = _band_for(region)
+        region_out = ({"x": region[0], "y": region[1],
+                       "w": region[2], "h": region[3]} if region else None)
 
         def _work() -> list[FrameSample]:
             extract_frames(ffmpeg, burned, frames_dir, interval_s,
-                           proc_key=str(external_id))
+                           proc_key=str(external_id), region=region)
             extract_thumbnails(ffmpeg, burned, thumbs_dir, interval_s,
                                proc_key=str(external_id))
             pngs = sorted(frames_dir.glob("frame_*.png"))
@@ -606,19 +633,20 @@ async def run_scene_scan(external_id: UUID,
             # 진행률 초기화 — 긴 영상은 OCR이 오래 걸려 프론트가 폴링하며 표시한다.
             save_scenes(external_id, {"scanning": True, "interval_ms": interval_ms,
                                       "total_frames": total, "ocr_done": 0,
-                                      "frames": []})
+                                      "frames": [], "ocr_region": region_out})
             samples: list[FrameSample] = []
             for i, png in enumerate(pngs):
                 if generation != _current_generation(external_id):
                     raise StaleRunCancelled(external_id)
-                text = read_slate_line(png, _DEFAULT_DELIMS)
+                text = read_slate_line(png, _DEFAULT_DELIMS, top_frac=band)
                 samples.append(FrameSample(index=i, t_ms=i * interval_ms, text=text))
                 # 증분 진행률 — 매 프레임 쓰면 I/O 과다라 10개마다(+마지막).
                 if (i + 1) % 10 == 0 or (i + 1) == total:
                     save_scenes(external_id, {"scanning": True,
                                               "interval_ms": interval_ms,
                                               "total_frames": total,
-                                              "ocr_done": i + 1, "frames": []})
+                                              "ocr_done": i + 1, "frames": [],
+                                              "ocr_region": region_out})
             return samples
 
         try:
@@ -632,6 +660,7 @@ async def run_scene_scan(external_id: UUID,
             "interval_ms": interval_ms,
             "frame_count": len(samples),
             "frames": [{"t_ms": s.t_ms, "text": s.text} for s in samples],
+            "ocr_region": region_out,
         })
     except StaleRunCancelled:
         logger.info("scene scan %s cancelled (gen %d)", external_id, generation)
@@ -804,10 +833,15 @@ async def run_scene_refine(external_id: UUID, mode: str) -> None:
         save_refine_status(external_id, {"refining": True, "done": 0,
                                          "total": total, "error": None})
 
+        # 스캔과 같은 영역·밴드로 읽어야 경계가 흔들리지 않는다.
+        region = load_ocr_region(external_id)
+        band = _band_for(region)
+
         def label_at(t_ms: int) -> str:
             dst = tmpdir / f"r_{t_ms}.png"
-            extract_frame(ffmpeg, burned, t_ms, dst, proc_key=str(external_id))
-            text = read_slate_line(dst, delimiters)
+            extract_frame(ffmpeg, burned, t_ms, dst, proc_key=str(external_id),
+                          region=region)
+            text = read_slate_line(dst, delimiters, top_frac=band)
             try:
                 dst.unlink()
             except OSError:
