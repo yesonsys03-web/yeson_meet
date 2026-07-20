@@ -846,6 +846,23 @@ async def test_set_and_keep_ocr_region(client, db_session, admin_user):
     assert pl.load_ocr_region(job.external_id) == (0.02, 0.03, 0.5, 0.08)
 
 
+async def test_rule_computation_keeps_ocr_region(client, db_session, admin_user):
+    """회귀(실기): 경계 계산이 scenes.json을 새 dict로 덮어써 사용자가 지정한
+    OCR 구역이 사라졌다 — 다음 스캔/정밀화가 전체 프레임을 훑어 느려지고, 쇼에
+    따라서는 판독 자체가 실패한다. 구역은 작업 산출물이 아니라 그 작품의 설정이다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {
+        "scanning": False, "interval_ms": 2000,
+        "frames": [{"t_ms": 0, "text": "HH_010_0010_AC"},
+                   {"t_ms": 2000, "text": "HH_020_0010_AC"}],
+        "ocr_region": {"x": 0.03, "y": 0.04, "w": 0.35, "h": 0.06},
+    })
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/rule",
+                          json={"seq_tokens": [1], "scene_tokens": [2]})
+    assert r.status_code == 200
+    assert pl.load_ocr_region(job.external_id) == (0.03, 0.04, 0.35, 0.06)
+
+
 async def test_ocr_region_rejects_out_of_range(client, db_session, admin_user):
     job = await _new_scene_job(db_session, admin_user, status="done")
     r = await client.post(

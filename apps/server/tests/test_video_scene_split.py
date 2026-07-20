@@ -209,6 +209,45 @@ def test_compute_boundaries_centers_first_run_after_invalid_lead():
     assert segs[0].start_ms == 5000  # 6000 - interval/2
 
 
+def test_refine_clears_refining_flag_when_cancelled(monkeypatch, tmp_path):
+    """회귀(실기): 취소 엔드포인트가 플래그를 내려도, 그 직후 아직 돌던 워커가
+    진행률을 다시 써 refining=true로 되살아났다. 워커는 다음 반복에서 취소를
+    감지하고 조용히 끝나므로 플래그가 켜진 채 남아 프론트가 영원히 폴링한다.
+    멈추는 쪽이 자기 플래그를 내려야 한다."""
+    import asyncio
+
+    from uuid import uuid4
+
+    from apps.server.domain.video_captions import pipeline as pl
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    eid = uuid4()
+    calls = {"n": 0}
+
+    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
+        calls["n"] += 1
+        if calls["n"] == 3:  # 진행 중 취소(세대 증가)
+            pl._bump_generation(eid)
+
+    monkeypatch.setattr(pl, "extract_frame", fake_extract)
+    monkeypatch.setattr(pl, "read_slate_line",
+                        lambda dst, delimiters, top_frac=1.0: "HH_020_0010_AC")
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    pl.save_scenes(eid, {
+        "scanning": False, "interval_ms": 2000, "frames": [],
+        "rule": {"delimiters": ["_"], "seq_tokens": [1], "scene_tokens": [2]},
+        "segments_sequence": [
+            {"label": "HH_010", "start_ms": 0, "end_ms": 4000},
+            {"label": "HH_020", "start_ms": 4000, "end_ms": 8000},
+            {"label": "HH_030", "start_ms": 8000, "end_ms": 12000},
+        ],
+        "segments_scene": [],
+    })
+    asyncio.run(pl.run_scene_refine(eid, "sequence"))
+    st = pl.load_refine_status(eid)
+    assert st is not None and st["refining"] is False, \
+        "취소 후 refining이 켜진 채 남으면 프론트가 영원히 폴링한다"
+
+
 def test_refine_first_segment_start(monkeypatch, tmp_path):
     """회귀(실기 010 1초 유실): 첫 세그먼트 시작(>0)도 정밀화 대상 — 앞쪽
     판독실패(타이틀카드) 구간과의 전환 프레임까지 이진탐색으로 좁혀야 한다."""

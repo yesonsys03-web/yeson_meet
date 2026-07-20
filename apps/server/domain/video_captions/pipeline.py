@@ -664,6 +664,11 @@ async def run_scene_scan(external_id: UUID,
         })
     except StaleRunCancelled:
         logger.info("scene scan %s cancelled (gen %d)", external_id, generation)
+        # 멈추는 쪽이 자기 플래그를 내린다(정밀화와 동일한 경합) — 취소 직후
+        # 이 워커의 진행률 저장이 scanning=true를 되살리면 폴링이 안 끝난다.
+        # 부분 판독은 남기지 않되(완료로 오인 방지) 구역 설정은 보존한다.
+        save_scenes(external_id, {"scanning": False, "interval_ms": interval_ms,
+                                  "ocr_region": region_out})
     except Exception:  # noqa: BLE001
         if generation != _current_generation(external_id):
             # kill_active로 죽은 ffmpeg(extract_frames/extract_thumbnails)가
@@ -758,6 +763,11 @@ async def run_scene_export(external_id: UUID, mode: str,
         return written
     except StaleRunCancelled:
         logger.info("scene export %s cancelled (gen %d)", external_id, generation)
+        try:
+            st = load_export_status(external_id) or {}
+            save_export_status(external_id, {**st, "exporting": False})
+        except Exception:  # noqa: BLE001 — 정리 실패가 취소 경로를 깨뜨리지 않게
+            logger.exception("failed to clear exporting flag for %s", external_id)
         return []
     except Exception:  # noqa: BLE001
         if generation != _current_generation(external_id):
@@ -788,6 +798,16 @@ def save_refine_status(external_id: UUID | str, data: dict) -> None:
     path = refine_status_path(external_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def _clear_refining(external_id: UUID | str) -> None:
+    """정밀화 종료(취소 포함) 시 진행 플래그를 내린다. 켜진 채 남으면 프론트가
+    끝나지 않는 작업을 영원히 폴링한다."""
+    try:
+        st = load_refine_status(external_id) or {}
+        save_refine_status(external_id, {**st, "refining": False})
+    except Exception:  # noqa: BLE001 — 정리 실패가 취소 경로를 깨뜨리지 않게
+        logger.exception("failed to clear refining flag for %s", external_id)
 
 
 def load_refine_status(external_id: UUID | str) -> dict | None:
@@ -937,8 +957,12 @@ async def run_scene_refine(external_id: UUID, mode: str) -> None:
                                          "total": total, "error": None})
     except StaleRunCancelled:
         logger.info("scene refine %s cancelled (gen %d)", external_id, generation)
+        # 멈추는 쪽이 자기 플래그를 내린다 — 취소 엔드포인트가 내려도 그 직후
+        # 이 워커가 진행률을 다시 써 refining=true로 되살아나던 경합(실기).
+        _clear_refining(external_id)
     except Exception:  # noqa: BLE001
         if generation != _current_generation(external_id):
+            _clear_refining(external_id)
             return
         logger.exception("scene refine %s failed", external_id)
         try:

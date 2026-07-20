@@ -642,6 +642,11 @@ async def set_scene_rule(
     rule_dict = body.model_dump()
     scene_data = build_scene_data(samples, rule_dict, total_ms, body.min_ms)
     scene_data["interval_ms"] = interval_ms
+    # 사용자가 지정한 OCR 구역은 계산 산출물이 아니라 그 작품의 설정이다 —
+    # build_scene_data가 만든 새 dict에 되실어야 경계 계산으로 지워지지 않는다
+    # (지워지면 다음 스캔·정밀화가 전체 프레임을 훑어 느려지고, 쇼에 따라서는
+    # 판독 자체가 실패한다).
+    scene_data["ocr_region"] = data.get("ocr_region")
     save_scenes(external_id, scene_data)
     return {"segments_scene": scene_data["segments_scene"],
             "segments_sequence": scene_data["segments_sequence"],
