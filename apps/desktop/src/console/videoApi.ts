@@ -379,3 +379,16 @@ export async function exportScenes(
 export function sceneThumbUrl(jobId: string, index: number): string {
   return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/thumb/${index}`;
 }
+
+export type ExportStatus = {
+  exporting: boolean;
+  done: number;
+  total: number;
+  error: string | null;
+  out_dir: string | null;
+  files: string[];
+};
+
+export async function getExportStatus(jobId: string): Promise<ExportStatus> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/export/status`, {});
+}

@@ -782,3 +782,21 @@ async def test_get_scenes_reports_scan_error(client, db_session, admin_user):
     r = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")
     body = r.json()
     assert body["scanned"] is False and body["error"] == "스캔에 실패했습니다."
+
+
+async def test_export_status_reports_progress(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    from apps.server.domain.video_captions import pipeline as pl
+    pl.save_export_status(job.external_id, {"exporting": True, "done": 12,
+                                            "total": 33, "out_dir": "/tmp/out",
+                                            "error": None})
+    r = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes/export/status")
+    body = r.json()
+    assert r.status_code == 200
+    assert body["exporting"] is True and body["done"] == 12 and body["total"] == 33
+
+
+async def test_export_status_empty_when_never_run(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    r = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes/export/status")
+    assert r.json()["exporting"] is False

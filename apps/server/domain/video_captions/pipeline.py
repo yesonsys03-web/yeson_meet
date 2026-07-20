@@ -648,10 +648,30 @@ async def run_scene_scan(external_id: UUID,
         _BURN_SEMAPHORE.release()
 
 
+def export_status_path(external_id: UUID | str) -> Path:
+    return job_dir(external_id) / "export_status.json"
+
+
+def save_export_status(external_id: UUID | str, data: dict) -> None:
+    path = export_status_path(external_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def load_export_status(external_id: UUID | str) -> dict | None:
+    path = export_status_path(external_id)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 async def run_scene_export(external_id: UUID, mode: str,
                            out_dir: str | None = None) -> list[str]:
     """확정된 scenes.json 경계로 세그먼트를 재인코딩해 out_dir(미지정 시 잡
-    디렉토리 scene_out/)에 슬레이트 라벨 파일명으로 저장한다. 저장 경로 목록 반환."""
+    디렉토리 scene_out/)에 슬레이트 라벨 파일명으로 저장한다. 저장 경로 목록 반환.
+
+    진행률은 export_status.json에 증분 기록한다(exporting/done/total/error) —
+    프론트가 폴링하며 진행바를 표시하고, 완료 시 exporting=False로 전환한다."""
     await _BURN_SEMAPHORE.acquire()
     generation = _bump_generation(external_id)
     try:
@@ -670,6 +690,10 @@ async def run_scene_export(external_id: UUID, mode: str,
             raise RuntimeError("ffmpeg를 찾을 수 없습니다.")
         dest = Path(out_dir) if out_dir else (workdir / "scene_out")
         dest.mkdir(parents=True, exist_ok=True)
+        total = len(segments)
+        save_export_status(external_id, {"exporting": True, "done": 0,
+                                         "total": total, "out_dir": str(dest),
+                                         "error": None})
 
         def _work() -> list[str]:
             written: list[str] = []
@@ -686,9 +710,16 @@ async def run_scene_export(external_id: UUID, mode: str,
                             seg["start_ms"], seg["end_ms"],
                             proc_key=str(external_id))
                 written.append(str(out_path))
+                save_export_status(external_id, {"exporting": True, "done": i + 1,
+                                                 "total": total,
+                                                 "out_dir": str(dest), "error": None})
             return written
 
-        return await asyncio.to_thread(_work)
+        written = await asyncio.to_thread(_work)
+        save_export_status(external_id, {"exporting": False, "done": total,
+                                         "total": total, "out_dir": str(dest),
+                                         "error": None, "files": written})
+        return written
     except StaleRunCancelled:
         logger.info("scene export %s cancelled (gen %d)", external_id, generation)
         return []
@@ -703,6 +734,11 @@ async def run_scene_export(external_id: UUID, mode: str,
         # unretrieved task exception 경고를 피하고, run_burn_job과 달리 여기는
         # 반환값(경로 목록)이 실패 신호를 이미 겸한다.
         logger.exception("scene export %s failed", external_id)
+        try:
+            save_export_status(external_id, {"exporting": False, "error":
+                                             "익스포트에 실패했습니다. 서버 로그를 확인하세요."})
+        except Exception:  # noqa: BLE001
+            pass
         return []
     finally:
         _BURN_SEMAPHORE.release()

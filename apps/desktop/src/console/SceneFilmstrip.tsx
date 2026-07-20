@@ -64,19 +64,21 @@ export function SceneFilmstrip(
           <div key={i}
                onClick={() => onSelectSegment?.(i)}
                style={{ display: "flex", gap: 8, fontSize: 13, alignItems: "center",
-                        padding: "3px 8px", borderRadius: 4,
+                        padding: "8px 8px", borderRadius: 4,
                         cursor: onSelectSegment ? "pointer" : "default",
                         outline: selectedIndex === i ? "1px solid #4a9eda" : "none",
                         background: selectedIndex === i
                           ? "rgba(74,158,218,0.18)" : "rgba(255,255,255,0.05)" }}>
             {onRename ? (
+              // 클릭이 행 선택으로 버블링되게 stopPropagation을 걸지 않는다 —
+              // 라벨을 눌러도 필름스트립 하이라이트가 동작해야 한다(행 전체가 타깃).
+              // 이름 편집은 그대로 되고, 편집 중 텍스트 드래그도 정상.
               <input value={s.label}
-                onClick={(e) => e.stopPropagation()}
                 onChange={(e) => onRename(i, e.target.value)}
                 style={{ fontFamily: "monospace", fontSize: 13, flex: 1, minWidth: 0,
                          background: "transparent", color: "inherit",
                          border: "1px solid rgba(255,255,255,0.12)", borderRadius: 3,
-                         padding: "1px 4px" }} />
+                         padding: "3px 4px" }} />
             ) : (
               <span style={{ fontFamily: "monospace", overflowWrap: "anywhere",
                              flex: 1, minWidth: 0 }}>{s.label}</span>

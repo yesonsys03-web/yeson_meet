@@ -29,10 +29,12 @@ from apps.server.domain.video_captions.ingest import save_upload
 from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
                                                         build_scene_data,
                                                         cancel_job_task, job_dir,
+                                                        load_export_status,
                                                         load_scenes,
                                                         prune_old_video_jobs,
                                                         run_burn_job, run_scene_export,
                                                         run_scene_scan, run_video_job,
+                                                        save_export_status,
                                                         save_scenes, start_job_task,
                                                         start_task, video_jobs_root)
 from apps.server.domain.video_captions.pipeline import \
@@ -619,8 +621,27 @@ async def export_scenes(
     key = "segments_sequence" if body.mode == "sequence" else "segments_scene"
     if not data or not (data.get(key) or []):
         raise HTTPException(status.HTTP_409_CONFLICT, "자를 세그먼트가 없습니다 — 규칙을 확정하세요.")
+    count = len(data[key])
+    # 초기 상태를 동기로 기록 — 프론트 폴링이 202 직후부터 진행바를 표시하게.
+    save_export_status(external_id, {"exporting": True, "done": 0, "total": count,
+                                     "out_dir": body.out_dir, "error": None})
     _start_scene_export(external_id, body.mode, body.out_dir)
-    return {"status": "exporting", "count": len(data[key])}
+    return {"status": "exporting", "count": count}
+
+
+@router.get("/{external_id}/scenes/export/status")
+async def scene_export_status(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    await _get_job_or_404(db, external_id)
+    st = load_export_status(external_id)
+    if not st:
+        return {"exporting": False, "done": 0, "total": 0, "error": None,
+                "out_dir": None, "files": []}
+    return {"exporting": bool(st.get("exporting")), "done": st.get("done", 0),
+            "total": st.get("total", 0), "error": st.get("error"),
+            "out_dir": st.get("out_dir"), "files": st.get("files", [])}
 
 
 @router.get("/{external_id}/scenes/thumb/{index}")

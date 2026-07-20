@@ -7,8 +7,9 @@ import {
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
-  exportScenes, getScenes, overrideSceneSegments, scanScenes, setSceneRule,
-  videoMediaUrl, type ScenesData, type SceneSegment,
+  exportScenes, getExportStatus, getScenes, overrideSceneSegments, scanScenes,
+  setSceneRule, videoMediaUrl,
+  type ExportStatus, type ScenesData, type SceneSegment,
 } from "./videoApi";
 
 type Mode = "scene" | "sequence";
@@ -81,21 +82,39 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     } finally { setBusy(false); }
   };
 
+  const [exportProg, setExportProg] = useState<ExportStatus | null>(null);
+
   const doExport = async () => {
-    setBusy(true); setError(null); setNotice(null);
+    setError(null); setNotice(null);
+    let outDir: string | undefined;
+    if (hasTauriRuntime()) {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const dir = await open({ directory: true, title: "저장 폴더 선택" });
+      if (typeof dir !== "string") { setNotice("저장 폴더 선택이 취소되었습니다."); return; }
+      outDir = dir;
+    }
+    setBusy(true);
+    setExportProg({ exporting: true, done: 0, total: segments.length,
+                    error: null, out_dir: outDir ?? null, files: [] });
     try {
-      let outDir: string | undefined;
-      if (hasTauriRuntime()) {
-        const { open } = await import("@tauri-apps/plugin-dialog");
-        const dir = await open({ directory: true, title: "저장 폴더 선택" });
-        if (typeof dir !== "string") { setNotice("저장 폴더 선택이 취소되었습니다."); return; }
-        outDir = dir;
-      }
       const res = await exportScenes(jobId, mode, outDir);
-      setNotice(`${res.count}개 클립을 내보내는 중… (${outDir ?? "서버 폴더"})`);
+      // 진행률 폴링 — 재인코딩은 클립당 수 초 걸리므로 진행바로 표시한다.
+      for (let i = 0; i < 3600; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const st = await getExportStatus(jobId);
+        setExportProg(st);
+        if (st.error) { setError(`익스포트 실패: ${st.error}`); return; }
+        if (!st.exporting) {
+          setNotice(`${st.done}/${res.count}개 클립 익스포트 완료 (${st.out_dir ?? outDir ?? "서버 폴더"})`);
+          return;
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+      setExportProg(null);
+    }
   };
 
   const segments: SceneSegment[] = data
@@ -231,7 +250,9 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
             <button type="button" style={consoleStyles.action}
               disabled={busy || segments.length === 0}
               onClick={() => void doExport()}>
-              {segments.length}개 클립 익스포트
+              {exportProg?.exporting
+                ? `익스포트 중… ${exportProg.done}/${exportProg.total}`
+                : `${segments.length}개 클립 익스포트`}
             </button>
             {dirty ? (
               <span style={{ fontSize: 12, color: "#e2b340" }}>
@@ -239,6 +260,20 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
               </span>
             ) : null}
           </div>
+          {exportProg?.exporting ? (
+            <div>
+              <div style={{ height: 6, borderRadius: 3, background: "rgba(255,255,255,0.12)" }}>
+                <div style={{ height: 6, borderRadius: 3,
+                              width: `${exportProg.total > 0
+                                ? Math.round((exportProg.done / exportProg.total) * 100) : 0}%`,
+                              background: "#4a9eda", transition: "width 0.3s" }} />
+              </div>
+              <p style={{ fontSize: 12, opacity: 0.7, margin: "4px 0 0" }}>
+                클립 재인코딩 중… {exportProg.done}/{exportProg.total}
+                {exportProg.out_dir ? ` → ${exportProg.out_dir}` : ""}
+              </p>
+            </div>
+          ) : null}
         </>
       )}
 
