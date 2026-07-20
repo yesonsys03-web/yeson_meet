@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  anomalousLabels, formatMs, mergeSegment, previewLabel, renameSegment,
-  segmentThumbRange, tokenizeSlate,
+  anomalousLabels, applyFixes, confidentFixes, formatMs, mergeSegment,
+  previewLabel, renameSegment, segmentThumbRange, tokenizeSlate,
+  type LabelFix,
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
@@ -192,8 +193,14 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       : { ...data, segments_scene: next });
     setDirty(true);
   };
-  const mergeSeg = (i: number, into: "prev" | "next") =>
+  const mergeSeg = (i: number, into: "prev" | "next") => {
     setSegments(mergeSegment(segments, i, into));
+    // 병합하면 배열이 줄어 기존 선택 인덱스가 다른 구간을 가리킨다 — 살아남은
+    // 구간을 선택해 필름스트립 하이라이트와 경계 썸네일이 병합 결과(넓어진 범위,
+    // 당겨진 시작 시각)를 곧바로 보여주게 한다.
+    const survivor = into === "prev" ? Math.max(0, i - 1) : i;
+    setSelectedSeg(survivor);
+  };
   const renameSeg = (i: number, label: string) =>
     setSegments(renameSegment(segments, i, label));
 
@@ -216,15 +223,34 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   // 탭을 바꿔도 인덱스는 원본 기준을 유지한다(병합/이름수정 콜백이 인덱스를 쓴다).
   const visibleIndices = onlyAnomalies ? anomalyIdx : null;
 
-  const applyAllSuggestions = () => {
-    // 모호한 제안(숫자 잔여)은 건드리지 않는다 — 사람이 직접 확인해야 한다.
-    let next = segments;
-    for (const a of anomalies) {
-      if (!a.suggestion || !a.confident) continue;
-      next = renameSegment(next, a.index, a.suggestion);
-    }
-    setSegments(next);
-    setNotice("확실한 제안만 적용했습니다 — 남은 행은 직접 확인하세요. 저장을 잊지 마세요.");
+  // 일괄 적용은 곧바로 바꾸지 않는다 — 무엇이 어떻게 바뀌는지 before→after로
+  // 먼저 보여주고, 체크한 것만 적용한다. 적용 후에도 한 번은 되돌릴 수 있다.
+  const [pendingFixes, setPendingFixes] = useState<LabelFix[] | null>(null);
+  const [fixChecked, setFixChecked] = useState<Set<number>>(new Set());
+  const [undoSnapshot, setUndoSnapshot] = useState<SceneSegment[] | null>(null);
+
+  const openFixPreview = () => {
+    const fixes = confidentFixes(segments.map((s) => s.label), delimiters);
+    setPendingFixes(fixes);
+    setFixChecked(new Set(fixes.map((f) => f.index)));  // 기본 전체 선택
+  };
+
+  const confirmFixes = () => {
+    if (!pendingFixes) return;
+    const applied = pendingFixes.filter((f) => fixChecked.has(f.index));
+    if (applied.length === 0) { setPendingFixes(null); return; }
+    setUndoSnapshot(segments);  // 되돌리기용 스냅샷
+    setSegments(applyFixes(segments, pendingFixes, fixChecked));
+    setPendingFixes(null);
+    setNotice(`이름 ${applied.length}건을 바꿨습니다 — 아직 저장 전입니다. `
+      + `되돌리려면 아래 "되돌리기"를 누르세요.`);
+  };
+
+  const undoFixes = () => {
+    if (!undoSnapshot) return;
+    setSegments(undoSnapshot);
+    setUndoSnapshot(null);
+    setNotice("이름 변경을 되돌렸습니다.");
   };
 
   const saveEdits = async () => {
@@ -365,11 +391,58 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
             </button>
             {onlyAnomalies && anomalies.some((a) => a.suggestion && a.confident) ? (
               <button type="button" style={consoleStyles.mutedAction}
-                onClick={applyAllSuggestions}>
-                제안 일괄 적용 ({anomalies.filter((a) => a.suggestion && a.confident).length})
+                onClick={openFixPreview}>
+                제안 일괄 적용 ({anomalies.filter((a) => a.suggestion && a.confident).length})…
               </button>
             ) : null}
+            {undoSnapshot ? (
+              <button type="button" style={consoleStyles.mutedAction}
+                onClick={undoFixes}>되돌리기</button>
+            ) : null}
           </div>
+
+          {/* 일괄 적용 확인 — 무엇이 어떻게 바뀌는지 보고 체크한 것만 적용한다. */}
+          {pendingFixes ? (
+            <div style={{ border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
+                          padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+              <strong style={{ fontSize: 13 }}>
+                이렇게 바꿉니다 — 체크한 것만 적용됩니다 ({fixChecked.size}/{pendingFixes.length})
+              </strong>
+              <div style={{ maxHeight: 260, overflowY: "auto", display: "flex",
+                            flexDirection: "column", gap: 3 }}>
+                {pendingFixes.map((f) => (
+                  <label key={f.index}
+                         style={{ display: "flex", gap: 8, alignItems: "center",
+                                  fontSize: 12, fontFamily: "monospace",
+                                  padding: "3px 4px", borderRadius: 3,
+                                  background: "rgba(255,255,255,0.04)" }}>
+                    <input type="checkbox" checked={fixChecked.has(f.index)}
+                      onChange={(e) => {
+                        const next = new Set(fixChecked);
+                        if (e.target.checked) next.add(f.index); else next.delete(f.index);
+                        setFixChecked(next);
+                      }} />
+                    <span style={{ opacity: 0.55, flexShrink: 0 }}>
+                      {formatMs(segments[f.index]?.start_ms ?? 0)}
+                    </span>
+                    <span style={{ color: "#e2b340", overflowWrap: "anywhere" }}>{f.from}</span>
+                    <span style={{ opacity: 0.6, flexShrink: 0 }}>→</span>
+                    <span style={{ color: "#3f9a5f", overflowWrap: "anywhere" }}>{f.to}</span>
+                  </label>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button type="button" style={consoleStyles.action}
+                  disabled={fixChecked.size === 0}
+                  onClick={confirmFixes}>적용 ({fixChecked.size})</button>
+                <button type="button" style={consoleStyles.mutedAction}
+                  onClick={() => setPendingFixes(null)}>취소</button>
+                <span style={{ fontSize: 11, opacity: 0.6 }}>
+                  적용해도 저장 전이라 "되돌리기"로 한 번 물릴 수 있습니다.
+                </span>
+              </div>
+            </div>
+          ) : null}
           {onlyAnomalies ? (
             <p style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>
               라벨 모양이 다수와 어긋나는 구간입니다(주로 OCR이 구분자를 놓친 경우).

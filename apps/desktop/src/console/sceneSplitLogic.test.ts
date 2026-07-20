@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { anomalousLabels, formatMs, labelTemplate, mergeSegment, previewLabel, renameSegment, segmentThumbRange, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
+import { anomalousLabels, applyFixes, confidentFixes, formatMs, labelTemplate, mergeSegment, previewLabel, renameSegment, segmentThumbRange, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -131,6 +131,33 @@ describe("anomalousLabels", () => {
   });
   it("returns nothing when every label matches the template", () => {
     expect(anomalousLabels(["HH0307_040_0060", "HH0307_040_0090"])).toEqual([]);
+  });
+});
+
+describe("confidentFixes / applyFixes", () => {
+  const segs = [
+    { label: "HH0307_040_0060", start_ms: 0, end_ms: 1000 },
+    { label: "HH0307_0400080_ACV01", start_ms: 1000, end_ms: 2000 },
+    { label: "HH0307_07510040_AC", start_ms: 2000, end_ms: 3000 },
+    { label: "HH0307_040_0110", start_ms: 3000, end_ms: 4000 },
+  ];
+  it("lists before→after only for confident suggestions", () => {
+    // 애매한 제안(숫자 잔여)은 미리보기 목록에도 넣지 않는다 — 일괄 적용 대상이
+    // 아니므로 행별 버튼으로만 처리한다.
+    expect(confidentFixes(segs.map((s) => s.label))).toEqual([
+      { index: 1, from: "HH0307_0400080_ACV01", to: "HH0307_040_0080" },
+    ]);
+  });
+  it("applies only the selected fixes and leaves the rest untouched", () => {
+    const fixes = [
+      { index: 1, from: "x", to: "HH0307_040_0080" },
+      { index: 3, from: "y", to: "HH0307_040_0999" },
+    ];
+    const out = applyFixes(segs, fixes, new Set([1]));  // 1번만 체크
+    expect(out[1]!.label).toBe("HH0307_040_0080");
+    expect(out[3]!.label).toBe("HH0307_040_0110");     // 미체크 → 그대로
+    expect(out[1]!.start_ms).toBe(1000);               // 시간은 안 건드린다
+    expect(segs[1]!.label).toBe("HH0307_0400080_ACV01");  // 원본 불변
   });
 });
 

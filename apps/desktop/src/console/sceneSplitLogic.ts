@@ -167,6 +167,31 @@ export function mergeSegment(
   return out;
 }
 
+export type LabelFix = { index: number; from: string; to: string };
+
+// 일괄 적용 미리보기용 — 확실한 제안만 before→after로 뽑는다. 애매한 제안(숫자
+// 잔여)은 목록에 넣지 않는다(행별 버튼으로만 처리).
+export function confidentFixes(
+  labels: string[], delimiters: string[] = DEFAULT_DELIMITERS,
+): LabelFix[] {
+  return anomalousLabels(labels, delimiters)
+    .filter((a) => a.confident && a.suggestion && a.suggestion !== a.label)
+    .map((a) => ({ index: a.index, from: a.label, to: a.suggestion as string }));
+}
+
+// 선택된 교정만 적용한다(시간은 건드리지 않는다). 원본 배열은 변경하지 않는다 —
+// 호출자가 적용 전 스냅샷을 그대로 들고 있다가 되돌릴 수 있어야 한다.
+export function applyFixes(
+  segs: SceneSegment[], fixes: LabelFix[], selected: Set<number>,
+): SceneSegment[] {
+  let out = segs;
+  for (const f of fixes) {
+    if (!selected.has(f.index)) continue;
+    out = renameSegment(out, f.index, f.to);
+  }
+  return out;
+}
+
 // 구간의 시간 범위를 썸네일 인덱스 범위로 매핑한다(썸네일 i ≈ t = i*intervalMs).
 // 리스트에서 구간을 클릭하면 필름스트립의 이 범위를 하이라이트·중앙정렬한다.
 export function segmentThumbRange(
