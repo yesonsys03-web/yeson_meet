@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from apps.server.api.v1 import video_jobs as api_vj
 from apps.server.db.models import VideoJob, VideoSegment
+from apps.server.domain.video_captions import pipeline as pl
 
 
 @pytest.fixture(autouse=True)
@@ -680,3 +681,145 @@ async def test_retranslate_reports_remaining(client, db_session, admin_user,
     resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/retranslate",
                              json={"provider": "claude"})
     assert resp.json() == {"total": 1, "retranslated": 0, "remaining": 1}
+
+
+async def _new_scene_job(db_session, admin_user, status="done"):
+    job = VideoJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                   source_type="upload", source_ref="c.mp4",
+                   whisper_model="small", status=status)
+    db_session.add(job)
+    await db_session.commit()
+    return job
+
+
+async def test_scan_scenes_requires_done_status(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="review")
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan")
+    assert resp.status_code == 409
+
+
+async def test_scan_scenes_starts_task_when_done(client, db_session, admin_user,
+                                                 monkeypatch):
+    started = {}
+    monkeypatch.setattr(api_vj, "_start_scene_scan",
+                        lambda eid: started.setdefault("eid", eid))
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    # scan endpoint also requires burned.mp4 to exist on disk
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan")
+    assert resp.status_code == 202
+    assert started["eid"] == job.external_id
+
+
+async def test_scan_scenes_writes_initial_scanning_state(client, db_session,
+                                                         admin_user, monkeypatch):
+    """재스캔 폴링 레이스 방지: 202 직후 scenes.json에 scanning 상태가 동기
+    기록돼야 한다 — 프레임 추출(수 분) 동안 옛 scanned 데이터가 보이면
+    프론트 폴링이 '스캔 완료(옛 데이터)'로 오판한다."""
+    monkeypatch.setattr(api_vj, "_start_scene_scan", lambda eid: None)
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    # 이전 스캔 완료 데이터가 있는 상태(재스캔 시나리오)
+    pl.save_scenes(job.external_id, {"scanning": False, "interval_ms": 2000,
+                                     "frames": [{"t_ms": 0, "text": "A_B_C"}]})
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan")
+    assert resp.status_code == 202
+    body = (await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes")).json()
+    assert body["scanning"] is True
+    assert body["scanned"] is False
+
+
+async def test_get_scenes_empty_before_scan(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    resp = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")
+    assert resp.status_code == 200
+    assert resp.json()["scanned"] is False
+
+
+async def test_set_rule_computes_boundaries(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {"interval_ms": 1000, "frames": [
+        {"t_ms": 0, "text": "HH0307_020_0150_AC_v01"},
+        {"t_ms": 1000, "text": "HH0307_020_0170_AC_v01"},
+        {"t_ms": 2000, "text": "HH0307_021_0010_AC_v01"},
+    ]})
+    resp = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/rule",
+        json={"seq_tokens": [1], "scene_tokens": [2], "min_ms": 0})
+    assert resp.status_code == 200
+    labels = [s["label"] for s in resp.json()["segments_scene"]]
+    assert labels == ["HH0307_020_0150", "HH0307_020_0170", "HH0307_021_0010"]
+    seq_labels = [s["label"] for s in resp.json()["segments_sequence"]]
+    assert seq_labels == ["HH0307_020", "HH0307_021"]
+
+
+async def test_export_starts_task(client, db_session, admin_user, monkeypatch):
+    started = {}
+    monkeypatch.setattr(api_vj, "_start_scene_export",
+                        lambda eid, mode, out: started.update(eid=eid, mode=mode))
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {"segments_scene": [
+        {"label": "HH0307_020_0150", "start_ms": 0, "end_ms": 3000}]})
+    resp = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export",
+        json={"mode": "scene"})
+    assert resp.status_code == 202
+    assert started["mode"] == "scene"
+
+
+async def test_export_rejects_without_segments(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    resp = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export",
+        json={"mode": "scene"})
+    assert resp.status_code == 409
+
+
+async def test_get_scenes_reports_scan_progress(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    from apps.server.domain.video_captions import pipeline as pl
+    pl.save_scenes(job.external_id, {"scanning": True, "interval_ms": 2000,
+                                     "total_frames": 658, "ocr_done": 240,
+                                     "frames": []})
+    r = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")
+    body = r.json()
+    assert r.status_code == 200
+    assert body["scanning"] is True and body["scanned"] is False
+    assert body["ocr_done"] == 240 and body["total_frames"] == 658
+
+
+async def test_get_scenes_reports_scan_error(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    from apps.server.domain.video_captions import pipeline as pl
+    pl.save_scenes(job.external_id, {"scanning": False, "frames": [],
+                                     "error": "스캔에 실패했습니다."})
+    r = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")
+    body = r.json()
+    assert body["scanned"] is False and body["error"] == "스캔에 실패했습니다."
+
+
+async def test_export_status_reports_progress(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    from apps.server.domain.video_captions import pipeline as pl
+    pl.save_export_status(job.external_id, {"exporting": True, "done": 12,
+                                            "total": 33, "out_dir": "/tmp/out",
+                                            "error": None})
+    r = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes/export/status")
+    body = r.json()
+    assert r.status_code == 200
+    assert body["exporting"] is True and body["done"] == 12 and body["total"] == 33
+
+
+async def test_export_status_empty_when_never_run(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    r = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes/export/status")
+    assert r.json()["exporting"] is False

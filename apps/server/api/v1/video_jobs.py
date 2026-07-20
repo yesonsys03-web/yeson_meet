@@ -27,13 +27,22 @@ from apps.server.db.models import AppUser, VideoJob, VideoSegment
 from apps.server.db.session import get_session
 from apps.server.domain.video_captions.ingest import save_upload
 from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
+                                                        build_scene_data,
                                                         cancel_job_task, job_dir,
+                                                        load_export_status,
+                                                        load_refine_status,
+                                                        load_scenes,
                                                         prune_old_video_jobs,
-                                                        run_burn_job, run_video_job,
-                                                        start_job_task, start_task,
-                                                        video_jobs_root)
+                                                        run_burn_job, run_scene_export,
+                                                        run_scene_refine,
+                                                        run_scene_scan, run_video_job,
+                                                        save_export_status,
+                                                        save_refine_status,
+                                                        save_scenes, start_job_task,
+                                                        start_task, video_jobs_root)
 from apps.server.domain.video_captions.pipeline import \
     _INFLIGHT_STATUSES as INFLIGHT_STATUSES
+from apps.server.domain.video_captions.scene_split import FrameSample
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
 from apps.server.domain.video_captions.translate import (is_source_copy,
                                                          is_untranslated,
@@ -54,6 +63,18 @@ def _start_burn(external_id: UUID, position: str, margin_v: int,
                 font_size: int, color: str) -> None:  # test seam
     start_job_task(external_id,
                    run_burn_job(external_id, position, margin_v, font_size, color))
+
+
+def _start_scene_scan(external_id: UUID) -> None:  # test seam
+    start_job_task(external_id, run_scene_scan(external_id))
+
+
+def _start_scene_export(external_id: UUID, mode: str, out_dir: str | None) -> None:  # test seam
+    start_job_task(external_id, run_scene_export(external_id, mode, out_dir))
+
+
+def _start_scene_refine(external_id: UUID, mode: str) -> None:  # test seam
+    start_job_task(external_id, run_scene_refine(external_id, mode))
 
 
 def _prune_old_jobs() -> None:  # test seam
@@ -83,6 +104,29 @@ class BurnIn(BaseModel):
     margin_v: int = Field(ge=0, le=300)
     font_size: int = Field(ge=8, le=72)
     color: str = Field(default="#FFFFFF", pattern="^#[0-9a-fA-F]{6}$")
+
+
+class SlateRuleIn(BaseModel):
+    delimiters: list[str] = Field(default_factory=lambda: ["_", "-"])
+    seq_tokens: list[int]
+    scene_tokens: list[int] = Field(default_factory=list)
+    min_ms: int = Field(default=2000, ge=0, le=60000)
+
+
+class SegmentOverride(BaseModel):
+    label: str
+    start_ms: int = Field(ge=0)
+    end_ms: int = Field(ge=0)
+
+
+class SegmentsOverrideIn(BaseModel):
+    mode: str = Field(pattern="^(scene|sequence)$")
+    segments: list[SegmentOverride]
+
+
+class SceneExportIn(BaseModel):
+    mode: str = Field(pattern="^(scene|sequence)$")
+    out_dir: str | None = None
 
 
 def _iso_utc(value: datetime | None) -> str | None:
@@ -488,6 +532,176 @@ async def retranslate_video_job(
     await db.commit()
     return {"total": len(targets), "retranslated": retranslated,
             "remaining": len(targets) - retranslated}
+
+
+@router.post("/{external_id}/scenes/scan", status_code=status.HTTP_202_ACCEPTED)
+async def scan_scenes(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    job = await _get_job_or_404(db, external_id)
+    if job.status != "done" or not job.burned_path or not Path(job.burned_path).exists():
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "씬 분할은 굽기 완료(done)된 작업에서만 가능합니다.")
+    # 초기 scanning 상태를 동기 기록(익스포트/정밀화와 같은 패턴) — 프레임 추출
+    # (수 분) 동안 옛 scanned 데이터가 남아 있으면 재스캔 폴링이 '스캔 완료
+    # (옛 데이터)'로 오판한다.
+    save_scenes(external_id, {"scanning": True, "total_frames": 0,
+                              "ocr_done": 0, "frames": []})
+    _start_scene_scan(external_id)
+    return {"status": "scanning"}
+
+
+@router.get("/{external_id}/scenes")
+async def get_scenes(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    await _get_job_or_404(db, external_id)
+    data = load_scenes(external_id)
+    if not data:
+        return {"scanned": False, "scanning": False, "error": None,
+                "ocr_done": 0, "total_frames": 0, "frames": [],
+                "segments_scene": [], "segments_sequence": [], "rule": None}
+    # scanned = 스캔 진행중 아님 + 에러 없음(+frames 확정). 진행중이면 프론트가
+    # ocr_done/total_frames로 진척을 표시하고, error면 폴링을 멈춘다.
+    scanning = bool(data.get("scanning"))
+    error = data.get("error")
+    return {
+        "scanned": (not scanning) and error is None and "frames" in data,
+        "scanning": scanning,
+        "error": error,
+        "ocr_done": data.get("ocr_done", 0),
+        "total_frames": data.get("total_frames", 0),
+        "frames": data.get("frames", []),
+        "segments_scene": data.get("segments_scene", []),
+        "segments_sequence": data.get("segments_sequence", []),
+        "rule": data.get("rule"),
+        "interval_ms": data.get("interval_ms", 2000),
+    }
+
+
+@router.post("/{external_id}/scenes/rule")
+async def set_scene_rule(
+    external_id: UUID,
+    body: SlateRuleIn,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    await _get_job_or_404(db, external_id)
+    data = load_scenes(external_id)
+    if not data or not data.get("frames"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "먼저 씬 스캔을 실행하세요.")
+    interval_ms = data.get("interval_ms", 1000)
+    samples = [FrameSample(index=i, t_ms=f["t_ms"], text=f.get("text", ""))
+               for i, f in enumerate(data["frames"])]
+    total_ms = (samples[-1].t_ms + interval_ms) if samples else 0
+    rule_dict = body.model_dump()
+    scene_data = build_scene_data(samples, rule_dict, total_ms, body.min_ms)
+    scene_data["interval_ms"] = interval_ms
+    save_scenes(external_id, scene_data)
+    return {"segments_scene": scene_data["segments_scene"],
+            "segments_sequence": scene_data["segments_sequence"],
+            "rule": rule_dict}
+
+
+@router.patch("/{external_id}/scenes/segments")
+async def override_scene_segments(
+    external_id: UUID,
+    body: SegmentsOverrideIn,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    await _get_job_or_404(db, external_id)
+    data = load_scenes(external_id)
+    if not data:
+        raise HTTPException(status.HTTP_409_CONFLICT, "먼저 씬 스캔을 실행하세요.")
+    key = "segments_sequence" if body.mode == "sequence" else "segments_scene"
+    data[key] = [s.model_dump() for s in body.segments]
+    save_scenes(external_id, data)
+    return {"updated": True}
+
+
+@router.post("/{external_id}/scenes/export", status_code=status.HTTP_202_ACCEPTED)
+async def export_scenes(
+    external_id: UUID,
+    body: SceneExportIn,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    job = await _get_job_or_404(db, external_id)
+    if job.status != "done":
+        raise HTTPException(status.HTTP_409_CONFLICT, "완료된 작업만 익스포트할 수 있습니다.")
+    data = load_scenes(external_id)
+    key = "segments_sequence" if body.mode == "sequence" else "segments_scene"
+    if not data or not (data.get(key) or []):
+        raise HTTPException(status.HTTP_409_CONFLICT, "자를 세그먼트가 없습니다 — 규칙을 확정하세요.")
+    count = len(data[key])
+    # 초기 상태를 동기로 기록 — 프론트 폴링이 202 직후부터 진행바를 표시하게.
+    save_export_status(external_id, {"exporting": True, "done": 0, "total": count,
+                                     "out_dir": body.out_dir, "error": None})
+    _start_scene_export(external_id, body.mode, body.out_dir)
+    return {"status": "exporting", "count": count}
+
+
+@router.get("/{external_id}/scenes/export/status")
+async def scene_export_status(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    await _get_job_or_404(db, external_id)
+    st = load_export_status(external_id)
+    if not st:
+        return {"exporting": False, "done": 0, "total": 0, "error": None,
+                "out_dir": None, "files": []}
+    return {"exporting": bool(st.get("exporting")), "done": st.get("done", 0),
+            "total": st.get("total", 0), "error": st.get("error"),
+            "out_dir": st.get("out_dir"), "files": st.get("files", [])}
+
+
+class SceneRefineIn(BaseModel):
+    mode: str = Field(pattern="^(scene|sequence)$")
+
+
+@router.post("/{external_id}/scenes/refine", status_code=status.HTTP_202_ACCEPTED)
+async def refine_scenes(
+    external_id: UUID,
+    body: SceneRefineIn,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    await _get_job_or_404(db, external_id)
+    data = load_scenes(external_id)
+    key = "segments_sequence" if body.mode == "sequence" else "segments_scene"
+    if not data or not data.get("rule") or len(data.get(key) or []) < 2:
+        raise HTTPException(status.HTTP_409_CONFLICT, "먼저 규칙을 확정하세요.")
+    save_refine_status(external_id, {"refining": True, "done": 0,
+                                     "total": len(data[key]) - 1, "error": None})
+    _start_scene_refine(external_id, body.mode)
+    return {"status": "refining", "total": len(data[key]) - 1}
+
+
+@router.get("/{external_id}/scenes/refine/status")
+async def scene_refine_status(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    await _get_job_or_404(db, external_id)
+    st = load_refine_status(external_id)
+    if not st:
+        return {"refining": False, "done": 0, "total": 0, "error": None}
+    return {"refining": bool(st.get("refining")), "done": st.get("done", 0),
+            "total": st.get("total", 0), "error": st.get("error")}
+
+
+@router.get("/{external_id}/scenes/thumb/{index}")
+async def scene_thumbnail(
+    external_id: UUID,
+    index: int,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> FileResponse:
+    await _get_job_or_404(db, external_id)
+    # 썸네일은 1-based(thumb_00001.jpg) — index는 0-based 프레임 인덱스
+    path = job_dir(external_id) / "scene_thumbs" / f"thumb_{index + 1:05d}.jpg"
+    if not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "thumbnail not found")
+    return FileResponse(path, media_type="image/jpeg")
 
 
 @router.get("/{external_id}/download")

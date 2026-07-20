@@ -299,3 +299,50 @@ def ensure_preview(ffmpeg: str, src: Path, dst: Path,
           "-crf", "23", "-c:a", "aac", "-movflags", "+faststart", str(dst)],
          proc_key=proc_key)
     return dst
+
+
+def extract_frames(ffmpeg: str, src: Path, out_dir: Path,
+                   interval_s: float = 1.0, proc_key: str | None = None) -> None:
+    """OCR용 프레임을 interval_s 간격으로 out_dir/frame_%05d.png에 추출.
+
+    frame_00001.png ≈ t=0, frame_00002.png ≈ t=interval_s … (fps 필터 기준).
+    호출자는 인덱스(1-based)로 t_ms = (index-1)*interval_ms를 부여한다.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _run([ffmpeg, "-y", "-i", str(src), "-vf", f"fps=1/{interval_s}",
+          str(out_dir / "frame_%05d.png")], proc_key=proc_key)
+
+
+def extract_thumbnails(ffmpeg: str, src: Path, out_dir: Path,
+                       interval_s: float = 1.0, height: int = 90,
+                       proc_key: str | None = None) -> None:
+    """필름스트립용 저해상도 썸네일. scale=-2:height (너비는 짝수 자동)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _run([ffmpeg, "-y", "-i", str(src), "-vf",
+          f"fps=1/{interval_s},scale=-2:{height}",
+          str(out_dir / "thumb_%05d.jpg")], proc_key=proc_key)
+
+
+def cut_segment(ffmpeg: str, src: Path, dst: Path, start_ms: int, end_ms: int,
+                proc_key: str | None = None) -> None:
+    """[start_ms, end_ms) 구간을 재인코딩(정확)해 dst로 저장. -c copy 금지 —
+    슬레이트 편집본은 컷 경계가 명확해야 하므로 프레임 정확도를 우선한다.
+    -ss를 -i 앞에 둬 입력 시킹으로 빠르게 접근하되, 재인코딩이라 컷은 정확하다.
+    끝은 출력측 -t(길이) — 입력측 -to는 디먹서 패킷 단위로 끊어 B-프레임
+    재정렬 시 다음 세그먼트 첫 프레임(들)이 꼬리에 섞인다(실측 7/16 클립).
+    출력 -t는 디코드된 타임라인(입력 -ss 이후 0 기준)에서 잘라 반열림을 지킨다."""
+    ss = f"{start_ms / 1000:.3f}"
+    dur = f"{(end_ms - start_ms) / 1000:.3f}"
+    _run([ffmpeg, "-y", "-ss", ss, "-i", str(src), "-t", dur,
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+          "-c:a", "aac", "-movflags", "+faststart", str(dst)],
+         proc_key=proc_key)
+
+
+def extract_frame(ffmpeg: str, src: Path, t_ms: int, dst: Path,
+                  proc_key: str | None = None) -> None:
+    """t_ms 시각의 단일 프레임을 dst로 추출(경계 정밀화용). -ss를 -i 앞에 둬
+    입력 시킹으로 빠르게 접근한다(OCR 판독용이라 프레임 미세오차는 무방)."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    _run([ffmpeg, "-y", "-ss", f"{t_ms / 1000:.3f}", "-i", str(src),
+          "-frames:v", "1", str(dst)], proc_key=proc_key)

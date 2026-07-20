@@ -39,6 +39,15 @@ uv venv --clear --python $PyVersion $BuildVenv
 $env:VIRTUAL_ENV = $BuildVenv
 uv pip install --python $VenvPython ./apps/server "pyinstaller>=6.21"
 
+# RapidOCR는 cv2(opencv)를 import한다. Windows는 libGL 문제가 없어 non-headless를
+# 유지하되, `uv pip install ./apps/server`의 전이 설치가 cv2/ 패키지를 실체화하지
+# 못하고 .dist-info만 남기는 uv 캐시 이슈(2026-07-20 macOS 실측)를 방어하기 위해
+# --reinstall --no-cache로 cv2/를 강제 실체화한다.
+uv pip install --python $VenvPython --reinstall --no-cache opencv-python
+# cv2 실체화 검증 — 실패 시 번들에 cv2가 빠져 스캔이 즉사하므로 빌드를 멈춘다.
+& $VenvPython -c "import cv2; print('build-venv cv2 OK', cv2.__version__)"
+if ($LASTEXITCODE -ne 0) { throw "opencv/cv2 not importable in build venv" }
+
 # Build the viewer SPA so the frozen server serves it under the same :8000 origin
 # as /api + /ws (replacing the old Docker-path Caddy). Staged via --add-data.
 Write-Host "Building viewer SPA (apps/web -> dist)..."
@@ -68,6 +77,11 @@ $WebDist = (Resolve-Path "apps/web/dist").Path
     --collect-all ctranslate2 `
     --collect-all av `
     --collect-all onnxruntime `
+    --collect-all rapidocr_onnxruntime `
+    --collect-all shapely `
+    --collect-all pyclipper `
+    --collect-all cv2 `
+    --collect-all PIL `
     --collect-all yt_dlp `
     --add-data "$WebDist;web_dist" `
     --distpath $Dist `
