@@ -132,6 +132,26 @@ def test_pick_slate_line_no_top_band_candidate_returns_empty():
     assert pick_slate_line(lines, ["_", " ", "-"], min_tokens=2) == ""
 
 
+def test_ocr_engine_caps_detection_upscale(monkeypatch):
+    """회귀(실측): RapidOCR 기본 검출 설정(limit_type=min, 736)은 작은 이미지를
+    짧은 변 기준으로 '확대'한다. 사용자가 지정한 구역(336x63)이 약 3900x736으로
+    부풀려져 판독이 1014ms까지 걸렸고, 과확대가 검출을 망가뜨려 텍스트가 잘리기도
+    했다("HH0307_030"만 읽힘). max 기준으로 바꾸면 확대가 없어진다(크롭 40ms,
+    전체 프레임도 894→675ms, 결과는 동일)."""
+    from apps.server.domain.video_captions import slate_ocr
+    captured = {}
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(slate_ocr, "_engine", None)
+    monkeypatch.setattr(slate_ocr, "_new_engine", lambda **kw: FakeRapidOCR(**kw))
+    slate_ocr._get_engine()
+    assert captured.get("det_limit_type") == "max"
+    assert captured.get("det_limit_side_len") == 960
+
+
 def test_read_slate_line_full_band_when_region_cropped(monkeypatch, tmp_path):
     """사용자가 OCR 영역을 지정하면 프레임이 그 영역으로 잘려 들어온다 — 크롭
     자체가 영역 필터이므로 상단 밴드 가정을 적용하면 안 된다(잘린 이미지에서는

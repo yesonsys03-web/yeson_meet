@@ -16,12 +16,27 @@ logger = logging.getLogger("yeson.video.slate_ocr")
 _engine = None
 
 
+# 검출 입력 크기 상한. RapidOCR 기본값(limit_type=min, 736)은 "짧은 변이 736이
+# 되도록" 맞추기 때문에 작은 이미지를 확대한다 — 사용자가 지정한 슬레이트 구역
+# (실측 336x63)이 약 3900x736으로 부풀려져 판독이 1014ms까지 걸렸고, 과확대가
+# 검출을 망가뜨려 텍스트가 잘리기까지 했다("HH0307_030_0240_AC_V01" → "HH0307_030").
+# max 기준은 큰 이미지만 줄이고 작은 이미지는 그대로 둔다 — 크롭 40ms(25배),
+# 전체 프레임도 894→675ms이며 판독 결과는 동일하다.
+_DET_LIMIT_TYPE = "max"
+_DET_LIMIT_SIDE_LEN = 960
+
+
+def _new_engine(**kwargs):  # test seam
+    from rapidocr_onnxruntime import RapidOCR  # 지연 import (번들 무관 경로 보호)
+    return RapidOCR(**kwargs)
+
+
 def _get_engine():
     """RapidOCR 지연 싱글턴. import·초기화 실패는 호출자에게 전파한다."""
     global _engine
     if _engine is None:
-        from rapidocr_onnxruntime import RapidOCR  # 지연 import (번들 무관 경로 보호)
-        _engine = RapidOCR()
+        _engine = _new_engine(det_limit_type=_DET_LIMIT_TYPE,
+                              det_limit_side_len=_DET_LIMIT_SIDE_LEN)
     return _engine
 
 
