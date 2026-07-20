@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import subprocess
+import threading
 import sys
 import tempfile
 import wave
@@ -74,17 +75,32 @@ class FfmpegError(RuntimeError):
 # 죽어 FfmpegError로 보여도 burn_subtitles가 libx264 재시도를 타지 않게 한다 —
 # 새 프로세스가 등록되면(register_proc) 그 키의 표식은 지워져 다음 실행에는
 # 영향을 주지 않는다.
-_ACTIVE: dict[str, subprocess.Popen] = {}
+# 키(잡)당 활성 프로세스 "집합" — 정밀화를 병렬로 돌리면 한 잡에 ffmpeg가 여러 개
+# 동시에 뜬다. 하나만 추적하면 나머지가 취소를 빠져나가 계속 돈다.
+_ACTIVE: dict[str, set[subprocess.Popen]] = {}
 _KILLED: set[str] = set()
+_ACTIVE_LOCK = threading.Lock()
 
 
 def register_proc(key: str, proc: subprocess.Popen) -> None:
-    _KILLED.discard(key)
-    _ACTIVE[key] = proc
+    with _ACTIVE_LOCK:
+        _KILLED.discard(key)
+        _ACTIVE.setdefault(key, set()).add(proc)
 
 
-def unregister_proc(key: str) -> None:
-    _ACTIVE.pop(key, None)
+def unregister_proc(key: str, proc: subprocess.Popen | None = None) -> None:
+    """정상 종료한 프로세스를 추적에서 뺀다. proc를 주면 그것만(같은 키의 다른
+    동시 실행은 유지), 없으면 그 키 전체를 지운다(하위 호환)."""
+    with _ACTIVE_LOCK:
+        if proc is None:
+            _ACTIVE.pop(key, None)
+            return
+        procs = _ACTIVE.get(key)
+        if procs is None:
+            return
+        procs.discard(proc)
+        if not procs:
+            _ACTIVE.pop(key, None)
 
 
 def kill_active(key: str) -> bool:
@@ -95,15 +111,18 @@ def kill_active(key: str) -> bool:
     프로세스 그룹 등 POSIX 전용 API는 쓰지 않는다. 예외는 삼킨다(이미 죽은
     프로세스 등). 등록된 프로세스가 있었으면 True.
     """
-    proc = _ACTIVE.pop(key, None)
-    if proc is None:
-        return False
-    _KILLED.add(key)
-    try:
-        proc.kill()
-        proc.wait()
-    except Exception:  # noqa: BLE001 — 이미 종료된 프로세스 등은 무시
-        pass
+    with _ACTIVE_LOCK:
+        procs = _ACTIVE.pop(key, None)
+        if not procs:
+            return False
+        _KILLED.add(key)
+        targets = list(procs)
+    for proc in targets:  # 동시 실행 중이던 것을 하나도 남기지 않는다
+        try:
+            proc.kill()
+            proc.wait()
+        except Exception:  # noqa: BLE001 — 이미 종료된 프로세스 등은 무시
+            pass
     return True
 
 
@@ -142,7 +161,7 @@ def _run(cmd: list[str], *, cwd: str | None = None,
     try:
         _, stderr = proc.communicate()
     finally:
-        unregister_proc(proc_key)
+        unregister_proc(proc_key, proc)
     if proc.returncode != 0:
         tail = (stderr or "")[-500:]
         raise FfmpegError(f"ffmpeg failed (code={proc.returncode}): {tail}")

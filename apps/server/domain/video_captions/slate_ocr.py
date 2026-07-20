@@ -7,13 +7,14 @@ onnxruntime은 이미 faster-whisper 전이의존 + 번들 --collect-all 대상�
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 from .scene_split import tokenize
 
 logger = logging.getLogger("yeson.video.slate_ocr")
 
-_engine = None
+_local = threading.local()
 
 
 # 검출 입력 크기 상한. RapidOCR 기본값(limit_type=min, 736)은 "짧은 변이 736이
@@ -31,13 +32,25 @@ def _new_engine(**kwargs):  # test seam
     return RapidOCR(**kwargs)
 
 
+def _reset_engines() -> None:  # test seam
+    global _local
+    _local = threading.local()
+
+
 def _get_engine():
-    """RapidOCR 지연 싱글턴. import·초기화 실패는 호출자에게 전파한다."""
-    global _engine
-    if _engine is None:
-        _engine = _new_engine(det_limit_type=_DET_LIMIT_TYPE,
-                              det_limit_side_len=_DET_LIMIT_SIDE_LEN)
-    return _engine
+    """RapidOCR 지연 생성 — 스레드마다 자기 엔진.
+
+    정밀화는 경계를 병렬로 처리하므로 한 엔진을 여러 스레드가 동시에 호출하게
+    되는데, 래퍼가 호출 중 self에 상태를 두면 서로를 오염시킬 수 있다. 스레드
+    로컬로 두면 그 위험 자체가 없어진다(엔진 하나당 모델 로드 ~1초·수십MB).
+    import·초기화 실패는 호출자에게 전파한다.
+    """
+    engine = getattr(_local, "engine", None)
+    if engine is None:
+        engine = _new_engine(det_limit_type=_DET_LIMIT_TYPE,
+                             det_limit_side_len=_DET_LIMIT_SIDE_LEN)
+        _local.engine = engine
+    return engine
 
 
 # 슬레이트로 인정하는 상단 밴드(프레임 높이 대비 y중심 비율). 슬레이트는 관례상

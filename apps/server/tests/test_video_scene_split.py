@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from uuid import uuid4
 
 from apps.server.domain.video_captions import pipeline as pl
@@ -132,6 +133,25 @@ def test_pick_slate_line_no_top_band_candidate_returns_empty():
     assert pick_slate_line(lines, ["_", " ", "-"], min_tokens=2) == ""
 
 
+def test_ocr_engine_is_per_thread(monkeypatch):
+    """정밀화를 병렬로 돌리므로 엔진을 스레드끼리 공유하지 않는다 — RapidOCR
+    래퍼가 호출 중 self에 상태를 두면 동시 호출이 서로를 오염시킬 수 있다.
+    스레드마다 자기 엔진을 쓰면 그 위험 자체가 없어진다."""
+    import threading
+
+    from apps.server.domain.video_captions import slate_ocr
+    monkeypatch.setattr(slate_ocr, "_new_engine", lambda **kw: object())
+    slate_ocr._reset_engines()
+    seen = []
+    seen.append(slate_ocr._get_engine())
+    seen.append(slate_ocr._get_engine())  # 같은 스레드 → 재사용
+    other: list = []
+    t = threading.Thread(target=lambda: other.append(slate_ocr._get_engine()))
+    t.start(); t.join()
+    assert seen[0] is seen[1], "같은 스레드에서는 엔진을 재사용해야 한다"
+    assert other[0] is not seen[0], "다른 스레드는 자기 엔진을 써야 한다"
+
+
 def test_ocr_engine_caps_detection_upscale(monkeypatch):
     """회귀(실측): RapidOCR 기본 검출 설정(limit_type=min, 736)은 작은 이미지를
     짧은 변 기준으로 '확대'한다. 사용자가 지정한 구역(336x63)이 약 3900x736으로
@@ -145,8 +165,8 @@ def test_ocr_engine_caps_detection_upscale(monkeypatch):
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(slate_ocr, "_engine", None)
     monkeypatch.setattr(slate_ocr, "_new_engine", lambda **kw: FakeRapidOCR(**kw))
+    slate_ocr._reset_engines()
     slate_ocr._get_engine()
     assert captured.get("det_limit_type") == "max"
     assert captured.get("det_limit_side_len") == 960
@@ -227,6 +247,60 @@ def test_compute_boundaries_centers_first_run_after_invalid_lead():
     segs = compute_boundaries(keyed, total_ms=10000, min_ms=2000,
                               interval_ms=2000, absorb_single=True)
     assert segs[0].start_ms == 5000  # 6000 - interval/2
+
+
+def test_refine_runs_boundaries_concurrently(monkeypatch, tmp_path):
+    """경계끼리는 독립이라 병렬로 처리한다(실측 병목은 프레임 추출 184ms).
+    동시에 여러 경계가 진행되는지 확인하고, 결과는 순차와 같아야 한다 —
+    각 경계는 '원래' 이웃 값으로 계산하고 적용은 나중에 한 번에 한다."""
+    import asyncio
+    import math
+    import threading
+
+    from uuid import uuid4
+
+    from apps.server.domain.video_captions import pipeline as pl
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    eid = uuid4()
+    frame = 1001 / 24
+    inflight = {"now": 0, "max": 0}
+    lock = threading.Lock()
+
+    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
+        with lock:
+            inflight["now"] += 1
+            inflight["max"] = max(inflight["max"], inflight["now"])
+        time.sleep(0.02)  # 추출 지연 흉내 — 동시성이 없으면 max가 1로 남는다
+        with lock:
+            inflight["now"] -= 1
+        calls[str(dst)] = t_ms
+
+    calls: dict[str, int] = {}
+    # 경계 i의 전환 시각 = i*4000ms (각 구간 4초)
+    def fake_read(dst, delimiters, top_frac=1.0):
+        t = calls[str(dst)]
+        idx = int(math.ceil(t / 4000)) if t % 4000 else t // 4000
+        seq = min(4, max(0, int(t // 4000) + (1 if t % 4000 else 0)))
+        return f"HH_{seq:03d}_0010_AC"
+
+    monkeypatch.setattr(pl, "extract_frame", fake_extract)
+    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    segs = [{"label": f"HH_{i:03d}", "start_ms": i * 4000,
+             "end_ms": (i + 1) * 4000} for i in range(5)]
+    pl.save_scenes(eid, {
+        "scanning": False, "interval_ms": 2000, "frames": [],
+        "rule": {"delimiters": ["_"], "seq_tokens": [1], "scene_tokens": [2]},
+        "segments_sequence": segs, "segments_scene": [],
+    })
+    asyncio.run(pl.run_scene_refine(eid, "sequence"))
+    assert inflight["max"] > 1, "경계가 순차로만 처리되면 병렬화 의미가 없다"
+    out = pl.load_scenes(eid)["segments_sequence"]
+    assert len(out) == 5
+    # 시간축이 이어져 있어야 한다(구간 사이에 구멍/역전 없음)
+    for a, b in zip(out, out[1:]):
+        assert a["end_ms"] == b["start_ms"]
+        assert a["start_ms"] < a["end_ms"]
 
 
 def test_refine_clears_refining_flag_when_cancelled(monkeypatch, tmp_path):
