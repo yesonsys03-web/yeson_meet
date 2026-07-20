@@ -58,6 +58,16 @@ export type BurnStyle = {
 };
 
 async function request<T>(url: string, init: RequestInit): Promise<T> {
+  // JSON 본문에는 Content-Type을 자동으로 붙인다 — 없으면 FastAPI가 본문을 JSON으로
+  // 파싱하지 않아 422가 난다(실기). 함수마다 손으로 붙이면 새 엔드포인트를 추가할
+  // 때 또 빠뜨린다. FormData(멀티파트)는 브라우저가 boundary와 함께 직접 설정해야
+  // 하므로 문자열 본문일 때만 건드린다.
+  if (typeof init.body === "string"
+      && !(init.headers as Record<string, string> | undefined)?.["Content-Type"]) {
+    init = { ...init,
+             headers: { ...(init.headers as Record<string, string> | undefined),
+                        "Content-Type": "application/json" } };
+  }
   const response = await fetch(url, init);
   if (!response.ok) throw new Error(`video api failed: HTTP ${response.status}`);
   if (response.status === 204) return undefined as T;
