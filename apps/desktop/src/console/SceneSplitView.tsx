@@ -28,6 +28,39 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
 
   const delimiters = spaceDelim ? ["_", " ", "-"] : ["_", "-"];
 
+  // 스캔 진행률 폴링 — 서버의 scanning/error 신호로 종료를 판단한다.
+  // 긴 영상은 OCR이 수 분 걸릴 수 있어 고정 타임아웃 대신 무진척이 오래
+  // 지속될 때만 포기한다. hadScan=true(재스캔)면 옛 scanned 데이터가 프레임
+  // 추출 동안 남아 보일 수 있어(구 서버) scanning을 한 번 본 뒤의 scanned만
+  // 완료로 인정한다.
+  const pollScan = async (hadScan: boolean) => {
+    let stalled = 0;
+    let lastDone = -1;
+    let sawScanning = false;
+    for (let i = 0; i < 1200; i++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const d = await getScenes(jobId);
+      if (d.error) { setError(`스캔 실패: ${d.error}`); return; }
+      if (d.scanning) {
+        sawScanning = true;
+        const done = d.ocr_done ?? 0;
+        const total = d.total_frames ?? 0;
+        setNotice(total > 0
+          ? `슬레이트 판독 중… ${done}/${total} 프레임`
+          : "프레임 추출 중…");
+        stalled = done === lastDone ? stalled + 1 : 0;
+        lastDone = done;
+        // 진척이 200초(133회) 넘게 멈춰 있으면 포기(서버 이상).
+        if (stalled > 133) { setError("스캔이 진행되지 않습니다. 서버 상태를 확인하세요."); return; }
+      } else if (d.scanned && (sawScanning || !hadScan)) {
+        setData(d);
+        setNotice("스캔 완료 — 토큰을 지정하세요.");
+        return;
+      }
+    }
+    setError("스캔이 시간 내 끝나지 않았습니다.");
+  };
+
   const refresh = async () => {
     const d = await getScenes(jobId);
     setData(d);
@@ -38,6 +71,16 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       setSceneIdx(d.rule.scene_tokens ?? []);
       setSpaceDelim((d.rule.delimiters ?? []).includes(" "));
     }
+    // 재진입 시 스캔이 이미 진행 중이면(다른 화면에서 걸어둔 스캔 등) 진행률
+    // 폴링을 이어붙인다 — 시작 버튼만 덩그러니 보이던 공백 수정.
+    if (d.scanning) {
+      setBusy(true); setNotice("슬레이트 판독 중…");
+      try {
+        await pollScan(false);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally { setBusy(false); }
+    }
   };
   useEffect(() => { void refresh(); }, [jobId]);
 
@@ -46,32 +89,11 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const tokens = tokenizeSlate(sample, delimiters);
 
   const runScan = async () => {
+    const hadScan = Boolean(data?.scanned);
     setBusy(true); setError(null); setNotice("프레임 추출 중…");
     try {
-      await scanScenes(jobId);
-      // 스캔은 비동기 — 진행률(ocr_done/total_frames)을 폴링하며 표시한다.
-      // 긴 영상은 OCR이 수 분 걸릴 수 있어 고정 타임아웃 대신 서버의 scanning/
-      // error 신호로 종료를 판단한다(무진척이 오래 지속될 때만 포기).
-      let stalled = 0;
-      let lastDone = -1;
-      for (let i = 0; i < 1200; i++) {
-        await new Promise((r) => setTimeout(r, 1500));
-        const d = await getScenes(jobId);
-        if (d.error) { setError(`스캔 실패: ${d.error}`); return; }
-        if (d.scanned) { setData(d); setNotice("스캔 완료 — 토큰을 지정하세요."); return; }
-        if (d.scanning) {
-          const done = d.ocr_done ?? 0;
-          const total = d.total_frames ?? 0;
-          setNotice(total > 0
-            ? `슬레이트 판독 중… ${done}/${total} 프레임`
-            : "프레임 추출 중…");
-          stalled = done === lastDone ? stalled + 1 : 0;
-          lastDone = done;
-          // 진척이 200초(133회) 넘게 멈춰 있으면 포기(서버 이상).
-          if (stalled > 133) { setError("스캔이 진행되지 않습니다. 서버 상태를 확인하세요."); return; }
-        }
-      }
-      setError("스캔이 시간 내 끝나지 않았습니다.");
+      await scanScenes(jobId);  // 스캔은 비동기 — 이후 진행률 폴링
+      await pollScan(hadScan);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
@@ -266,6 +288,13 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                 disabled={busy || seqIdx.length === 0}
                 onClick={() => void applyRule()}>
                 {busy ? "계산 중…" : "경계 계산"}
+              </button>
+              {/* OCR 재판독 — 판독 로직 개선·오염된 스캔 데이터 복구용. 기존
+                  프레임 텍스트를 버리고 처음부터 다시 스캔한다. */}
+              <button type="button" style={consoleStyles.mutedAction}
+                disabled={busy}
+                onClick={() => void runScan()}>
+                다시 스캔
               </button>
               {seqIdx.length === 0 ? (
                 <span style={{ fontSize: 12, color: "#e2b340" }}>

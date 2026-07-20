@@ -543,6 +543,11 @@ async def scan_scenes(
     if job.status != "done" or not job.burned_path or not Path(job.burned_path).exists():
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "씬 분할은 굽기 완료(done)된 작업에서만 가능합니다.")
+    # 초기 scanning 상태를 동기 기록(익스포트/정밀화와 같은 패턴) — 프레임 추출
+    # (수 분) 동안 옛 scanned 데이터가 남아 있으면 재스캔 폴링이 '스캔 완료
+    # (옛 데이터)'로 오판한다.
+    save_scenes(external_id, {"scanning": True, "total_frames": 0,
+                              "ocr_done": 0, "frames": []})
     _start_scene_scan(external_id)
     return {"status": "scanning"}
 

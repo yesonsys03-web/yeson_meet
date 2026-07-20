@@ -715,6 +715,29 @@ async def test_scan_scenes_starts_task_when_done(client, db_session, admin_user,
     assert started["eid"] == job.external_id
 
 
+async def test_scan_scenes_writes_initial_scanning_state(client, db_session,
+                                                         admin_user, monkeypatch):
+    """재스캔 폴링 레이스 방지: 202 직후 scenes.json에 scanning 상태가 동기
+    기록돼야 한다 — 프레임 추출(수 분) 동안 옛 scanned 데이터가 보이면
+    프론트 폴링이 '스캔 완료(옛 데이터)'로 오판한다."""
+    monkeypatch.setattr(api_vj, "_start_scene_scan", lambda eid: None)
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    # 이전 스캔 완료 데이터가 있는 상태(재스캔 시나리오)
+    pl.save_scenes(job.external_id, {"scanning": False, "interval_ms": 2000,
+                                     "frames": [{"t_ms": 0, "text": "A_B_C"}]})
+    resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan")
+    assert resp.status_code == 202
+    body = (await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes")).json()
+    assert body["scanning"] is True
+    assert body["scanned"] is False
+
+
 async def test_get_scenes_empty_before_scan(client, db_session, admin_user):
     job = await _new_scene_job(db_session, admin_user, status="done")
     resp = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")
