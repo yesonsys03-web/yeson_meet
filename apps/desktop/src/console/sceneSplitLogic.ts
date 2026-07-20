@@ -23,6 +23,39 @@ export function previewLabel(tokens: string[], uptoIndex: number): string {
   return tokens.slice(0, uptoIndex + 1).map(squashWs).join("_");
 }
 
+import type { SceneSegment } from "./videoApi";
+
+// 잘못 인식된 구간(예: OCR 노이즈로 생긴 짧은 'VAL')을 이웃 구간에 흡수한다.
+// 시간축에 빈틈이 생기지 않도록 이웃이 그 구간의 시간을 넘겨받는다.
+// into="prev": 이전 구간이 end_ms를 이 구간 end까지 연장하고 이 구간 제거.
+// into="next": 다음 구간이 start_ms를 이 구간 start까지 당기고 이 구간 제거.
+export function mergeSegment(
+  segs: SceneSegment[], i: number, into: "prev" | "next",
+): SceneSegment[] {
+  const cur = segs[i];
+  if (!cur) return segs;
+  const out = segs.slice();
+  if (into === "prev" && i > 0) {
+    const prev = out[i - 1];
+    if (prev) { out[i - 1] = { ...prev, end_ms: cur.end_ms }; out.splice(i, 1); }
+  } else if (into === "next" && i < segs.length - 1) {
+    const nxt = out[i + 1];
+    if (nxt) { out[i + 1] = { ...nxt, start_ms: cur.start_ms }; out.splice(i, 1); }
+  }
+  return out;
+}
+
+// 구간 이름(=파일명) 수정.
+export function renameSegment(
+  segs: SceneSegment[], i: number, label: string,
+): SceneSegment[] {
+  const cur = segs[i];
+  if (!cur) return segs;
+  const out = segs.slice();
+  out[i] = { ...cur, label };
+  return out;
+}
+
 export function formatMs(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));
   const m = Math.floor(total / 60);

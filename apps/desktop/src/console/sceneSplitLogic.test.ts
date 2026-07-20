@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatMs, previewLabel, tokenizeSlate } from "./sceneSplitLogic";
+import { formatMs, mergeSegment, previewLabel, renameSegment, tokenizeSlate } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -39,5 +39,31 @@ describe("previewLabel whitespace normalization", () => {
   it("squashes OCR space blips so labels are stable", () => {
     expect(previewLabel(["Seq 01B", "S19"], 0)).toBe("Seq01B");
     expect(previewLabel(["Seq01B", "S19"], 0)).toBe("Seq01B");
+  });
+});
+
+describe("segment editing", () => {
+  const segs = [
+    { label: "Seq12B", start_ms: 40000, end_ms: 88000 },
+    { label: "VAL", start_ms: 88000, end_ms: 90000 },   // OCR 노이즈
+    { label: "Seq13", start_ms: 90000, end_ms: 108000 },
+  ];
+  it("merges a bad segment into the previous one", () => {
+    const out = mergeSegment(segs, 1, "prev");
+    expect(out.map((s) => s.label)).toEqual(["Seq12B", "Seq13"]);
+    expect(out[0]).toEqual({ label: "Seq12B", start_ms: 40000, end_ms: 90000 });
+  });
+  it("merges a bad segment into the next one", () => {
+    const out = mergeSegment(segs, 1, "next");
+    expect(out.map((s) => s.label)).toEqual(["Seq12B", "Seq13"]);
+    expect(out[1]).toEqual({ label: "Seq13", start_ms: 88000, end_ms: 108000 });
+  });
+  it("renames a segment", () => {
+    expect(renameSegment(segs, 1, "Seq12C")[1]?.label).toBe("Seq12C");
+  });
+  it("is a no-op at the edges / out of range", () => {
+    expect(mergeSegment(segs, 0, "prev")).toEqual(segs);
+    expect(mergeSegment(segs, 2, "next")).toEqual(segs);
+    expect(mergeSegment(segs, 9, "prev")).toEqual(segs);
   });
 });

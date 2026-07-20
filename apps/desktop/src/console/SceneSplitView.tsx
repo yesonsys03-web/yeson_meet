@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
-import { previewLabel, tokenizeSlate } from "./sceneSplitLogic";
+import {
+  mergeSegment, previewLabel, renameSegment, tokenizeSlate,
+} from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
-  exportScenes, getScenes, scanScenes, setSceneRule,
+  exportScenes, getScenes, overrideSceneSegments, scanScenes, setSceneRule,
   type ScenesData, type SceneSegment,
 } from "./videoApi";
 
@@ -98,6 +100,32 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const segments: SceneSegment[] = data
     ? (mode === "sequence" ? data.segments_sequence : data.segments_scene) : [];
 
+  // 현재 모드의 구간 목록을 편집(병합/이름수정)해 data 상태에 반영한다. dirty면
+  // "수정사항 저장"으로 서버에 PATCH해야 익스포트에 반영된다.
+  const [dirty, setDirty] = useState(false);
+  const setSegments = (next: SceneSegment[]) => {
+    if (!data) return;
+    setData(mode === "sequence"
+      ? { ...data, segments_sequence: next }
+      : { ...data, segments_scene: next });
+    setDirty(true);
+  };
+  const mergeSeg = (i: number, into: "prev" | "next") =>
+    setSegments(mergeSegment(segments, i, into));
+  const renameSeg = (i: number, label: string) =>
+    setSegments(renameSegment(segments, i, label));
+
+  const saveEdits = async () => {
+    setBusy(true); setError(null);
+    try {
+      await overrideSceneSegments(jobId, mode, segments);
+      setDirty(false);
+      setNotice("수정사항을 저장했습니다.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
+  };
+
   const toggleSeq = (i: number) => {
     setSeqIdx((prev) =>
       prev.includes(i) ? prev.filter((x) => x !== i)
@@ -178,13 +206,26 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
           </div>
           <SceneFilmstrip jobId={jobId} segments={segments}
             thumbCount={data.frames.length}
-            intervalMs={data.interval_ms ?? 1000}
-            totalMs={(data.frames.at(-1)?.t_ms ?? 0) + (data.interval_ms ?? 1000)} />
-          <button type="button" style={consoleStyles.action}
-            disabled={busy || segments.length === 0}
-            onClick={() => void doExport()}>
-            {segments.length}개 클립 익스포트
-          </button>
+            intervalMs={data.interval_ms ?? 2000}
+            totalMs={(data.frames.at(-1)?.t_ms ?? 0) + (data.interval_ms ?? 2000)}
+            onMerge={mergeSeg} onRename={renameSeg} />
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button type="button" style={consoleStyles.mutedAction}
+              disabled={busy || !dirty}
+              onClick={() => void saveEdits()}>
+              {dirty ? "수정사항 저장" : "저장됨"}
+            </button>
+            <button type="button" style={consoleStyles.action}
+              disabled={busy || segments.length === 0}
+              onClick={() => void doExport()}>
+              {segments.length}개 클립 익스포트
+            </button>
+            {dirty ? (
+              <span style={{ fontSize: 12, color: "#e2b340" }}>
+                저장 안 된 수정이 있어요 — 익스포트 전에 저장하세요.
+              </span>
+            ) : null}
+          </div>
         </>
       )}
     </div>
