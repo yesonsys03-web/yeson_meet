@@ -14,9 +14,13 @@ export function tokenizeSlate(
   return parts.map((s) => s.trim()).filter((s) => s.length > 0);
 }
 
+// 토큰 내부 공백 제거 — 백엔드 _squash_ws와 동일. OCR이 "Seq01B"/"Seq 01B"로
+// 들쭉날쭉 읽어도 같은 라벨이 되게 하고, 파일명에 공백이 안 들어가게 한다.
+const squashWs = (t: string): string => t.replace(/\s+/g, "");
+
 export function previewLabel(tokens: string[], uptoIndex: number): string {
   if (uptoIndex < 0 || uptoIndex >= tokens.length) return "";
-  return tokens.slice(0, uptoIndex + 1).join("_");
+  return tokens.slice(0, uptoIndex + 1).map(squashWs).join("_");
 }
 
 export function formatMs(ms: number): string {

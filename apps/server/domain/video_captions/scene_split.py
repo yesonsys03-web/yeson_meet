@@ -46,20 +46,29 @@ def tokenize(text: str, delimiters: list[str]) -> list[str]:
     return [p for p in (s.strip() for s in parts) if p]
 
 
+def _squash_ws(token: str) -> str:
+    """토큰 내부 공백을 모두 제거. OCR이 같은 필드를 프레임마다 "Seq01B"/"Seq 01B"로
+    들쭉날쭉 읽어도(실기 관측) 같은 값으로 취급되게 한다 — 이 정규화가 없으면 공백
+    한 칸 차이로 스퓨리어스 경계가 생긴다. 파일명에도 공백이 안 들어가 깔끔하다."""
+    return "".join(token.split())
+
+
 def grouping_key(tokens: list[str], indices: list[int]) -> str | None:
     """선택된 토큰들을 결합해 그룹 키를 만든다. 인덱스가 범위를 벗어나면
-    (판독 실패로 토큰이 모자란 경우) None."""
+    (판독 실패로 토큰이 모자란 경우) None. 토큰 내부 공백은 정규화한다
+    (OCR 공백 노이즈로 인한 스퓨리어스 경계 방지)."""
     if not indices or any(i < 0 or i >= len(tokens) for i in indices):
         return None
-    return _KEY_SEP.join(tokens[i] for i in indices)
+    return _KEY_SEP.join(_squash_ws(tokens[i]) for i in indices)
 
 
 def build_label(tokens: list[str], upto_index: int) -> str:
     """파일명 라벨 = tokens[0..upto_index]를 "_"로 결합. 선택 토큰 앞의 고정
-    접두(쇼넘버 등)가 자연히 포함된다."""
+    접두(쇼넘버 등)가 자연히 포함된다. grouping_key와 동일하게 토큰 내부 공백을
+    정규화해 같은 그룹이 항상 같은 파일명을 갖게 한다."""
     if upto_index < 0 or upto_index >= len(tokens):
         return ""
-    return "_".join(tokens[: upto_index + 1])
+    return "_".join(_squash_ws(t) for t in tokens[: upto_index + 1])
 
 
 def _mode_indices(rule: SlateRule, mode: str) -> list[int]:

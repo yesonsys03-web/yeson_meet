@@ -162,3 +162,23 @@ def test_build_scene_data_produces_both_modes():
     assert scene_labels == ["HH0307_020_0150", "HH0307_020_0170", "HH0307_021_0010"]
     assert seq_labels == ["HH0307_020", "HH0307_021"]
     assert len(data["frames"]) == 3
+
+
+def test_grouping_key_normalizes_internal_whitespace():
+    from apps.server.domain.video_captions.scene_split import grouping_key, build_label
+    # OCR이 같은 필드를 "Seq01B"/"Seq 01B"로 들쭉날쭉 읽어도 같은 키/라벨.
+    assert grouping_key(["Seq 01B", "S19"], [0]) == grouping_key(["Seq01B", "S19"], [0])
+    assert build_label(["Seq 01B", "S19"], 0) == "Seq01B"
+
+
+def test_boundaries_absorb_ocr_space_blips():
+    from apps.server.domain.video_captions.scene_split import (
+        FrameSample, SlateRule, compute_boundaries, hold_keys)
+    rule = SlateRule(delimiters=["_", "-"], seq_tokens=[0], scene_tokens=[1])
+    samples = [
+        FrameSample(0, 0, "Seq01B_S19"),
+        FrameSample(1, 2000, "Seq 01B_S19"),   # 공백 블립 — 같은 시퀀스여야
+        FrameSample(2, 4000, "Seq01B_S19"),
+    ]
+    segs = compute_boundaries(hold_keys(samples, rule, "sequence"), 6000, min_ms=0)
+    assert [s.label for s in segs] == ["Seq01B"]  # 하나로 병합

@@ -34,3 +34,10 @@ describe("formatMs", () => {
     expect(formatMs(112000)).toBe("1:52");
   });
 });
+
+describe("previewLabel whitespace normalization", () => {
+  it("squashes OCR space blips so labels are stable", () => {
+    expect(previewLabel(["Seq 01B", "S19"], 0)).toBe("Seq01B");
+    expect(previewLabel(["Seq01B", "S19"], 0)).toBe("Seq01B");
+  });
+});
