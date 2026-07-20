@@ -45,6 +45,17 @@ export function mergeSegment(
   return out;
 }
 
+// 구간의 시간 범위를 썸네일 인덱스 범위로 매핑한다(썸네일 i ≈ t = i*intervalMs).
+// 리스트에서 구간을 클릭하면 필름스트립의 이 범위를 하이라이트·중앙정렬한다.
+export function segmentThumbRange(
+  startMs: number, endMs: number, intervalMs: number, thumbCount: number,
+): { from: number; to: number } {
+  const iv = intervalMs > 0 ? intervalMs : 1;
+  const from = Math.max(0, Math.min(thumbCount - 1, Math.floor(startMs / iv)));
+  const to = Math.max(from, Math.min(thumbCount - 1, Math.ceil(endMs / iv) - 1));
+  return { from, to };
+}
+
 // 구간 이름(=파일명) 수정.
 export function renameSegment(
   segs: SceneSegment[], i: number, label: string,

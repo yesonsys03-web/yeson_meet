@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  mergeSegment, previewLabel, renameSegment, tokenizeSlate,
+  formatMs, mergeSegment, previewLabel, renameSegment, segmentThumbRange,
+  tokenizeSlate,
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
   exportScenes, getScenes, overrideSceneSegments, scanScenes, setSceneRule,
-  type ScenesData, type SceneSegment,
+  videoMediaUrl, type ScenesData, type SceneSegment,
 } from "./videoApi";
 
 type Mode = "scene" | "sequence";
@@ -115,6 +116,16 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const renameSeg = (i: number, label: string) =>
     setSegments(renameSegment(segments, i, label));
 
+  // 리스트에서 클릭한 구간 → 필름스트립 하이라이트 범위. 썸네일 클릭 → 팝업 시각.
+  const [selectedSeg, setSelectedSeg] = useState<number | null>(null);
+  const [previewMs, setPreviewMs] = useState<number | null>(null);
+  const intervalMs = data?.interval_ms ?? 2000;
+  const thumbCount = data?.frames.length ?? 0;
+  const highlight = selectedSeg != null && segments[selectedSeg]
+    ? segmentThumbRange(segments[selectedSeg]!.start_ms,
+                        segments[selectedSeg]!.end_ms, intervalMs, thumbCount)
+    : null;
+
   const saveEdits = async () => {
     setBusy(true); setError(null);
     try {
@@ -206,9 +217,11 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
           </div>
           <SceneFilmstrip jobId={jobId} segments={segments}
             thumbCount={data.frames.length}
-            intervalMs={data.interval_ms ?? 2000}
-            totalMs={(data.frames.at(-1)?.t_ms ?? 0) + (data.interval_ms ?? 2000)}
-            onMerge={mergeSeg} onRename={renameSeg} />
+            intervalMs={intervalMs}
+            totalMs={(data.frames.at(-1)?.t_ms ?? 0) + intervalMs}
+            onMerge={mergeSeg} onRename={renameSeg}
+            selectedIndex={selectedSeg} highlight={highlight}
+            onSelectSegment={setSelectedSeg} onThumbClick={setPreviewMs} />
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <button type="button" style={consoleStyles.mutedAction}
               disabled={busy || !dirty}
@@ -228,6 +241,30 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
           </div>
         </>
       )}
+
+      {/* 썸네일 클릭 팝업 — 작은 썸네일 대신 실제 영상을 그 시각으로 시킹해 크게
+          보여준다(슬레이트를 읽을 수 있게). 배경/닫기 클릭 시 닫힘. */}
+      {previewMs != null ? (
+        <div onClick={() => setPreviewMs(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 1000,
+                   background: "rgba(0,0,0,0.8)", display: "flex",
+                   alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ position: "relative", maxWidth: "90vw", maxHeight: "90vh" }}>
+            <video
+              src={videoMediaUrl(jobId)} controls autoPlay={false}
+              onLoadedMetadata={(e) => { e.currentTarget.currentTime = previewMs / 1000; }}
+              style={{ maxWidth: "90vw", maxHeight: "82vh", borderRadius: 8,
+                       background: "#000" }} />
+            <div style={{ display: "flex", justifyContent: "space-between",
+                          alignItems: "center", marginTop: 6, color: "#fff" }}>
+              <span style={{ fontSize: 13, opacity: 0.85 }}>이 지점: {formatMs(previewMs)}</span>
+              <button type="button" style={consoleStyles.mutedAction}
+                onClick={() => setPreviewMs(null)}>닫기</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

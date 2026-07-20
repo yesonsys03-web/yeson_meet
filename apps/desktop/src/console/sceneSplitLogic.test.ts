@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatMs, mergeSegment, previewLabel, renameSegment, tokenizeSlate } from "./sceneSplitLogic";
+import { formatMs, mergeSegment, previewLabel, renameSegment, segmentThumbRange, tokenizeSlate } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -65,5 +65,17 @@ describe("segment editing", () => {
     expect(mergeSegment(segs, 0, "prev")).toEqual(segs);
     expect(mergeSegment(segs, 2, "next")).toEqual(segs);
     expect(mergeSegment(segs, 9, "prev")).toEqual(segs);
+  });
+});
+
+describe("segmentThumbRange", () => {
+  it("maps a segment's time span to thumbnail indices", () => {
+    // interval 2000ms, 10 thumbs (0..9 → t=0,2,4,...18s)
+    expect(segmentThumbRange(0, 6000, 2000, 10)).toEqual({ from: 0, to: 2 });
+    expect(segmentThumbRange(88000, 90000, 2000, 100)).toEqual({ from: 44, to: 44 });
+  });
+  it("clamps to available thumbnails", () => {
+    expect(segmentThumbRange(0, 999000, 2000, 5)).toEqual({ from: 0, to: 4 });
+    expect(segmentThumbRange(999000, 999000, 2000, 5)).toEqual({ from: 4, to: 4 });
   });
 });

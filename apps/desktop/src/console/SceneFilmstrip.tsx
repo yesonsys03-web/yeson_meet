@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { formatMs } from "./sceneSplitLogic";
 import { sceneThumbUrl, type SceneSegment } from "./videoApi";
 
@@ -10,33 +11,67 @@ type Props = {
   // 편집 콜백(선택). 주어지면 각 구간에 병합/이름수정 컨트롤을 렌더한다.
   onMerge?: (i: number, into: "prev" | "next") => void;
   onRename?: (i: number, label: string) => void;
+  // 선택된 구간(리스트 클릭) — 해당 썸네일 범위를 하이라이트·중앙정렬한다.
+  selectedIndex?: number | null;
+  highlight?: { from: number; to: number } | null;
+  onSelectSegment?: (i: number) => void;
+  // 썸네일 클릭 → 그 시각을 팝업(실제 영상 시킹)으로 크게 보여준다.
+  onThumbClick?: (tMs: number) => void;
 };
 
 // 다빈치 리졸브식 필름스트립: 썸네일을 시간축에 깔고 아래에 구간 목록을 얹는다.
-// 편집 콜백이 주어지면 잘못 인식된 구간(예: OCR 노이즈 'VAL')을 이웃에 병합하거나
-// 이름을 고칠 수 있다.
+// 리스트 구간을 클릭하면 필름스트립에서 그 범위를 하이라이트하고 중앙으로 스크롤한다.
+// 썸네일을 클릭하면 실제 프레임을 팝업으로 크게 확인할 수 있다. 편집 콜백이 주어지면
+// 잘못 인식된 구간(예 'VAL')을 이웃에 병합하거나 이름을 고칠 수 있다.
 export function SceneFilmstrip(
-  { jobId, segments, thumbCount, onMerge, onRename }: Props,
+  { jobId, segments, thumbCount, intervalMs, onMerge, onRename,
+    selectedIndex, highlight, onSelectSegment, onThumbClick }: Props,
 ) {
   const thumbs = Array.from({ length: thumbCount }, (_, i) => i);
   const editable = Boolean(onMerge || onRename);
+  const stripRef = useRef<HTMLDivElement>(null);
+
+  // 선택 구간이 바뀌면 하이라이트 범위의 중앙 썸네일을 필름스트립 중앙으로 스크롤.
+  useEffect(() => {
+    if (!highlight || !stripRef.current) return;
+    const center = Math.round((highlight.from + highlight.to) / 2);
+    const el = stripRef.current.querySelector<HTMLElement>(`[data-thumb="${center}"]`);
+    el?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }, [highlight?.from, highlight?.to]);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ display: "flex", overflowX: "auto", gap: 1,
+      <div ref={stripRef}
+           style={{ display: "flex", overflowX: "auto", gap: 1,
                     background: "#000", borderRadius: 6, padding: 2 }}>
-        {thumbs.map((i) => (
-          <img key={i} src={sceneThumbUrl(jobId, i)} alt=""
-               style={{ height: 64, flexShrink: 0 }} />
-        ))}
+        {thumbs.map((i) => {
+          const on = highlight ? i >= highlight.from && i <= highlight.to : false;
+          return (
+            <img key={i} data-thumb={i} src={sceneThumbUrl(jobId, i)} alt=""
+                 title={`${formatMs(i * intervalMs)} — 클릭하면 크게 보기`}
+                 onClick={() => onThumbClick?.(i * intervalMs)}
+                 style={{ height: 72, flexShrink: 0, cursor: onThumbClick ? "zoom-in" : "default",
+                          // 선택 구간에 속한 썸네일만 밝게, 나머지는 살짝 어둡게.
+                          opacity: highlight && !on ? 0.4 : 1,
+                          outline: on ? "2px solid #4a9eda" : "none",
+                          outlineOffset: on ? "-2px" : undefined,
+                          transition: "opacity 0.15s" }} />
+          );
+        })}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
         {segments.map((s, i) => (
-          <div key={i} style={{ display: "flex", gap: 8, fontSize: 13,
-                                alignItems: "center",
-                                padding: "3px 8px", borderRadius: 4,
-                                background: "rgba(255,255,255,0.05)" }}>
+          <div key={i}
+               onClick={() => onSelectSegment?.(i)}
+               style={{ display: "flex", gap: 8, fontSize: 13, alignItems: "center",
+                        padding: "3px 8px", borderRadius: 4,
+                        cursor: onSelectSegment ? "pointer" : "default",
+                        outline: selectedIndex === i ? "1px solid #4a9eda" : "none",
+                        background: selectedIndex === i
+                          ? "rgba(74,158,218,0.18)" : "rgba(255,255,255,0.05)" }}>
             {onRename ? (
               <input value={s.label}
+                onClick={(e) => e.stopPropagation()}
                 onChange={(e) => onRename(i, e.target.value)}
                 style={{ fontFamily: "monospace", fontSize: 13, flex: 1, minWidth: 0,
                          background: "transparent", color: "inherit",
@@ -54,10 +89,12 @@ export function SceneFilmstrip(
                 {/* 이 구간을 이웃에 흡수(잘못 인식된 짧은 구간 제거용) */}
                 <button type="button" title="이전 구간에 병합"
                   disabled={i === 0}
-                  style={miniBtn} onClick={() => onMerge(i, "prev")}>◀병합</button>
+                  style={miniBtn}
+                  onClick={(e) => { e.stopPropagation(); onMerge(i, "prev"); }}>◀병합</button>
                 <button type="button" title="다음 구간에 병합"
                   disabled={i === segments.length - 1}
-                  style={miniBtn} onClick={() => onMerge(i, "next")}>병합▶</button>
+                  style={miniBtn}
+                  onClick={(e) => { e.stopPropagation(); onMerge(i, "next"); }}>병합▶</button>
               </span>
             ) : null}
           </div>
@@ -65,8 +102,8 @@ export function SceneFilmstrip(
       </div>
       {editable && segments.length > 0 ? (
         <p style={{ fontSize: 11, opacity: 0.55, margin: 0 }}>
-          잘못 인식된 구간은 ◀/▶ 병합으로 이웃에 흡수하고, 이름은 직접 고칠 수 있어요.
-          수정 후 아래 "수정사항 저장"을 눌러야 익스포트에 반영됩니다.
+          구간을 클릭하면 필름스트립에서 위치가 하이라이트됩니다. 썸네일을 클릭하면 크게 볼 수 있어요.
+          잘못 인식된 구간은 ◀/▶ 병합으로 이웃에 흡수하고 이름은 직접 고친 뒤 "수정사항 저장"을 누르세요.
         </p>
       ) : null}
     </div>
