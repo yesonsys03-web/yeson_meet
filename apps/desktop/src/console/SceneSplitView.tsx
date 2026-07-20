@@ -27,7 +27,17 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
 
   const delimiters = spaceDelim ? ["_", " ", "-"] : ["_", "-"];
 
-  const refresh = async () => setData(await getScenes(jobId));
+  const refresh = async () => {
+    const d = await getScenes(jobId);
+    setData(d);
+    // 서버에 저장된 규칙이 있으면 토큰 선택을 복원한다 — 화면 재진입 시 선택이
+    // 초기화돼 "경계 계산"이 비활성(회색)으로 보이던 문제 수정.
+    if (d.rule) {
+      setSeqIdx(d.rule.seq_tokens ?? []);
+      setSceneIdx(d.rule.scene_tokens ?? []);
+      setSpaceDelim((d.rule.delimiters ?? []).includes(" "));
+    }
+  };
   useEffect(() => { void refresh(); }, [jobId]);
 
   // 대표 프레임 = 첫 비어있지 않은 OCR 텍스트
@@ -76,7 +86,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       setData({ ...(data as ScenesData), scanned: true,
                 segments_scene: res.segments_scene,
                 segments_sequence: res.segments_sequence });
-      setNotice("경계를 계산했습니다.");
+      setSelectedSeg(null);
+      setNotice(`경계 계산 완료 — 시퀀스 ${res.segments_sequence.length}개 · 씬 ${res.segments_scene.length}개. 이제 익스포트하면 최신 경계로 잘립니다.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
@@ -221,9 +232,18 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
               시퀀스 라벨 미리보기: <code>{previewLabel(tokens, Math.max(-1, ...seqIdx))}</code>
               {"  ·  "}씬 라벨: <code>{previewLabel(tokens, Math.max(-1, ...seqIdx, ...sceneIdx))}</code>
             </p>
-            <button type="button" style={{ ...consoleStyles.mutedAction, marginTop: 8 }}
-              disabled={busy || seqIdx.length === 0}
-              onClick={() => void applyRule()}>경계 계산</button>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+              <button type="button" style={consoleStyles.mutedAction}
+                disabled={busy || seqIdx.length === 0}
+                onClick={() => void applyRule()}>
+                {busy ? "계산 중…" : "경계 계산"}
+              </button>
+              {seqIdx.length === 0 ? (
+                <span style={{ fontSize: 12, color: "#e2b340" }}>
+                  먼저 위에서 SEQ 토큰을 하나 이상 고르세요 (그래야 버튼이 활성화됩니다).
+                </span>
+              ) : null}
+            </div>
           </div>
 
           {/* 모드 토글 + 필름스트립 */}
