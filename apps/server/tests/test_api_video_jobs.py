@@ -738,6 +738,43 @@ async def test_scan_scenes_writes_initial_scanning_state(client, db_session,
     assert body["scanned"] is False
 
 
+async def test_scene_thumb_at_extracts_and_caches(client, db_session, admin_user,
+                                                  monkeypatch, tmp_path):
+    """경계 썸네일(임의 시각)은 요청 시 추출하고 디스크에 캐시한다 — 캐시 키가
+    t_ms라 경계가 바뀌어도 무효화가 필요 없다(같은 시각=같은 프레임)."""
+    calls: list[int] = []
+
+    def fake_extract(ffmpeg, src, t_ms, dst, height=90, proc_key=None):
+        calls.append(t_ms)
+        Path(dst).parent.mkdir(parents=True, exist_ok=True)
+        Path(dst).write_bytes(b"\xff\xd8jpg")
+
+    monkeypatch.setattr(api_vj, "extract_thumbnail_at", fake_extract)
+    monkeypatch.setattr(api_vj, "locate_ffmpeg", lambda: "ffmpeg")
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+
+    url = f"/api/v1/video-jobs/{job.external_id}/scenes/thumb-at"
+    r1 = await client.get(url, params={"t_ms": 4968})
+    assert r1.status_code == 200
+    assert calls == [4968]
+    r2 = await client.get(url, params={"t_ms": 4968})  # 캐시 히트
+    assert r2.status_code == 200
+    assert calls == [4968]
+
+
+async def test_scene_thumb_at_404_without_burned(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    r = await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/thumb-at",
+        params={"t_ms": 1000})
+    assert r.status_code == 404
+
+
 async def test_get_scenes_empty_before_scan(client, db_session, admin_user):
     job = await _new_scene_job(db_session, admin_user, status="done")
     resp = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")

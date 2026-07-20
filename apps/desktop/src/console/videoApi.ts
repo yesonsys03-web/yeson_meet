@@ -380,6 +380,11 @@ export function sceneThumbUrl(jobId: string, index: number): string {
   return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/thumb/${index}`;
 }
 
+// 임의 시각 썸네일 — 정밀화된 구간 시작(2초 격자 밖) 프레임 확인용.
+export function sceneThumbAtUrl(jobId: string, tMs: number): string {
+  return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/thumb-at?t_ms=${tMs}`;
+}
+
 export type ExportStatus = {
   exporting: boolean;
   done: number;

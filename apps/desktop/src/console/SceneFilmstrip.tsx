@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { formatMs } from "./sceneSplitLogic";
-import { sceneThumbUrl, type SceneSegment } from "./videoApi";
+import { formatMs, segmentThumbRange } from "./sceneSplitLogic";
+import { sceneThumbAtUrl, sceneThumbUrl, type SceneSegment } from "./videoApi";
 
 type Props = {
   jobId: string;
@@ -31,6 +31,18 @@ export function SceneFilmstrip(
   const editable = Boolean(onMerge || onRename);
   const stripRef = useRef<HTMLDivElement>(null);
 
+  // 구간 시작이 2초 격자 위가 아니면(정밀화된 경계) 그 시각의 실제 첫 프레임을
+  // 격자 썸네일 앞에 끼워 넣는다 — 격자 썸네일만 있으면 구간의 첫 칸이 시작보다
+  // 최대 2초 뒤라 "첫 프레임"으로 오해된다(실기: 샷 프레임번호가 1이 아닌 24로 보임).
+  const boundaryBefore = new Map<number, { seg: SceneSegment; idx: number }[]>();
+  segments.forEach((seg, idx) => {
+    const { from } = segmentThumbRange(seg.start_ms, seg.end_ms, intervalMs, thumbCount);
+    if (seg.start_ms === from * intervalMs) return;  // 격자와 일치하면 불필요
+    const list = boundaryBefore.get(from) ?? [];
+    list.push({ seg, idx });
+    boundaryBefore.set(from, list);
+  });
+
   // 선택 구간이 바뀌면 하이라이트 범위의 중앙 썸네일을 필름스트립 중앙으로 스크롤.
   useEffect(() => {
     if (!highlight || !stripRef.current) return;
@@ -44,9 +56,26 @@ export function SceneFilmstrip(
       <div ref={stripRef}
            style={{ display: "flex", overflowX: "auto", gap: 1,
                     background: "#000", borderRadius: 6, padding: 2 }}>
-        {thumbs.map((i) => {
+        {thumbs.flatMap((i) => {
           const on = highlight ? i >= highlight.from && i <= highlight.to : false;
-          return (
+          const cells = (boundaryBefore.get(i) ?? []).map(({ seg, idx }) => {
+            const bOn = selectedIndex === idx;
+            return (
+              <img key={`b${idx}`} data-boundary={idx}
+                   src={sceneThumbAtUrl(jobId, seg.start_ms)} alt=""
+                   title={`${seg.label} 시작 ${formatMs(seg.start_ms)} (첫 프레임) — 클릭하면 크게 보기`}
+                   onClick={() => onThumbClick?.(seg.start_ms)}
+                   style={{ height: 72, flexShrink: 0,
+                            cursor: onThumbClick ? "zoom-in" : "default",
+                            opacity: highlight && !bOn ? 0.4 : 1,
+                            // 격자 썸네일과 구분되게 경계 프레임은 호박색 테두리.
+                            outline: `2px solid ${bOn ? "#4a9eda" : "#e2b340"}`,
+                            outlineOffset: "-2px",
+                            transition: "opacity 0.15s" }} />
+            );
+          });
+          return [
+            ...cells,
             <img key={i} data-thumb={i} src={sceneThumbUrl(jobId, i)} alt=""
                  title={`${formatMs(i * intervalMs)} — 클릭하면 크게 보기`}
                  onClick={() => onThumbClick?.(i * intervalMs)}
@@ -55,8 +84,8 @@ export function SceneFilmstrip(
                           opacity: highlight && !on ? 0.4 : 1,
                           outline: on ? "2px solid #4a9eda" : "none",
                           outlineOffset: on ? "-2px" : undefined,
-                          transition: "opacity 0.15s" }} />
-          );
+                          transition: "opacity 0.15s" }} />,
+          ];
         })}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>

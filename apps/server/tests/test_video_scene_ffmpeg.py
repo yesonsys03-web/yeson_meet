@@ -39,6 +39,23 @@ def test_extract_thumbnails_scales_by_height(monkeypatch, tmp_path: Path):
     assert calls[0][-1].endswith("thumb_%05d.jpg")
 
 
+def test_extract_thumbnail_at_seeks_and_scales(monkeypatch, tmp_path: Path):
+    """경계 썸네일: 임의 시각 1프레임을 필름스트립 높이로 축소해 저장.
+    -ss는 -i 앞(cut_segment/extract_frame와 같은 시간축) — 그래야 썸네일이
+    실제로 잘려 나올 클립의 첫 프레임과 일치한다."""
+    calls: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: (calls.append(cmd), _Result())[1])
+    ff.extract_thumbnail_at("ffmpeg", tmp_path / "in.mp4", 4968,
+                            tmp_path / "b.jpg", height=90)
+    cmd = calls[0]
+    assert cmd[cmd.index("-ss") + 1] == "4.968"
+    assert cmd.index("-ss") < cmd.index("-i")
+    assert cmd[cmd.index("-vf") + 1] == "scale=-2:90"
+    assert cmd[cmd.index("-frames:v") + 1] == "1"
+    assert cmd[-1].endswith("b.jpg")
+
+
 def test_cut_segment_reencodes_with_ss_and_output_t(monkeypatch, tmp_path: Path):
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run",

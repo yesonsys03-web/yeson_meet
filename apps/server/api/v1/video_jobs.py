@@ -9,6 +9,7 @@ endpoints extend that same trust decision rather than being a special case.
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +43,8 @@ from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
                                                         start_task, video_jobs_root)
 from apps.server.domain.video_captions.pipeline import \
     _INFLIGHT_STATUSES as INFLIGHT_STATUSES
+from apps.server.domain.video_captions.ffmpeg import (extract_thumbnail_at,
+                                                      locate_ffmpeg)
 from apps.server.domain.video_captions.scene_split import FrameSample
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
 from apps.server.domain.video_captions.translate import (is_source_copy,
@@ -701,6 +704,34 @@ async def scene_thumbnail(
     path = job_dir(external_id) / "scene_thumbs" / f"thumb_{index + 1:05d}.jpg"
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "thumbnail not found")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@router.get("/{external_id}/scenes/thumb-at")
+async def scene_thumbnail_at(
+    external_id: UUID,
+    t_ms: Annotated[int, Query(ge=0)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> FileResponse:
+    """임의 시각의 썸네일 — 정밀화된 구간 시작(2초 격자 밖) 프레임을 보여준다.
+
+    요청 시 추출하고 디스크에 캐시한다. 캐시 키가 t_ms라 경계가 바뀌어도 무효화가
+    필요 없다(같은 시각이면 같은 프레임). 정밀화·병합으로 경계가 움직여도 다음
+    렌더에서 새 시각으로 자연히 다시 뽑힌다.
+    """
+    await _get_job_or_404(db, external_id)
+    burned = job_dir(external_id) / "burned.mp4"
+    if not burned.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "burned video not found")
+    path = job_dir(external_id) / "scene_thumbs" / f"at_{t_ms:09d}.jpg"
+    if not path.exists():
+        ffmpeg = locate_ffmpeg()
+        if ffmpeg is None:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                                "ffmpeg를 찾을 수 없습니다.")
+        await asyncio.to_thread(extract_thumbnail_at, ffmpeg, burned, t_ms, path)
+        if not path.exists():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "thumbnail not found")
     return FileResponse(path, media_type="image/jpeg")
 
 

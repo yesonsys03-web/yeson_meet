@@ -78,4 +78,14 @@ describe("segmentThumbRange", () => {
     expect(segmentThumbRange(0, 999000, 2000, 5)).toEqual({ from: 0, to: 4 });
     expect(segmentThumbRange(999000, 999000, 2000, 5)).toEqual({ from: 4, to: 4 });
   });
+  it("excludes the thumbnail before a refined (non-grid) boundary", () => {
+    // 회귀(실기): 정밀화 후 경계가 2초 배수가 아니게 되면 floor(start)는 직전
+    // 구간에 속한 썸네일을 포함해, 한 칸이 두 구간에 중복 하이라이트되고 클릭 시
+    // 엉뚱한 프레임이 떴다. 썸네일 i(=시각 i*interval)는 start<=i*iv<end일 때만
+    // 그 구간 소속이다.
+    // 010: 4968~131968 → t=6000(3)부터, t=130000(65)까지
+    expect(segmentThumbRange(4968, 131968, 2000, 743)).toEqual({ from: 3, to: 65 });
+    // 020: 131968~251218 → t=132000(66)부터 (65는 아직 010)
+    expect(segmentThumbRange(131968, 251218, 2000, 743)).toEqual({ from: 66, to: 125 });
+  });
 });

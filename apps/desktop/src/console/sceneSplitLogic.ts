@@ -50,8 +50,11 @@ export function mergeSegment(
 export function segmentThumbRange(
   startMs: number, endMs: number, intervalMs: number, thumbCount: number,
 ): { from: number; to: number } {
+  // 썸네일 i는 시각 i*interval의 단일 프레임이므로 start<=i*iv<end 일 때만 그
+  // 구간 소속이다. 시작을 floor로 잡으면 정밀화 후(경계가 2초 배수가 아님) 직전
+  // 구간의 썸네일이 딸려 들어와 한 칸이 두 구간에 중복 하이라이트된다.
   const iv = intervalMs > 0 ? intervalMs : 1;
-  const from = Math.max(0, Math.min(thumbCount - 1, Math.floor(startMs / iv)));
+  const from = Math.max(0, Math.min(thumbCount - 1, Math.ceil(startMs / iv)));
   const to = Math.max(from, Math.min(thumbCount - 1, Math.ceil(endMs / iv) - 1));
   return { from, to };
 }

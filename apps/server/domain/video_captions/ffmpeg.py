@@ -339,6 +339,17 @@ def cut_segment(ffmpeg: str, src: Path, dst: Path, start_ms: int, end_ms: int,
          proc_key=proc_key)
 
 
+def extract_thumbnail_at(ffmpeg: str, src: Path, t_ms: int, dst: Path,
+                         height: int = 90, proc_key: str | None = None) -> None:
+    """임의 시각 1프레임을 필름스트립 높이로 축소해 jpg로 저장(경계 썸네일용).
+    -ss를 -i 앞에 둬 cut_segment/extract_frame과 같은 시간축을 쓴다 — 그래야
+    이 썸네일이 실제로 잘려 나올 클립의 첫 프레임과 일치한다."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    _run([ffmpeg, "-y", "-ss", f"{t_ms / 1000:.3f}", "-i", str(src),
+          "-frames:v", "1", "-vf", f"scale=-2:{height}", str(dst)],
+         proc_key=proc_key)
+
+
 def extract_frame(ffmpeg: str, src: Path, t_ms: int, dst: Path,
                   proc_key: str | None = None) -> None:
     """t_ms 시각의 단일 프레임을 dst로 추출(경계 정밀화용). -ss를 -i 앞에 둬
