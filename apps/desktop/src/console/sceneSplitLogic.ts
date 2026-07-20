@@ -23,6 +23,128 @@ export function previewLabel(tokens: string[], uptoIndex: number): string {
   return tokens.slice(0, uptoIndex + 1).map(squashWs).join("_");
 }
 
+// ── OCR 오독 검출 ────────────────────────────────────────────────────────────
+// 씬 모드는 구간이 수백 개라 눈으로 훑기 어렵다. 오독은 대개 구분자 유실로
+// 토큰이 붙는 형태라(실기: 040_0080_AC_v01 → 0400080_ACV01) 라벨의 "모양"이
+// 다수와 어긋난다. 작품별 포맷을 하드코딩하지 않고, 데이터 자신의 최빈 모양을
+// 기준으로 이탈을 찾고 그 템플릿으로 재분해해 교정안을 만든다.
+
+// 토큰을 문자종류(U=대문자, L=소문자, D=숫자, X=기타) 런과 길이로 요약.
+export function tokenShape(token: string): string {
+  const cls = (c: string): string =>
+    /[0-9]/.test(c) ? "D" : /[A-Z]/.test(c) ? "U" : /[a-z]/.test(c) ? "L" : "X";
+  let out = "";
+  let cur = "";
+  let n = 0;
+  for (const c of squashWs(token)) {
+    const k = cls(c);
+    if (k === cur) { n += 1; continue; }
+    if (cur) out += `${cur}${n}`;
+    cur = k; n = 1;
+  }
+  if (cur) out += `${cur}${n}`;
+  return out;
+}
+
+const modeOf = (xs: string[]): string | null => {
+  const counts = new Map<string, number>();
+  for (const x of xs) counts.set(x, (counts.get(x) ?? 0) + 1);
+  let best: string | null = null;
+  let bestN = 0;
+  for (const [k, n] of counts) if (n > bestN) { best = k; bestN = n; }
+  return best;
+};
+
+// 라벨 집합의 대표 모양 — 최빈 토큰 개수를 고르고, 그 개수를 가진 라벨들에서
+// 위치별 최빈 모양을 뽑는다.
+export function labelTemplate(
+  labels: string[], delimiters: string[] = DEFAULT_DELIMITERS,
+): string[] | null {
+  const toks = labels.map((l) => tokenizeSlate(l, delimiters));
+  const counts = toks.filter((t) => t.length > 0).map((t) => String(t.length));
+  const modal = modeOf(counts);
+  if (!modal) return null;
+  const n = Number(modal);
+  const rows = toks.filter((t) => t.length === n);
+  const tpl: string[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const shape = modeOf(rows.map((r) => tokenShape(r[i] as string)));
+    if (!shape) return null;
+    tpl.push(shape);
+  }
+  return tpl;
+}
+
+// 모양 문자열("U2D4")을 (문자종류, 길이) 목록으로.
+const parseShape = (shape: string): [string, number][] =>
+  [...shape.matchAll(/([ULDX])(\d+)/g)].map((m) => [m[1] as string, Number(m[2])]);
+
+const matchesShape = (token: string, shape: string): boolean =>
+  tokenShape(token) === shape;
+
+// 구분자를 잃고 붙어버린 라벨을 템플릿 모양대로 다시 쪼갠다. 템플릿을 채우지
+// 못하면(문자가 모자라거나 종류가 안 맞으면) null — 억지 교정은 하지 않는다.
+function reparse(
+  label: string, template: string[], delimiters: string[],
+): { label: string; confident: boolean } | null {
+  const toks = tokenizeSlate(label, delimiters);
+  if (toks.length === template.length
+      && toks.every((t, i) => matchesShape(t, template[i] as string))) {
+    return null;  // 이미 정상
+  }
+  const flat = toks.map(squashWs).join("");
+  const cls = (c: string): string =>
+    /[0-9]/.test(c) ? "D" : /[A-Z]/.test(c) ? "U" : /[a-z]/.test(c) ? "L" : "X";
+  let pos = 0;
+  const out: string[] = [];
+  for (const shape of template) {
+    let piece = "";
+    for (const [kind, len] of parseShape(shape)) {
+      for (let k = 0; k < len; k += 1) {
+        const c = flat[pos];
+        if (c === undefined || cls(c) !== kind) return null;
+        piece += c; pos += 1;
+      }
+    }
+    out.push(piece);
+  }
+  // 라벨 뒤에는 보통 AC/v01 같은 글자 토큰이 남는다(정상). 하지만 바로 다음 글자가
+  // 숫자면 자릿수가 남는다는 뜻 — 어디서 끊어야 할지 모호하니(실기 07510040)
+  // 자동 적용 대상에서 뺀다.
+  const next = flat[pos];
+  return { label: out.join("_"), confident: next === undefined || cls(next) !== "D" };
+}
+
+export function suggestLabelFix(
+  label: string, template: string[], delimiters: string[] = DEFAULT_DELIMITERS,
+): string | null {
+  return reparse(label, template, delimiters)?.label ?? null;
+}
+
+export type LabelAnomaly = {
+  index: number; label: string; suggestion: string | null; confident: boolean;
+};
+
+// 템플릿과 어긋나는 라벨만 골라 교정안과 함께 돌려준다. 교정안을 못 만들어도
+// (VAL 같은 완전 오독) 이탈 사실은 보고한다 — 사용자가 직접 고칠 수 있게.
+export function anomalousLabels(
+  labels: string[], delimiters: string[] = DEFAULT_DELIMITERS,
+): LabelAnomaly[] {
+  const tpl = labelTemplate(labels, delimiters);
+  if (!tpl) return [];
+  const out: LabelAnomaly[] = [];
+  labels.forEach((label, index) => {
+    const toks = tokenizeSlate(label, delimiters);
+    const ok = toks.length === tpl.length
+      && toks.every((t, i) => matchesShape(t, tpl[i] as string));
+    if (ok) return;
+    const fix = reparse(label, tpl, delimiters);
+    out.push({ index, label, suggestion: fix?.label ?? null,
+               confident: fix?.confident ?? false });
+  });
+  return out;
+}
+
 import type { SceneSegment } from "./videoApi";
 
 // 잘못 인식된 구간(예: OCR 노이즈로 생긴 짧은 'VAL')을 이웃 구간에 흡수한다.

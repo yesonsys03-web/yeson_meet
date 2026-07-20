@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatMs, mergeSegment, previewLabel, renameSegment, segmentThumbRange, tokenizeSlate } from "./sceneSplitLogic";
+import { anomalousLabels, formatMs, labelTemplate, mergeSegment, previewLabel, renameSegment, segmentThumbRange, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -65,6 +65,72 @@ describe("segment editing", () => {
     expect(mergeSegment(segs, 0, "prev")).toEqual(segs);
     expect(mergeSegment(segs, 2, "next")).toEqual(segs);
     expect(mergeSegment(segs, 9, "prev")).toEqual(segs);
+  });
+});
+
+describe("tokenShape", () => {
+  it("summarizes a token as runs of char class + length", () => {
+    expect(tokenShape("040")).toBe("D3");
+    expect(tokenShape("HH0307")).toBe("U2D4");
+    expect(tokenShape("v01")).toBe("L1D2");
+    expect(tokenShape("0400080")).toBe("D7");
+  });
+});
+
+describe("labelTemplate", () => {
+  it("takes the modal token count and modal shape per position", () => {
+    // 대다수가 HH0307_040_0060 꼴, 하나만 오독(구분자 유실)
+    const labels = ["HH0307_040_0060", "HH0307_040_0090",
+                    "HH0307_0400080_ACV01", "HH0307_040_0110"];
+    expect(labelTemplate(labels)).toEqual(["U2D4", "D3", "D4"]);
+  });
+  it("returns null when there is no usable majority", () => {
+    expect(labelTemplate([])).toBeNull();
+  });
+});
+
+describe("suggestLabelFix", () => {
+  const tpl = ["U2D4", "D3", "D4"];
+  it("re-splits a merged-token misread using the modal template", () => {
+    // 실기: OCR이 언더스코어를 놓쳐 040_0080 → 0400080, AC_V01 → ACV01
+    expect(suggestLabelFix("HH0307_0400080_ACV01", tpl)).toBe("HH0307_040_0080");
+  });
+  it("returns null for labels that already match the template", () => {
+    expect(suggestLabelFix("HH0307_040_0060", tpl)).toBeNull();
+  });
+  it("returns null when the characters cannot fill the template", () => {
+    expect(suggestLabelFix("HH0307_04", tpl)).toBeNull();
+    expect(suggestLabelFix("VAL", tpl)).toBeNull();
+  });
+});
+
+describe("anomalousLabels", () => {
+  it("flags only the misread rows and pairs them with a suggestion", () => {
+    const labels = ["HH0307_040_0060", "HH0307_040_0090",
+                    "HH0307_0400080_ACV01", "HH0307_040_0110"];
+    expect(anomalousLabels(labels)).toEqual([
+      { index: 2, label: "HH0307_0400080_ACV01",
+        suggestion: "HH0307_040_0080", confident: true },
+    ]);
+  });
+  it("still reports an anomaly when no suggestion can be derived", () => {
+    const labels = ["HH0307_040_0060", "HH0307_040_0090", "VAL",
+                    "HH0307_040_0110"];
+    expect(anomalousLabels(labels)).toEqual([
+      { index: 2, label: "VAL", suggestion: null, confident: false },
+    ]);
+  });
+  it("marks a suggestion unconfident when a digit is left over", () => {
+    // 실기: HH0307_07510040_AC — 숫자가 8자리라 어디서 끊을지 모호하다(075|1004로
+    // 채우면 '0'이 남는다). 자동 적용 대상에서 빼고 사람이 보게 한다.
+    const labels = ["HH0307_075_0040", "HH0307_07510040_AC", "HH0307_075_0050"];
+    expect(anomalousLabels(labels)).toEqual([
+      { index: 1, label: "HH0307_07510040_AC",
+        suggestion: "HH0307_075_1004", confident: false },
+    ]);
+  });
+  it("returns nothing when every label matches the template", () => {
+    expect(anomalousLabels(["HH0307_040_0060", "HH0307_040_0090"])).toEqual([]);
   });
 });
 

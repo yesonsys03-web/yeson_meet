@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { formatMs, segmentThumbRange } from "./sceneSplitLogic";
+import { formatMs, segmentThumbRange, type LabelAnomaly } from "./sceneSplitLogic";
 import { sceneThumbAtUrl, sceneThumbUrl, type SceneSegment } from "./videoApi";
 
 type Props = {
@@ -17,6 +17,11 @@ type Props = {
   onSelectSegment?: (i: number) => void;
   // 썸네일 클릭 → 그 시각을 팝업(실제 영상 시킹)으로 크게 보여준다.
   onThumbClick?: (tMs: number) => void;
+  // 목록에 보여줄 구간 인덱스(오독 필터 탭). null이면 전체. 인덱스는 원본 기준을
+  // 유지해야 병합/이름수정 콜백이 올바른 구간을 가리킨다.
+  visibleIndices?: number[] | null;
+  // 인덱스 → 오독 교정 제안(있으면 라벨 옆에 원클릭 적용 버튼).
+  suggestions?: Map<number, LabelAnomaly>;
 };
 
 // 다빈치 리졸브식 필름스트립: 썸네일을 시간축에 깔고 아래에 구간 목록을 얹는다.
@@ -25,7 +30,8 @@ type Props = {
 // 잘못 인식된 구간(예 'VAL')을 이웃에 병합하거나 이름을 고칠 수 있다.
 export function SceneFilmstrip(
   { jobId, segments, thumbCount, intervalMs, onMerge, onRename,
-    selectedIndex, highlight, onSelectSegment, onThumbClick }: Props,
+    selectedIndex, highlight, onSelectSegment, onThumbClick,
+    visibleIndices, suggestions }: Props,
 ) {
   const thumbs = Array.from({ length: thumbCount }, (_, i) => i);
   const editable = Boolean(onMerge || onRename);
@@ -89,7 +95,9 @@ export function SceneFilmstrip(
         })}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-        {segments.map((s, i) => (
+        {segments.map((s, i) => ({ s, i }))
+          .filter(({ i }) => !visibleIndices || visibleIndices.includes(i))
+          .map(({ s, i }) => (
           <div key={i}
                onClick={() => onSelectSegment?.(i)}
                style={{ display: "flex", gap: 8, fontSize: 13, alignItems: "center",
@@ -112,6 +120,21 @@ export function SceneFilmstrip(
               <span style={{ fontFamily: "monospace", overflowWrap: "anywhere",
                              flex: 1, minWidth: 0 }}>{s.label}</span>
             )}
+            {/* 오독 교정 제안 — 누르면 그 행 라벨만 바꾼다(일괄 적용과 별개). */}
+            {(() => {
+              const a = suggestions?.get(i);
+              if (!a || !a.suggestion || a.suggestion === s.label) return null;
+              return (
+                <button type="button" style={{ ...miniBtn, flexShrink: 0,
+                          borderColor: a.confident ? "#3f9a5f" : "#e2b340",
+                          fontFamily: "monospace" }}
+                  title={a.confident
+                    ? "제안 적용" : "숫자가 남아 애매한 제안 — 프레임을 확인하세요"}
+                  onClick={(e) => { e.stopPropagation(); onRename?.(i, a.suggestion!); }}>
+                  {a.confident ? "→ " : "→? "}{a.suggestion}
+                </button>
+              );
+            })()}
             <span style={{ opacity: 0.7, flexShrink: 0 }}>
               {formatMs(s.start_ms)}–{formatMs(s.end_ms)}
             </span>

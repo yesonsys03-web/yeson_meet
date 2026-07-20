@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  formatMs, mergeSegment, previewLabel, renameSegment, segmentThumbRange,
-  tokenizeSlate,
+  anomalousLabels, formatMs, mergeSegment, previewLabel, renameSegment,
+  segmentThumbRange, tokenizeSlate,
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
@@ -207,6 +207,26 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                         segments[selectedSeg]!.end_ms, intervalMs, thumbCount)
     : null;
 
+  // OCR 오독 검출 — 씬 모드는 구간이 수백 개라 눈으로 못 훑는다. 라벨 모양이
+  // 다수와 어긋나는 행만 모아 보여주고, 템플릿 재분해로 만든 교정안을 일괄 적용.
+  const [onlyAnomalies, setOnlyAnomalies] = useState(false);
+  const anomalies = anomalousLabels(segments.map((s) => s.label), delimiters);
+  const anomalyIdx = anomalies.map((a) => a.index);
+  const suggestionOf = new Map(anomalies.map((a) => [a.index, a]));
+  // 탭을 바꿔도 인덱스는 원본 기준을 유지한다(병합/이름수정 콜백이 인덱스를 쓴다).
+  const visibleIndices = onlyAnomalies ? anomalyIdx : null;
+
+  const applyAllSuggestions = () => {
+    // 모호한 제안(숫자 잔여)은 건드리지 않는다 — 사람이 직접 확인해야 한다.
+    let next = segments;
+    for (const a of anomalies) {
+      if (!a.suggestion || !a.confident) continue;
+      next = renameSegment(next, a.index, a.suggestion);
+    }
+    setSegments(next);
+    setNotice("확실한 제안만 적용했습니다 — 남은 행은 직접 확인하세요. 저장을 잊지 마세요.");
+  };
+
   const saveEdits = async () => {
     setBusy(true); setError(null);
     try {
@@ -329,12 +349,42 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                             background: "#4a9eda", transition: "width 0.3s" }} />
             </div>
           ) : null}
+          {/* 구간 목록 탭 — 오독 의심 행만 모아 일괄 교정할 수 있게 한다. */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button type="button"
+              style={onlyAnomalies ? consoleStyles.mutedAction : consoleStyles.action}
+              onClick={() => { setOnlyAnomalies(false); setSelectedSeg(null); }}>
+              전체 ({segments.length})
+            </button>
+            <button type="button"
+              style={onlyAnomalies ? consoleStyles.action : consoleStyles.mutedAction}
+              disabled={anomalies.length === 0}
+              onClick={() => { setOnlyAnomalies(true); setSelectedSeg(null); }}>
+              {anomalies.length > 0
+                ? `⚠ 확인 필요 (${anomalies.length})` : "확인 필요 없음"}
+            </button>
+            {onlyAnomalies && anomalies.some((a) => a.suggestion && a.confident) ? (
+              <button type="button" style={consoleStyles.mutedAction}
+                onClick={applyAllSuggestions}>
+                제안 일괄 적용 ({anomalies.filter((a) => a.suggestion && a.confident).length})
+              </button>
+            ) : null}
+          </div>
+          {onlyAnomalies ? (
+            <p style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>
+              라벨 모양이 다수와 어긋나는 구간입니다(주로 OCR이 구분자를 놓친 경우).
+              제안이 있으면 라벨 오른쪽에 표시되고, 숫자가 남아 애매한 제안은
+              일괄 적용에서 빠집니다 — 썸네일을 눌러 실제 프레임을 확인하세요.
+            </p>
+          ) : null}
           <SceneFilmstrip jobId={jobId} segments={segments}
             thumbCount={data.frames.length}
             intervalMs={intervalMs}
             totalMs={(data.frames.at(-1)?.t_ms ?? 0) + intervalMs}
             onMerge={mergeSeg} onRename={renameSeg}
             selectedIndex={selectedSeg} highlight={highlight}
+            visibleIndices={visibleIndices}
+            suggestions={suggestionOf}
             onSelectSegment={setSelectedSeg} onThumbClick={setPreviewMs} />
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <button type="button" style={consoleStyles.mutedAction}
