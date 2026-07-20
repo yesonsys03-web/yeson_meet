@@ -327,10 +327,13 @@ def cut_segment(ffmpeg: str, src: Path, dst: Path, start_ms: int, end_ms: int,
                 proc_key: str | None = None) -> None:
     """[start_ms, end_ms) 구간을 재인코딩(정확)해 dst로 저장. -c copy 금지 —
     슬레이트 편집본은 컷 경계가 명확해야 하므로 프레임 정확도를 우선한다.
-    -ss를 -i 앞에 둬 입력 시킹으로 빠르게 접근하되, 재인코딩이라 컷은 정확하다."""
+    -ss를 -i 앞에 둬 입력 시킹으로 빠르게 접근하되, 재인코딩이라 컷은 정확하다.
+    끝은 출력측 -t(길이) — 입력측 -to는 디먹서 패킷 단위로 끊어 B-프레임
+    재정렬 시 다음 세그먼트 첫 프레임(들)이 꼬리에 섞인다(실측 7/16 클립).
+    출력 -t는 디코드된 타임라인(입력 -ss 이후 0 기준)에서 잘라 반열림을 지킨다."""
     ss = f"{start_ms / 1000:.3f}"
-    to = f"{end_ms / 1000:.3f}"
-    _run([ffmpeg, "-y", "-ss", ss, "-to", to, "-i", str(src),
+    dur = f"{(end_ms - start_ms) / 1000:.3f}"
+    _run([ffmpeg, "-y", "-ss", ss, "-i", str(src), "-t", dur,
           "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
           "-c:a", "aac", "-movflags", "+faststart", str(dst)],
          proc_key=proc_key)

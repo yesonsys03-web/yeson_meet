@@ -173,7 +173,31 @@ def compute_boundaries(
                 merged[i][2] = b
                 merged[i - 1][3] = b
 
+    # 첫 구간 시작 당김 — 앞머리가 판독실패(타이틀카드 등, 키 None)면 첫 구간이
+    # 첫 유효 샘플에서 시작해 실제 시작보다 최대 interval만큼 늦다(실기 010
+    # 첫 1초 유실). 내부 경계와 동일하게 반 간격 당긴다.
+    if interval_ms > 0 and merged and keyed and merged[0][2] > keyed[0][0]:
+        merged[0][2] = max(keyed[0][0], merged[0][2] - interval_ms // 2)
+
     return [Segment(label=lbl, start_ms=st, end_ms=en) for _, lbl, st, en in merged]
+
+
+def label_matches(text_label: str, target: str, other: str,
+                  delimiters: list[str]) -> bool:
+    """정밀화 오라클용 라벨 판정 — 구분자를 제거한(squash) 접두 일치.
+
+    OCR이 구분자를 놓쳐 토큰이 붙어도("HH0307_1200010"; 실기에서 경계를 2초+
+    지각시킨 오독) 목표 라벨("HH0307_120")과 같은 쪽으로 분류한다. other
+    (반대쪽 세그먼트 라벨)가 target 이상 길이로 함께 접두 일치하면(중복 라벨
+    _02 접미사처럼 한 라벨이 다른 라벨의 접두인 경우) 보수적으로 불일치."""
+    def sq(s: str) -> str:
+        return "".join(_squash_ws(t) for t in tokenize(s, delimiters))
+    t, o, x = sq(target), sq(other), sq(text_label)
+    if not t or not x or not x.startswith(t):
+        return False
+    if o and x.startswith(o) and len(o) >= len(t):
+        return False
+    return True
 
 
 def dedupe_labels(labels: list[str]) -> list[str]:

@@ -25,13 +25,24 @@ def _get_engine():
     return _engine
 
 
+# 슬레이트로 인정하는 상단 밴드(프레임 높이 대비 y중심 비율). 슬레이트는 관례상
+# 프레임 상단에 붙고, 하단에는 워터마크·번인 자막이 온다 — 실기(HZBN307)에서
+# 하단 워터마크가 토큰 수(6>5)로 슬레이트를 이겨 경계가 전멸한 회귀의 방지선.
+_TOP_BAND_FRAC = 0.35
+
+
 def pick_slate_line(
-    lines: list[tuple[str, float]], delimiters: list[str], min_tokens: int,
+    lines: list[tuple[str, float, float]], delimiters: list[str],
+    min_tokens: int, top_frac: float = _TOP_BAND_FRAC,
 ) -> str:
-    """OCR 라인 후보 중 슬레이트 1줄 선택 — 토큰 수(내림차순)·신뢰도(내림차순)
-    우선. min_tokens 미만으로 쪼개지는 라인은 후보에서 제외한다."""
+    """OCR 라인 후보 중 슬레이트 1줄 선택 — 상단 밴드(y_frac ≤ top_frac) 안에서
+    토큰 수(내림차순)·신뢰도(내림차순) 우선. min_tokens 미만으로 쪼개지는 라인과
+    밴드 밖 라인(하단 워터마크·자막)은 후보에서 제외한다. 밴드 안에 후보가 없으면
+    하단으로 폴백하지 않고 ""(판독실패) — hold_keys가 직전 유효값으로 홀드한다."""
     scored = []
-    for text, score in lines:
+    for text, score, y_frac in lines:
+        if y_frac > top_frac:
+            continue
         n = len(tokenize(text, delimiters))
         if n >= min_tokens:
             scored.append((n, score, text))
@@ -49,8 +60,15 @@ def read_slate_line(
         result, _elapse = _get_engine()(str(image_path))
         if not result:
             return ""
-        # RapidOCR 반환: [[box, text, score], ...]
-        lines = [(item[1], float(item[2])) for item in result]
+        from PIL import Image  # RapidOCR 전이의존(lock 고정) — 지연 import
+        with Image.open(image_path) as im:
+            height = im.height
+        # RapidOCR 반환: [[box(4점 [x,y]), text, score], ...]
+        lines = []
+        for item in result:
+            ys = [float(p[1]) for p in item[0]]
+            y_frac = (sum(ys) / len(ys)) / height if height else 1.0
+            lines.append((item[1], float(item[2]), y_frac))
         return pick_slate_line(lines, delimiters, min_tokens)
     except Exception:  # noqa: BLE001 — 한 프레임 판독 실패가 전체 스캔을 막지 않게
         logger.exception("OCR failed for %s", image_path)

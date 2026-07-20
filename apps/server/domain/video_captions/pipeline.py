@@ -27,7 +27,7 @@ from .ffmpeg import (
 from .ingest import download_youtube
 from .scene_split import (
     FrameSample, SlateRule, build_label, compute_boundaries, dedupe_labels,
-    hold_keys, tokenize,
+    hold_keys, label_matches, tokenize,
 )
 from .slate_ocr import read_slate_line
 from .srt import SubSegment, build_force_style, segments_to_srt
@@ -773,7 +773,7 @@ async def run_scene_refine(external_id: UUID, mode: str) -> None:
 
     2초 샘플링 격자로는 컷이 ±1초 어긋나(이웃 시퀀스가 클립에 남음), 중앙정렬로
     반감해도 잔여가 있다. 경계마다 [b-half, b+half] 창을 이진탐색해 라벨이 next로
-    바뀌는 지점(≤250ms 정밀도)을 찾아 경계를 그 프레임으로 옮긴다. 진행률은
+    바뀌는 지점(<1프레임 정밀도)을 찾아 경계를 그 프레임으로 옮긴다. 진행률은
     refine_status.json에 증분 기록한다(refining/done/total/error)."""
     await _BURN_SEMAPHORE.acquire()
     generation = _bump_generation(external_id)
@@ -783,7 +783,9 @@ async def run_scene_refine(external_id: UUID, mode: str) -> None:
             raise RuntimeError("먼저 규칙을 확정하세요.")
         seg_key = "segments_sequence" if mode == "sequence" else "segments_scene"
         segments = [dict(s) for s in (data.get(seg_key) or [])]
-        total = len(segments) - 1
+        # 내부 경계 + (앞머리가 판독실패 구간이면) 첫 세그 시작도 정밀화 대상.
+        total = (len(segments) - 1) + (1 if segments and
+                                       segments[0]["start_ms"] > 0 else 0)
         if total < 1:
             save_refine_status(external_id, {"refining": False, "done": 0,
                                              "total": 0, "error": None})
@@ -815,27 +817,81 @@ async def run_scene_refine(external_id: UUID, mode: str) -> None:
 
         def _work() -> list[dict]:
             tmpdir.mkdir(parents=True, exist_ok=True)
+            done = 0
+
+            # 첫 세그 시작 정밀화 — 앞머리가 타이틀카드 등 판독실패 구간이면
+            # 첫 세그 시작이 첫 유효 샘플에 붙어 실제 시작보다 최대 interval만큼
+            # 늦다(실기 010 첫 1초=24프레임 유실). 판독실패("")는 라벨 불일치라
+            # 이진탐색 오라클이 자연스럽게 '전환 전'으로 분류한다.
+            if segments[0]["start_ms"] > 0:
+                if generation != _current_generation(external_id):
+                    raise StaleRunCancelled(external_id)
+                s0 = segments[0]["start_ms"]
+                first_label = segments[0]["label"]
+
+                def at_first(t_ms: int) -> bool:
+                    return label_matches(label_at(t_ms), first_label, "",
+                                         delimiters)
+
+                lo = max(0, s0 - interval_ms)
+                hi = min(segments[0]["end_ms"], s0 + interval_ms)
+                for _ in range(8):
+                    if lo <= 0 or not at_first(lo):
+                        break
+                    lo = max(0, lo - 2 * interval_ms)
+                if at_first(hi) and not at_first(lo):
+                    while hi - lo > 20:
+                        mid = (lo + hi) // 2
+                        if at_first(mid):
+                            hi = mid
+                        else:
+                            lo = mid
+                    segments[0]["start_ms"] = hi
+                done += 1
+                save_refine_status(external_id, {"refining": True, "done": done,
+                                                 "total": total, "error": None})
+
             for i in range(1, len(segments)):
                 if generation != _current_generation(external_id):
                     raise StaleRunCancelled(external_id)
                 b = segments[i]["start_ms"]
                 next_label = segments[i]["label"]
+                prev_label = segments[i - 1]["label"]
+
+                # 오독 내성 라벨 판정 — OCR이 구분자를 놓쳐 토큰이 붙어 읽혀도
+                # ("HH0307_1200010"; 실기에서 경계 2초+ 지각) 같은 쪽으로 분류.
+                def at_next(t_ms: int) -> bool:
+                    return label_matches(label_at(t_ms), next_label,
+                                         prev_label, delimiters)
+
                 # 창을 ±interval로 넓힌다 — 스캔 프레임시각(fps 필터)과 컷/정밀화가
                 # 쓰는 -ss 시각이 최대 ~1.5초 어긋나므로, ±half(±1초)로는 실제 전환을
                 # 못 담는다(실측). 이웃 구간 범위로 클램프해 next-next로 넘치지 않게.
                 lo = max(segments[i - 1]["start_ms"], b - interval_ms)
                 hi = min(segments[i]["end_ms"], b + interval_ms)
+                # 창 시작이 이미 next면 전환이 창보다 앞이다(오독 세그먼트가 직전에
+                # 흡수돼 사전 경계가 지각한 실측 케이스) — 직전 구간 시작까지 창을
+                # 왼쪽으로 확장한다(회당 2×interval, 유한 반복).
+                floor = segments[i - 1]["start_ms"]
+                for _ in range(8):
+                    if lo <= floor or not at_next(lo):
+                        break
+                    lo = max(floor, lo - 2 * interval_ms)
                 # 창 끝=next, 창 시작≠next 여야 전환이 창 안에 있다(아니면 중앙정렬 유지).
-                if label_at(hi) == next_label and label_at(lo) != next_label:
-                    while hi - lo > 150:
+                # 종료 임계는 1프레임(50fps=20ms)보다 작아야 한다 — 150ms(≈3.6프레임
+                # @23.976)로는 경계가 전환 프레임 뒤로 수렴해(실측 10/15 지각) 새
+                # 시퀀스 첫 프레임들이 직전 클립 끝에 새 나간다. 경계당 OCR +2~3회 비용.
+                if at_next(hi) and not at_next(lo):
+                    while hi - lo > 20:
                         mid = (lo + hi) // 2
-                        if label_at(mid) == next_label:
+                        if at_next(mid):
                             hi = mid
                         else:
                             lo = mid
                     segments[i]["start_ms"] = hi
                     segments[i - 1]["end_ms"] = hi
-                save_refine_status(external_id, {"refining": True, "done": i,
+                done += 1
+                save_refine_status(external_id, {"refining": True, "done": done,
                                                  "total": total, "error": None})
             return segments
 
