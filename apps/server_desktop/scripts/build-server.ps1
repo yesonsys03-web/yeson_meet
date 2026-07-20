@@ -39,15 +39,14 @@ uv venv --clear --python $PyVersion $BuildVenv
 $env:VIRTUAL_ENV = $BuildVenv
 uv pip install --python $VenvPython ./apps/server "pyinstaller>=6.21"
 
-# RapidOCR가 끌어온 opencv-python(비-headless)은 Linux에서 libGL.so.1을 요구해
-# 서버 번들에서 import cv2가 즉사한다. 같은 cv2 모듈을 제공하는 headless로 교체.
-uv pip install --python $VenvPython `
-    opencv-python-headless
-# opencv-python이 이미 없을 수도 있으니 실패해도 계속 진행(bash의 `|| true` 대응).
-# $ErrorActionPreference=Stop + PowerShell 7.4의 네이티브 명령 오류 전파가 켜지면
-# uninstall 비정상 종료가 스크립트를 중단시킬 수 있어 try/catch로 감싼다.
-try { uv pip uninstall --python $VenvPython opencv-python } catch { }
-$global:LASTEXITCODE = 0
+# RapidOCR는 cv2(opencv)를 import한다. Windows는 libGL 문제가 없어 non-headless를
+# 유지하되, `uv pip install ./apps/server`의 전이 설치가 cv2/ 패키지를 실체화하지
+# 못하고 .dist-info만 남기는 uv 캐시 이슈(2026-07-20 macOS 실측)를 방어하기 위해
+# --reinstall --no-cache로 cv2/를 강제 실체화한다.
+uv pip install --python $VenvPython --reinstall --no-cache opencv-python
+# cv2 실체화 검증 — 실패 시 번들에 cv2가 빠져 스캔이 즉사하므로 빌드를 멈춘다.
+& $VenvPython -c "import cv2; print('build-venv cv2 OK', cv2.__version__)"
+if ($LASTEXITCODE -ne 0) { throw "opencv/cv2 not importable in build venv" }
 
 # Build the viewer SPA so the frozen server serves it under the same :8000 origin
 # as /api + /ws (replacing the old Docker-path Caddy). Staged via --add-data.
