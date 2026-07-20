@@ -748,6 +748,34 @@ async def scene_thumbnail(
     return FileResponse(path, media_type="image/jpeg")
 
 
+@router.post("/{external_id}/scenes/cancel", status_code=status.HTTP_202_ACCEPTED)
+async def cancel_scene_ops(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """진행 중인 스캔/정밀화/익스포트 중단 — 지금까지는 앱을 죽여야 했다.
+
+    세대 카운터를 올리고 ffmpeg를 죽인 뒤(cancel_job_task), 상태 파일의 진행
+    플래그를 내려 프론트 폴링이 멈추게 한다. 취소된 스캔은 완료가 아니므로
+    frames를 남기지 않는다(부분 판독을 완료로 오인하면 경계가 엉망이 된다).
+    사용자가 지정한 OCR 구역은 작업과 무관한 설정이라 보존한다.
+    """
+    await _get_job_or_404(db, external_id)
+    cancel_job_task(external_id)
+    st = load_refine_status(external_id)
+    if st and st.get("refining"):
+        save_refine_status(external_id, {**st, "refining": False})
+    ex = load_export_status(external_id)
+    if ex and ex.get("exporting"):
+        save_export_status(external_id, {**ex, "exporting": False})
+    data = load_scenes(external_id)
+    if data and data.get("scanning"):
+        save_scenes(external_id, {"scanning": False,
+                                  "interval_ms": data.get("interval_ms", 2000),
+                                  "ocr_region": data.get("ocr_region")})
+    return {"status": "canceled"}
+
+
 @router.post("/{external_id}/scenes/ocr-region")
 async def set_ocr_region(
     external_id: UUID,

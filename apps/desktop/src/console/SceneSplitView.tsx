@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
@@ -8,7 +8,7 @@ import {
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
-  exportScenes, getExportStatus, getRefineStatus, getScenes,
+  cancelSceneOps, exportScenes, getExportStatus, getRefineStatus, getScenes,
   listSlateTemplates, overrideSceneSegments, refineScenes, scanScenes,
   setOcrRegion as setOcrRegionApi, setSceneRule, videoMediaUrl,
   type ExportStatus, type OcrRegion, type RefineStatus, type ScenesData,
@@ -120,30 +120,91 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   };
 
   const [refineProg, setRefineProg] = useState<RefineStatus | null>(null);
+  // 연속 실행(스캔→경계→정밀화) 중 단계 표시 + 취소 신호. 취소는 서버 작업을
+  // 멈추는 것과 별개로 이 로컬 루프도 빠져나와야 한다.
+  const [stage, setStage] = useState<string | null>(null);
+  const cancelledRef = useRef(false);
 
-  const doRefine = async () => {
-    setError(null); setNotice(null); setBusy(true);
-    setRefineProg({ refining: true, done: 0, total: segments.length - 1, error: null });
+  const cancelAll = async () => {
+    cancelledRef.current = true;
     try {
-      await refineScenes(jobId, mode);
-      // 경계마다 이진탐색 OCR이라 시간이 걸린다 — 진행률 폴링.
-      for (let i = 0; i < 3600; i++) {
-        await new Promise((r) => setTimeout(r, 1500));
-        const st = await getRefineStatus(jobId);
-        setRefineProg(st);
-        if (st.error) { setError(`정밀화 실패: ${st.error}`); return; }
-        if (!st.refining) {
-          const d = await getScenes(jobId);  // 정밀화된 경계 다시 불러오기
-          setData(d);
-          setNotice("경계 정밀화 완료 — 이제 프레임 단위로 잘립니다. 재익스포트하세요.");
-          return;
-        }
-      }
+      await cancelSceneOps(jobId);
+    } catch { /* 이미 끝났을 수 있다 */ }
+    setStage(null); setRefineProg(null); setBusy(false);
+    setNotice("중단했습니다.");
+  };
+
+  // 정밀화 한 모드 실행 + 완료까지 폴링. 연속 실행에서 모드별로 재사용한다.
+  const refineOnce = async (m: Mode, total: number) => {
+    setRefineProg({ refining: true, done: 0, total, error: null });
+    await refineScenes(jobId, m);
+    for (let i = 0; i < 3600; i++) {
+      if (cancelledRef.current) return;
+      await new Promise((r) => setTimeout(r, 1500));
+      const st = await getRefineStatus(jobId);
+      setRefineProg(st);
+      if (st.error) throw new Error(`정밀화 실패: ${st.error}`);
+      if (!st.refining) return;
+    }
+    throw new Error("정밀화가 시간 내 끝나지 않았습니다.");
+  };
+
+  const doRefine = async (m: Mode = mode) => {
+    setError(null); setNotice(null); setBusy(true);
+    cancelledRef.current = false;
+    try {
+      await refineOnce(m, Math.max(1, segments.length - 1));
+      if (cancelledRef.current) return;
+      setData(await getScenes(jobId));  // 정밀화된 경계 다시 불러오기
+      setNotice("경계 정밀화 완료 — 이제 프레임 단위로 잘립니다. 재익스포트하세요.");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
       setRefineProg(null);
+    }
+  };
+
+  // 스캔 → 경계 계산 → 정밀화(시퀀스·씬 둘 다)를 한 번에. 세 단계는 어차피 항상
+  // 함께 필요하고, 정밀화를 빠뜨린 채 익스포트해 경계가 어긋나는 사고가 잦았다.
+  // 토큰 규칙이 있어야 경계 계산이 가능하므로(스캔 결과를 보고 고르는 값), 규칙이
+  // 없으면 스캔까지만 하고 토큰 선택을 기다린다. 익스포트 양식이 쇼마다 달라
+  // (씬별로 내보내는 쇼도 있다) 두 모드를 모두 정밀화한다.
+  const runAll = async (opts: { rescan: boolean }) => {
+    setError(null); cancelledRef.current = false; setBusy(true);
+    try {
+      if (opts.rescan) {
+        setStage("1/4 슬레이트 스캔");
+        await scanScenes(jobId);
+        await pollScan(Boolean(data?.scanned));
+        if (cancelledRef.current) return;
+      }
+      if (seqIdx.length === 0) {
+        setStage(null);
+        setNotice("스캔 완료 — 토큰을 고른 뒤 '경계 계산 + 정밀화'를 누르세요.");
+        return;
+      }
+      setStage("2/4 경계 계산");
+      const res = await setSceneRule(jobId, {
+        delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx,
+      });
+      if (cancelledRef.current) return;
+      setStage(`3/4 시퀀스 정밀화 (${res.segments_sequence.length}구간)`);
+      await refineOnce("sequence", Math.max(1, res.segments_sequence.length - 1));
+      if (cancelledRef.current) return;
+      setStage(`4/4 씬 정밀화 (${res.segments_scene.length}구간)`);
+      await refineOnce("scene", Math.max(1, res.segments_scene.length - 1));
+      if (cancelledRef.current) return;
+      setData(await getScenes(jobId));
+      setSelectedSeg(null);
+      setNotice(`전체 완료 — 시퀀스 ${res.segments_sequence.length}개 · 씬 `
+        + `${res.segments_scene.length}개, 양쪽 다 프레임 단위 경계입니다.`);
+    } catch (e) {
+      if (!cancelledRef.current) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      setBusy(false); setStage(null); setRefineProg(null);
     }
   };
 
@@ -349,11 +410,34 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
           onApplyTemplate={applyTemplate} />
       ) : null}
 
+      {/* 진행 단계 + 중단. 긴 작업이라 무엇이 도는지 보이고 멈출 수 있어야 한다. */}
+      {stage ? (
+        <div style={{ display: "flex", gap: 10, alignItems: "center",
+                      padding: "6px 10px", borderRadius: 6,
+                      background: "rgba(74,158,218,0.12)" }}>
+          <strong style={{ fontSize: 13 }}>{stage}</strong>
+          {refineProg?.refining ? (
+            <span style={{ fontSize: 12, opacity: 0.8 }}>
+              {refineProg.done}/{refineProg.total} 경계
+            </span>
+          ) : null}
+          <button type="button" style={consoleStyles.mutedAction}
+            onClick={() => void cancelAll()}>중단</button>
+        </div>
+      ) : null}
+
       {!data?.scanned ? (
-        <button type="button" style={consoleStyles.action} disabled={busy}
-          onClick={() => void runScan()}>
-          {busy ? "스캔 중…" : "슬레이트 스캔 시작"}
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button type="button" style={consoleStyles.action} disabled={busy}
+            onClick={() => void runAll({ rescan: true })}>
+            {busy ? "실행 중…" : "전체 실행 (스캔 → 경계 → 정밀화)"}
+          </button>
+          <button type="button" style={consoleStyles.mutedAction} disabled={busy}
+            onClick={() => void runScan()}>스캔만</button>
+          <span style={{ fontSize: 12, opacity: 0.65 }}>
+            토큰 규칙이 없으면 스캔까지만 하고 멈춥니다(스캔 결과를 보고 고르는 값이라).
+          </span>
+        </div>
       ) : (
         <>
           {/* 규칙 지정: 토큰 칩 */}
@@ -392,17 +476,22 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
               {"  ·  "}씬 라벨: <code>{previewLabel(tokens, Math.max(-1, ...seqIdx, ...sceneIdx))}</code>
             </p>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+              {/* 토큰을 고른 뒤의 주 동작 — 경계 계산과 정밀화는 항상 함께 필요하다. */}
+              <button type="button" style={consoleStyles.action}
+                disabled={busy || seqIdx.length === 0}
+                onClick={() => void runAll({ rescan: false })}>
+                {busy ? "실행 중…" : "경계 계산 + 정밀화 (시퀀스·씬)"}
+              </button>
               <button type="button" style={consoleStyles.mutedAction}
                 disabled={busy || seqIdx.length === 0}
                 onClick={() => void applyRule()}>
-                {busy ? "계산 중…" : "경계 계산"}
+                경계 계산만
               </button>
-              {/* OCR 재판독 — 판독 로직 개선·오염된 스캔 데이터 복구용. 기존
-                  프레임 텍스트를 버리고 처음부터 다시 스캔한다. */}
+              {/* OCR 재판독 — 구역·판독 로직을 바꿨거나 오염된 스캔 복구용. */}
               <button type="button" style={consoleStyles.mutedAction}
                 disabled={busy}
-                onClick={() => void runScan()}>
-                다시 스캔
+                onClick={() => void runAll({ rescan: true })}>
+                다시 스캔(전체)
               </button>
               {seqIdx.length === 0 ? (
                 <span style={{ fontSize: 12, color: "#e2b340" }}>

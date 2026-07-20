@@ -775,6 +775,31 @@ async def test_scene_thumb_at_404_without_burned(client, db_session, admin_user)
     assert r.status_code == 404
 
 
+async def test_cancel_scene_ops_stops_polling_states(client, db_session, admin_user,
+                                                     monkeypatch):
+    """긴 작업(스캔/정밀화)을 멈출 수단 — 지금까지는 앱을 죽여야 했다. 취소하면
+    상태 파일의 진행 플래그를 내려 프론트 폴링이 멈춰야 한다."""
+    killed = {}
+    monkeypatch.setattr(api_vj, "cancel_job_task",
+                        lambda eid: killed.setdefault("eid", eid))
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_refine_status(job.external_id, {"refining": True, "done": 3,
+                                            "total": 414, "error": None})
+    pl.save_scenes(job.external_id, {"scanning": True, "interval_ms": 2000,
+                                     "frames": [], "ocr_region": {"x": 0, "y": 0,
+                                                                  "w": 1, "h": 0.2}})
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/cancel")
+    assert r.status_code == 202
+    assert killed["eid"] == job.external_id
+    assert pl.load_refine_status(job.external_id)["refining"] is False
+    body = (await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes")).json()
+    assert body["scanning"] is False
+    assert body["scanned"] is False, "취소된 스캔을 완료로 오인하면 안 된다"
+    assert body["ocr_region"] == {"x": 0, "y": 0, "w": 1, "h": 0.2}, \
+        "취소해도 지정한 구역은 남아야 한다"
+
+
 async def test_slate_template_crud(client, monkeypatch, tmp_path):
     """쇼 템플릿 CRUD — 구역과 토큰 규칙을 쇼 이름으로 저장해 다음 작품에서
     골라 쓴다. 잡에 속하지 않는 전역 목록이다."""

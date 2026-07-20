@@ -413,6 +413,12 @@ export async function testOcrRegion(
     { method: "POST", body: JSON.stringify({ t_ms: tMs, region }) });
 }
 
+// 진행 중인 스캔/정밀화/익스포트 중단.
+export async function cancelSceneOps(jobId: string): Promise<void> {
+  await request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/cancel`,
+    { method: "POST" });
+}
+
 export async function listSlateTemplates(): Promise<{ templates: SlateTemplate[] }> {
   return request(`${apiBase()}/api/v1/video-jobs/slate-templates`, {});
 }
