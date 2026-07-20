@@ -101,10 +101,17 @@ def compute_boundaries(
     keyed: list[tuple[int, str | None, str | None]],
     total_ms: int,
     min_ms: int = 2000,
+    interval_ms: int = 0,
+    absorb_single: bool = False,
 ) -> list[Segment]:
     """연속된 동일 키 구간을 세그먼트로 묶는다. 각 구간은
     [start_ms, 다음 구간 start_ms) (마지막은 total_ms). min_ms 미만 구간은
-    직전 구간에 흡수해 오독 1프레임 튐을 제거한다."""
+    직전 구간에 흡수해 오독 1프레임 튐을 제거한다.
+
+    interval_ms>0이면 (a) 내부 경계를 두 샘플의 중간으로 당겨(컷을 첫 새 샘플이
+    아니라 그 절반 앞) 샘플링 격자로 인한 이웃 블리드를 절반으로 줄이고,
+    (b) absorb_single=True면 내부(양쪽에 이웃이 있는) 1샘플 고립 구간을 직전에
+    흡수한다(시퀀스 모드 오독 제거 — 시퀀스가 1샘플만 지속될 리 없다)."""
     runs: list[tuple[str, str, int]] = []  # (key, label, start_ms)
     for t_ms, key, label in keyed:
         if key is None:
@@ -133,6 +140,19 @@ def compute_boundaries(
         merged[1][2] = merged[0][2]
         merged.pop(0)
 
+    # 내부 1샘플 고립 흡수(시퀀스 모드) — 첫/마지막은 제외(끝단은 확신이 낮음),
+    # 양옆에 이웃이 있는 1샘플 구간만 직전에 흡수한다.
+    if absorb_single and interval_ms > 0 and len(merged) >= 3:
+        kept: list[list] = [merged[0]]
+        for i in range(1, len(merged) - 1):
+            span = merged[i]
+            if span[3] - span[2] <= interval_ms:
+                kept[-1][3] = span[3]  # 직전 끝을 연장(흡수)
+            else:
+                kept.append(span)
+        kept.append(merged[-1])
+        merged = kept
+
     # 인접한 동일 키 구간 병합 (흡수 후 같은 키가 인접할 수 있음)
     if merged:
         final: list[list] = [merged[0]]
@@ -142,6 +162,16 @@ def compute_boundaries(
             else:
                 final.append(merged[i])
         merged = final
+
+    # 경계 중앙 정렬 — 컷을 (직전 마지막 샘플, 첫 새 샘플)의 중간으로 당긴다.
+    # 실제 전환은 두 샘플 사이 어딘가라 중간이 기대 오차를 최소화(±interval/2).
+    if interval_ms > 0 and len(merged) > 1:
+        half = interval_ms // 2
+        for i in range(1, len(merged)):
+            b = merged[i][2] - half
+            if b > merged[i - 1][2]:  # 구간 역전 방지
+                merged[i][2] = b
+                merged[i - 1][3] = b
 
     return [Segment(label=lbl, start_ms=st, end_ms=en) for _, lbl, st, en in merged]
 

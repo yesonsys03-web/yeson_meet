@@ -527,10 +527,16 @@ def build_scene_data(samples: list[FrameSample], rule_dict: dict,
         seq_tokens=rule_dict["seq_tokens"],
         scene_tokens=rule_dict.get("scene_tokens", []),
     )
+    # 샘플 간격 — 경계 중앙정렬·1샘플 흡수 판정에 쓴다(스캔은 균일 간격).
+    interval_ms = (samples[1].t_ms - samples[0].t_ms) if len(samples) >= 2 else 2000
     scene_keyed = hold_keys(samples, rule, "scene")
     seq_keyed = hold_keys(samples, rule, "sequence")
-    seg_scene = compute_boundaries(scene_keyed, total_ms, min_ms)
-    seg_seq = compute_boundaries(seq_keyed, total_ms, min_ms)
+    # 씬 모드: 경계 중앙정렬만(짧은 진짜 컷이 있을 수 있어 1샘플 흡수는 안 함).
+    seg_scene = compute_boundaries(scene_keyed, total_ms, min_ms,
+                                   interval_ms=interval_ms)
+    # 시퀀스 모드: 중앙정렬 + 내부 1샘플 고립 흡수(오독 제거 — 시퀀스는 1샘플일 리 없음).
+    seg_seq = compute_boundaries(seq_keyed, total_ms, min_ms,
+                                 interval_ms=interval_ms, absorb_single=True)
     return {
         "rule": rule_dict,
         "frames": [{"t_ms": s.t_ms, "text": s.text} for s in samples],

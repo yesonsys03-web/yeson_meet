@@ -182,3 +182,31 @@ def test_boundaries_absorb_ocr_space_blips():
     ]
     segs = compute_boundaries(hold_keys(samples, rule, "sequence"), 6000, min_ms=0)
     assert [s.label for s in segs] == ["Seq01B"]  # 하나로 병합
+
+
+def test_compute_boundaries_centers_cut_between_samples():
+    from apps.server.domain.video_captions.scene_split import compute_boundaries
+    # A A B B, 2초 간격. 실제 전환은 두 샘플(2000,4000) 사이 → 컷을 중간 3000으로.
+    keyed = [(0, "A", "A"), (2000, "A", "A"), (4000, "B", "B"), (6000, "B", "B")]
+    segs = compute_boundaries(keyed, 8000, min_ms=0, interval_ms=2000)
+    assert segs[0].start_ms == 0 and segs[0].end_ms == 3000
+    assert segs[1].start_ms == 3000 and segs[1].end_ms == 8000
+
+
+def test_compute_boundaries_absorbs_internal_single_sample_in_sequence():
+    from apps.server.domain.video_captions.scene_split import compute_boundaries
+    # A A VAL B B — VAL은 내부 1샘플 고립 오독.
+    keyed = [(0, "A", "A"), (2000, "A", "A"), (4000, "VAL", "VAL"),
+             (6000, "B", "B"), (8000, "B", "B")]
+    seq = compute_boundaries(keyed, 10000, min_ms=0, interval_ms=2000, absorb_single=True)
+    assert [s.label for s in seq] == ["A", "B"]  # VAL 흡수됨
+    scene = compute_boundaries(keyed, 10000, min_ms=0, interval_ms=2000, absorb_single=False)
+    assert [s.label for s in scene] == ["A", "VAL", "B"]  # 씬 모드는 유지
+
+
+def test_compute_boundaries_keeps_single_sample_at_edges():
+    from apps.server.domain.video_captions.scene_split import compute_boundaries
+    # 마지막 1샘플(B)은 흡수하지 않는다(끝단은 확신 낮음) — 실기 Seq80 같은 끝 시퀀스 보호.
+    keyed = [(0, "A", "A"), (2000, "A", "A"), (4000, "B", "B")]
+    seq = compute_boundaries(keyed, 6000, min_ms=0, interval_ms=2000, absorb_single=True)
+    assert [s.label for s in seq] == ["A", "B"]
