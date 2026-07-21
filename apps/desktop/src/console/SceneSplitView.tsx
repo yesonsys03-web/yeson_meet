@@ -47,9 +47,19 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     let stalled = 0;
     let lastDone = -1;
     let sawScanning = false;
+    let pollFails = 0;
     for (let i = 0; i < 1200; i++) {
       await new Promise((r) => setTimeout(r, 1500));
-      const d = await getScenes(jobId);
+      let d: ScenesData;
+      try {
+        d = await getScenes(jobId);
+      } catch {
+        // 스캔도 CPU를 강하게 써 폴링이 순간 실패할 수 있다 — 연속 실패만 포기.
+        pollFails += 1;
+        if (pollFails >= 20) { setError("서버 응답이 없습니다. 상태를 확인하세요."); return; }
+        continue;
+      }
+      pollFails = 0;
       if (d.error) { setError(`스캔 실패: ${d.error}`); return; }
       if (d.scanning) {
         sawScanning = true;
@@ -145,10 +155,22 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const refineOnce = async (m: Mode, total: number) => {
     setRefineProg({ refining: true, done: 0, total, error: null });
     await refineScenes(jobId, m);
+    // 정밀화는 ffmpeg를 병렬로 띄워 CPU를 강하게 써서, 상태 폴링 요청이 순간
+    // 실패("Load failed")할 수 있다 — 작업은 서버에서 계속되므로 한 번 실패에
+    // 포기하지 않고 연속 실패가 쌓일 때만(서버 다운 등) 중단한다.
+    let pollFails = 0;
     for (let i = 0; i < 3600; i++) {
       if (cancelledRef.current) return;
       await new Promise((r) => setTimeout(r, 1500));
-      const st = await getRefineStatus(jobId);
+      let st: RefineStatus;
+      try {
+        st = await getRefineStatus(jobId);
+      } catch {
+        pollFails += 1;
+        if (pollFails >= 20) throw new Error("서버 응답이 없습니다. 상태를 확인하세요.");
+        continue;
+      }
+      pollFails = 0;
       setRefineProg(st);
       if (st.error) throw new Error(`정밀화 실패: ${st.error}`);
       if (!st.refining) return;
