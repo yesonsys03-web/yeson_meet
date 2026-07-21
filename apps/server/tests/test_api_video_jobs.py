@@ -692,6 +692,27 @@ async def _new_scene_job(db_session, admin_user, status="done"):
     return job
 
 
+async def test_rule_min_ms_auto_scales_with_interval(client, db_session, admin_user):
+    """회귀(실기): min_ms=2000 고정이 0.25초 스캔에서 잡은 짧은 씬(0.75초)을
+    전부 흡수했다. 흡수량은 샘플 간격에 비례해야 한다 — 2초 간격이면 1샘플
+    튐=2초라 큰 값이 필요하지만, 0.25초면 튐=0.25초라 작아야 짧은 씬이 살아남는다.
+    min_ms 미지정(None) 시 간격에 비례한 값을 자동 적용한다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    # 0.25초 간격, 0.75초짜리 짧은 씬(0020) 포함
+    frames = []
+    labels = (["HH_010_0010"] * 8 + ["HH_010_0020"] * 3 + ["HH_010_0030"] * 8)
+    for i, lb in enumerate(labels):
+        frames.append({"t_ms": i * 250, "text": lb})
+    pl.save_scenes(job.external_id, {"scanning": False, "interval_ms": 250,
+                                     "frames": frames})
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/rule",
+                          json={"seq_tokens": [1], "scene_tokens": [2]})
+    assert r.status_code == 200
+    scenes = [s["label"] for s in r.json()["segments_scene"]]
+    assert "HH_010_0020" in scenes, \
+        f"0.75초 짧은 씬이 흡수되면 안 된다: {scenes}"
+
+
 async def test_scan_accepts_interval_and_decouples_thumbs(client, db_session,
                                                          admin_user, monkeypatch):
     """짧은 씬(2초 미만)을 잡으려면 스캔 간격을 촘촘하게 줄 수 있어야 한다. 다만

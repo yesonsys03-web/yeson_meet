@@ -30,6 +30,11 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const [spaceDelim, setSpaceDelim] = useState(false);
   // 샘플 간격(초). 짧은 씬이 많으면 촘촘하게(0.25s) — 놓치면 그 씬 클립이 없어진다.
   const [scanIntervalS, setScanIntervalS] = useState(2.0);
+  // 최소 씬 길이(초). 빈값=자동(간격 비례). 이보다 짧은 구간은 오독 튐으로 보고
+  // 흡수한다 — 진짜 짧은 씬이 삼켜지면 이 값을 낮춘다.
+  const [minSceneSec, setMinSceneSec] = useState("");
+  const minMs = minSceneSec.trim() === "" ? undefined
+    : Math.max(0, Math.round(Number(minSceneSec) * 1000));
 
   const delimiters = spaceDelim ? ["_", " ", "-"] : ["_", "-"];
 
@@ -109,7 +114,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setBusy(true); setError(null);
     try {
       const res = await setSceneRule(jobId, {
-        delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx,
+        delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx, min_ms: minMs,
       });
       setData({ ...(data as ScenesData), scanned: true,
                 segments_scene: res.segments_scene,
@@ -188,7 +193,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       }
       setStage("2/4 경계 계산");
       const res = await setSceneRule(jobId, {
-        delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx,
+        delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx, min_ms: minMs,
       });
       if (cancelledRef.current) return;
       setStage(`3/4 시퀀스 정밀화 (${res.segments_sequence.length}구간)`);
@@ -424,6 +429,18 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
             <option value={0.5}>0.5초</option>
             <option value={0.25}>0.25초 (짧은 컷·느림)</option>
           </select>
+        </label>
+        {/* 최소 씬 길이 — 이보다 짧은 구간은 오독 튐으로 보고 흡수. 빈값=자동
+            (간격 비례). 진짜 짧은 씬이 삼켜지면 낮춘다. */}
+        <label style={{ fontSize: 12, opacity: 0.8, display: "inline-flex",
+                        alignItems: "center", gap: 5 }}>
+          최소 씬 길이
+          <input value={minSceneSec} onChange={(e) => setMinSceneSec(e.target.value)}
+            placeholder="자동" inputMode="decimal"
+            style={{ width: 56, fontSize: 12, padding: "3px 6px", borderRadius: 4,
+                     background: "transparent", color: "inherit",
+                     border: "1px solid rgba(255,255,255,0.15)" }} />
+          초
         </label>
       </div>
       {showPicker ? (

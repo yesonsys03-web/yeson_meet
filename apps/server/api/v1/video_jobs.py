@@ -125,7 +125,10 @@ class SlateRuleIn(BaseModel):
     delimiters: list[str] = Field(default_factory=lambda: ["_", "-"])
     seq_tokens: list[int]
     scene_tokens: list[int] = Field(default_factory=list)
-    min_ms: int = Field(default=2000, ge=0, le=60000)
+    # 최소 씬 길이(ms) — 이보다 짧은 구간은 OCR 오독 튐으로 보고 직전에 흡수한다.
+    # None이면 샘플 간격에 비례한 값을 자동 적용한다(고정 2000ms는 촘촘한 스캔에서
+    # 진짜 짧은 씬을 삼켰다). 사용자가 명시하면 그 값을 쓴다.
+    min_ms: int | None = Field(default=None, ge=0, le=60000)
 
 
 class SegmentOverride(BaseModel):
@@ -656,7 +659,12 @@ async def set_scene_rule(
                for i, f in enumerate(data["frames"])]
     total_ms = (samples[-1].t_ms + interval_ms) if samples else 0
     rule_dict = body.model_dump()
-    scene_data = build_scene_data(samples, rule_dict, total_ms, body.min_ms)
+    # min_ms 미지정이면 간격 비례 자동값 — 1샘플 오독 튐(≈1 interval)은 흡수하되
+    # 2샘플 이상 진짜 씬은 남기도록 1.5×interval. 이러면 0.25초 스캔에서 0.5초
+    # 이상 씬이 살아남는다(실기 0050=0.75초). rule_dict에도 실제 쓴 값을 남긴다.
+    min_ms = body.min_ms if body.min_ms is not None else round(1.5 * interval_ms)
+    rule_dict["min_ms"] = min_ms
+    scene_data = build_scene_data(samples, rule_dict, total_ms, min_ms)
     scene_data["interval_ms"] = interval_ms
     # 사용자가 지정한 OCR 구역은 계산 산출물이 아니라 그 작품의 설정이다 —
     # build_scene_data가 만든 새 dict에 되실어야 경계 계산으로 지워지지 않는다
