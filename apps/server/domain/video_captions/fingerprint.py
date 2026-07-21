@@ -85,6 +85,23 @@ def frame_runs(cuts: list[int], n_frames: int) -> list[tuple[int, int]]:
     return list(zip(starts, starts[1:] + [n_frames]))
 
 
+def stable_frame(diffs: list[int], start: int, end: int) -> int:
+    """런 [start, end)에서 판독할 프레임 — 인접 diff 합이 가장 작은 '정지' 프레임.
+
+    런 중간을 맹목적으로 읽으면 가짜 컷을 만든 흐릿한 프레임(디졸브·모션 잔상)
+    을 읽게 돼 오독률이 치솟는다(실기 11.5%). 앞뒤 diff가 작은 프레임은 화면이
+    정지해 있어 텍스트가 선명하다. 컷 프레임(런 양끝)은 컷 스파이크를 지므로
+    자연히 피해진다. 동점이면 런 중앙에 가까운(그다음 낮은 인덱스) 프레임."""
+    center2 = start + end - 1  # 중앙×2 (정수 비교용)
+
+    def score(i: int) -> tuple:
+        motion_in = diffs[i - 1] if 0 <= i - 1 < len(diffs) else 0
+        motion_out = diffs[i] if i < len(diffs) else 0
+        return (motion_in + motion_out, abs(2 * i - center2), i)
+
+    return min(range(start, end), key=score)
+
+
 def frame_mid_ms(idx: int, fps: float) -> int:
     """프레임 idx의 표시구간 '중앙' 시각(ms) — 경계·OCR 추출 시각 규약.
 

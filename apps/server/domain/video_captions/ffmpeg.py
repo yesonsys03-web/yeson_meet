@@ -426,6 +426,27 @@ def extract_thumbnails(ffmpeg: str, src: Path, out_dir: Path,
           str(out_dir / "thumb_%05d.jpg")], proc_key=proc_key)
 
 
+def extract_frames_at(ffmpeg: str, src: Path, frame_indices: list[int],
+                      out_dir: Path, region: OcrRegion,
+                      proc_key: str | None = None) -> dict[int, Path]:
+    """지정한 프레임 번호(0-based 디코드 순서)들을 한 번의 디코드 패스로 일괄
+    추출한다 — 프레임마다 입력 -ss 시킹(실측 830ms×수천 회=수 분)을 하지 않는다.
+
+    select 필터그래프는 파일(-filter_script:v)로 전달한다 — 수천 프레임이면
+    식이 수십 KB라 Windows 커맨드라인 32K 한도에 걸린다. -fps_mode vfr로
+    선택된 프레임만 순서대로 내보내며, 출력 번호는 선택 프레임의 오름차순과
+    1:1 대응한다. 반환은 프레임번호→경로 매핑(파일 생성 여부는 확인하지
+    않는다 — 판독 실패는 호출자의 폴백이 받는다)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ordered = sorted(set(frame_indices))
+    expr = "+".join(f"eq(n\\,{n})" for n in ordered)
+    graph = out_dir / "select.vf"
+    graph.write_text(f"select={expr},{crop_filter(region)}", encoding="utf-8")
+    _run([ffmpeg, "-y", "-i", str(src), "-filter_script:v", str(graph),
+          "-fps_mode", "vfr", str(out_dir / "at_%05d.png")], proc_key=proc_key)
+    return {n: out_dir / f"at_{k:05d}.png" for k, n in enumerate(ordered, 1)}
+
+
 def cut_segment(ffmpeg: str, src: Path, dst: Path, start_ms: int, end_ms: int,
                 proc_key: str | None = None, fps: float | None = None) -> None:
     """[start_ms, end_ms) 구간을 재인코딩(정확)해 dst로 저장. -c copy 금지 —

@@ -798,6 +798,18 @@ async def test_run_scene_scan_fingerprint_happy_path(monkeypatch, tmp_path):
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(str(t_ms))  # 판독 페이크가 어느 프레임인지 알 수 있게
 
+    # 배치 추출 페이크 — 실제 구현과 같은 프레임번호→경로 계약으로, 파일에
+    # 그 프레임의 중앙 시각을 적어 판독 페이크가 라벨을 결정할 수 있게 한다.
+    def fake_extract_at(ffmpeg, src, frame_indices, out_dir, region,
+                        proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = {}
+        for k, n in enumerate(sorted(set(frame_indices)), 1):
+            p = out_dir / f"at_{k:05d}.png"
+            p.write_text(str(frame_mid_ms(n, 24.0)))
+            out[n] = p
+        return out
+
     cut_ms = frame_mid_ms(10, 24.0)
 
     def fake_read(path, delimiters, min_tokens=2, top_frac=0.35):
@@ -809,6 +821,7 @@ async def test_run_scene_scan_fingerprint_happy_path(monkeypatch, tmp_path):
     monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
     monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
     monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
     monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
     monkeypatch.setattr(pl, "read_slate_line", fake_read)
 

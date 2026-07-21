@@ -267,3 +267,25 @@ def test_extract_fingerprint_frames_all_frames_cropped_scaled(
                   "scale=160:-2")
     assert cmd[-1].endswith("f_%06d.png")
     assert (tmp_path / "fp").is_dir()
+
+
+def test_extract_frames_at_batches_selects_in_one_pass(monkeypatch, tmp_path: Path):
+    """런 대표 프레임 일괄 추출 — 런마다 -ss 시킹(실측 830ms×2658=9분)이 아니라
+    한 번의 디코드 패스에서 select로 뽑는다. 필터그래프는 Windows 커맨드라인
+    32K 한도를 피해 파일(-filter_script:v)로 전달한다. 반환은 프레임번호→경로
+    매핑(선택은 오름차순으로 출력 번호와 대응)."""
+    calls: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: (calls.append(cmd), _Result())[1])
+    out = ff.extract_frames_at("ffmpeg", tmp_path / "in.mp4", [7, 3, 120],
+                               tmp_path / "sel", region=(0.0, 0.0, 0.5, 0.2))
+    cmd = calls[0]
+    assert "-filter_script:v" in cmd
+    graph = Path(cmd[cmd.index("-filter_script:v") + 1]).read_text()
+    assert "select=eq(n\\,3)+eq(n\\,7)+eq(n\\,120)" in graph
+    assert "crop=in_w*0.5000:in_h*0.2000:in_w*0.0000:in_h*0.0000" in graph
+    assert "-fps_mode" in cmd and cmd[cmd.index("-fps_mode") + 1] == "vfr"
+    # 오름차순 대응: 3→_00001, 7→_00002, 120→_00003
+    assert out[3].name == "at_00001.png"
+    assert out[7].name == "at_00002.png"
+    assert out[120].name == "at_00003.png"

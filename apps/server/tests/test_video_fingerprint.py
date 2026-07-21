@@ -151,3 +151,34 @@ def test_adjacent_diffs_calls_check_cancel(tmp_path):
 
     with pytest.raises(Boom):
         adjacent_diffs([p, p], check_cancel=cancel)
+
+
+# ── stable_frame (런 내 판독 프레임 선택) ────────────────────────────────────
+# 런 중간을 맹목적으로 읽으면 가짜 컷을 만든 흐릿한 프레임(디졸브·모션)을
+# 읽게 돼 오독률이 치솟는다(실기 11.5%). 인접 diff가 가장 작은 '정지' 프레임을
+# 고르면 오독을 원천에서 줄인다.
+
+def test_stable_frame_prefers_static_over_middle():
+    from apps.server.domain.video_captions.fingerprint import stable_frame
+    # 런 [0,6): 앞쪽(0~2)은 움직임, 3~4는 완전 정지 — 중간(2~3)이 아니라 정지 구간.
+    diffs = [50, 40, 30, 0, 0, 400]  # diffs[5]=다음 컷 스파이크
+    assert stable_frame(diffs, 0, 6) == 4  # in=diffs[3]=0, out=diffs[4]=0
+
+
+def test_stable_frame_uniform_picks_middle():
+    from apps.server.domain.video_captions.fingerprint import stable_frame
+    assert stable_frame([0] * 10, 2, 8) == 4  # 동점이면 중앙 근처
+
+
+def test_stable_frame_avoids_cut_edges():
+    from apps.server.domain.video_captions.fingerprint import stable_frame
+    # 시작 프레임은 컷 스파이크(in), 끝 프레임은 다음 컷 스파이크(out)를 진다.
+    diffs = [500, 0, 0, 0, 500]
+    pick = stable_frame(diffs, 1, 5)
+    assert pick in (2, 3)
+    assert pick != 1 and pick != 4
+
+
+def test_stable_frame_single_frame_run():
+    from apps.server.domain.video_captions.fingerprint import stable_frame
+    assert stable_frame([500, 500], 1, 2) == 1

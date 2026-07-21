@@ -23,10 +23,13 @@ from apps.server.db.session import AsyncSessionLocal
 from . import gpu_pack
 from .ffmpeg import (
     burn_subtitles, cut_segment, ensure_preview, extract_audio, extract_frame,
-    extract_fingerprint_frames, extract_frames, extract_thumbnails,
-    kill_active, locate_ffmpeg, video_fps, wav_duration_seconds,
+    extract_fingerprint_frames, extract_frames, extract_frames_at,
+    extract_thumbnails, kill_active, locate_ffmpeg, video_fps,
+    wav_duration_seconds,
 )
-from .fingerprint import adjacent_diffs, detect_cuts, frame_mid_ms, frame_runs
+from .fingerprint import (
+    adjacent_diffs, detect_cuts, frame_mid_ms, frame_runs, stable_frame,
+)
 from .ingest import download_youtube
 from .scene_split import (
     FrameSample, SceneRun, SlateRule, build_label, canonicalize_texts,
@@ -824,15 +827,26 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
             tmpdir = workdir / "fp_ocr_tmp"
             tmpdir.mkdir(parents=True, exist_ok=True)
 
-            def _read_run(bounds: tuple[int, int]) -> str:
-                start_f, end_f = bounds
+            # 런마다 '정지' 프레임(인접 diff 최소)을 골라 한 번의 디코드 패스로
+            # 일괄 추출한다 — 런마다 -ss 시킹하면 830ms×수천 런=수 분이 시킹에
+            # 녹고(실측 총 9분), 흐릿한 중간 프레임을 읽어 오독도 는다.
+            picks = [stable_frame(diffs, s, e) for s, e in runs_f]
+            batch = extract_frames_at(ffmpeg, burned, picks, tmpdir, eff_region,
+                                      proc_key=str(external_id))
+
+            def _read_run(item: tuple[int, tuple[int, int]]) -> str:
+                idx, (start_f, end_f) = item
                 _check_cancel()
-                # 컷 경계에서 먼 순서(중앙→1/4→3/4)로 시도 — 컷 프레임은 디졸브
-                # ·모션블러로 오독하기 쉽다(실측: 컷 프레임 판독에서 꼬리 잘림
-                # 다수). 런 내부는 텍스트가 동일하다는 게 지문 방식의 전제라
-                # 어느 프레임을 읽어도 같아야 하고, 실패("")만 자리를 바꿔 본다.
+                png = batch.get(picks[idx])
+                text = (read_slate_line(png, _DEFAULT_DELIMS, top_frac=1.0)
+                        if png is not None else "")
+                if text:
+                    return text
+                # 배치 프레임 판독 실패 — 컷에서 떨어진 다른 프레임을 시킹
+                # 추출해 재시도(드묾: 실기 2658런 중 14). 런 내부는 텍스트가
+                # 동일하다는 게 지문 방식의 전제라 자리만 바꿔 본다.
                 span = end_f - start_f
-                for frac in (0.5, 0.25, 0.75):
+                for frac in (0.25, 0.75):
                     fi = min(end_f - 1, start_f + int(span * frac))
                     dst = tmpdir / f"r_{threading.get_ident()}_{fi}.png"
                     extract_frame(ffmpeg, burned, frame_mid_ms(fi, fps), dst,
@@ -851,7 +865,7 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
             try:
                 # 런 판독은 서로 독립 — 정밀화·스캔과 같은 이유·설정으로 병렬화.
                 with ThreadPoolExecutor(max_workers=_refine_workers()) as pool:
-                    for text in pool.map(_read_run, runs_f):
+                    for text in pool.map(_read_run, enumerate(runs_f)):
                         texts.append(text)
                         done += 1
                         if done % 10 == 0 or done == total:
