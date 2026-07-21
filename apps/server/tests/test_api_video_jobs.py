@@ -692,6 +692,38 @@ async def _new_scene_job(db_session, admin_user, status="done"):
     return job
 
 
+async def test_scan_accepts_interval_and_decouples_thumbs(client, db_session,
+                                                         admin_user, monkeypatch):
+    """짧은 씬(2초 미만)을 잡으려면 스캔 간격을 촘촘하게 줄 수 있어야 한다. 다만
+    썸네일까지 촘촘하면 필름스트립이 수천 칸이 되므로, 썸네일 간격은 분리해
+    성기게 유지한다(scan 0.25s여도 thumb는 2s)."""
+    captured = {}
+    monkeypatch.setattr(api_vj, "_start_scene_scan",
+                        lambda eid, interval_s: captured.update(interval=interval_s))
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan",
+                          json={"interval_s": 0.25})
+    assert r.status_code == 202
+    assert captured["interval"] == 0.25
+
+
+async def test_scan_interval_out_of_range_rejected(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan",
+                          json={"interval_s": 0.01})
+    assert r.status_code == 422
+
+
 async def test_scan_scenes_requires_done_status(client, db_session, admin_user):
     job = await _new_scene_job(db_session, admin_user, status="review")
     resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan")
@@ -702,7 +734,7 @@ async def test_scan_scenes_starts_task_when_done(client, db_session, admin_user,
                                                  monkeypatch):
     started = {}
     monkeypatch.setattr(api_vj, "_start_scene_scan",
-                        lambda eid: started.setdefault("eid", eid))
+                        lambda eid, interval_s: started.setdefault("eid", eid))
     job = await _new_scene_job(db_session, admin_user, status="done")
     # scan endpoint also requires burned.mp4 to exist on disk
     d = pl.job_dir(job.external_id)
@@ -720,7 +752,7 @@ async def test_scan_scenes_writes_initial_scanning_state(client, db_session,
     """재스캔 폴링 레이스 방지: 202 직후 scenes.json에 scanning 상태가 동기
     기록돼야 한다 — 프레임 추출(수 분) 동안 옛 scanned 데이터가 보이면
     프론트 폴링이 '스캔 완료(옛 데이터)'로 오판한다."""
-    monkeypatch.setattr(api_vj, "_start_scene_scan", lambda eid: None)
+    monkeypatch.setattr(api_vj, "_start_scene_scan", lambda eid, interval_s: None)
     job = await _new_scene_job(db_session, admin_user, status="done")
     d = pl.job_dir(job.external_id)
     d.mkdir(parents=True, exist_ok=True)

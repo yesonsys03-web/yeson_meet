@@ -71,8 +71,8 @@ def _start_burn(external_id: UUID, position: str, margin_v: int,
                    run_burn_job(external_id, position, margin_v, font_size, color))
 
 
-def _start_scene_scan(external_id: UUID) -> None:  # test seam
-    start_job_task(external_id, run_scene_scan(external_id))
+def _start_scene_scan(external_id: UUID, interval_s: float) -> None:  # test seam
+    start_job_task(external_id, run_scene_scan(external_id, interval_s))
 
 
 def _start_scene_export(external_id: UUID, mode: str, out_dir: str | None) -> None:  # test seam
@@ -308,6 +308,8 @@ class SlateTemplateIn(BaseModel):
     delimiters: list[str] = Field(default_factory=lambda: ["_", "-"])
     seq_tokens: list[int] = Field(default_factory=list)
     scene_tokens: list[int] = Field(default_factory=list)
+    # 샘플 간격도 쇼 특성(컷 밀도)이라 템플릿에 함께 저장한다.
+    scan_interval_s: float = Field(default=2.0, ge=0.1, le=5.0)
 
 
 @router.get("/slate-templates")
@@ -577,21 +579,31 @@ async def retranslate_video_job(
             "remaining": len(targets) - retranslated}
 
 
+class ScanIn(BaseModel):
+    # 샘플 간격(초). 짧은 씬(2초 미만)이 많은 애니메틱은 촘촘하게(0.25s) 떠야
+    # 놓치지 않는다 — 크롭 OCR이 빨라져 0.25s도 25분 영상 ~7분이면 끝난다.
+    interval_s: float = Field(default=2.0, ge=0.1, le=5.0)
+
+
 @router.post("/{external_id}/scenes/scan", status_code=status.HTTP_202_ACCEPTED)
 async def scan_scenes(
     external_id: UUID,
     db: Annotated[AsyncSession, Depends(get_session)],
+    body: ScanIn | None = None,
 ) -> dict:
     job = await _get_job_or_404(db, external_id)
     if job.status != "done" or not job.burned_path or not Path(job.burned_path).exists():
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "씬 분할은 굽기 완료(done)된 작업에서만 가능합니다.")
+    interval_s = (body or ScanIn()).interval_s
     # 초기 scanning 상태를 동기 기록(익스포트/정밀화와 같은 패턴) — 프레임 추출
     # (수 분) 동안 옛 scanned 데이터가 남아 있으면 재스캔 폴링이 '스캔 완료
-    # (옛 데이터)'로 오판한다.
+    # (옛 데이터)'로 오판한다. 구역은 재스캔에도 유지되게 되싣는다.
+    prev = load_scenes(external_id) or {}
     save_scenes(external_id, {"scanning": True, "total_frames": 0,
-                              "ocr_done": 0, "frames": []})
-    _start_scene_scan(external_id)
+                              "ocr_done": 0, "frames": [],
+                              "ocr_region": prev.get("ocr_region")})
+    _start_scene_scan(external_id, interval_s)
     return {"status": "scanning"}
 
 
@@ -621,6 +633,10 @@ async def get_scenes(
         "segments_sequence": data.get("segments_sequence", []),
         "rule": data.get("rule"),
         "interval_ms": data.get("interval_ms", 2000),
+        # 썸네일은 스캔 간격과 분리(성기게) — 필름스트립 격자 계산은 이 값을 쓴다.
+        "thumb_interval_ms": data.get("thumb_interval_ms",
+                                      data.get("interval_ms", 2000)),
+        "thumb_count": data.get("thumb_count", len(data.get("frames", []))),
         "ocr_region": data.get("ocr_region"),
     }
 

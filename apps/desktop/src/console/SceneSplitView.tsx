@@ -28,6 +28,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const [sceneIdx, setSceneIdx] = useState<number[]>([]);
   // 공백을 필드 구분자로 쓰는 슬레이트 대응(기본은 공백 비분해 — 백엔드와 동일).
   const [spaceDelim, setSpaceDelim] = useState(false);
+  // 샘플 간격(초). 짧은 씬이 많으면 촘촘하게(0.25s) — 놓치면 그 씬 클립이 없어진다.
+  const [scanIntervalS, setScanIntervalS] = useState(2.0);
 
   const delimiters = spaceDelim ? ["_", " ", "-"] : ["_", "-"];
 
@@ -95,7 +97,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const hadScan = Boolean(data?.scanned);
     setBusy(true); setError(null); setNotice("프레임 추출 중…");
     try {
-      await scanScenes(jobId);  // 스캔은 비동기 — 이후 진행률 폴링
+      await scanScenes(jobId, scanIntervalS);  // 스캔은 비동기 — 이후 진행률 폴링
       await pollScan(hadScan);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -175,7 +177,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     try {
       if (opts.rescan) {
         setStage("1/4 슬레이트 스캔");
-        await scanScenes(jobId);
+        await scanScenes(jobId, scanIntervalS);
         await pollScan(Boolean(data?.scanned));
         if (cancelledRef.current) return;
       }
@@ -271,10 +273,12 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const [selectedSeg, setSelectedSeg] = useState<number | null>(null);
   const [previewMs, setPreviewMs] = useState<number | null>(null);
   const intervalMs = data?.interval_ms ?? 2000;
-  const thumbCount = data?.frames.length ?? 0;
+  // 필름스트립은 썸네일 격자(성긴 간격)로 그린다 — 스캔 간격과 다르다.
+  const thumbIntervalMs = data?.thumb_interval_ms ?? intervalMs;
+  const thumbCount = data?.thumb_count ?? data?.frames.length ?? 0;
   const highlight = selectedSeg != null && segments[selectedSeg]
     ? segmentThumbRange(segments[selectedSeg]!.start_ms,
-                        segments[selectedSeg]!.end_ms, intervalMs, thumbCount)
+                        segments[selectedSeg]!.end_ms, thumbIntervalMs, thumbCount)
     : null;
 
   // OCR 오독 검출 — 씬 모드는 구간이 수백 개라 눈으로 못 훑는다. 라벨 모양이
@@ -316,6 +320,9 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     })();
   }, []);
   useEffect(() => { setOcrRegion(data?.ocr_region ?? null); }, [data?.ocr_region]);
+  useEffect(() => {
+    if (data?.interval_ms) setScanIntervalS(data.interval_ms / 1000);
+  }, [data?.interval_ms]);
 
   // 템플릿을 고르면 구역과 토큰 규칙을 한 번에 적용한다(같은 쇼면 포맷도 같다).
   const applyTemplate = (t: SlateTemplate) => {
@@ -323,6 +330,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setSeqIdx(t.seq_tokens ?? []);
     setSceneIdx(t.scene_tokens ?? []);
     setSpaceDelim((t.delimiters ?? []).includes(" "));
+    if (t.scan_interval_s) setScanIntervalS(t.scan_interval_s);
     void setOcrRegionApi(jobId, t.region).catch(() => undefined);
     setNotice(`'${t.name}' 템플릿을 적용했습니다 — 구역과 토큰 규칙이 설정됐습니다.`);
   };
@@ -401,12 +409,29 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
             ? `지정됨 — 가로 ${(ocrRegion.w * 100).toFixed(0)}% · 세로 ${(ocrRegion.h * 100).toFixed(0)}%`
             : "미지정 — 전체 프레임에서 상단을 훑습니다(느리고 쇼에 따라 실패)"}
         </span>
+        {/* 샘플 간격 — 짧은 씬(2초 미만)이 많으면 촘촘하게. 놓치면 그 씬 클립이
+            아예 생기지 않는다(2초 샘플이 사이의 짧은 컷을 건너뛴다). */}
+        <label style={{ fontSize: 12, opacity: 0.8, display: "inline-flex",
+                        alignItems: "center", gap: 5, marginLeft: "auto" }}>
+          샘플 간격
+          <select value={scanIntervalS}
+            onChange={(e) => setScanIntervalS(Number(e.target.value))}
+            style={{ fontSize: 12, padding: "3px 6px", borderRadius: 4,
+                     background: "transparent", color: "inherit",
+                     border: "1px solid rgba(255,255,255,0.15)" }}>
+            <option value={2.0}>2초 (빠름·긴 컷)</option>
+            <option value={1.0}>1초</option>
+            <option value={0.5}>0.5초</option>
+            <option value={0.25}>0.25초 (짧은 컷·느림)</option>
+          </select>
+        </label>
       </div>
       {showPicker ? (
         <SlateRegionPicker jobId={jobId} sampleMs={sampleMs} region={ocrRegion}
           onChange={setOcrRegion} templates={templates}
           onTemplatesChange={setTemplates}
-          rule={{ delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx }}
+          rule={{ delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx,
+                  scan_interval_s: scanIntervalS }}
           onApplyTemplate={applyTemplate} />
       ) : null}
 
@@ -602,8 +627,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
             </p>
           ) : null}
           <SceneFilmstrip jobId={jobId} segments={segments}
-            thumbCount={data.frames.length}
-            intervalMs={intervalMs}
+            thumbCount={thumbCount}
+            intervalMs={thumbIntervalMs}
             totalMs={(data.frames.at(-1)?.t_ms ?? 0) + intervalMs}
             onMerge={mergeSeg} onRename={renameSeg}
             selectedIndex={selectedSeg} highlight={highlight}

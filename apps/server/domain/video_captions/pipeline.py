@@ -618,6 +618,10 @@ async def run_scene_scan(external_id: UUID,
                 shutil.rmtree(d, ignore_errors=True)
 
         interval_ms = int(interval_s * 1000)
+        # 썸네일 간격은 스캔(OCR) 간격과 분리한다 — 스캔을 0.25s로 촘촘히 떠도
+        # 썸네일까지 그러면 필름스트립이 수천 칸이 된다. 썸네일은 최소 2s로 성기게.
+        thumb_interval_s = max(2.0, interval_s)
+        thumb_interval_ms = int(thumb_interval_s * 1000)
         # 사용자가 지정한 슬레이트 구역 — scenes.json을 덮어쓰기 전에 읽어두고,
         # 이후 모든 저장에 되실어 재스캔해도 지정이 사라지지 않게 한다.
         region = load_ocr_region(external_id)
@@ -625,34 +629,47 @@ async def run_scene_scan(external_id: UUID,
         region_out = ({"x": region[0], "y": region[1],
                        "w": region[2], "h": region[3]} if region else None)
 
-        def _work() -> list[FrameSample]:
+        def _prog(extra: dict) -> dict:
+            return {"scanning": True, "interval_ms": interval_ms,
+                    "thumb_interval_ms": thumb_interval_ms,
+                    "ocr_region": region_out, **extra}
+
+        def _work() -> tuple[list[FrameSample], int]:
             extract_frames(ffmpeg, burned, frames_dir, interval_s,
                            proc_key=str(external_id), region=region)
-            extract_thumbnails(ffmpeg, burned, thumbs_dir, interval_s,
+            extract_thumbnails(ffmpeg, burned, thumbs_dir, thumb_interval_s,
                                proc_key=str(external_id))
+            thumb_count = len(list(thumbs_dir.glob("thumb_*.jpg")))
             pngs = sorted(frames_dir.glob("frame_*.png"))
             total = len(pngs)
             # 진행률 초기화 — 긴 영상은 OCR이 오래 걸려 프론트가 폴링하며 표시한다.
-            save_scenes(external_id, {"scanning": True, "interval_ms": interval_ms,
-                                      "total_frames": total, "ocr_done": 0,
-                                      "frames": [], "ocr_region": region_out})
+            save_scenes(external_id, _prog({"total_frames": total, "ocr_done": 0,
+                                            "frames": [], "thumb_count": thumb_count}))
             samples: list[FrameSample] = []
-            for i, png in enumerate(pngs):
+            # 촘촘한 스캔은 OCR 호출이 많으므로 병렬화한다(정밀화와 같은 이유·설정).
+            def _read(ipng):
+                i, png = ipng
                 if generation != _current_generation(external_id):
                     raise StaleRunCancelled(external_id)
-                text = read_slate_line(png, _DEFAULT_DELIMS, top_frac=band)
-                samples.append(FrameSample(index=i, t_ms=i * interval_ms, text=text))
-                # 증분 진행률 — 매 프레임 쓰면 I/O 과다라 10개마다(+마지막).
-                if (i + 1) % 10 == 0 or (i + 1) == total:
-                    save_scenes(external_id, {"scanning": True,
-                                              "interval_ms": interval_ms,
-                                              "total_frames": total,
-                                              "ocr_done": i + 1, "frames": [],
-                                              "ocr_region": region_out})
-            return samples
+                return i, read_slate_line(png, _DEFAULT_DELIMS, top_frac=band)
+
+            texts: dict[int, str] = {}
+            done = 0
+            with ThreadPoolExecutor(max_workers=_refine_workers()) as pool:
+                for i, text in pool.map(_read, enumerate(pngs)):
+                    texts[i] = text
+                    done += 1
+                    # 증분 진행률 — 매 프레임 쓰면 I/O 과다라 20개마다(+마지막).
+                    if done % 20 == 0 or done == total:
+                        save_scenes(external_id, _prog(
+                            {"total_frames": total, "ocr_done": done,
+                             "frames": [], "thumb_count": thumb_count}))
+            samples = [FrameSample(index=i, t_ms=i * interval_ms,
+                                   text=texts.get(i, "")) for i in range(total)]
+            return samples, thumb_count
 
         try:
-            samples = await asyncio.to_thread(_work)
+            samples, thumb_count = await asyncio.to_thread(_work)
         finally:
             # OCR용 원본 프레임은 크므로 제거(썸네일만 남긴다) — 실패해도 제거한다.
             shutil.rmtree(frames_dir, ignore_errors=True)
@@ -660,6 +677,8 @@ async def run_scene_scan(external_id: UUID,
         save_scenes(external_id, {
             "scanning": False,
             "interval_ms": interval_ms,
+            "thumb_interval_ms": thumb_interval_ms,
+            "thumb_count": thumb_count,
             "frame_count": len(samples),
             "frames": [{"t_ms": s.t_ms, "text": s.text} for s in samples],
             "ocr_region": region_out,

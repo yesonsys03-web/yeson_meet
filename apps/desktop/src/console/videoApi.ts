@@ -338,6 +338,9 @@ export type ScenesData = {
   segments_sequence: SceneSegment[];
   rule: SlateRuleInput | null;
   interval_ms?: number;
+  // 썸네일 간격/개수는 스캔 간격과 분리(성기게) — 필름스트립 격자 계산에 쓴다.
+  thumb_interval_ms?: number;
+  thumb_count?: number;
   // 사용자가 지정한 슬레이트 구역(비율). 없으면 전체 프레임 + 상단 밴드 가정.
   ocr_region?: OcrRegion | null;
 };
@@ -349,9 +352,11 @@ export type SlateRuleInput = {
   min_ms?: number;
 };
 
-export async function scanScenes(jobId: string): Promise<void> {
+export async function scanScenes(
+  jobId: string, intervalS = 2.0,
+): Promise<void> {
   await request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/scan`,
-    { method: "POST" });
+    { method: "POST", body: JSON.stringify({ interval_s: intervalS }) });
 }
 
 export async function getScenes(jobId: string): Promise<ScenesData> {
@@ -406,6 +411,7 @@ export type SlateTemplate = {
   delimiters: string[];
   seq_tokens: number[];
   scene_tokens: number[];
+  scan_interval_s?: number;
 };
 
 export async function setOcrRegion(
