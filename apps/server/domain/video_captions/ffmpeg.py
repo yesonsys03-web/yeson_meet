@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -135,6 +136,31 @@ def locate_ffmpeg() -> str | None:
     if override:
         return override if Path(override).exists() else None
     return shutil.which("ffmpeg")
+
+
+_FPS_RE = re.compile(r"(\d+(?:\.\d+)?)\s+fps")
+
+
+def video_fps(ffmpeg: str, src: Path) -> float | None:
+    """소스의 프레임레이트(fps). ffprobe를 번들하지 않으므로 `ffmpeg -i`(출력파일
+    없음 → code 1)의 stderr 스트림 정보('… 23.98 fps …')를 파싱한다. 실패 시 None.
+    컷 경계를 프레임 간 간격 중앙(반프레임)에 놓아 경계 프레임 중복/유실을 없애는
+    데만 쓰므로 정확한 유리수(24000/1001)까지는 필요 없고 반올림값이면 충분하다."""
+    try:
+        result = subprocess.run(
+            [ffmpeg, "-i", str(src)], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", **_SUBPROCESS_FLAGS,
+        )
+    except OSError:
+        return None
+    m = _FPS_RE.search(result.stderr or "")
+    if not m:
+        return None
+    try:
+        fps = float(m.group(1))
+    except ValueError:
+        return None
+    return fps if fps > 0 else None
 
 
 def _run(cmd: list[str], *, cwd: str | None = None,
@@ -359,7 +385,7 @@ def extract_thumbnails(ffmpeg: str, src: Path, out_dir: Path,
 
 
 def cut_segment(ffmpeg: str, src: Path, dst: Path, start_ms: int, end_ms: int,
-                proc_key: str | None = None) -> None:
+                proc_key: str | None = None, fps: float | None = None) -> None:
     """[start_ms, end_ms) 구간을 재인코딩(정확)해 dst로 저장. -c copy 금지 —
     슬레이트 편집본은 컷 경계가 명확해야 하므로 프레임 정확도를 우선한다.
     -ss를 -i 앞에 둬 입력 시킹으로 빠르게 접근하되, 재인코딩이라 컷은 정확하다.
@@ -371,10 +397,26 @@ def cut_segment(ffmpeg: str, src: Path, dst: Path, start_ms: int, end_ms: int,
     리스트(elst media time -1)가 생기는데, QuickTime은 이를 존중해 클립 앞에
     검정 프레임을 렌더한다 — 원본엔 없는데도(실기 확인: 흰색으로 여는 샷 앞에
     검정). ffmpeg·VLC는 무시한다. setpts로 첫 프레임 PTS를 0으로 리셋하고
-    B-프레임을 없애면(-bf 0) 빈 편집 자체가 사라진다(edit list media time 0)."""
+    B-프레임을 없애면(-bf 0) 빈 편집 자체가 사라진다(edit list media time 0).
+
+    fps(경계 프레임 중복 방지): 정밀화는 경계를 '-ss로 다음 라벨이 잡히는 시각'으로
+    수렴시키는데, 그 값은 실제 전환 프레임 PTS보다 0~<1프레임 위에 놓인다. 입력측
+    -ss는 그 시각 '이하'의 가장 가까운 프레임으로 스냅다운("그 시각에 보이는 프레임")
+    하므로 -ss start는 이 세그의 첫 프레임을 정확히 잡는다. 문제는 끝을 -t(길이)로
+    끊을 때다: 시작·끝 경계의 스냅 편차(δ)가 서로 달라, 다음 세그 첫 프레임이 이
+    클립 꼬리에 1개 섞이는 일이 경계의 프레임 그리드 정렬에 따라 씬마다 제각각으로
+    생긴다(실측). fps를 주면 끝을 -t 대신 정확한 프레임 수 -frames:v로 끊는다 —
+    세그 프레임 수는 정수라 (end-start)를 fps로 환산해 반올림하면 δ 편차(<1프레임)가
+    흡수돼 정확히 복원되고, -ss 스냅다운 첫 프레임 + 정확한 개수라 빈틈·중복이 없다."""
     ss = f"{start_ms / 1000:.3f}"
-    dur = f"{(end_ms - start_ms) / 1000:.3f}"
-    _run([ffmpeg, "-y", "-ss", ss, "-i", str(src), "-t", dur,
+    if fps and fps > 0:
+        n = max(1, round((end_ms - start_ms) * fps / 1000.0))
+        tail = ["-frames:v", str(n)]
+    else:
+        # fps 미상: 출력측 -t(길이)로 폴백. 입력측 -to는 디먹서 패킷 단위로 끊어
+        # B-프레임 재정렬 시 다음 세그 첫 프레임이 꼬리에 섞이므로 금지.
+        tail = ["-t", f"{(end_ms - start_ms) / 1000:.3f}"]
+    _run([ffmpeg, "-y", "-ss", ss, "-i", str(src), *tail,
           "-vf", "setpts=PTS-STARTPTS", "-af", "asetpts=PTS-STARTPTS",
           "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-bf", "0",
           "-c:a", "aac", "-movflags", "+faststart", str(dst)],

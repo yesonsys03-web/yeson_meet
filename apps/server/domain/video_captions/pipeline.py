@@ -24,7 +24,7 @@ from . import gpu_pack
 from .ffmpeg import (
     burn_subtitles, cut_segment, ensure_preview, extract_audio, extract_frame,
     extract_frames, extract_thumbnails, kill_active, locate_ffmpeg,
-    wav_duration_seconds,
+    video_fps, wav_duration_seconds,
 )
 from .ingest import download_youtube
 from .scene_split import (
@@ -752,6 +752,9 @@ async def run_scene_export(external_id: UUID, mode: str,
             raise RuntimeError("ffmpeg를 찾을 수 없습니다.")
         dest = Path(out_dir) if out_dir else (workdir / "scene_out")
         dest.mkdir(parents=True, exist_ok=True)
+        # 컷 경계를 프레임 간 간격 중앙에 놓아 경계 프레임 중복/유실을 없앤다
+        # (cut_segment 참조). 소스 전체가 동일 fps라 한 번만 프로브한다.
+        fps = video_fps(ffmpeg, burned)
         total = len(segments)
         save_export_status(external_id, {"exporting": True, "done": 0,
                                          "total": total, "out_dir": str(dest),
@@ -770,7 +773,7 @@ async def run_scene_export(external_id: UUID, mode: str,
                 out_path = dest / f"{deduped[i]}.mp4"
                 cut_segment(ffmpeg, burned, out_path,
                             seg["start_ms"], seg["end_ms"],
-                            proc_key=str(external_id))
+                            proc_key=str(external_id), fps=fps)
                 written.append(str(out_path))
                 save_export_status(external_id, {"exporting": True, "done": i + 1,
                                                  "total": total,
