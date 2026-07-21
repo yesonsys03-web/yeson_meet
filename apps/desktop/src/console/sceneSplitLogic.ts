@@ -193,6 +193,23 @@ export function mergeSegment(
   return out;
 }
 
+// 인접한 동일 라벨 세그먼트를 하나로 합친다(시간축 연장). 씬 한가운데 짧은
+// 오독이 씬을 쪼갠 뒤 라벨을 교정하면 같은 라벨이 인접하게 되는데, 이들을
+// 병합해야 한 씬이 여러 클립으로 나뉘지 않는다. 비인접(비단조 슬레이트) 동일
+// 라벨은 건드리지 않는다.
+export function mergeAdjacentSameLabel(segs: SceneSegment[]): SceneSegment[] {
+  const out: SceneSegment[] = [];
+  for (const s of segs) {
+    const last = out[out.length - 1];
+    if (last && last.label === s.label) {
+      out[out.length - 1] = { ...last, end_ms: s.end_ms };
+    } else {
+      out.push({ ...s });
+    }
+  }
+  return out;
+}
+
 export type LabelFix = { index: number; from: string; to: string };
 
 // 일괄 적용 미리보기용 — 확실한 제안만 before→after로 뽑는다. 애매한 제안(숫자

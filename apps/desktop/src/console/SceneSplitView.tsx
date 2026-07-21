@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  anomalousLabels, applyFixes, confidentFixes, formatMs, mergeSegment,
+  anomalousLabels, applyFixes, confidentFixes, formatMs, mergeAdjacentSameLabel, mergeSegment,
   previewLabel, renameSegment, segmentThumbRange, tokenizeSlate,
   type LabelFix,
 } from "./sceneSplitLogic";
@@ -377,17 +377,34 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const applied = pendingFixes.filter((f) => fixChecked.has(f.index));
     if (applied.length === 0) { setPendingFixes(null); return; }
     setUndoSnapshot(segments);  // 되돌리기용 스냅샷
-    setSegments(applyFixes(segments, pendingFixes, fixChecked));
+    // 교정으로 같아진 인접 라벨을 바로 병합한다 — 안 그러면 한 씬이 여러 조각으로
+    // 남는다(오독이 씬 한가운데를 쪼갠 케이스).
+    const fixed = applyFixes(segments, pendingFixes, fixChecked);
+    const mergedSegs = mergeAdjacentSameLabel(fixed);
+    setSegments(mergedSegs);
     setPendingFixes(null);
-    setNotice(`이름 ${applied.length}건을 바꿨습니다 — 아직 저장 전입니다. `
-      + `되돌리려면 아래 "되돌리기"를 누르세요.`);
+    const mergedCount = fixed.length - mergedSegs.length;
+    setNotice(`이름 ${applied.length}건 교정`
+      + (mergedCount > 0 ? ` + 인접 중복 ${mergedCount}건 병합` : "")
+      + ` — 아직 저장 전입니다. 되돌리려면 "되돌리기"를 누르세요.`);
+  };
+
+  // 교정 없이 인접 중복만 정리 — 라벨은 맞는데 갈라진 경우(예: 사용자가 오독을
+  // 수동 교정했지만 병합은 안 한 경우) 한 번에 합친다.
+  const mergeDuplicates = () => {
+    const mergedSegs = mergeAdjacentSameLabel(segments);
+    const n = segments.length - mergedSegs.length;
+    if (n === 0) { setNotice("인접 중복이 없습니다."); return; }
+    setUndoSnapshot(segments);
+    setSegments(mergedSegs);
+    setNotice(`인접 중복 ${n}건을 병합했습니다 — 저장 전입니다.`);
   };
 
   const undoFixes = () => {
     if (!undoSnapshot) return;
     setSegments(undoSnapshot);
     setUndoSnapshot(null);
-    setNotice("이름 변경을 되돌렸습니다.");
+    setNotice("되돌렸습니다.");
   };
 
   const saveEdits = async () => {
@@ -608,6 +625,13 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
               <button type="button" style={consoleStyles.mutedAction}
                 onClick={openFixPreview}>
                 제안 일괄 적용 ({anomalies.filter((a) => a.suggestion && a.confident).length})…
+              </button>
+            ) : null}
+            {/* 인접 중복 병합 — 교정으로 같아졌거나 수동 교정 후 갈라진 씬을 합친다. */}
+            {mergeAdjacentSameLabel(segments).length < segments.length ? (
+              <button type="button" style={consoleStyles.mutedAction}
+                onClick={mergeDuplicates}>
+                인접 중복 병합 ({segments.length - mergeAdjacentSameLabel(segments).length})
               </button>
             ) : null}
             {undoSnapshot ? (

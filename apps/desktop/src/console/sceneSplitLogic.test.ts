@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { anomalousLabels, applyFixes, confidentFixes, formatMs, regionFromDrag, labelTemplate, mergeSegment, previewLabel, renameSegment, segmentThumbRange, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
+import { anomalousLabels, applyFixes, confidentFixes, formatMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, previewLabel, renameSegment, segmentThumbRange, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -152,6 +152,31 @@ describe("anomalousLabels", () => {
   });
   it("returns nothing when every label matches the template", () => {
     expect(anomalousLabels(["HH0307_040_0060", "HH0307_040_0090"])).toEqual([]);
+  });
+});
+
+describe("mergeAdjacentSameLabel", () => {
+  it("merges consecutive segments with the same label into one span", () => {
+    // 씬 한가운데 짧은 오독이 씬을 쪼갠 뒤 교정하면 같은 라벨이 인접한다 —
+    // 이들을 시간축 이어 하나로 합친다.
+    const segs = [
+      { label: "HH_010_0210", start_ms: 0, end_ms: 1000 },
+      { label: "HH_010_0210", start_ms: 1000, end_ms: 1500 },  // 교정된 오독
+      { label: "HH_010_0210", start_ms: 1500, end_ms: 3000 },
+      { label: "HH_010_0220", start_ms: 3000, end_ms: 4000 },
+    ];
+    expect(mergeAdjacentSameLabel(segs)).toEqual([
+      { label: "HH_010_0210", start_ms: 0, end_ms: 3000 },
+      { label: "HH_010_0220", start_ms: 3000, end_ms: 4000 },
+    ]);
+  });
+  it("leaves non-adjacent same labels alone (non-monotonic slates)", () => {
+    const segs = [
+      { label: "A", start_ms: 0, end_ms: 1000 },
+      { label: "B", start_ms: 1000, end_ms: 2000 },
+      { label: "A", start_ms: 2000, end_ms: 3000 },
+    ];
+    expect(mergeAdjacentSameLabel(segs)).toEqual(segs);
   });
 });
 
