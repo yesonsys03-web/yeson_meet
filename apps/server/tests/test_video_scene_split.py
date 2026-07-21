@@ -665,3 +665,95 @@ def test_runs_contiguous_no_gaps():
     assert segs[0].start_ms == 700 and segs[-1].end_ms == 2600
     for a, b in zip(segs, segs[1:]):
         assert a.end_ms == b.start_ms
+
+
+# ── 런 텍스트 canonical화 (지문 오독 원천 차단) ─────────────────────────────
+# 지문 방식은 런 중간(가짜 컷을 만든 흐릿한 프레임 근처)을 읽어 구분자 유실
+# 오독률이 간격 스캔의 10배(실기 11.5%)다. 그룹핑 전에 데이터 자신의 최빈
+# 토큰 모양(템플릿)으로 오독을 재분해해 키가 갈라지는 것을 원천 차단한다
+# (프론트 sceneSplitLogic.ts tokenShape/labelTemplate/reparse의 서버 이식 —
+# 경계 계산의 단일 출처는 서버다).
+
+def test_token_shape_runs():
+    from apps.server.domain.video_captions.scene_split import token_shape
+    assert token_shape("HH0307") == "U2D4"
+    assert token_shape("v01") == "L1D2"
+    assert token_shape("Seq 11B") == "U1L2D2U1"  # 내부 공백은 squash
+
+
+def test_label_template_modal_shapes():
+    from apps.server.domain.video_captions.scene_split import label_template
+    texts = ["HH0307_010_0010_AC_v01"] * 5 + ["HH0307010_0020_AC_v01", "VAL"]
+    assert label_template(texts, ["_", "-"]) == ["U2D4", "D3", "D4", "U2", "L1D2"]
+
+
+def test_canonicalize_fixes_delimiter_loss():
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["HH0307_010_0010_AC_v01"] * 5
+             + ["HH0307010_0020_AC_v01",    # 쇼+시퀀스 붙음(실기)
+                "HH0307_0100030_ACv01"])    # 시퀀스+씬·AC+v01 붙음(실기)
+    out = canonicalize_texts(texts, ["_", "-"])
+    assert out[:5] == texts[:5]  # 정상은 그대로
+    assert out[5] == "HH0307_010_0020_AC_v01"
+    assert out[6] == "HH0307_010_0030_AC_v01"
+
+
+def test_canonicalize_leaves_ambiguous_and_corrupt():
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["HH0307_010_0010_AC_v01"] * 5
+             + ["HH0307_010_00305_AC_v01",  # 자릿수 남음 — 억지 교정 금지
+                "HH030Z_140_0010_AC_v01",   # 문자 오독 — 템플릿 불일치
+                ""])                         # 판독 실패
+    out = canonicalize_texts(texts, ["_", "-"])
+    assert out[5:] == texts[5:]
+
+
+# ── 클러스터 갈라짐 흡수 (runs_to_segments absorb_flanked_ms) ────────────────
+# 같은 키 두 세그 사이에 낀 '연속' 오독 블록(총 길이 ≤ cap)을 통째로 흡수한다.
+# 단일 낀 것만 잡는 프론트 정리로는 연속 오독(A|X|Y|A)이 남는다(실기 시퀀스
+# 322→104 잔존). 캡이 진짜 비단조(A|B|A에서 B가 긴 경우)를 보존한다.
+
+def test_runs_absorb_flanked_cluster():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 1000, "HH0307_010_0010_AC_v01"),
+        _run(1000, 1100, "HH0307_010_0010AC_v01"),   # 오독 X
+        _run(1100, 1200, "HH03070100010_AC_v01"),    # 오독 Y (연속 클러스터)
+        _run(1200, 2000, "HH0307_010_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene", absorb_flanked_ms=5000)
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010_0010", 0, 2000)]
+
+
+def test_runs_absorb_flanked_respects_cap():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 1000, "HH0307_010_0010_AC_v01"),
+        _run(1000, 7000, "HH0307_010_0020_AC_v01"),  # 6초 — 진짜 씬(비단조) 보존
+        _run(7000, 8000, "HH0307_010_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene", absorb_flanked_ms=5000)
+    assert [s.label for s in segs] == [
+        "HH0307_010_0010", "HH0307_010_0020", "HH0307_010_0010"]
+
+
+def test_runs_absorb_flanked_default_off():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 1000, "HH0307_010_0010_AC_v01"),
+        _run(1000, 1100, "HH0307_010_0010AC_v01"),
+        _run(1100, 2000, "HH0307_010_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert len(segs) == 3  # absorb_flanked_ms 미지정=기존 동작
+
+
+def test_runs_absorb_flanked_keeps_edges():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 100, "HH0307_010_0010AC_v01"),       # 선두 오독 — 흡수 짝 없음
+        _run(100, 1000, "HH0307_010_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene", absorb_flanked_ms=5000)
+    assert [s.label for s in segs] == ["HH0307_010_0010AC", "HH0307_010_0010"]

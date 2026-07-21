@@ -29,8 +29,9 @@ from .ffmpeg import (
 from .fingerprint import adjacent_diffs, detect_cuts, frame_mid_ms, frame_runs
 from .ingest import download_youtube
 from .scene_split import (
-    FrameSample, SceneRun, SlateRule, build_label, compute_boundaries,
-    dedupe_labels, hold_keys, label_matches, runs_to_segments, tokenize,
+    FrameSample, SceneRun, SlateRule, build_label, canonicalize_texts,
+    compute_boundaries, dedupe_labels, hold_keys, label_matches,
+    runs_to_segments, tokenize,
 )
 from .slate_ocr import read_slate_line
 from .srt import SubSegment, build_force_style, segments_to_srt
@@ -711,24 +712,38 @@ async def run_scene_scan(external_id: UUID,
         _BURN_SEMAPHORE.release()
 
 
+# 지문 클러스터 흡수 캡 — 프론트 '오독 갈라짐 정리'(FLANK_MAX_MS)와 동일 5초.
+# 이보다 긴 블록은 진짜 비단조 씬일 수 있어 보존한다.
+_FP_FLANK_MAX_MS = 5000
+
+
 def build_fingerprint_segments(runs_raw: list[dict], rule_dict: dict) -> dict:
     """지문 런 + 규칙 → 양 모드 세그먼트(순수 함수, build_scene_data의 지문판).
     경계는 이미 프레임 정확한 컷이라 min_ms 흡수·중앙정렬·정밀화가 없다 —
-    규칙은 런들을 같은 키로 병합하는 데만 쓴다."""
+    규칙은 런들을 같은 키로 병합하는 데만 쓴다.
+
+    그룹핑 전에 런 텍스트를 canonical화하고(구분자 유실 오독 → 같은 키로 병합),
+    교정 못 한 오독은 클러스터 흡수(≤5s)로 걷어낸다 — 지문은 런 중간(흐릿한
+    프레임 근처)을 읽어 오독률이 높아(실기 11.5%) 이 두 단계가 없으면 오독
+    하나가 세그먼트 하나로 굳는다(실기 씬 806→481·시퀀스 322→19)."""
     rule = SlateRule(
         delimiters=rule_dict.get("delimiters", ["_", " ", "-"]),
         seq_tokens=rule_dict["seq_tokens"],
         scene_tokens=rule_dict.get("scene_tokens", []),
     )
-    runs = [SceneRun(start_ms=r["start_ms"], end_ms=r["end_ms"],
-                     text=r.get("text", "")) for r in runs_raw]
+    texts = canonicalize_texts([r.get("text", "") for r in runs_raw],
+                               rule.delimiters)
+    runs = [SceneRun(start_ms=r["start_ms"], end_ms=r["end_ms"], text=t)
+            for r, t in zip(runs_raw, texts)]
     return {
         "segments_scene": [
             {"label": s.label, "start_ms": s.start_ms, "end_ms": s.end_ms}
-            for s in runs_to_segments(runs, rule, "scene")],
+            for s in runs_to_segments(runs, rule, "scene",
+                                      absorb_flanked_ms=_FP_FLANK_MAX_MS)],
         "segments_sequence": [
             {"label": s.label, "start_ms": s.start_ms, "end_ms": s.end_ms}
-            for s in runs_to_segments(runs, rule, "sequence")],
+            for s in runs_to_segments(runs, rule, "sequence",
+                                      absorb_flanked_ms=_FP_FLANK_MAX_MS)],
     }
 
 

@@ -191,8 +191,111 @@ def compute_boundaries(
     return [Segment(label=lbl, start_ms=st, end_ms=en) for _, lbl, st, en in merged]
 
 
+def token_shape(token: str) -> str:
+    """토큰을 문자종류(U=대문자, L=소문자, D=숫자, X=기타) 런과 길이로 요약.
+    프론트 sceneSplitLogic.tokenShape와 동일 규칙 — 경계 계산의 단일 출처는
+    서버라, 오독 정규화도 서버가 한다."""
+    out = ""
+    cur = ""
+    count = 0
+    for c in _squash_ws(token):
+        kind = ("D" if c.isdigit() else "U" if c.isupper()
+                else "L" if c.islower() else "X")
+        if kind == cur:
+            count += 1
+            continue
+        if cur:
+            out += f"{cur}{count}"
+        cur, count = kind, 1
+    if cur:
+        out += f"{cur}{count}"
+    return out
+
+
+def _mode_of(values: list[str]) -> str | None:
+    counts: dict[str, int] = {}
+    for v in values:
+        counts[v] = counts.get(v, 0) + 1
+    best = None
+    best_n = 0
+    for k, n in counts.items():
+        if n > best_n:
+            best, best_n = k, n
+    return best
+
+
+def label_template(texts: list[str], delimiters: list[str]) -> list[str] | None:
+    """텍스트 집합의 대표 모양 — 최빈 토큰 개수를 고르고, 그 개수를 가진
+    텍스트들에서 위치별 최빈 모양을 뽑는다. 작품별 포맷을 하드코딩하지 않고
+    데이터 자신의 다수 모양을 기준으로 삼는다."""
+    tokenized = [tokenize(t, delimiters) for t in texts]
+    modal = _mode_of([str(len(t)) for t in tokenized if t])
+    if not modal:
+        return None
+    n = int(modal)
+    rows = [t for t in tokenized if len(t) == n]
+    template: list[str] = []
+    for i in range(n):
+        shape = _mode_of([token_shape(r[i]) for r in rows])
+        if not shape:
+            return None
+        template.append(shape)
+    return template
+
+
+_SHAPE_RE = re.compile(r"([ULDX])(\d+)")
+
+
+def _reparse(text: str, template: list[str], delimiters: list[str]) -> str | None:
+    """구분자를 잃고 붙은 텍스트를 템플릿 모양대로 다시 쪼갠다. 템플릿을
+    확신 있게 채우지 못하면(문자 부족·종류 불일치·숫자 잔여) None — 억지
+    교정은 하지 않는다. 프론트 reparse의 confident 판정과 동일."""
+    toks = tokenize(text, delimiters)
+    if (len(toks) == len(template)
+            and all(token_shape(t) == s for t, s in zip(toks, template))):
+        return None  # 이미 정상
+    flat = "".join(_squash_ws(t) for t in toks)
+
+    def cls(c: str) -> str:
+        return ("D" if c.isdigit() else "U" if c.isupper()
+                else "L" if c.islower() else "X")
+
+    pos = 0
+    out: list[str] = []
+    for shape in template:
+        piece = ""
+        for kind, length in _SHAPE_RE.findall(shape):
+            for _ in range(int(length)):
+                if pos >= len(flat) or cls(flat[pos]) != kind:
+                    return None
+                piece += flat[pos]
+                pos += 1
+        out.append(piece)
+    if pos < len(flat) and cls(flat[pos]) == "D":
+        return None  # 자릿수가 남으면 어디서 끊을지 모호 — 자동 교정 제외
+    return "_".join(out)
+
+
+def canonicalize_texts(texts: list[str], delimiters: list[str]) -> list[str]:
+    """런 텍스트들을 데이터 자신의 최빈 템플릿으로 정규화한다(확신 교정만).
+
+    지문 방식은 런 중간 — 가짜 컷을 만든 흐릿한 프레임 근처 — 을 읽어 구분자
+    유실 오독률이 간격 스캔의 10배(실기 11.5%)다. 그룹핑 전에 정규화해야
+    오독 하나가 세그먼트 하나로 굳는 것을 원천 차단한다(실기: 시퀀스 322→147).
+    교정 못 하는 텍스트(문자 오독·잔여 숫자·판독 실패)는 원문 그대로 둔다 —
+    이후 클러스터 흡수(runs_to_segments absorb_flanked_ms)가 받는다."""
+    template = label_template([t for t in texts if t], delimiters)
+    if not template:
+        return list(texts)
+    out: list[str] = []
+    for text in texts:
+        fixed = _reparse(text, template, delimiters) if text else None
+        out.append(fixed if fixed is not None else text)
+    return out
+
+
 def runs_to_segments(runs: list[SceneRun], rule: SlateRule,
-                     mode: str) -> list[Segment]:
+                     mode: str, absorb_flanked_ms: int = 0) -> list[Segment]:
     """지문 런 → 세그먼트(순수 함수, 지문 방식의 compute_boundaries 대응).
 
     경계는 이미 프레임 정확한 컷이므로 min_ms 흡수·중앙정렬·정밀화가 없다.
@@ -200,25 +303,58 @@ def runs_to_segments(runs: list[SceneRun], rule: SlateRule,
     이 병합으로 흡수된다. 판독 실패 런은 직전 세그먼트의 연속으로 본다
     (hold_keys와 같은 홀드 규칙 — 슬레이트는 씬 내내 떠 있으므로 새 라벨이
     읽히기 전까지는 같은 씬이다). 선두의 판독 실패 런(타이틀카드 등)은 버린다 —
-    첫 유효 런의 시작이 곧 실제 컷이라 간격 방식처럼 시작을 당길 필요가 없다."""
+    첫 유효 런의 시작이 곧 실제 컷이라 간격 방식처럼 시작을 당길 필요가 없다.
+
+    absorb_flanked_ms>0이면 같은 키 두 그룹 사이에 낀 '연속' 다른-키 블록
+    (총 길이 ≤ 이 값)을 통째로 흡수한다 — canonical화가 못 고친 오독(문자
+    오독·꼬리 잘림)은 연속 클러스터(A|X|Y|A)로 남는데, 단일 낀 것만 잡는
+    정리로는 부족하다(실기 시퀀스 322→104 잔존, 클러스터 흡수로 19). 캡이
+    진짜 비단조(A|B|A에서 B가 긴 경우)를 보존한다."""
     indices = _mode_indices(rule, mode)
     upto = max(indices) if indices else -1
-    out: list[Segment] = []
+    # [key, label, start, end] 그룹 — 흡수 패스가 키를 봐야 해서 키를 유지한다.
+    groups: list[list] = []
     last_key: str | None = None
     for run in runs:
         toks = tokenize(run.text, rule.delimiters) if run.text else []
         key = grouping_key(toks, indices)
         if key is None:
-            if out:
-                out[-1].end_ms = run.end_ms
+            if groups:
+                groups[-1][3] = run.end_ms
             continue
-        if out and key == last_key:
-            out[-1].end_ms = run.end_ms
+        if groups and key == last_key:
+            groups[-1][3] = run.end_ms
         else:
-            out.append(Segment(label=build_label(toks, upto),
-                               start_ms=run.start_ms, end_ms=run.end_ms))
+            groups.append([key, build_label(toks, upto),
+                           run.start_ms, run.end_ms])
         last_key = key
-    return out
+
+    if absorb_flanked_ms > 0:
+        for _ in range(8):  # 흡수로 새 인접 동일 키가 생기면 반복(유한)
+            merged: list[list] = []
+            i = 0
+            changed = False
+            while i < len(groups):
+                if merged:
+                    # 직전 그룹과 같은 키가 다시 나오는 지점까지의 블록을 찾아,
+                    # 블록 총 길이가 캡 이하면 (블록+복귀 그룹)을 통째로 잇는다.
+                    j = i
+                    while j < len(groups) and groups[j][0] != merged[-1][0]:
+                        j += 1
+                    if (j < len(groups) and j > i
+                            and groups[j - 1][3] - groups[i][2] <= absorb_flanked_ms):
+                        merged[-1][3] = groups[j][3]
+                        i = j + 1
+                        changed = True
+                        continue
+                merged.append(list(groups[i]))
+                i += 1
+            groups = merged
+            if not changed:
+                break
+
+    return [Segment(label=lbl, start_ms=st, end_ms=en)
+            for _key, lbl, st, en in groups]
 
 
 def label_matches(text_label: str, target: str, other: str,

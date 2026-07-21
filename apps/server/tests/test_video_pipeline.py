@@ -853,3 +853,25 @@ async def test_run_scene_scan_fingerprint_failure_writes_error(
     assert data["scanning"] is False
     assert data["error"]
     assert data["method"] == "fingerprint"
+
+
+def test_build_fingerprint_segments_canonicalizes_and_absorbs():
+    """지문 오독 대응 배선: ①구분자 유실 오독은 canonical화로 같은 키가 되어
+    병합되고 ②교정 불가 오독(문자 오독)은 클러스터 흡수(≤5s)로 사라진다 —
+    실기(HZBN307)에서 씬 806→481·시퀀스 322→19를 만든 조합."""
+    runs = [
+        {"start_ms": 0, "end_ms": 1000, "text": "HH0307_010_0010_AC_v01"},
+        # 구분자 유실 오독 — canonical화가 고쳐 위와 같은 키로 병합돼야 한다.
+        {"start_ms": 1000, "end_ms": 1200, "text": "HH0307010_0010_AC_v01"},
+        # 문자 오독(Z) — 교정 불가지만 같은 키 사이 짧은 클러스터라 흡수된다.
+        {"start_ms": 1200, "end_ms": 1300, "text": "HH030Z_010_0010_AC_v01"},
+        {"start_ms": 1300, "end_ms": 2000, "text": "HH0307_010_0010_AC_v01"},
+        {"start_ms": 2000, "end_ms": 3000, "text": "HH0307_010_0020_AC_v01"},
+    ]
+    rule = {"delimiters": ["_", "-"], "seq_tokens": [1], "scene_tokens": [2]}
+    out = pl.build_fingerprint_segments(runs, rule)
+    assert [(s["label"], s["start_ms"], s["end_ms"])
+            for s in out["segments_scene"]] == [
+        ("HH0307_010_0010", 0, 2000), ("HH0307_010_0020", 2000, 3000)]
+    assert [(s["label"], s["start_ms"], s["end_ms"])
+            for s in out["segments_sequence"]] == [("HH0307_010", 0, 3000)]
