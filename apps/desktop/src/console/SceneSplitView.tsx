@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  anomalousLabels, applyFixes, confidentFixes, formatMs, mergeAdjacentSameLabel, mergeSegment,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, mergeAdjacentSameLabel, mergeSegment,
   previewLabel, renameSegment, segmentThumbRange, tokenizeSlate,
   type LabelFix,
 } from "./sceneSplitLogic";
@@ -400,6 +400,21 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setNotice(`인접 중복 ${n}건을 병합했습니다 — 저장 전입니다.`);
   };
 
+  // 오독 갈라짐 정리 — 앞뒤 같은 라벨로 둘러싸인 짧은 구간(확정 오독)을 흡수한다.
+  // 라벨 교정이 안 되는 접두 유실 오독도 처리한다(시퀀스에서 특히 유효 — 실기
+  // 시퀀스 79개 중 28곳이 이 형태였다). 5초 이하만 흡수해 진짜 비단조는 보존.
+  const FLANK_MAX_MS = 5000;
+  const flankedCount = segments.length
+    - absorbFlankedMisreads(segments, FLANK_MAX_MS).length;
+  const cleanFlanked = () => {
+    const out = absorbFlankedMisreads(segments, FLANK_MAX_MS);
+    const n = segments.length - out.length;
+    if (n === 0) { setNotice("정리할 오독 갈라짐이 없습니다."); return; }
+    setUndoSnapshot(segments);
+    setSegments(out);
+    setNotice(`오독으로 갈라진 ${n}건을 흡수했습니다 — 저장 전입니다. 되돌리기 가능.`);
+  };
+
   const undoFixes = () => {
     if (!undoSnapshot) return;
     setSegments(undoSnapshot);
@@ -625,6 +640,13 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
               <button type="button" style={consoleStyles.mutedAction}
                 onClick={openFixPreview}>
                 제안 일괄 적용 ({anomalies.filter((a) => a.suggestion && a.confident).length})…
+              </button>
+            ) : null}
+            {/* 오독 갈라짐 정리 — 앞뒤 동일 라벨 사이 낀 오독을 흡수(시퀀스 특효). */}
+            {flankedCount > 0 ? (
+              <button type="button" style={consoleStyles.action}
+                onClick={cleanFlanked}>
+                오독 갈라짐 정리 ({flankedCount})
               </button>
             ) : null}
             {/* 인접 중복 병합 — 교정으로 같아졌거나 수동 교정 후 갈라진 씬을 합친다. */}

@@ -193,6 +193,32 @@ export function mergeSegment(
   return out;
 }
 
+// 앞뒤가 같은 라벨로 둘러싸인 짧은 구간을 흡수한다 — 씬/시퀀스는 번호가 바뀌었다
+// 되돌아오지 않으므로, 동일 라벨 사이에 낀 짧은 구간은 OCR 판독 튐(오독)이다.
+// 라벨 교정 없이 그냥 없앨 수 있다(교정 근거가 없는 접두 유실 오독도 처리). maxMs
+// 이하만 흡수해 진짜 비단조(A|B|A에서 B가 긴 경우)는 보존한다. 반복 적용해
+// 교대 오독(A|m|A|m|A)도 한 번에 정리한다.
+export function absorbFlankedMisreads(
+  segs: SceneSegment[], maxMs: number,
+): SceneSegment[] {
+  let cur = segs;
+  for (let pass = 0; pass < 8; pass += 1) {
+    const relabeled = cur.map((s, i) => {
+      const prev = cur[i - 1];
+      const next = cur[i + 1];
+      if (prev && next && prev.label === next.label && s.label !== prev.label
+          && (s.end_ms - s.start_ms) <= maxMs) {
+        return { ...s, label: prev.label };
+      }
+      return s;
+    });
+    const merged = mergeAdjacentSameLabel(relabeled);
+    if (merged.length === cur.length) return merged;  // 변화 없으면 끝
+    cur = merged;
+  }
+  return cur;
+}
+
 // 인접한 동일 라벨 세그먼트를 하나로 합친다(시간축 연장). 씬 한가운데 짧은
 // 오독이 씬을 쪼갠 뒤 라벨을 교정하면 같은 라벨이 인접하게 되는데, 이들을
 // 병합해야 한 씬이 여러 클립으로 나뉘지 않는다. 비인접(비단조 슬레이트) 동일

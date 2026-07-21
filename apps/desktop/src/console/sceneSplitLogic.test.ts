@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { anomalousLabels, applyFixes, confidentFixes, formatMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, previewLabel, renameSegment, segmentThumbRange, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, previewLabel, renameSegment, segmentThumbRange, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -152,6 +152,40 @@ describe("anomalousLabels", () => {
   });
   it("returns nothing when every label matches the template", () => {
     expect(anomalousLabels(["HH0307_040_0060", "HH0307_040_0090"])).toEqual([]);
+  });
+});
+
+describe("absorbFlankedMisreads", () => {
+  it("absorbs a short run flanked by identical labels (definite misread)", () => {
+    // 시퀀스A | 오독 | 시퀀스A — 시퀀스는 바뀌었다 되돌아오지 않으니 오독 확정.
+    const segs = [
+      { label: "HH_010", start_ms: 0, end_ms: 40000 },
+      { label: "HH0100160_AC", start_ms: 40000, end_ms: 40500 },  // 0.5s 오독
+      { label: "HH_010", start_ms: 40500, end_ms: 90000 },
+    ];
+    expect(absorbFlankedMisreads(segs, 5000)).toEqual([
+      { label: "HH_010", start_ms: 0, end_ms: 90000 },
+    ]);
+  });
+  it("handles alternating misreads (A|m|A|m|A) in one pass", () => {
+    const segs = [
+      { label: "A", start_ms: 0, end_ms: 1000 },
+      { label: "m1", start_ms: 1000, end_ms: 1500 },
+      { label: "A", start_ms: 1500, end_ms: 2000 },
+      { label: "m2", start_ms: 2000, end_ms: 2500 },
+      { label: "A", start_ms: 2500, end_ms: 3000 },
+    ];
+    expect(absorbFlankedMisreads(segs, 5000)).toEqual([
+      { label: "A", start_ms: 0, end_ms: 3000 },
+    ]);
+  });
+  it("keeps a long flanked run (possible real non-monotonic)", () => {
+    const segs = [
+      { label: "A", start_ms: 0, end_ms: 1000 },
+      { label: "B", start_ms: 1000, end_ms: 20000 },  // 19s — 진짜일 수 있음
+      { label: "A", start_ms: 20000, end_ms: 21000 },
+    ];
+    expect(absorbFlankedMisreads(segs, 5000)).toEqual(segs);
   });
 });
 
