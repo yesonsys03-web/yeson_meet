@@ -248,3 +248,22 @@ def test_cut_segment_fps_frames_v_exact_count_and_no_overrun(tmp_path: Path):
     assert nb == round((c - b) * fps / 1000.0)
     # 인접 두 컷의 합 = 한 번에 자른 전체 — 중복(초과)도 유실(부족)도 없다.
     assert na + nb == nac
+
+
+def test_extract_fingerprint_frames_all_frames_cropped_scaled(
+        monkeypatch, tmp_path: Path):
+    """지문용 추출: fps 필터가 없어야 한다(전 프레임 = 출력 인덱스가 소스 프레임
+    번호와 1:1, 컷을 프레임 정확하게 찾는 전제). 크롭 후 축소(scale)로 지문
+    해상도만 낮춘다 — 텍스트 유무 변화만 보면 충분(실측 140px 검증)."""
+    calls: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: (calls.append(cmd), _Result())[1])
+    ff.extract_fingerprint_frames("ffmpeg", tmp_path / "in.mp4", tmp_path / "fp",
+                                  region=(0.02, 0.03, 0.5, 0.08))
+    cmd = calls[0]
+    vf = cmd[cmd.index("-vf") + 1]
+    assert "fps=" not in vf
+    assert vf == ("crop=in_w*0.5000:in_h*0.0800:in_w*0.0200:in_h*0.0300,"
+                  "scale=160:-2")
+    assert cmd[-1].endswith("f_%06d.png")
+    assert (tmp_path / "fp").is_dir()

@@ -399,6 +399,23 @@ def extract_frames(ffmpeg: str, src: Path, out_dir: Path,
           str(out_dir / "frame_%05d.png")], proc_key=proc_key)
 
 
+def extract_fingerprint_frames(ffmpeg: str, src: Path, out_dir: Path,
+                               region: OcrRegion, scale_w: int = 160,
+                               proc_key: str | None = None) -> None:
+    """지문 컷 감지용: 슬레이트 구역의 '모든' 프레임을 작게 축소해 추출.
+
+    fps 필터를 쓰지 않아 출력 f_%06d.png의 인덱스가 소스 프레임 번호와 1:1이다
+    (컷을 프레임 정확하게 찾는 전제 — 호출자는 인덱스(1-based)로 프레임
+    idx = index-1을 부여한다). scale은 지문 해상도만 낮춘다 — 텍스트 유무 변화만
+    보면 충분(실측 140px 검증)하고, 25분 영상 3.6만 프레임의 PNG 용량과 지문
+    계산량을 잡는다. 판독(OCR)은 이 축소본이 아니라 extract_frame 원본 크롭을
+    쓴다."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    vf = crop_filter(region) + f",scale={scale_w}:-2"
+    _run([ffmpeg, "-y", "-i", str(src), "-vf", vf,
+          str(out_dir / "f_%06d.png")], proc_key=proc_key)
+
+
 def extract_thumbnails(ffmpeg: str, src: Path, out_dir: Path,
                        interval_s: float = 1.0, height: int = 90,
                        proc_key: str | None = None) -> None:
