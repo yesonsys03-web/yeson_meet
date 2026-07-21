@@ -28,12 +28,30 @@ export function SlateRegionPicker(
     rule, onApplyTemplate }: Props,
 ) {
   const frameRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
   const [hover, setHover] = useState<OcrRegion | null>(null);
   const [busy, setBusy] = useState(false);
   const [tested, setTested] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
+  // 슬레이트는 인트로 타이틀카드가 지나야 나타난다 — 첫 프레임 고정으론 슬레이트를
+  // 볼 수 없다. 스크러버로 슬레이트가 보이는 지점까지 이동해 구역을 잡는다.
+  const [curSec, setCurSec] = useState(sampleMs / 1000);
+  const [durSec, setDurSec] = useState(0);
+
+  const seek = (sec: number) => {
+    const v = videoRef.current;
+    if (!v) return;
+    const clamped = Math.max(0, Math.min(durSec || sec, sec));
+    v.currentTime = clamped;
+    setCurSec(clamped);
+  };
+  const fmt = (s: number) => {
+    const m = Math.floor(s / 60);
+    const rest = (s - m * 60).toFixed(2).padStart(5, "0");
+    return `${m}:${rest}`;
+  };
 
   const shown = hover ?? region;
 
@@ -66,7 +84,8 @@ export function SlateRegionPicker(
     if (!region) return;
     setBusy(true); setError(null); setTested(null);
     try {
-      const res = await testOcrRegion(jobId, sampleMs, region);
+      // 스크러버로 이동한 현재 프레임에서 읽는다 — 사용자가 보고 있는 그 슬레이트.
+      const res = await testOcrRegion(jobId, Math.round(curSec * 1000), region);
       setTested(res.text || "(판독 실패 — 구역을 다시 잡아보세요)");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -120,9 +139,14 @@ export function SlateRegionPicker(
            style={{ position: "relative", userSelect: "none", cursor: "crosshair",
                     borderRadius: 6, overflow: "hidden", background: "#000",
                     maxWidth: 960 }}>
-        <video src={`${videoMediaUrl(jobId)}#t=${(sampleMs / 1000).toFixed(3)}`}
+        <video ref={videoRef}
+               src={`${videoMediaUrl(jobId)}#t=${(sampleMs / 1000).toFixed(3)}`}
                preload="metadata" muted playsInline
-               onLoadedMetadata={(e) => { e.currentTarget.currentTime = sampleMs / 1000; }}
+               onLoadedMetadata={(e) => {
+                 setDurSec(e.currentTarget.duration || 0);
+                 e.currentTarget.currentTime = sampleMs / 1000;
+               }}
+               onSeeked={(e) => setCurSec(e.currentTarget.currentTime)}
                style={{ width: "100%", display: "block", pointerEvents: "none" }} />
         {shown ? (
           <div style={{ position: "absolute", pointerEvents: "none",
@@ -132,6 +156,25 @@ export function SlateRegionPicker(
                         boxShadow: "0 0 0 9999px rgba(0,0,0,0.45)" }} />
         ) : null}
       </div>
+      {/* 타임라인 — 슬레이트가 보이는 지점으로 이동해 구역을 잡는다. */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button type="button" style={{ ...consoleStyles.mutedAction, padding: "2px 8px" }}
+          title="1프레임 뒤로" onClick={() => seek(curSec - 1 / 24)}>◀</button>
+        <input type="range" min={0} max={durSec || 0} step={1 / 24}
+          value={curSec}
+          onChange={(e) => seek(Number(e.target.value))}
+          style={{ flex: 1 }} />
+        <button type="button" style={{ ...consoleStyles.mutedAction, padding: "2px 8px" }}
+          title="1프레임 앞으로" onClick={() => seek(curSec + 1 / 24)}>▶</button>
+        <span style={{ fontSize: 12, opacity: 0.75, fontFamily: "monospace",
+                       minWidth: 96, textAlign: "right" }}>
+          {fmt(curSec)} / {fmt(durSec)}
+        </span>
+      </div>
+      <p style={{ fontSize: 12, opacity: 0.6, margin: 0 }}>
+        슬레이트가 안 보이면(인트로 타이틀카드) 위 타임라인으로 슬레이트가 나오는
+        지점까지 이동한 뒤 구역을 드래그하세요.
+      </p>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <button type="button" style={consoleStyles.mutedAction}
           disabled={busy || !region} onClick={() => void runTest()}>
