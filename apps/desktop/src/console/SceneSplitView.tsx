@@ -241,6 +241,13 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
 
   const doExport = async () => {
     setError(null); setNotice(null);
+    // 익스포트는 서버 저장본을 자른다 — 현재 모드에 미저장 편집이 있으면 화면과
+    // 다른 옛 경계로 잘린다. 먼저 저장하도록 막는다(실기: 시퀀스 16개 병합했는데
+    // 저장 안 해 79개로 익스포트될 뻔한 사고 방지).
+    if (dirty) {
+      setError('저장 안 된 수정이 있습니다 — 먼저 "수정사항 저장"을 누르세요.');
+      return;
+    }
     let outDir: string | undefined;
     if (hasTauriRuntime()) {
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -277,13 +284,17 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
 
   // 현재 모드의 구간 목록을 편집(병합/이름수정)해 data 상태에 반영한다. dirty면
   // "수정사항 저장"으로 서버에 PATCH해야 익스포트에 반영된다.
-  const [dirty, setDirty] = useState(false);
+  // dirty는 모드별로 따로 둔다 — 공유하면 씬을 저장할 때 시퀀스의 미저장 편집까지
+  // '저장됨'으로 꺼져 저장 버튼이 비활성화된다(실기: 시퀀스 16개 병합했는데 저장
+  // 불가). 익스포트는 서버 저장본을 쓰므로 각 모드를 반드시 따로 저장해야 한다.
+  const [dirtyModes, setDirtyModes] = useState<Set<Mode>>(new Set());
+  const dirty = dirtyModes.has(mode);
   const setSegments = (next: SceneSegment[]) => {
     if (!data) return;
     setData(mode === "sequence"
       ? { ...data, segments_sequence: next }
       : { ...data, segments_scene: next });
-    setDirty(true);
+    setDirtyModes((prev) => new Set(prev).add(mode));
   };
   const mergeSeg = (i: number, into: "prev" | "next") => {
     setSegments(mergeSegment(segments, i, into));
@@ -426,8 +437,15 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setBusy(true); setError(null);
     try {
       await overrideSceneSegments(jobId, mode, segments);
-      setDirty(false);
-      setNotice("수정사항을 저장했습니다.");
+      // 저장한 모드만 dirty 해제 — 다른 모드의 미저장 편집은 유지한다.
+      setDirtyModes((prev) => {
+        const next = new Set(prev); next.delete(mode); return next;
+      });
+      const otherDirty = dirtyModes.has(mode === "scene" ? "sequence" : "scene");
+      setNotice(otherDirty
+        ? `${mode === "scene" ? "씬" : "시퀀스"} 저장 완료 — `
+          + `${mode === "scene" ? "시퀀스" : "씬"} 모드에 저장 안 된 수정이 있습니다.`
+        : "수정사항을 저장했습니다.");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
