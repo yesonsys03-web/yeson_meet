@@ -153,8 +153,23 @@ def test_cut_segment_falls_back_to_output_t_without_fps(monkeypatch,
     assert "-to" not in cmd
 
 
-def test_video_fps_parses_ffmpeg_stderr(monkeypatch, tmp_path: Path):
-    """ffprobe를 번들하지 않으므로 `ffmpeg -i`(code 1) stderr에서 fps를 파싱한다."""
+def test_video_fps_measures_exact_from_frame_pts(monkeypatch, tmp_path: Path):
+    """회귀(실기, 꼬리 +1프레임): 표시 fps 23.98(반올림)로 N을 계산하면 긴 클립에서
+    누적오차로 N이 +1 틀려 다음 세그 첫 프레임이 섞인다. showinfo로 실제 프레임 PTS
+    간격을 재 정확한 fps(24000/1001=23.976)를 얻어야 한다 — 표시값 23.98이 아니라."""
+    # 24000/1001 간격(0.0417083s)의 pts_time 라인 — showinfo가 내는 형식.
+    step = 1001.0 / 24000.0
+    lines = "".join(
+        f"[Parsed_showinfo] n:{i} pts_time:{i * step:.6f} other\n" for i in range(30))
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: _Result(returncode=0, stderr=lines))
+    fps = ff.video_fps("ffmpeg", tmp_path / "in.mp4")
+    assert fps is not None and abs(fps - 24000.0 / 1001.0) < 0.001
+    assert abs(fps - 23.98) > 0.002  # 표시 반올림값과 달라야 한다
+
+
+def test_video_fps_falls_back_to_display_when_no_frames(monkeypatch, tmp_path: Path):
+    """showinfo가 프레임을 못 내면(디코드 실패 등) `ffmpeg -i` 표시 fps로 폴백."""
     stderr = ("  Stream #0:0[0x1](und): Video: h264 (High), yuv420p, "
               "1920x1080, 2500 kb/s, 23.98 fps, 23.98 tbr, 24k tbn\n")
     monkeypatch.setattr(subprocess, "run",

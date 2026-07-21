@@ -139,13 +139,11 @@ def locate_ffmpeg() -> str | None:
 
 
 _FPS_RE = re.compile(r"(\d+(?:\.\d+)?)\s+fps")
+_PTS_RE = re.compile(r"pts_time:(\d+(?:\.\d+)?)")
 
 
-def video_fps(ffmpeg: str, src: Path) -> float | None:
-    """소스의 프레임레이트(fps). ffprobe를 번들하지 않으므로 `ffmpeg -i`(출력파일
-    없음 → code 1)의 stderr 스트림 정보('… 23.98 fps …')를 파싱한다. 실패 시 None.
-    컷 경계를 프레임 간 간격 중앙(반프레임)에 놓아 경계 프레임 중복/유실을 없애는
-    데만 쓰므로 정확한 유리수(24000/1001)까지는 필요 없고 반올림값이면 충분하다."""
+def _fps_from_display(ffmpeg: str, src: Path) -> float | None:
+    """`ffmpeg -i` stderr의 표시 fps('… 23.98 fps …'). 반올림값이라 폴백 전용."""
     try:
         result = subprocess.run(
             [ffmpeg, "-i", str(src)], capture_output=True, text=True,
@@ -161,6 +159,33 @@ def video_fps(ffmpeg: str, src: Path) -> float | None:
     except ValueError:
         return None
     return fps if fps > 0 else None
+
+
+def video_fps(ffmpeg: str, src: Path) -> float | None:
+    """소스의 정확한 프레임레이트(fps). 실패 시 None.
+
+    표시 fps('23.98 fps')는 소수 2자리 반올림이라 실제 24000/1001(23.976)과
+    어긋난다 — 컷 프레임 수 N=round((end-start)×fps/1000)를 긴 클립(수천 프레임)에
+    쓰면 이 오차가 0.5프레임 넘게 누적돼 N이 ±1 틀리고, 다음 세그 첫 프레임이 꼬리에
+    섞인다(실기: 23.98이면 1862→1863). 그래서 표시값 대신 앞 3초를 디코드해 실제
+    프레임 PTS 간격의 중앙값으로 fps를 측정한다(ffprobe 미번들). showinfo가 프레임을
+    못 내면 표시값으로 폴백한다."""
+    try:
+        result = subprocess.run(
+            [ffmpeg, "-i", str(src), "-map", "0:v:0", "-vf", "showinfo",
+             "-t", "3", "-f", "null", "-"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            **_SUBPROCESS_FLAGS,
+        )
+    except OSError:
+        return None
+    pts = [float(x) for x in _PTS_RE.findall(result.stderr or "")]
+    deltas = sorted(b - a for a, b in zip(pts, pts[1:]) if b > a)
+    if len(deltas) >= 2:
+        median = deltas[len(deltas) // 2]
+        if median > 0:
+            return 1.0 / median
+    return _fps_from_display(ffmpeg, src)
 
 
 def _run(cmd: list[str], *, cwd: str | None = None,
