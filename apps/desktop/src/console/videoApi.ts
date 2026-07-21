@@ -325,6 +325,10 @@ export function videoDownloadUrl(jobId: string, kind: "video" | "srt"): string {
 
 export type SceneSegment = { label: string; start_ms: number; end_ms: number };
 
+// 스캔 방식 — interval(간격 OCR 샘플링+정밀화, 기존)과 fingerprint(전 프레임
+// 지문 컷 감지, 프레임 정확·정밀화 불필요)를 나란히 두고 UI에서 고른다.
+export type SceneMethod = "interval" | "fingerprint";
+
 export type ScenesData = {
   scanned: boolean;
   // 긴 영상 스캔 진행 상태(백엔드가 증분 기록). scanning 중이면 ocr_done/total_frames로
@@ -343,6 +347,11 @@ export type ScenesData = {
   thumb_count?: number;
   // 사용자가 지정한 슬레이트 구역(비율). 없으면 전체 프레임 + 상단 밴드 가정.
   ocr_region?: OcrRegion | null;
+  // 스캔 방식 — fingerprint면 정밀화 단계가 없다(경계가 이미 프레임 정확).
+  method?: SceneMethod;
+  // 지문 스캔의 영상 전체 길이(마지막 런 끝) — 간격 방식은 프레임 격자로
+  // 유도하지만 지문 런은 격자가 없어 명시 값을 쓴다.
+  total_ms?: number | null;
 };
 
 export type SlateRuleInput = {
@@ -353,10 +362,10 @@ export type SlateRuleInput = {
 };
 
 export async function scanScenes(
-  jobId: string, intervalS = 2.0,
+  jobId: string, intervalS = 2.0, method: SceneMethod = "interval",
 ): Promise<void> {
   await request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/scan`,
-    { method: "POST", body: JSON.stringify({ interval_s: intervalS }) });
+    { method: "POST", body: JSON.stringify({ interval_s: intervalS, method }) });
 }
 
 export async function getScenes(jobId: string): Promise<ScenesData> {
@@ -412,6 +421,8 @@ export type SlateTemplate = {
   seq_tokens: number[];
   scene_tokens: number[];
   scan_interval_s?: number;
+  // 스캔 방식(간격/지문)도 쇼 단위로 정해지는 값이라 템플릿에 함께 저장한다.
+  method?: SceneMethod;
 };
 
 export async function setOcrRegion(

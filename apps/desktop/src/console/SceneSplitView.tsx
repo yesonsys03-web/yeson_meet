@@ -11,8 +11,8 @@ import {
   cancelSceneOps, exportScenes, getExportStatus, getRefineStatus, getScenes,
   listSlateTemplates, overrideSceneSegments, refineScenes, scanScenes,
   setOcrRegion as setOcrRegionApi, setSceneRule, videoMediaUrl,
-  type ExportStatus, type OcrRegion, type RefineStatus, type ScenesData,
-  type SceneSegment, type SlateTemplate,
+  type ExportStatus, type OcrRegion, type RefineStatus, type SceneMethod,
+  type ScenesData, type SceneSegment, type SlateTemplate,
 } from "./videoApi";
 import { SlateRegionPicker } from "./SlateRegionPicker";
 
@@ -30,6 +30,9 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const [spaceDelim, setSpaceDelim] = useState(false);
   // 샘플 간격(초). 짧은 씬이 많으면 촘촘하게(0.25s) — 놓치면 그 씬 클립이 없어진다.
   const [scanIntervalS, setScanIntervalS] = useState(2.0);
+  // 스캔 방식 — 간격(기존)/지문(전 프레임 컷 감지, 프레임 정확·정밀화 불필요).
+  // 지문에 리스크(가짜 컷 등)가 보이면 간격으로 폴백한다.
+  const [scanMethod, setScanMethod] = useState<SceneMethod>("interval");
   // 최소 씬 길이(초). 빈값=자동(간격 비례). 이보다 짧은 구간은 오독 튐으로 보고
   // 흡수한다 — 진짜 짧은 씬이 삼켜지면 이 값을 낮춘다.
   const [minSceneSec, setMinSceneSec] = useState("");
@@ -91,6 +94,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       setSceneIdx(d.rule.scene_tokens ?? []);
       setSpaceDelim((d.rule.delimiters ?? []).includes(" "));
     }
+    // 서버에 저장된 스캔 방식 복원 — 재진입 시 선택이 초기화되지 않게.
+    if (d.method) setScanMethod(d.method);
     // 재진입 시 스캔이 이미 진행 중이면(다른 화면에서 걸어둔 스캔 등) 진행률
     // 폴링을 이어붙인다 — 시작 버튼만 덩그러니 보이던 공백 수정.
     if (d.scanning) {
@@ -112,7 +117,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const hadScan = Boolean(data?.scanned);
     setBusy(true); setError(null); setNotice("프레임 추출 중…");
     try {
-      await scanScenes(jobId, scanIntervalS);  // 스캔은 비동기 — 이후 진행률 폴링
+      await scanScenes(jobId, scanIntervalS, scanMethod);  // 비동기 — 이후 진행률 폴링
       await pollScan(hadScan);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -200,30 +205,38 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   // 없으면 스캔까지만 하고 토큰 선택을 기다린다. 익스포트 양식이 쇼마다 달라
   // (씬별로 내보내는 쇼도 있다) 두 모드를 모두 정밀화한다.
   const runAll = async (opts: { rescan: boolean }) => {
+    // 재스캔이면 사용자가 고른 방식, 기존 데이터 재계산이면 그 데이터의 방식.
+    const fp = (opts.rescan ? scanMethod : (data?.method ?? scanMethod))
+      === "fingerprint";
     setError(null); cancelledRef.current = false; setBusy(true);
     try {
       if (opts.rescan) {
-        setStage("1/4 슬레이트 스캔");
-        await scanScenes(jobId, scanIntervalS);
+        setStage(fp ? "1/2 지문 컷 감지" : "1/4 슬레이트 스캔");
+        await scanScenes(jobId, scanIntervalS, scanMethod);
         await pollScan(Boolean(data?.scanned));
         if (cancelledRef.current) return;
       }
       if (seqIdx.length === 0) {
         setStage(null);
-        setNotice("스캔 완료 — 토큰을 고른 뒤 '경계 계산 + 정밀화'를 누르세요.");
+        setNotice(fp
+          ? "컷 감지 완료 — 토큰을 고른 뒤 '경계 계산'을 누르세요."
+          : "스캔 완료 — 토큰을 고른 뒤 '경계 계산 + 정밀화'를 누르세요.");
         return;
       }
-      setStage("2/4 경계 계산");
+      setStage(fp ? "2/2 경계 계산" : "2/4 경계 계산");
       const res = await setSceneRule(jobId, {
         delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx, min_ms: minMs,
       });
       if (cancelledRef.current) return;
-      setStage(`3/4 시퀀스 정밀화 (${res.segments_sequence.length}구간)`);
-      await refineOnce("sequence", Math.max(1, res.segments_sequence.length - 1));
-      if (cancelledRef.current) return;
-      setStage(`4/4 씬 정밀화 (${res.segments_scene.length}구간)`);
-      await refineOnce("scene", Math.max(1, res.segments_scene.length - 1));
-      if (cancelledRef.current) return;
+      if (!fp) {
+        // 간격 스캔만 정밀화가 필요하다 — 지문 경계는 이미 프레임 정확한 컷.
+        setStage(`3/4 시퀀스 정밀화 (${res.segments_sequence.length}구간)`);
+        await refineOnce("sequence", Math.max(1, res.segments_sequence.length - 1));
+        if (cancelledRef.current) return;
+        setStage(`4/4 씬 정밀화 (${res.segments_scene.length}구간)`);
+        await refineOnce("scene", Math.max(1, res.segments_scene.length - 1));
+        if (cancelledRef.current) return;
+      }
       setData(await getScenes(jobId));
       setSelectedSeg(null);
       setNotice(`전체 완료 — 시퀀스 ${res.segments_sequence.length}개 · 씬 `
@@ -359,8 +372,11 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   }, []);
   useEffect(() => { setOcrRegion(data?.ocr_region ?? null); }, [data?.ocr_region]);
   useEffect(() => {
-    if (data?.interval_ms) setScanIntervalS(data.interval_ms / 1000);
-  }, [data?.interval_ms]);
+    // 지문 스캔에는 샘플 간격 개념이 없다 — 간격 UI 값을 덮어쓰지 않는다.
+    if (data?.interval_ms && data.method !== "fingerprint") {
+      setScanIntervalS(data.interval_ms / 1000);
+    }
+  }, [data?.interval_ms, data?.method]);
 
   // 템플릿을 고르면 구역과 토큰 규칙을 한 번에 적용한다(같은 쇼면 포맷도 같다).
   const applyTemplate = (t: SlateTemplate) => {
@@ -369,6 +385,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setSceneIdx(t.scene_tokens ?? []);
     setSpaceDelim((t.delimiters ?? []).includes(" "));
     if (t.scan_interval_s) setScanIntervalS(t.scan_interval_s);
+    if (t.method) setScanMethod(t.method);
     void setOcrRegionApi(jobId, t.region).catch(() => undefined);
     setNotice(`'${t.name}' 템플릿을 적용했습니다 — 구역과 토큰 규칙이 설정됐습니다.`);
   };
@@ -486,41 +503,60 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
             ? `지정됨 — 가로 ${(ocrRegion.w * 100).toFixed(0)}% · 세로 ${(ocrRegion.h * 100).toFixed(0)}%`
             : "미지정 — 전체 프레임에서 상단을 훑습니다(느리고 쇼에 따라 실패)"}
         </span>
-        {/* 샘플 간격 — 짧은 씬(2초 미만)이 많으면 촘촘하게. 놓치면 그 씬 클립이
-            아예 생기지 않는다(2초 샘플이 사이의 짧은 컷을 건너뛴다). */}
+        {/* 스캔 방식 — 지문은 전 프레임 컷 감지라 경계가 프레임 정확하고 정밀화가
+            없다. 가짜 컷 등 리스크가 보이면 간격 방식으로 폴백한다. */}
         <label style={{ fontSize: 12, opacity: 0.8, display: "inline-flex",
                         alignItems: "center", gap: 5, marginLeft: "auto" }}>
-          샘플 간격
-          <select value={scanIntervalS}
-            onChange={(e) => setScanIntervalS(Number(e.target.value))}
+          방식
+          <select value={scanMethod}
+            onChange={(e) => setScanMethod(e.target.value as SceneMethod)}
             style={{ fontSize: 12, padding: "3px 6px", borderRadius: 4,
                      background: "transparent", color: "inherit",
                      border: "1px solid rgba(255,255,255,0.15)" }}>
-            <option value={2.0}>2초 (빠름·긴 컷)</option>
-            <option value={1.0}>1초</option>
-            <option value={0.5}>0.5초</option>
-            <option value={0.25}>0.25초 (짧은 컷·느림)</option>
+            <option value="interval">간격 스캔 (샘플링+정밀화)</option>
+            <option value="fingerprint">지문 컷 감지 (프레임 정확)</option>
           </select>
         </label>
-        {/* 최소 씬 길이 — 이보다 짧은 구간은 오독 튐으로 보고 흡수. 빈값=자동
-            (간격 비례). 진짜 짧은 씬이 삼켜지면 낮춘다. */}
-        <label style={{ fontSize: 12, opacity: 0.8, display: "inline-flex",
-                        alignItems: "center", gap: 5 }}>
-          최소 씬 길이
-          <input value={minSceneSec} onChange={(e) => setMinSceneSec(e.target.value)}
-            placeholder="자동" inputMode="decimal"
-            style={{ width: 56, fontSize: 12, padding: "3px 6px", borderRadius: 4,
-                     background: "transparent", color: "inherit",
-                     border: "1px solid rgba(255,255,255,0.15)" }} />
-          초
-        </label>
+        {scanMethod !== "fingerprint" ? (
+          <>
+            {/* 샘플 간격 — 짧은 씬(2초 미만)이 많으면 촘촘하게. 놓치면 그 씬 클립이
+                아예 생기지 않는다(2초 샘플이 사이의 짧은 컷을 건너뛴다). */}
+            <label style={{ fontSize: 12, opacity: 0.8, display: "inline-flex",
+                            alignItems: "center", gap: 5 }}>
+              샘플 간격
+              <select value={scanIntervalS}
+                onChange={(e) => setScanIntervalS(Number(e.target.value))}
+                style={{ fontSize: 12, padding: "3px 6px", borderRadius: 4,
+                         background: "transparent", color: "inherit",
+                         border: "1px solid rgba(255,255,255,0.15)" }}>
+                <option value={2.0}>2초 (빠름·긴 컷)</option>
+                <option value={1.0}>1초</option>
+                <option value={0.5}>0.5초</option>
+                <option value={0.25}>0.25초 (짧은 컷·느림)</option>
+              </select>
+            </label>
+            {/* 최소 씬 길이 — 이보다 짧은 구간은 오독 튐으로 보고 흡수. 빈값=자동
+                (간격 비례). 진짜 짧은 씬이 삼켜지면 낮춘다. 지문 방식은 컷이
+                프레임 정확이라 이 흡수 자체가 없다. */}
+            <label style={{ fontSize: 12, opacity: 0.8, display: "inline-flex",
+                            alignItems: "center", gap: 5 }}>
+              최소 씬 길이
+              <input value={minSceneSec} onChange={(e) => setMinSceneSec(e.target.value)}
+                placeholder="자동" inputMode="decimal"
+                style={{ width: 56, fontSize: 12, padding: "3px 6px", borderRadius: 4,
+                         background: "transparent", color: "inherit",
+                         border: "1px solid rgba(255,255,255,0.15)" }} />
+              초
+            </label>
+          </>
+        ) : null}
       </div>
       {showPicker ? (
         <SlateRegionPicker jobId={jobId} sampleMs={sampleMs} region={ocrRegion}
           onChange={setOcrRegion} templates={templates}
           onTemplatesChange={setTemplates}
           rule={{ delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx,
-                  scan_interval_s: scanIntervalS }}
+                  scan_interval_s: scanIntervalS, method: scanMethod }}
           onApplyTemplate={applyTemplate} />
       ) : null}
 
@@ -544,7 +580,9 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button type="button" style={consoleStyles.action} disabled={busy}
             onClick={() => void runAll({ rescan: true })}>
-            {busy ? "실행 중…" : "전체 실행 (스캔 → 경계 → 정밀화)"}
+            {busy ? "실행 중…"
+              : scanMethod === "fingerprint" ? "전체 실행 (컷 감지 → 경계)"
+              : "전체 실행 (스캔 → 경계 → 정밀화)"}
           </button>
           <button type="button" style={consoleStyles.mutedAction} disabled={busy}
             onClick={() => void runScan()}>스캔만</button>
@@ -590,11 +628,14 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
               {"  ·  "}씬 라벨: <code>{previewLabel(tokens, Math.max(-1, ...seqIdx, ...sceneIdx))}</code>
             </p>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
-              {/* 토큰을 고른 뒤의 주 동작 — 경계 계산과 정밀화는 항상 함께 필요하다. */}
+              {/* 토큰을 고른 뒤의 주 동작 — 간격 방식은 경계 계산과 정밀화가 항상
+                  함께 필요하고, 지문 방식은 경계 계산으로 끝난다(이미 프레임 정확). */}
               <button type="button" style={consoleStyles.action}
                 disabled={busy || seqIdx.length === 0}
                 onClick={() => void runAll({ rescan: false })}>
-                {busy ? "실행 중…" : "경계 계산 + 정밀화 (시퀀스·씬)"}
+                {busy ? "실행 중…"
+                  : data.method === "fingerprint" ? "경계 계산 (시퀀스·씬)"
+                  : "경계 계산 + 정밀화 (시퀀스·씬)"}
               </button>
               <button type="button" style={consoleStyles.mutedAction}
                 disabled={busy || seqIdx.length === 0}
@@ -623,14 +664,17 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
               onChange={() => setMode("sequence")} /> 시퀀스별</label>
             <span style={{ opacity: 0.7 }}>{segments.length}개 구간</span>
             {/* 경계 정밀화 — 2초 샘플링의 ±1초 잔여를 프레임 단위로 좁힌다(경계마다
-                이진탐색 OCR이라 수 분 소요, 현재 모드만). */}
-            <button type="button" style={consoleStyles.mutedAction}
-              disabled={busy || segments.length < 2}
-              onClick={() => void doRefine()}>
-              {refineProg?.refining
-                ? `정밀화 중… ${refineProg.done}/${refineProg.total}`
-                : "경계 정밀화 (프레임 단위)"}
-            </button>
+                이진탐색 OCR이라 수 분 소요, 현재 모드만). 지문 방식은 경계가 이미
+                프레임 정확이라 버튼 자체가 없다(서버도 409로 막는다). */}
+            {data.method !== "fingerprint" ? (
+              <button type="button" style={consoleStyles.mutedAction}
+                disabled={busy || segments.length < 2}
+                onClick={() => void doRefine()}>
+                {refineProg?.refining
+                  ? `정밀화 중… ${refineProg.done}/${refineProg.total}`
+                  : "경계 정밀화 (프레임 단위)"}
+              </button>
+            ) : null}
           </div>
           {refineProg?.refining ? (
             <div style={{ height: 6, borderRadius: 3, background: "rgba(255,255,255,0.12)" }}>
@@ -732,7 +776,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
           <SceneFilmstrip jobId={jobId} segments={segments}
             thumbCount={thumbCount}
             intervalMs={thumbIntervalMs}
-            totalMs={(data.frames.at(-1)?.t_ms ?? 0) + intervalMs}
+            totalMs={data.total_ms
+              ?? ((data.frames.at(-1)?.t_ms ?? 0) + intervalMs)}
             onMerge={mergeSeg} onRename={renameSeg}
             selectedIndex={selectedSeg} highlight={highlight}
             visibleIndices={visibleIndices}

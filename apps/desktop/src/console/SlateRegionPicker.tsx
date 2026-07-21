@@ -3,7 +3,7 @@ import { consoleStyles } from "./consoleStyles";
 import { regionFromDrag } from "./sceneSplitLogic";
 import {
   saveSlateTemplate, setOcrRegion, testOcrRegion, videoMediaUrl,
-  type OcrRegion, type SlateTemplate,
+  type OcrRegion, type SceneMethod, type SlateTemplate,
 } from "./videoApi";
 
 type Props = {
@@ -16,7 +16,7 @@ type Props = {
   onTemplatesChange: (t: SlateTemplate[]) => void;
   // 템플릿 저장 시 함께 묶을 현재 토큰 규칙 + 샘플 간격(같은 쇼면 포맷·컷밀도 같다).
   rule: { delimiters: string[]; seq_tokens: number[]; scene_tokens: number[];
-          scan_interval_s: number };
+          scan_interval_s: number; method: SceneMethod };
   onApplyTemplate: (t: SlateTemplate) => void;
 };
 
