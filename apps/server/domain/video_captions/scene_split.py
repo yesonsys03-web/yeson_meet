@@ -36,6 +36,15 @@ class Segment:
     end_ms: int
 
 
+@dataclass
+class SceneRun:
+    """지문 컷 감지가 만든 런 — 인접 컷 사이 구간과 그 안에서 읽은 슬레이트.
+    런은 시간축에서 연속이다(runs[i].end_ms == runs[i+1].start_ms)."""
+    start_ms: int
+    end_ms: int
+    text: str
+
+
 def tokenize(text: str, delimiters: list[str]) -> list[str]:
     """구분자(기본 _, 공백, -)로 분해. 빈 토큰은 버린다(하이픈 양옆 공백 등)."""
     if not delimiters:
@@ -180,6 +189,36 @@ def compute_boundaries(
         merged[0][2] = max(keyed[0][0], merged[0][2] - interval_ms // 2)
 
     return [Segment(label=lbl, start_ms=st, end_ms=en) for _, lbl, st, en in merged]
+
+
+def runs_to_segments(runs: list[SceneRun], rule: SlateRule,
+                     mode: str) -> list[Segment]:
+    """지문 런 → 세그먼트(순수 함수, 지문 방식의 compute_boundaries 대응).
+
+    경계는 이미 프레임 정확한 컷이므로 min_ms 흡수·중앙정렬·정밀화가 없다.
+    같은 키의 연속 런은 병합한다 — 씬 내부 가짜 컷(반투명 바 뒤 애니 움직임)이
+    이 병합으로 흡수된다. 판독 실패 런은 직전 세그먼트의 연속으로 본다
+    (hold_keys와 같은 홀드 규칙 — 슬레이트는 씬 내내 떠 있으므로 새 라벨이
+    읽히기 전까지는 같은 씬이다). 선두의 판독 실패 런(타이틀카드 등)은 버린다 —
+    첫 유효 런의 시작이 곧 실제 컷이라 간격 방식처럼 시작을 당길 필요가 없다."""
+    indices = _mode_indices(rule, mode)
+    upto = max(indices) if indices else -1
+    out: list[Segment] = []
+    last_key: str | None = None
+    for run in runs:
+        toks = tokenize(run.text, rule.delimiters) if run.text else []
+        key = grouping_key(toks, indices)
+        if key is None:
+            if out:
+                out[-1].end_ms = run.end_ms
+            continue
+        if out and key == last_key:
+            out[-1].end_ms = run.end_ms
+        else:
+            out.append(Segment(label=build_label(toks, upto),
+                               start_ms=run.start_ms, end_ms=run.end_ms))
+        last_key = key
+    return out
 
 
 def label_matches(text_label: str, target: str, other: str,

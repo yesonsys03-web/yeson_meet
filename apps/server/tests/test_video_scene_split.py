@@ -572,3 +572,96 @@ def test_compute_boundaries_keeps_single_sample_at_edges():
     keyed = [(0, "A", "A"), (2000, "A", "A"), (4000, "B", "B")]
     seq = compute_boundaries(keyed, 6000, min_ms=0, interval_ms=2000, absorb_single=True)
     assert [s.label for s in seq] == ["A", "B"]
+
+
+# ── runs_to_segments (지문 컷 감지) ──────────────────────────────────────────
+# 런 = 지문 컷 사이 구간 + 그 안에서 읽은 슬레이트. 경계는 이미 프레임 정확한
+# 컷이므로 min_ms·중앙정렬·정밀화가 없고, 같은 키의 연속 런 병합(가짜 컷 흡수)과
+# 판독실패 홀드만 한다.
+
+RULE = SlateRule(delimiters=["_", "-"], seq_tokens=[1], scene_tokens=[2])
+
+
+def _run(start_ms, end_ms, text):
+    from apps.server.domain.video_captions.scene_split import SceneRun
+    return SceneRun(start_ms=start_ms, end_ms=end_ms, text=text)
+
+
+def test_runs_merge_consecutive_same_key():
+    # 씬 내부 가짜 컷(반투명 바 뒤 애니 움직임)으로 런이 갈라져도 같은 키면 병합.
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 100, "HH0307_010_0010_AC_v01"),
+        _run(100, 250, "HH0307_010_0010_AC_v01"),
+        _run(250, 500, "HH0307_010_0020_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010_0010", 0, 250), ("HH0307_010_0020", 250, 500)]
+
+
+def test_runs_drop_leading_unreadable():
+    # 선두 판독실패(타이틀카드) 런은 버린다 — 첫 유효 런의 시작이 곧 실제 컷.
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 5000, ""),
+        _run(5000, 8000, "HH0307_010_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010_0010", 5000, 8000)]
+
+
+def test_runs_hold_mid_unreadable_to_previous():
+    # 중간 판독실패 런은 직전 세그먼트의 연속으로 본다(hold_keys와 같은 홀드).
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 100, "HH0307_010_0010_AC_v01"),
+        _run(100, 200, ""),
+        _run(200, 300, "HH0307_010_0020_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010_0010", 0, 200), ("HH0307_010_0020", 200, 300)]
+
+
+def test_runs_unreadable_then_same_key_still_merges():
+    # A | 실패 | A — 실패 런이 직전에 붙은 뒤 다음 A도 같은 키라 한 세그로.
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 100, "HH0307_010_0010_AC_v01"),
+        _run(100, 200, ""),
+        _run(200, 300, "HH0307_010_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010_0010", 0, 300)]
+
+
+def test_runs_sequence_mode_groups_by_seq_tokens_only():
+    # 시퀀스 모드: 씬 토큰이 달라도 seq 토큰이 같으면 한 세그먼트.
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 100, "HH0307_010_0010_AC_v01"),
+        _run(100, 200, "HH0307_010_0020_AC_v01"),
+        _run(200, 300, "HH0307_020_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "sequence")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010", 0, 200), ("HH0307_020", 200, 300)]
+
+
+def test_runs_contiguous_no_gaps():
+    # 어떤 흡수·병합 후에도 시간축은 연속이어야 한다(빈틈=프레임 유실).
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 700, ""),
+        _run(700, 1000, "HH0307_010_0010_AC_v01"),
+        _run(1000, 1400, ""),
+        _run(1400, 2000, "HH0307_010_0020_AC_v01"),
+        _run(2000, 2600, "HH0307_010_0020_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert segs[0].start_ms == 700 and segs[-1].end_ms == 2600
+    for a, b in zip(segs, segs[1:]):
+        assert a.end_ms == b.start_ms
