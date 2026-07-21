@@ -109,6 +109,14 @@ def test_cut_segment_reencodes_with_ss_and_output_t(monkeypatch, tmp_path: Path)
     assert "-to" not in cmd
     assert cmd[cmd.index("-t") + 1] == "4.500"
     assert cmd.index("-t") > cmd.index("-i")
+    # 회귀(실기, QuickTime 전용 검정): 입력 시킹 + B-프레임 재정렬로 mp4에 빈
+    # 편집 리스트(media time -1)가 생겨 QuickTime이 앞에 검정 프레임을 렌더한다
+    # (원본엔 없는데도). setpts로 첫 프레임 PTS를 0으로 리셋 + B-프레임 제거(-bf 0)로
+    # 빈 편집 자체를 없앤다.
+    vf = cmd[cmd.index("-vf") + 1]
+    assert "setpts=PTS-STARTPTS" in vf
+    assert cmd[cmd.index("-af") + 1] == "asetpts=PTS-STARTPTS"
+    assert cmd[cmd.index("-bf") + 1] == "0"
 
 
 def test_cut_segment_half_open_frame_count(tmp_path: Path):

@@ -365,11 +365,18 @@ def cut_segment(ffmpeg: str, src: Path, dst: Path, start_ms: int, end_ms: int,
     -ss를 -i 앞에 둬 입력 시킹으로 빠르게 접근하되, 재인코딩이라 컷은 정확하다.
     끝은 출력측 -t(길이) — 입력측 -to는 디먹서 패킷 단위로 끊어 B-프레임
     재정렬 시 다음 세그먼트 첫 프레임(들)이 꼬리에 섞인다(실측 7/16 클립).
-    출력 -t는 디코드된 타임라인(입력 -ss 이후 0 기준)에서 잘라 반열림을 지킨다."""
+    출력 -t는 디코드된 타임라인(입력 -ss 이후 0 기준)에서 잘라 반열림을 지킨다.
+
+    setpts=PTS-STARTPTS + -bf 0: 입력 시킹 + B-프레임 재정렬로 mp4에 빈 편집
+    리스트(elst media time -1)가 생기는데, QuickTime은 이를 존중해 클립 앞에
+    검정 프레임을 렌더한다 — 원본엔 없는데도(실기 확인: 흰색으로 여는 샷 앞에
+    검정). ffmpeg·VLC는 무시한다. setpts로 첫 프레임 PTS를 0으로 리셋하고
+    B-프레임을 없애면(-bf 0) 빈 편집 자체가 사라진다(edit list media time 0)."""
     ss = f"{start_ms / 1000:.3f}"
     dur = f"{(end_ms - start_ms) / 1000:.3f}"
     _run([ffmpeg, "-y", "-ss", ss, "-i", str(src), "-t", dur,
-          "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+          "-vf", "setpts=PTS-STARTPTS", "-af", "asetpts=PTS-STARTPTS",
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-bf", "0",
           "-c:a", "aac", "-movflags", "+faststart", str(dst)],
          proc_key=proc_key)
 
