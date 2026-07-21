@@ -888,3 +888,58 @@ def test_build_fingerprint_segments_canonicalizes_and_absorbs():
         ("HH0307_010_0010", 0, 2000), ("HH0307_010_0020", 2000, 3000)]
     assert [(s["label"], s["start_ms"], s["end_ms"])
             for s in out["segments_sequence"]] == [("HH0307_010", 0, 3000)]
+
+
+# ── 디졸브 경계 OCR 정렬 (_align_cut) ────────────────────────────────────────
+# 지문 컷=픽셀 전환 지점은 디졸브에서 슬레이트 '가독' 전환과 어긋난다(실기:
+# 130→140 컷이 6프레임 지각 — 끝 6프레임이 다음 시퀀스로 읽힘, 030→040은
+# 1프레임 조기). 컷을 '다음 슬레이트가 읽히는 첫 프레임'으로 옮긴다.
+
+def _mk_read(mapping):
+    return lambda f: mapping.get(f, "")
+
+
+PREV = "HH0307_130_0330_AC_v01"
+NEXT = "HH0307_140_0010_AC_v01"
+
+
+def test_align_cut_keeps_exact_boundary():
+    read = _mk_read({9: PREV, 10: NEXT})
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 10
+
+
+def test_align_cut_moves_left_when_next_leaks_before():
+    # 컷 지각: d-1..d-6이 이미 다음 슬레이트로 읽힘 → 첫 다음-프레임(4)으로.
+    read = _mk_read({3: PREV, **{f: NEXT for f in range(4, 11)}})
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 4
+
+
+def test_align_cut_moves_right_when_prev_lingers():
+    # 컷 조기: d·d+1이 아직 이전 슬레이트 → 다음이 읽히는 첫 프레임(12)으로.
+    read = _mk_read({9: PREV, 10: PREV, 11: PREV, 12: NEXT})
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 12
+
+
+def test_align_cut_conservative_on_unreadable():
+    # 전환 프레임이 흐릿해 판독불가면 판단 근거가 없다 — 원래 컷 유지.
+    read = _mk_read({})
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 10
+
+
+def test_align_cut_stops_left_walk_at_unreadable():
+    # 왼쪽 걷기 중 판독불가를 만나면 마지막으로 확인된 다음-프레임에서 멈춘다.
+    read = _mk_read({6: NEXT, 7: NEXT, 8: NEXT, 9: NEXT, 10: NEXT})  # 5는 ""
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 6
+
+
+def test_align_cut_tolerates_fused_misreads():
+    # 오독(구분자 유실)도 squash 접두 일치로 같은 쪽으로 분류돼야 한다.
+    read = _mk_read({9: "HH0307130_0330AC", 10: "HH03071400010_AC"})
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 10
+
+
+def test_align_cut_respects_bounds():
+    # 이전 런 시작(lo)·다음 런 끝(hi)을 넘어가지 않는다.
+    read = _mk_read({f: NEXT for f in range(0, 11)})
+    out = pl._align_cut(read, 10, PREV, NEXT, lo=8, hi=20, delimiters=["_", "-"])
+    assert out == 9  # lo=8 → 8은 이전 런 시작이라 침범 금지, 9까지가 한계

@@ -758,6 +758,57 @@ _FP_FALLBACK_REGION = (0.0, 0.0, 1.0, _TOP_BAND_DEFAULT)
 _FP_THUMB_INTERVAL_S = 2.0
 
 
+def _align_cut(read_at, cut: int, prev_text: str, next_text: str,
+               lo: int, hi: int, delimiters: list[str],
+               max_probe: int = 8) -> int:
+    """지문 컷을 '다음 슬레이트가 읽히는 첫 프레임'으로 정렬한다.
+
+    지문 컷(픽셀 전환 지점)은 디졸브에서 슬레이트 '가독' 전환과 어긋난다
+    (실기: 130→140 컷 6프레임 지각 — 클립 꼬리가 다음 시퀀스로 읽힘,
+    030→040은 1프레임 조기). read_at(frame)->text로 컷 주변을 읽어, 컷 직전
+    프레임이 이미 다음으로 읽히면 왼쪽으로, 컷 프레임이 아직 이전으로 읽히면
+    오른쪽으로 걷는다. 판정은 squash 접두 상호 일치(오독·꼬리 잘림 내성) —
+    양쪽 다 일치(공통 접두만 읽힘)하거나 판독불가면 근거가 없으므로 멈춘다
+    (보수적 — 원래 컷 유지가 기본). lo/hi는 이웃 런 침범 방지 경계(exclusive)."""
+    def sq(s: str) -> str:
+        return "".join("".join(t.split()) for t in tokenize(s, delimiters))
+
+    prev_sq, next_sq = sq(prev_text), sq(next_text)
+
+    def side(frame: int) -> str | None:
+        x = sq(read_at(frame) or "")
+        if not x:
+            return None
+        match_prev = x.startswith(prev_sq) or prev_sq.startswith(x)
+        match_next = x.startswith(next_sq) or next_sq.startswith(x)
+        if match_prev == match_next:
+            return None
+        return "next" if match_next else "prev"
+
+    before = side(cut - 1)
+    if before == "next":
+        # 컷 지각 — 다음 슬레이트가 읽히는 가장 이른 프레임까지 왼쪽으로.
+        new = cut - 1
+        frame, probes = cut - 2, 0
+        while frame > lo and probes < max_probe and side(frame) == "next":
+            new = frame
+            frame -= 1
+            probes += 1
+        return new
+    if before == "prev" and side(cut) == "prev":
+        # 컷 조기 — 이전 슬레이트가 끝나는 지점(다음이 읽히는 첫 프레임)까지.
+        frame, probes = cut + 1, 0
+        while frame < hi and probes < max_probe:
+            s = side(frame)
+            if s == "next":
+                return frame
+            if s != "prev":
+                break
+            frame += 1
+            probes += 1
+    return cut
+
+
 async def run_scene_scan_fingerprint(external_id: UUID) -> None:
     """burned.mp4 전 프레임의 텍스트 이진화 지문으로 컷을 찾고, 컷 사이 런마다
     슬레이트를 OCR해 scenes.json에 method="fingerprint"로 저장한다. 경계는 규칙
@@ -873,6 +924,56 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                             save_scenes(external_id, _prog(
                                 {"total_frames": total, "ocr_done": done,
                                  "frames": [], "thumb_count": thumb_count}))
+
+                # 디졸브 경계 정렬 — 텍스트가 달라지는 컷마다 전후 프레임을 읽어
+                # 슬레이트 가독 전환 프레임으로 옮긴다(_align_cut 참조). 전후
+                # 프레임은 배치로 미리 뜨고, 걷기(드묾)만 개별 시킹한다.
+                texts_c = canonicalize_texts(texts, _DEFAULT_DELIMS)
+                bounds = [i for i in range(1, len(runs_f))
+                          if texts_c[i - 1] and texts_c[i]
+                          and texts_c[i - 1] != texts_c[i]]
+                align_dir = tmpdir / "align"
+                prefetch = (extract_frames_at(
+                    ffmpeg, burned,
+                    sorted({f for i in bounds
+                            for f in (runs_f[i][0] - 1, runs_f[i][0])}),
+                    align_dir, eff_region, proc_key=str(external_id),
+                    workers=_refine_workers()) if bounds else {})
+                read_cache: dict[int, str] = {}
+
+                def _read_frame(fi: int) -> str:
+                    if fi in read_cache:
+                        return read_cache[fi]
+                    png = prefetch.get(fi)
+                    if png is None:
+                        png = align_dir / f"nb_{fi}.png"
+                        extract_frame(ffmpeg, burned,
+                                      frame_boundary_ms(fi, fps), png,
+                                      proc_key=str(external_id),
+                                      region=eff_region)
+                    text = read_slate_line(png, _DEFAULT_DELIMS, top_frac=1.0)
+                    read_cache[fi] = text
+                    return text
+
+                starts = [s for s, _e in runs_f]
+                for bi, i in enumerate(bounds):
+                    _check_cancel()
+                    starts[i] = _align_cut(
+                        _read_frame, runs_f[i][0], texts_c[i - 1], texts_c[i],
+                        lo=runs_f[i - 1][0], hi=runs_f[i][1],
+                        delimiters=_DEFAULT_DELIMS)
+                    if bi % 20 == 0 or bi == len(bounds) - 1:
+                        save_scenes(external_id, _prog(
+                            {"total_frames": total + len(bounds),
+                             "ocr_done": total + bi + 1, "frames": [],
+                             "thumb_count": thumb_count}))
+                # 정렬 결과로 런 재구성 — 연속성 유지(끝=다음 시작), 극단적으로
+                # 이웃 경계가 서로를 지나치면(짧은 런 양끝이 동시 이동) 단조 보정.
+                for i in range(1, len(starts)):
+                    starts[i] = max(starts[i], starts[i - 1] + 1)
+                runs_f = [(starts[i],
+                           starts[i + 1] if i + 1 < len(starts) else n_frames)
+                          for i in range(len(runs_f))]
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
 
