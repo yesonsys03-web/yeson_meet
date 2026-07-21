@@ -741,3 +741,115 @@ async def test_run_burn_job_stale_generation_stops_and_keeps_cancelled(
         select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
     assert loaded.status == "cancelled"  # error로 덮어쓰지 않음
     assert loaded.burned_path is None    # done 처리도 되지 않음
+
+
+# ── 지문 컷 감지 스캔 (run_scene_scan_fingerprint) ───────────────────────────
+
+def test_build_fingerprint_segments_groups_both_modes():
+    """지문 런 + 규칙 → 양 모드 세그먼트(순수) — 씬은 씬 토큰까지, 시퀀스는
+    seq 토큰만으로 그룹. 경계는 런 경계 그대로(흡수·정렬·정밀화 없음)."""
+    runs = [
+        {"start_ms": 0, "end_ms": 100, "text": "HH0307_010_0010_AC_v01"},
+        {"start_ms": 100, "end_ms": 250, "text": "HH0307_010_0010_AC_v01"},
+        {"start_ms": 250, "end_ms": 500, "text": "HH0307_010_0020_AC_v01"},
+        {"start_ms": 500, "end_ms": 900, "text": "HH0307_020_0010_AC_v01"},
+    ]
+    rule = {"delimiters": ["_", "-"], "seq_tokens": [1], "scene_tokens": [2]}
+    out = pl.build_fingerprint_segments(runs, rule)
+    assert [(s["label"], s["start_ms"], s["end_ms"])
+            for s in out["segments_scene"]] == [
+        ("HH0307_010_0010", 0, 250), ("HH0307_010_0020", 250, 500),
+        ("HH0307_020_0010", 500, 900)]
+    assert [(s["label"], s["start_ms"], s["end_ms"])
+            for s in out["segments_sequence"]] == [
+        ("HH0307_010", 0, 500), ("HH0307_020", 500, 900)]
+
+
+async def test_run_scene_scan_fingerprint_happy_path(monkeypatch, tmp_path):
+    """추출→지문 diff(진짜 계산)→컷→런 중간 OCR→scenes.json 저장 전 구간.
+
+    페이크 추출이 프레임 10에서 패턴이 바뀌는 PNG 20장을 만들고, 지문 diff가
+    실제로 그 컷 하나를 찾는지, 런 경계가 frame_mid_ms 규약으로 기록되는지,
+    method/runs/frames(호환 샘플)/total_ms/video_fps가 저장되는지 확인한다."""
+    from PIL import Image
+
+    from apps.server.domain.video_captions.fingerprint import frame_mid_ms
+
+    eid = uuid4()
+    workdir = pl.job_dir(eid)
+    workdir.mkdir(parents=True)
+    (workdir / "burned.mp4").write_bytes(b"v")
+
+    def fake_extract_fp(ffmpeg, src, out_dir, region, scale_w=160,
+                        proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(20):
+            im = Image.new("L", (32, 8), 255)
+            for x in (range(0, 20) if i < 10 else range(12, 32)):
+                for y in range(8):
+                    im.putpixel((x, y), 0)
+            im.save(out_dir / f"f_{i + 1:06d}.png")
+
+    def fake_thumbs(ffmpeg, src, out_dir, interval_s, proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "thumb_00001.jpg").write_bytes(b"j")
+
+    def fake_extract_frame(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(str(t_ms))  # 판독 페이크가 어느 프레임인지 알 수 있게
+
+    cut_ms = frame_mid_ms(10, 24.0)
+
+    def fake_read(path, delimiters, min_tokens=2, top_frac=0.35):
+        t_ms = int(Path(path).read_text())
+        return ("HH0307_010_0010_AC_v01" if t_ms < cut_ms
+                else "HH0307_010_0020_AC_v01")
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+
+    await pl.run_scene_scan_fingerprint(eid)
+
+    data = pl.load_scenes(eid)
+    assert data["scanning"] is False and data.get("error") is None
+    assert data["method"] == "fingerprint"
+    assert data["video_fps"] == 24.0
+    assert data["total_ms"] == frame_mid_ms(20, 24.0)
+    assert data["runs"] == [
+        {"start_ms": frame_mid_ms(0, 24.0), "end_ms": cut_ms,
+         "text": "HH0307_010_0010_AC_v01"},
+        {"start_ms": cut_ms, "end_ms": frame_mid_ms(20, 24.0),
+         "text": "HH0307_010_0020_AC_v01"},
+    ]
+    # 토큰 선택 UI 호환 샘플 — 런 시작 시각·텍스트.
+    assert data["frames"] == [
+        {"t_ms": r["start_ms"], "text": r["text"]} for r in data["runs"]]
+    assert data["thumb_count"] == 1
+    # 지문 프레임 임시 디렉토리는 정리된다(크기가 크다).
+    assert not (workdir / "scene_fp_frames").exists()
+
+
+async def test_run_scene_scan_fingerprint_failure_writes_error(
+        monkeypatch, tmp_path):
+    """진짜 실패(추출 예외)는 error를 기록해 프론트 폴링이 멈추게 한다 —
+    method도 남겨 방식 선택이 유지되게."""
+    eid = uuid4()
+    workdir = pl.job_dir(eid)
+    workdir.mkdir(parents=True)
+    (workdir / "burned.mp4").write_bytes(b"v")
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+
+    def boom(*a, **kw):
+        raise FfmpegError("x")
+
+    monkeypatch.setattr(pl, "extract_fingerprint_frames", boom)
+    await pl.run_scene_scan_fingerprint(eid)
+    data = pl.load_scenes(eid)
+    assert data["scanning"] is False
+    assert data["error"]
+    assert data["method"] == "fingerprint"

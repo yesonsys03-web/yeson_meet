@@ -23,13 +23,14 @@ from apps.server.db.session import AsyncSessionLocal
 from . import gpu_pack
 from .ffmpeg import (
     burn_subtitles, cut_segment, ensure_preview, extract_audio, extract_frame,
-    extract_frames, extract_thumbnails, kill_active, locate_ffmpeg,
-    video_fps, wav_duration_seconds,
+    extract_fingerprint_frames, extract_frames, extract_thumbnails,
+    kill_active, locate_ffmpeg, video_fps, wav_duration_seconds,
 )
+from .fingerprint import adjacent_diffs, detect_cuts, frame_mid_ms, frame_runs
 from .ingest import download_youtube
 from .scene_split import (
-    FrameSample, SlateRule, build_label, compute_boundaries, dedupe_labels,
-    hold_keys, label_matches, tokenize,
+    FrameSample, SceneRun, SlateRule, build_label, compute_boundaries,
+    dedupe_labels, hold_keys, label_matches, runs_to_segments, tokenize,
 )
 from .slate_ocr import read_slate_line
 from .srt import SubSegment, build_force_style, segments_to_srt
@@ -702,6 +703,191 @@ async def run_scene_scan(external_id: UUID,
         # 진짜 실패 — error를 기록해 프론트 폴링이 멈추게 한다(3분 헛대기 방지).
         try:
             save_scenes(external_id, {"scanning": False, "frames": [],
+                                      "error": "스캔에 실패했습니다. 서버 로그를 확인하세요."})
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    finally:
+        _BURN_SEMAPHORE.release()
+
+
+def build_fingerprint_segments(runs_raw: list[dict], rule_dict: dict) -> dict:
+    """지문 런 + 규칙 → 양 모드 세그먼트(순수 함수, build_scene_data의 지문판).
+    경계는 이미 프레임 정확한 컷이라 min_ms 흡수·중앙정렬·정밀화가 없다 —
+    규칙은 런들을 같은 키로 병합하는 데만 쓴다."""
+    rule = SlateRule(
+        delimiters=rule_dict.get("delimiters", ["_", " ", "-"]),
+        seq_tokens=rule_dict["seq_tokens"],
+        scene_tokens=rule_dict.get("scene_tokens", []),
+    )
+    runs = [SceneRun(start_ms=r["start_ms"], end_ms=r["end_ms"],
+                     text=r.get("text", "")) for r in runs_raw]
+    return {
+        "segments_scene": [
+            {"label": s.label, "start_ms": s.start_ms, "end_ms": s.end_ms}
+            for s in runs_to_segments(runs, rule, "scene")],
+        "segments_sequence": [
+            {"label": s.label, "start_ms": s.start_ms, "end_ms": s.end_ms}
+            for s in runs_to_segments(runs, rule, "sequence")],
+    }
+
+
+# 지문 스캔에서 구역 미지정 시 상단 밴드를 크롭으로 쓴다(_TOP_BAND_DEFAULT와
+# 같은 비율) — 지문은 크롭이 필수라(전체 프레임이면 애니 전체의 변화가 다 컷으로
+# 잡힌다) 기존 '상단 밴드 가정'을 크롭으로 실체화한 것. 썸네일 간격은 간격
+# 스캔의 상한과 동일한 2초 고정(지문에는 샘플 간격 개념이 없다).
+_FP_FALLBACK_REGION = (0.0, 0.0, 1.0, _TOP_BAND_DEFAULT)
+_FP_THUMB_INTERVAL_S = 2.0
+
+
+async def run_scene_scan_fingerprint(external_id: UUID) -> None:
+    """burned.mp4 전 프레임의 텍스트 이진화 지문으로 컷을 찾고, 컷 사이 런마다
+    슬레이트를 OCR해 scenes.json에 method="fingerprint"로 저장한다. 경계는 규칙
+    확정(/scenes/rule) 때 runs_to_segments가 계산한다 — 간격 스캔과 같은 2단계
+    UX이되, 경계가 이미 프레임 정확이라 정밀화 단계가 없다.
+
+    진행률: 추출·지문 단계는 total_frames=0(프론트 '프레임 추출 중…' 표시),
+    런 OCR 단계부터 ocr_done/total_frames(=런 수)로 증분 기록. 취소·실패·세마포어
+    규약은 run_scene_scan과 동일하되 method를 함께 보존한다(방식 선택 유지)."""
+    await _BURN_SEMAPHORE.acquire()
+    generation = _bump_generation(external_id)
+    region_out = None
+    try:
+        workdir = job_dir(external_id)
+        burned = workdir / "burned.mp4"
+        if not burned.exists():
+            raise RuntimeError("굽기 완료본(burned.mp4)이 없습니다.")
+        ffmpeg = locate_ffmpeg()
+        if ffmpeg is None:
+            raise RuntimeError("ffmpeg를 찾을 수 없습니다.")
+        # 컷 프레임 인덱스 ↔ 시각(ms) 변환의 기준 — 반드시 측정 fps(showinfo).
+        fps = video_fps(ffmpeg, burned)
+        if not fps:
+            raise RuntimeError("소스 프레임레이트를 측정하지 못했습니다.")
+
+        frames_dir = workdir / "scene_fp_frames"
+        thumbs_dir = workdir / "scene_thumbs"
+        for d in (frames_dir, thumbs_dir):
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
+
+        region = load_ocr_region(external_id)
+        region_out = ({"x": region[0], "y": region[1],
+                       "w": region[2], "h": region[3]} if region else None)
+        eff_region = region or _FP_FALLBACK_REGION
+        thumb_interval_ms = int(_FP_THUMB_INTERVAL_S * 1000)
+
+        def _prog(extra: dict) -> dict:
+            return {"scanning": True, "method": "fingerprint",
+                    "thumb_interval_ms": thumb_interval_ms,
+                    "ocr_region": region_out, **extra}
+
+        def _check_cancel() -> None:
+            if generation != _current_generation(external_id):
+                raise StaleRunCancelled(external_id)
+
+        def _work() -> tuple[list[SceneRun], int, int]:
+            extract_fingerprint_frames(ffmpeg, burned, frames_dir, eff_region,
+                                       proc_key=str(external_id))
+            extract_thumbnails(ffmpeg, burned, thumbs_dir, _FP_THUMB_INTERVAL_S,
+                               proc_key=str(external_id))
+            thumb_count = len(list(thumbs_dir.glob("thumb_*.jpg")))
+            pngs = sorted(frames_dir.glob("f_*.png"))
+            n_frames = len(pngs)
+            if n_frames == 0:
+                raise RuntimeError("프레임을 추출하지 못했습니다.")
+            save_scenes(external_id, _prog(
+                {"total_frames": 0, "ocr_done": 0, "frames": [],
+                 "thumb_count": thumb_count}))
+            diffs = adjacent_diffs(pngs, check_cancel=_check_cancel)
+            runs_f = frame_runs(detect_cuts(diffs), n_frames)
+            total = len(runs_f)
+            save_scenes(external_id, _prog(
+                {"total_frames": total, "ocr_done": 0, "frames": [],
+                 "thumb_count": thumb_count}))
+
+            tmpdir = workdir / "fp_ocr_tmp"
+            tmpdir.mkdir(parents=True, exist_ok=True)
+
+            def _read_run(bounds: tuple[int, int]) -> str:
+                start_f, end_f = bounds
+                _check_cancel()
+                # 컷 경계에서 먼 순서(중앙→1/4→3/4)로 시도 — 컷 프레임은 디졸브
+                # ·모션블러로 오독하기 쉽다(실측: 컷 프레임 판독에서 꼬리 잘림
+                # 다수). 런 내부는 텍스트가 동일하다는 게 지문 방식의 전제라
+                # 어느 프레임을 읽어도 같아야 하고, 실패("")만 자리를 바꿔 본다.
+                span = end_f - start_f
+                for frac in (0.5, 0.25, 0.75):
+                    fi = min(end_f - 1, start_f + int(span * frac))
+                    dst = tmpdir / f"r_{threading.get_ident()}_{fi}.png"
+                    extract_frame(ffmpeg, burned, frame_mid_ms(fi, fps), dst,
+                                  proc_key=str(external_id), region=eff_region)
+                    text = read_slate_line(dst, _DEFAULT_DELIMS, top_frac=1.0)
+                    try:
+                        dst.unlink()
+                    except OSError:
+                        pass
+                    if text:
+                        return text
+                return ""
+
+            texts: list[str] = []
+            done = 0
+            try:
+                # 런 판독은 서로 독립 — 정밀화·스캔과 같은 이유·설정으로 병렬화.
+                with ThreadPoolExecutor(max_workers=_refine_workers()) as pool:
+                    for text in pool.map(_read_run, runs_f):
+                        texts.append(text)
+                        done += 1
+                        if done % 10 == 0 or done == total:
+                            save_scenes(external_id, _prog(
+                                {"total_frames": total, "ocr_done": done,
+                                 "frames": [], "thumb_count": thumb_count}))
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+
+            runs = [SceneRun(start_ms=frame_mid_ms(s, fps),
+                             end_ms=frame_mid_ms(e, fps), text=t)
+                    for (s, e), t in zip(runs_f, texts)]
+            return runs, thumb_count, n_frames
+
+        try:
+            runs, thumb_count, n_frames = await asyncio.to_thread(_work)
+        finally:
+            # 지문용 프레임은 수만 장이라 크다 — 실패해도 제거한다.
+            shutil.rmtree(frames_dir, ignore_errors=True)
+
+        save_scenes(external_id, {
+            "scanning": False,
+            "method": "fingerprint",
+            "video_fps": fps,
+            "total_ms": frame_mid_ms(n_frames, fps),
+            "thumb_interval_ms": thumb_interval_ms,
+            "thumb_count": thumb_count,
+            "frame_count": len(runs),
+            "runs": [{"start_ms": r.start_ms, "end_ms": r.end_ms,
+                      "text": r.text} for r in runs],
+            # frames는 토큰 선택 UI 호환용 — 런 시작 시각을 샘플로 노출한다.
+            "frames": [{"t_ms": r.start_ms, "text": r.text} for r in runs],
+            "ocr_region": region_out,
+        })
+    except StaleRunCancelled:
+        logger.info("scene fp scan %s cancelled (gen %d)", external_id, generation)
+        # 멈추는 쪽이 자기 플래그를 내린다(run_scene_scan과 동일 경합 방지).
+        # 부분 판독은 남기지 않되 구역·방식 선택은 보존한다.
+        save_scenes(external_id, {"scanning": False, "method": "fingerprint",
+                                  "ocr_region": region_out})
+    except Exception:  # noqa: BLE001
+        if generation != _current_generation(external_id):
+            # kill_active로 죽은 ffmpeg가 FfmpegError로 표면화된 경우 —
+            # 세대가 넘어갔으면 실패가 아니라 취소이므로 조용히 정리한다.
+            logger.info("scene fp scan %s cancelled mid-ffmpeg (gen %d)",
+                        external_id, generation)
+            return
+        logger.exception("scene fp scan %s failed", external_id)
+        try:
+            save_scenes(external_id, {"scanning": False, "method": "fingerprint",
+                                      "frames": [], "ocr_region": region_out,
                                       "error": "스캔에 실패했습니다. 서버 로그를 확인하세요."})
         except Exception:  # noqa: BLE001
             pass
