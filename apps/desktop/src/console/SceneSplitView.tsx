@@ -45,8 +45,9 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   // 긴 영상은 OCR이 수 분 걸릴 수 있어 고정 타임아웃 대신 무진척이 오래
   // 지속될 때만 포기한다. hadScan=true(재스캔)면 옛 scanned 데이터가 프레임
   // 추출 동안 남아 보일 수 있어(구 서버) scanning을 한 번 본 뒤의 scanned만
-  // 완료로 인정한다.
-  const pollScan = async (hadScan: boolean) => {
+  // 완료로 인정한다. 반환=스캔 성공 여부 — 실패했는데 runAll이 경계 계산으로
+  // 진행하면 빈 스캔 데이터에 409가 떠 원인이 가려진다(실기).
+  const pollScan = async (hadScan: boolean): Promise<boolean> => {
     let stalled = 0;
     let lastDone = -1;
     let sawScanning = false;
@@ -59,11 +60,11 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       } catch {
         // 스캔도 CPU를 강하게 써 폴링이 순간 실패할 수 있다 — 연속 실패만 포기.
         pollFails += 1;
-        if (pollFails >= 20) { setError("서버 응답이 없습니다. 상태를 확인하세요."); return; }
+        if (pollFails >= 20) { setError("서버 응답이 없습니다. 상태를 확인하세요."); return false; }
         continue;
       }
       pollFails = 0;
-      if (d.error) { setError(`스캔 실패: ${d.error}`); return; }
+      if (d.error) { setError(`스캔 실패: ${d.error}`); return false; }
       if (d.scanning) {
         sawScanning = true;
         const done = d.ocr_done ?? 0;
@@ -74,14 +75,15 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
         stalled = done === lastDone ? stalled + 1 : 0;
         lastDone = done;
         // 진척이 200초(133회) 넘게 멈춰 있으면 포기(서버 이상).
-        if (stalled > 133) { setError("스캔이 진행되지 않습니다. 서버 상태를 확인하세요."); return; }
+        if (stalled > 133) { setError("스캔이 진행되지 않습니다. 서버 상태를 확인하세요."); return false; }
       } else if (d.scanned && (sawScanning || !hadScan)) {
         setData(d);
         setNotice("스캔 완료 — 토큰을 지정하세요.");
-        return;
+        return true;
       }
     }
     setError("스캔이 시간 내 끝나지 않았습니다.");
+    return false;
   };
 
   const refresh = async () => {
@@ -213,8 +215,10 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       if (opts.rescan) {
         setStage(fp ? "1/2 지문 컷 감지" : "1/4 슬레이트 스캔");
         await scanScenes(jobId, scanIntervalS, scanMethod);
-        await pollScan(Boolean(data?.scanned));
-        if (cancelledRef.current) return;
+        const ok = await pollScan(Boolean(data?.scanned));
+        // 스캔 실패면 여기서 멈춘다 — 빈 데이터로 경계 계산을 치면 409가 떠
+        // 진짜 원인(스캔 실패)이 가려진다.
+        if (!ok || cancelledRef.current) return;
       }
       if (seqIdx.length === 0) {
         setStage(null);
