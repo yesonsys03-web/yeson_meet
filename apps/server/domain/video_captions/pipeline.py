@@ -832,7 +832,8 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
             # 녹고(실측 총 9분), 흐릿한 중간 프레임을 읽어 오독도 는다.
             picks = [stable_frame(diffs, s, e) for s, e in runs_f]
             batch = extract_frames_at(ffmpeg, burned, picks, tmpdir, eff_region,
-                                      proc_key=str(external_id))
+                                      proc_key=str(external_id),
+                                      workers=_refine_workers())
 
             def _read_run(item: tuple[int, tuple[int, int]]) -> str:
                 idx, (start_f, end_f) = item

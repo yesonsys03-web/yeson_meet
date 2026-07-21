@@ -426,25 +426,54 @@ def extract_thumbnails(ffmpeg: str, src: Path, out_dir: Path,
           str(out_dir / "thumb_%05d.jpg")], proc_key=proc_key)
 
 
+# select 식 항 수 상한 — ffmpeg 표현식 파서는 연쇄 연산 ~100항을 넘기면
+# 'Cannot allocate memory'로 필터 초기화에 실패한다(번들 8.1.2 실측: 100 OK,
+# 150 FAIL — 파서 재귀 한도라 플랫폼 무관). 100에 딱 붙이지 않고 여유를 둔다.
+_SELECT_CHUNK = 96
+
+
 def extract_frames_at(ffmpeg: str, src: Path, frame_indices: list[int],
                       out_dir: Path, region: OcrRegion,
-                      proc_key: str | None = None) -> dict[int, Path]:
-    """지정한 프레임 번호(0-based 디코드 순서)들을 한 번의 디코드 패스로 일괄
+                      proc_key: str | None = None,
+                      chunk_size: int = _SELECT_CHUNK,
+                      workers: int = 1) -> dict[int, Path]:
+    """지정한 프레임 번호(0-based 디코드 순서)들을 select 디코드 패스로 일괄
     추출한다 — 프레임마다 입력 -ss 시킹(실측 830ms×수천 회=수 분)을 하지 않는다.
 
-    select 필터그래프는 파일(-filter_script:v)로 전달한다 — 수천 프레임이면
-    식이 수십 KB라 Windows 커맨드라인 32K 한도에 걸린다. -fps_mode vfr로
-    선택된 프레임만 순서대로 내보내며, 출력 번호는 선택 프레임의 오름차순과
-    1:1 대응한다. 반환은 프레임번호→경로 매핑(파일 생성 여부는 확인하지
-    않는다 — 판독 실패는 호출자의 폴백이 받는다)."""
+    select 식은 chunk_size 항씩 나눠 여러 패스로 돌린다(위 _SELECT_CHUNK 참조).
+    각 패스는 -frames:v로 청크의 마지막 프레임을 내보낸 뒤 디코드를 멈추므로
+    뒤 청크만 영상 깊숙이 디코드하고, workers>1이면 청크들을 병렬로 돌린다
+    (청크는 서로 독립 — proc_key 레지스트리는 키당 집합이라 동시 등록·일괄
+    취소가 안전하다). 그래프는 파일(-filter_script:v)로 전달한다 — Windows
+    커맨드라인 32K 한도와 이스케이프 문제를 원천 회피. -fps_mode vfr로 선택된
+    프레임만 순서대로 나오며, 출력 번호는 청크 내 오름차순과 1:1 대응한다.
+    반환은 프레임번호→경로 매핑(파일 생성 여부는 확인하지 않는다 — 판독
+    실패는 호출자의 폴백이 받는다)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     ordered = sorted(set(frame_indices))
-    expr = "+".join(f"eq(n\\,{n})" for n in ordered)
-    graph = out_dir / "select.vf"
-    graph.write_text(f"select={expr},{crop_filter(region)}", encoding="utf-8")
-    _run([ffmpeg, "-y", "-i", str(src), "-filter_script:v", str(graph),
-          "-fps_mode", "vfr", str(out_dir / "at_%05d.png")], proc_key=proc_key)
-    return {n: out_dir / f"at_{k:05d}.png" for k, n in enumerate(ordered, 1)}
+    chunks = [ordered[i:i + chunk_size]
+              for i in range(0, len(ordered), chunk_size)]
+
+    def _one(ci_chunk: tuple[int, list[int]]) -> None:
+        ci, chunk = ci_chunk
+        expr = "+".join(f"eq(n\\,{n})" for n in chunk)
+        graph = out_dir / f"select_{ci:03d}.vf"
+        graph.write_text(f"select={expr},{crop_filter(region)}",
+                         encoding="utf-8")
+        _run([ffmpeg, "-y", "-i", str(src), "-filter_script:v", str(graph),
+              "-fps_mode", "vfr", "-frames:v", str(len(chunk)),
+              str(out_dir / f"c{ci:03d}_%05d.png")], proc_key=proc_key)
+
+    if workers > 1 and len(chunks) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            list(pool.map(_one, enumerate(chunks)))
+    else:
+        for item in enumerate(chunks):
+            _one(item)
+    return {n: out_dir / f"c{ci:03d}_{k:05d}.png"
+            for ci, chunk in enumerate(chunks)
+            for k, n in enumerate(chunk, 1)}
 
 
 def cut_segment(ffmpeg: str, src: Path, dst: Path, start_ms: int, end_ms: int,

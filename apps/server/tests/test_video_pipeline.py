@@ -801,7 +801,7 @@ async def test_run_scene_scan_fingerprint_happy_path(monkeypatch, tmp_path):
     # 배치 추출 페이크 — 실제 구현과 같은 프레임번호→경로 계약으로, 파일에
     # 그 프레임의 중앙 시각을 적어 판독 페이크가 라벨을 결정할 수 있게 한다.
     def fake_extract_at(ffmpeg, src, frame_indices, out_dir, region,
-                        proc_key=None):
+                        proc_key=None, workers=1):
         out_dir.mkdir(parents=True, exist_ok=True)
         out = {}
         for k, n in enumerate(sorted(set(frame_indices)), 1):

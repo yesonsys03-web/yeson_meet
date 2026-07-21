@@ -269,11 +269,11 @@ def test_extract_fingerprint_frames_all_frames_cropped_scaled(
     assert (tmp_path / "fp").is_dir()
 
 
-def test_extract_frames_at_batches_selects_in_one_pass(monkeypatch, tmp_path: Path):
+def test_extract_frames_at_batches_selects_per_chunk(monkeypatch, tmp_path: Path):
     """런 대표 프레임 일괄 추출 — 런마다 -ss 시킹(실측 830ms×2658=9분)이 아니라
-    한 번의 디코드 패스에서 select로 뽑는다. 필터그래프는 Windows 커맨드라인
-    32K 한도를 피해 파일(-filter_script:v)로 전달한다. 반환은 프레임번호→경로
-    매핑(선택은 오름차순으로 출력 번호와 대응)."""
+    select 디코드 패스로 뽑는다. 필터그래프는 Windows 커맨드라인 32K 한도를
+    피해 파일(-filter_script:v)로 전달하고, -frames:v로 청크 마지막 프레임에서
+    디코드를 조기 종료한다. 반환은 프레임번호→경로 매핑(청크 내 오름차순 대응)."""
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run",
                         lambda cmd, **kw: (calls.append(cmd), _Result())[1])
@@ -285,7 +285,34 @@ def test_extract_frames_at_batches_selects_in_one_pass(monkeypatch, tmp_path: Pa
     assert "select=eq(n\\,3)+eq(n\\,7)+eq(n\\,120)" in graph
     assert "crop=in_w*0.5000:in_h*0.2000:in_w*0.0000:in_h*0.0000" in graph
     assert "-fps_mode" in cmd and cmd[cmd.index("-fps_mode") + 1] == "vfr"
-    # 오름차순 대응: 3→_00001, 7→_00002, 120→_00003
-    assert out[3].name == "at_00001.png"
-    assert out[7].name == "at_00002.png"
-    assert out[120].name == "at_00003.png"
+    assert "-frames:v" in cmd and cmd[cmd.index("-frames:v") + 1] == "3"
+    # 청크 내 오름차순 대응: 3→_00001, 7→_00002, 120→_00003
+    assert out[3].name == "c000_00001.png"
+    assert out[7].name == "c000_00002.png"
+    assert out[120].name == "c000_00003.png"
+
+
+def test_extract_frames_at_chunks_large_sets(monkeypatch, tmp_path: Path):
+    """수천 항짜리 select 식은 ffmpeg 표현식 파서가 'Cannot allocate memory'로
+    거부한다(실기: 2658항 즉사) — 청크로 나눠 여러 패스로 돌린다. 각 청크의
+    그래프 파일은 그 청크의 프레임만 담고, 매핑은 청크별 패턴을 가리킨다."""
+    calls: list[list[str]] = []
+    graphs: list[str] = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        graphs.append(
+            Path(cmd[cmd.index("-filter_script:v") + 1]).read_text())
+        return _Result()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    out = ff.extract_frames_at("ffmpeg", tmp_path / "in.mp4", [5, 1, 9, 3],
+                               tmp_path / "sel", region=(0.0, 0.0, 1.0, 0.35),
+                               chunk_size=2)
+    assert len(calls) == 2
+    assert "select=eq(n\\,1)+eq(n\\,3)" in graphs[0]
+    assert "select=eq(n\\,5)+eq(n\\,9)" in graphs[1]
+    assert out[1].name == "c000_00001.png"
+    assert out[3].name == "c000_00002.png"
+    assert out[5].name == "c001_00001.png"
+    assert out[9].name == "c001_00002.png"
