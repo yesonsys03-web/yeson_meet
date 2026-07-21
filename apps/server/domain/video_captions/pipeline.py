@@ -28,7 +28,7 @@ from .ffmpeg import (
     wav_duration_seconds,
 )
 from .fingerprint import (
-    adjacent_diffs, detect_cuts, frame_mid_ms, frame_runs, stable_frame,
+    adjacent_diffs, detect_cuts, frame_boundary_ms, frame_runs, stable_frame,
 )
 from .ingest import download_youtube
 from .scene_split import (
@@ -850,7 +850,7 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                 for frac in (0.25, 0.75):
                     fi = min(end_f - 1, start_f + int(span * frac))
                     dst = tmpdir / f"r_{threading.get_ident()}_{fi}.png"
-                    extract_frame(ffmpeg, burned, frame_mid_ms(fi, fps), dst,
+                    extract_frame(ffmpeg, burned, frame_boundary_ms(fi, fps), dst,
                                   proc_key=str(external_id), region=eff_region)
                     text = read_slate_line(dst, _DEFAULT_DELIMS, top_frac=1.0)
                     try:
@@ -876,8 +876,8 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
 
-            runs = [SceneRun(start_ms=frame_mid_ms(s, fps),
-                             end_ms=frame_mid_ms(e, fps), text=t)
+            runs = [SceneRun(start_ms=frame_boundary_ms(s, fps),
+                             end_ms=frame_boundary_ms(e, fps), text=t)
                     for (s, e), t in zip(runs_f, texts)]
             return runs, thumb_count, n_frames
 
@@ -891,7 +891,7 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
             "scanning": False,
             "method": "fingerprint",
             "video_fps": fps,
-            "total_ms": frame_mid_ms(n_frames, fps),
+            "total_ms": frame_boundary_ms(n_frames, fps),
             "thumb_interval_ms": thumb_interval_ms,
             "thumb_count": thumb_count,
             "frame_count": len(runs),

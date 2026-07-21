@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from apps.server.domain.video_captions.fingerprint import (
-    MERGE_GAP, MIN_CUT_DIFF, adjacent_diffs, detect_cuts, frame_mid_ms,
+    MERGE_GAP, MIN_CUT_DIFF, adjacent_diffs, detect_cuts, frame_boundary_ms,
     frame_runs, load_fingerprint,
 )
 
@@ -83,30 +83,40 @@ def test_runs_empty_when_no_frames():
     assert frame_runs([], 0) == []
 
 
-# ── frame_mid_ms ─────────────────────────────────────────────────────────────
+# ── frame_boundary_ms ────────────────────────────────────────────────────────
+# 실측(2026-07-21, 번들 8.1.2 + select 대조): 입력 -ss X는 "X에 보이는 프레임"이
+# 아니라 "PTS ≥ X인 첫 프레임"을 내보낸다(스냅업). 프레임 표시구간 '중앙'을
+# 경계로 쓰면 모든 클립이 1프레임 늦게 시작해 꼬리에 다음 씬 1프레임이 섞였다
+# (시퀀스 16클립 실기 전수 재현). 경계는 '직전 프레임과의 갭 중앙'이어야 한다.
 
-def test_mid_ms_is_frame_display_midpoint():
-    # 24fps: 프레임 0의 표시구간 [0, 41.67)ms — 중앙 ≈ 20.83 → 21ms.
-    assert frame_mid_ms(0, 24.0) == 21
-    assert frame_mid_ms(24, 24.0) == round((24 + 0.5) * 1000 / 24.0)
+def test_boundary_ms_targets_gap_before_frame():
+    # 24fps: 프레임 1 경계 = 갭 중앙 ≈ 20.83 → 21ms. 프레임 0은 0으로 클램프.
+    assert frame_boundary_ms(0, 24.0) == 0
+    assert frame_boundary_ms(1, 24.0) == 21
+    assert frame_boundary_ms(24, 24.0) == round((24 - 0.5) * 1000 / 24.0)
 
 
 @pytest.mark.parametrize("fps", [24.0, 24000 / 1001, 30000 / 1001, 25.0])
-@pytest.mark.parametrize("start,end", [(0, 1), (0, 1862), (120, 212), (7, 8)])
-def test_mid_ms_boundaries_reconstruct_exact_frame_count(fps, start, end):
+@pytest.mark.parametrize("start,end", [(1, 2), (1, 1863), (120, 212), (7, 8)])
+def test_boundary_ms_reconstructs_exact_frame_count(fps, start, end):
     # cut_segment 규약: N = round((end_ms-start_ms)×fps/1000)가 정확히 프레임
     # 수(end-start)로 떨어져야 꼬리 혼입·유실이 없다(NTSC 장구간 포함).
-    s = frame_mid_ms(start, fps)
-    e = frame_mid_ms(end, fps)
+    # idx=0은 0으로 클램프돼 갭 중앙보다 반 갭 늦으므로 이 속성에서 제외 —
+    # 프레임 0에서 시작하는 세그먼트(선두 타이틀카드 없는 영상)만 꼬리 ±1프레임
+    # 반올림 에지가 있다(문서화된 트레이드오프: 음수 시각이 scenes.json·UI·
+    # thumb-at(ge=0)로 새는 것보다 낫다).
+    s = frame_boundary_ms(start, fps)
+    e = frame_boundary_ms(end, fps)
     assert round((e - s) * fps / 1000.0) == end - start
 
 
 @pytest.mark.parametrize("fps", [24.0, 24000 / 1001])
-def test_mid_ms_lands_inside_frame_interval(fps):
-    # -ss 스냅다운 안전: 중앙 시각은 그 프레임의 [PTS, 다음 PTS) 안에 있어야 한다.
-    for idx in (0, 1, 1000, 35999):
-        t = frame_mid_ms(idx, fps) / 1000.0
-        assert idx / fps < t < (idx + 1) / fps
+def test_boundary_ms_lands_in_gap_before_frame(fps):
+    # 스냅업 정확성: PTS(idx-1) < 경계 < PTS(idx) 여야 -ss가 정확히 frame idx를
+    # 내보낸다(±0.5ms 반올림에도 갭 중앙이라 여유 ~20ms).
+    for idx in (1, 2, 1000, 35999):
+        t = frame_boundary_ms(idx, fps) / 1000.0
+        assert (idx - 1) / fps < t < idx / fps
 
 
 # ── load_fingerprint / adjacent_diffs ────────────────────────────────────────

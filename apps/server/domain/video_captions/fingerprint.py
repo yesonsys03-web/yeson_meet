@@ -102,12 +102,17 @@ def stable_frame(diffs: list[int], start: int, end: int) -> int:
     return min(range(start, end), key=score)
 
 
-def frame_mid_ms(idx: int, fps: float) -> int:
-    """프레임 idx의 표시구간 '중앙' 시각(ms) — 경계·OCR 추출 시각 규약.
+def frame_boundary_ms(idx: int, fps: float) -> int:
+    """frame idx가 -ss로 정확히 잡히는 경계 시각(ms) — 직전 프레임과의 갭 중앙.
 
-    프레임 PTS(idx/fps) 정확값을 쓰면 입력측 -ss 스냅다운("그 시각 이하 가장
-    가까운 프레임")이 반올림 오차 1ms로도 직전 프레임으로 미끄러진다. 중앙이면
-    ±0.5ms 오차에도 항상 frame idx에 안착하고, 세그 프레임 수
+    실측(번들 8.1.2, select 절대 프레임번호 대조): 입력측 -ss X는 "X 시각에
+    보이는 프레임"이 아니라 **PTS ≥ X인 첫 프레임**을 내보낸다(스냅업). 그래서
+    프레임 표시구간 '중앙'((idx+0.5)/fps)을 경계로 쓰면 -ss가 다음 프레임부터
+    시작해 모든 클립이 1프레임 늦고, 개수는 정확하니 꼬리에 다음 씬 1프레임이
+    섞인다(실기 시퀀스 16클립 전수 재현 — 머리 2프레임째 시작+꼬리 혼입).
+    갭 중앙((idx-0.5)/fps)은 PTS(idx-1) < X < PTS(idx)라 ±0.5ms 반올림에도
+    정확히 frame idx에 안착하고(여유 ~20ms@24fps), 세그 프레임 수
     N=round((end-start)×fps/1000)도 정확히 (end_idx-start_idx)로 떨어진다
-    (cut_segment의 -frames:v 규약과 일치 — NTSC 장구간 누적 오차 없음)."""
-    return round((idx + 0.5) * 1000.0 / fps)
+    (cut_segment의 -frames:v 규약과 일치 — NTSC 장구간 누적 오차 없음).
+    idx=0은 음수가 되므로 0으로 클램프한다(-ss 0 → 첫 프레임)."""
+    return max(0, round((idx - 0.5) * 1000.0 / fps))

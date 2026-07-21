@@ -769,11 +769,11 @@ async def test_run_scene_scan_fingerprint_happy_path(monkeypatch, tmp_path):
     """추출→지문 diff(진짜 계산)→컷→런 중간 OCR→scenes.json 저장 전 구간.
 
     페이크 추출이 프레임 10에서 패턴이 바뀌는 PNG 20장을 만들고, 지문 diff가
-    실제로 그 컷 하나를 찾는지, 런 경계가 frame_mid_ms 규약으로 기록되는지,
+    실제로 그 컷 하나를 찾는지, 런 경계가 frame_boundary_ms 규약으로 기록되는지,
     method/runs/frames(호환 샘플)/total_ms/video_fps가 저장되는지 확인한다."""
     from PIL import Image
 
-    from apps.server.domain.video_captions.fingerprint import frame_mid_ms
+    from apps.server.domain.video_captions.fingerprint import frame_boundary_ms
 
     eid = uuid4()
     workdir = pl.job_dir(eid)
@@ -806,11 +806,11 @@ async def test_run_scene_scan_fingerprint_happy_path(monkeypatch, tmp_path):
         out = {}
         for k, n in enumerate(sorted(set(frame_indices)), 1):
             p = out_dir / f"at_{k:05d}.png"
-            p.write_text(str(frame_mid_ms(n, 24.0)))
+            p.write_text(str(frame_boundary_ms(n, 24.0)))
             out[n] = p
         return out
 
-    cut_ms = frame_mid_ms(10, 24.0)
+    cut_ms = frame_boundary_ms(10, 24.0)
 
     def fake_read(path, delimiters, min_tokens=2, top_frac=0.35):
         t_ms = int(Path(path).read_text())
@@ -831,11 +831,11 @@ async def test_run_scene_scan_fingerprint_happy_path(monkeypatch, tmp_path):
     assert data["scanning"] is False and data.get("error") is None
     assert data["method"] == "fingerprint"
     assert data["video_fps"] == 24.0
-    assert data["total_ms"] == frame_mid_ms(20, 24.0)
+    assert data["total_ms"] == frame_boundary_ms(20, 24.0)
     assert data["runs"] == [
-        {"start_ms": frame_mid_ms(0, 24.0), "end_ms": cut_ms,
+        {"start_ms": frame_boundary_ms(0, 24.0), "end_ms": cut_ms,
          "text": "HH0307_010_0010_AC_v01"},
-        {"start_ms": cut_ms, "end_ms": frame_mid_ms(20, 24.0),
+        {"start_ms": cut_ms, "end_ms": frame_boundary_ms(20, 24.0),
          "text": "HH0307_010_0020_AC_v01"},
     ]
     # 토큰 선택 UI 호환 샘플 — 런 시작 시각·텍스트.
