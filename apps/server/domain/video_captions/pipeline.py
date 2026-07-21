@@ -28,7 +28,8 @@ from .ffmpeg import (
     wav_duration_seconds,
 )
 from .fingerprint import (
-    adjacent_diffs, detect_cuts, frame_boundary_ms, frame_runs, stable_frame,
+    FADE_WINDOW, detect_cuts_with_fades, diff_series, frame_boundary_ms,
+    frame_runs, stable_frame,
 )
 from .ingest import download_youtube
 from .scene_split import (
@@ -868,8 +869,12 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
             save_scenes(external_id, _prog(
                 {"total_frames": 0, "ocr_done": 0, "frames": [],
                  "thumb_count": thumb_count}))
-            diffs = adjacent_diffs(pngs, check_cancel=_check_cancel)
-            runs_f = frame_runs(detect_cuts(diffs), n_frames)
+            # 인접+윈도우 diff 한 패스 — 윈도우가 느린 페이드(인접 diff가 임계를
+            # 못 넘는 디졸브)의 컷 누락을 막는다(실기: 씬 통째 흡수).
+            diffs, wdiffs = diff_series(pngs, FADE_WINDOW,
+                                        check_cancel=_check_cancel)
+            runs_f = frame_runs(
+                detect_cuts_with_fades(diffs, wdiffs, FADE_WINDOW), n_frames)
             total = len(runs_f)
             save_scenes(external_id, _prog(
                 {"total_frames": total, "ocr_done": 0, "frames": [],

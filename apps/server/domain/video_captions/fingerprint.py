@@ -59,6 +59,77 @@ def adjacent_diffs(paths: list[Path],
     return diffs
 
 
+# 느린 페이드 감지 윈도우(프레임). 시퀀스 전환 디졸브는 4~12프레임에 걸쳐
+# 서서히 바뀌어 인접 diff가 임계를 한 번도 못 넘는다(실기: 030_0330 씬이 통째로
+# 다음 런에 흡수, 130→140 혼입). i vs i-6 누적 diff는 텍스트가 통째로 바뀌므로
+# 크게 튄다 — 길수록 민감하지만 플래토가 넓어져 위치 정밀도가 떨어진다.
+FADE_WINDOW = 6
+
+
+def diff_series(paths: list[Path], window: int,
+                check_cancel: Callable[[], None] | None = None,
+                ) -> tuple[list[int], list[int]]:
+    """인접 해밍거리와 윈도우 해밍거리(frame k+window vs frame k)를 한 패스로.
+
+    adjacent_diffs와 같은 스트리밍(최근 window개 링버퍼, O(window) 메모리).
+    반환: (adj, win) — adj[i]=frame i+1 vs i, win[k]=frame k+window vs k."""
+    import numpy as np
+    adj: list[int] = []
+    win: list[int] = []
+    ring: list = []
+    prev = None
+    for i, path in enumerate(paths):
+        if check_cancel is not None and i % 256 == 0:
+            check_cancel()
+        cur = load_fingerprint(path)
+        if prev is not None:
+            adj.append(int(np.sum(cur != prev)) if cur.shape == prev.shape
+                       else int(cur.size))
+        if len(ring) == window:
+            old = ring[0]
+            win.append(int(np.sum(cur != old)) if cur.shape == old.shape
+                       else int(cur.size))
+        ring.append(cur)
+        if len(ring) > window:
+            ring.pop(0)
+        prev = cur
+    return adj, win
+
+
+def detect_cuts_with_fades(adjacent: list[int], windowed: list[int],
+                           window: int) -> list[int]:
+    """하드컷(인접 diff) + 느린 페이드 컷(윈도우 diff 플래토) 통합 감지.
+
+    윈도우 diff가 임계를 넘는 연속 구간(플래토)은 그 안 어딘가의 전환을 뜻한다.
+    하드컷도 자기 주변에 플래토를 만들므로 이미 잡힌 컷 근처 플래토는 버리고,
+    남은 플래토(=인접 diff만으로는 안 보이는 느린 페이드)에 컷 1개를 삽입한다 —
+    위치는 플래토 안 인접 diff 최대 지점(가장 빠른 변화). 가짜 컷 추가는
+    무해하다(동일 라벨 병합이 흡수) — 컷 누락만이 씬을 통째로 잃게 한다."""
+    cuts = detect_cuts(adjacent)
+    if window <= 1 or not windowed:
+        return cuts
+    threshold = max(MIN_CUT_DIFF, statistics.median(windowed) * MED_MULT)
+    fade: list[int] = []
+    k = 0
+    while k < len(windowed):
+        if windowed[k] <= threshold:
+            k += 1
+            continue
+        j = k
+        while j + 1 < len(windowed) and windowed[j + 1] > threshold:
+            j += 1
+        lo_f, hi_f = k, j + window  # 플래토가 걸친 프레임 범위
+        if not any(lo_f - MERGE_GAP <= c <= hi_f + MERGE_GAP for c in cuts):
+            lo_i = max(0, lo_f)
+            hi_i = min(len(adjacent) - 1, hi_f - 1)
+            if lo_i <= hi_i:
+                best = max(range(lo_i, hi_i + 1),
+                           key=lambda i: (adjacent[i], -i))
+                fade.append(best + 1)
+        k = j + 1
+    return sorted(set(cuts + fade))
+
+
 def detect_cuts(diffs: list[int]) -> list[int]:
     """컷 프레임 인덱스(새 런의 첫 프레임, 0-based) 목록.
 
