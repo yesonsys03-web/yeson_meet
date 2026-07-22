@@ -1027,3 +1027,14 @@ def test_clamp_allows_left_move_over_unreadable():
 
 def test_clamp_noop_when_equal():
     assert pl._clamp_fp_move(lambda f: "next", 10, 10) == 10
+
+
+def test_text_side_is_case_insensitive():
+    # OCR이 v01을 V01로 읽는 순간 대소문자 구분 비교가 '어느 쪽도 아님'을
+    # 만들어 OCR 권위가 무력화됐다(실기 090_0180 꼬리 2프레임 잔존).
+    assert pl._text_side("HH0307_090_0190_AC_V01",
+                         "HH0307_090_0180_AC_v01",
+                         "HH0307_090_0190_AC_v01", ["_", "-", "/"]) == "next"
+    assert pl._text_side("HH03070900180AC-V01",
+                         "HH0307_090_0180_AC_v01",
+                         "HH0307_090_0190_AC_v01", ["_", "-", "/"]) == "prev"

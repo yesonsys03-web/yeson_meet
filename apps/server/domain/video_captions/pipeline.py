@@ -767,7 +767,9 @@ def _text_side(text: str | None, prev_text: str, next_text: str,
     """판독 텍스트가 이전/다음 어느 쪽 슬레이트인지 — squash 접두 상호 일치
     (오독·꼬리 잘림 내성). 판독불가·양쪽 다 일치(공통 접두만 읽힘)면 None."""
     def sq(s: str) -> str:
-        return "".join("".join(t.split()) for t in tokenize(s, delimiters))
+        # 소문자화 — OCR이 v01/V01을 오가며 읽어(실기) 대소문자 구분 비교는
+        # '어느 쪽도 아님'을 만들고 OCR 권위를 무력화한다.
+        return "".join("".join(t.split()) for t in tokenize(s, delimiters)).lower()
 
     x = sq(text or "")
     if not x:
@@ -1024,20 +1026,9 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                     return text
 
                 starts = [s for s, _e in runs_f]
-                for bi, i in enumerate(bounds):
-                    _check_cancel()
-                    starts[i] = _align_cut(
-                        _read_frame, runs_f[i][0], texts_c[i - 1], texts_c[i],
-                        lo=runs_f[i - 1][0], hi=runs_f[i][1],
-                        delimiters=_DEFAULT_DELIMS)
-                    if bi % 20 == 0 or bi == len(bounds) - 1:
-                        save_scenes(external_id, _prog(
-                            {"total_frames": total + len(bounds),
-                             "ocr_done": total + bi + 1, "frames": [],
-                             "thumb_count": thumb_count}))
-                # 지문 유사도 정렬(최종 보정) — OCR이 못 읽는 페이드 프레임의
-                # 귀속을 픽셀 잔상으로 판정한다(_fp_align 참조). 추가 ffmpeg·OCR
-                # 호출 없음(추출된 지문 PNG 재사용).
+                # ① 지문 유사도 정렬 — OCR이 못 읽는 페이드 프레임의 귀속을
+                # 픽셀 잔상으로 판정한다(_fp_align 참조). 이동은 OCR 가독성으로
+                # 캡(_clamp_fp_move). 추가 ffmpeg·OCR 호출 없음(지문 PNG 재사용).
                 fp_cache: dict[int, object] = {}
 
                 def _fp_at(fi: int):
@@ -1048,12 +1039,11 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                     return fp
 
                 for i in bounds:
+                    _check_cancel()
                     aligned = _fp_align(
                         _fp_at, starts[i], _fp_at(picks[i - 1]), _fp_at(picks[i]),
                         lo=starts[i - 1], hi=runs_f[i][1])
                     if aligned is not None and aligned != starts[i]:
-                        # 읽히는 프레임의 소속은 OCR이 권위 — 유사도 이동은
-                        # 판독불가 프레임 위로만 허용(_clamp_fp_move 참조).
                         prev_t, next_t = texts_c[i - 1], texts_c[i]
 
                         def _side(fi: int, p=prev_t, n=next_t) -> str | None:
@@ -1061,6 +1051,21 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                                               _DEFAULT_DELIMS)
 
                         starts[i] = _clamp_fp_move(_side, starts[i], aligned)
+
+                # ② OCR 정렬을 '마지막'에 — 읽히는 프레임의 소속은 OCR이 최종
+                # 권위다. 유사도가 어떤 이유로든(캡의 판정 불가 프레임 등) 경계를
+                # 어긋내면 여기서 교정된다(실기: 하드컷·선명 슬레이트 잔존 오차).
+                for bi, i in enumerate(bounds):
+                    _check_cancel()
+                    starts[i] = _align_cut(
+                        _read_frame, starts[i], texts_c[i - 1], texts_c[i],
+                        lo=runs_f[i - 1][0], hi=runs_f[i][1],
+                        delimiters=_DEFAULT_DELIMS)
+                    if bi % 20 == 0 or bi == len(bounds) - 1:
+                        save_scenes(external_id, _prog(
+                            {"total_frames": total + len(bounds),
+                             "ocr_done": total + bi + 1, "frames": [],
+                             "thumb_count": thumb_count}))
 
                 # 정렬 결과로 런 재구성 — 연속성 유지(끝=다음 시작), 극단적으로
                 # 이웃 경계가 서로를 지나치면(짧은 런 양끝이 동시 이동) 단조 보정.
