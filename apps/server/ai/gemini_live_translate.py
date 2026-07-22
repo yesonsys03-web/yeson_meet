@@ -483,6 +483,16 @@ class GeminiLiveTranslateProvider:
         logger.info("Gemini Live Translate stream ended", extra=trace)
 
 
+class GeminiHybridTranslateProvider(GeminiLiveTranslateProvider):
+    """하이브리드(트랙 C): 3.5 연속 전사·파셜 + 단어집 텍스트 번역 파이널.
+
+    3.5의 강점(빠른 발화에도 안 끊기는 연속 스트림, ~1.5-3s 파셜)은 그대로
+    두고, 약점(용어사전 불가 — 실기 shots→발, five percent→다섯 퍼센트)만
+    파이널 교체로 보정한다."""
+
+    _final_translate = True
+
+
 def _transcription_text(server_content: Any, attr: str) -> str | None:
     transcription = getattr(server_content, attr, None)
     text = getattr(transcription, "text", None)

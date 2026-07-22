@@ -248,6 +248,20 @@ class TestProviderRegistration:
         provider = create_ai_provider()
         assert isinstance(provider, GeminiLiveTranslateProvider)
 
+    def test_create_ai_provider_hybrid(self, monkeypatch) -> None:
+        from apps.server.ai.gemini_live_translate import GeminiHybridTranslateProvider
+        from apps.server.ws.sidecar import create_ai_provider
+
+        monkeypatch.setenv("YESON_AI_PROVIDER", "gemini_hybrid_translate")
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        assert create_ai_provider() is None
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        provider = create_ai_provider()
+        assert isinstance(provider, GeminiHybridTranslateProvider)
+        assert provider._final_translate is True
+        # 하이브리드도 3.5 라이브 스트림 기반 — 기존 프로바이더의 서브클래스
+        assert isinstance(provider, GeminiLiveTranslateProvider)
+
 
 def text_client(reply=None, error=None, calls=None):
     """aio.models.generate_content만 있는 텍스트 번역용 fake client."""
