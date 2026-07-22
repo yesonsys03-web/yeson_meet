@@ -825,3 +825,25 @@ def test_tokenize_slash_misread_as_delimiter():
     # "/"를 구분자로 취급하면 오독 텍스트도 정상과 같은 토큰·키로 쪼개진다.
     assert tokenize("HH0307_120/0010_AC_v01", ["_", "-", "/"]) == [
         "HH0307", "120", "0010", "AC", "v01"]
+
+
+def test_canonicalize_fixes_single_inserted_char():
+    # OCR이 '_'를 숫자 '1'로 읽는 환각 삽입(실기 HH0307_07510040_AC → 075_0040
+    # 오독) — 한 글자를 삭제해 템플릿에 '유일하게' 들어맞으면 확신 교정한다.
+    # 진짜 다른 씬(0040 vs 0050)은 삭제로는 못 맞추므로 안전하다.
+    # 같은 씬의 깨끗한 판독이 코퍼스에 존재하는 게 교정 근거다.
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["HH0307_075_0030_AC_v01"] * 4
+             + ["HH0307_075_0040_AC_v01"]
+             + ["HH0307_07510040_AC_v01"])
+    out = canonicalize_texts(texts, ["_", "-"])
+    assert out[5] == "HH0307_075_0040_AC_v01"
+
+
+def test_canonicalize_rejects_ambiguous_deletion():
+    # 삭제 위치에 따라 서로 다른 결과가 나오면(모호) 교정하지 않는다.
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["HH0307_075_0030_AC_v01"] * 5
+             + ["HH0307_07512340_AC_v01"])  # 8자리: 어느 숫자를 지워도 7자리
+    out = canonicalize_texts(texts, ["_", "-"])   # 가 되지만 결과가 제각각 → 유지
+    assert out[5] == "HH0307_07512340_AC_v01"

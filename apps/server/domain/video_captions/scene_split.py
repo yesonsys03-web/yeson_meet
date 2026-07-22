@@ -253,16 +253,9 @@ def label_template(texts: list[str], delimiters: list[str]) -> list[str] | None:
 _SHAPE_RE = re.compile(r"([ULDX])(\d+)")
 
 
-def _reparse(text: str, template: list[str], delimiters: list[str]) -> str | None:
-    """구분자를 잃고 붙은 텍스트를 템플릿 모양대로 다시 쪼갠다. 템플릿을
-    확신 있게 채우지 못하면(문자 부족·종류 불일치·숫자 잔여) None — 억지
-    교정은 하지 않는다. 프론트 reparse의 confident 판정과 동일."""
-    toks = tokenize(text, delimiters)
-    if (len(toks) == len(template)
-            and all(token_shape(t) == s for t, s in zip(toks, template))):
-        return None  # 이미 정상
-    flat = "".join(_squash_ws(t) for t in toks)
-
+def _fill_template(flat: str, template: list[str]) -> str | None:
+    """squash된 문자열을 템플릿 모양대로 채운다 — 못 채우거나 숫자가 남으면
+    None(어디서 끊을지 모호한 자릿수 잔여는 억지 교정 금지)."""
     def cls(c: str) -> str:
         return ("D" if c.isdigit() else "U" if c.isupper()
                 else "L" if c.islower() else "X")
@@ -279,8 +272,34 @@ def _reparse(text: str, template: list[str], delimiters: list[str]) -> str | Non
                 pos += 1
         out.append(piece)
     if pos < len(flat) and cls(flat[pos]) == "D":
-        return None  # 자릿수가 남으면 어디서 끊을지 모호 — 자동 교정 제외
+        return None
     return "_".join(out)
+
+
+def _reparse(text: str, template: list[str], delimiters: list[str],
+             known: frozenset[str] = frozenset()) -> str | None:
+    """구분자를 잃고 붙은 텍스트를 템플릿 모양대로 다시 쪼갠다. 직접 채우기가
+    실패하면 '한 글자 삭제' 관용을 시도한다 — OCR이 구분자를 숫자로 환각하는
+    삽입 오독(실기 '_'→'1': HH0307_07510040) 대응. 숫자열은 어느 숫자를 지워도
+    형태가 맞아 유일성만으로는 판정 불가 — 삭제 후보 중 **코퍼스에서 깨끗하게
+    읽힌 텍스트(known)와 일치하는 것이 정확히 하나**일 때만 교정한다(같은
+    씬의 정상 판독이 다른 런에 존재한다는 게 근거; Z-오염류 가짜 후보는
+    코퍼스에 없어 자동 배제)."""
+    toks = tokenize(text, delimiters)
+    if (len(toks) == len(template)
+            and all(token_shape(t) == s for t, s in zip(toks, template))):
+        return None  # 이미 정상
+    flat = "".join(_squash_ws(t) for t in toks)
+    fixed = _fill_template(flat, template)
+    if fixed is not None:
+        return fixed
+    if known:
+        matched = {c for i in range(len(flat))
+                   if (c := _fill_template(flat[:i] + flat[i + 1:],
+                                           template)) is not None and c in known}
+        if len(matched) == 1:
+            return matched.pop()
+    return None
 
 
 def canonicalize_texts(texts: list[str], delimiters: list[str]) -> list[str]:
@@ -294,9 +313,16 @@ def canonicalize_texts(texts: list[str], delimiters: list[str]) -> list[str]:
     template = label_template([t for t in texts if t], delimiters)
     if not template:
         return list(texts)
+    # 코퍼스의 '깨끗한' 텍스트(canonical형) — 삽입 오독 삭제 후보의 근거 집합.
+    known = frozenset(
+        "_".join(_squash_ws(t) for t in toks)
+        for text in texts if text
+        for toks in [tokenize(text, delimiters)]
+        if len(toks) == len(template)
+        and all(token_shape(t) == s for t, s in zip(toks, template)))
     out: list[str] = []
     for text in texts:
-        fixed = _reparse(text, template, delimiters) if text else None
+        fixed = _reparse(text, template, delimiters, known) if text else None
         out.append(fixed if fixed is not None else text)
     return out
 
