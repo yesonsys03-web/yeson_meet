@@ -737,7 +737,8 @@ def build_fingerprint_segments(runs_raw: list[dict], rule_dict: dict) -> dict:
     )
     texts = canonicalize_texts([r.get("text", "") for r in runs_raw],
                                rule.delimiters)
-    runs = [SceneRun(start_ms=r["start_ms"], end_ms=r["end_ms"], text=t)
+    runs = [SceneRun(start_ms=r["start_ms"], end_ms=r["end_ms"], text=t,
+                     cut_diff=r.get("cut_diff", 0))
             for r, t in zip(runs_raw, texts)]
     return {
         "segments_scene": [
@@ -796,8 +797,11 @@ def _align_cut(read_at, cut: int, prev_text: str, next_text: str,
             frame -= 1
             probes += 1
         return new
-    if before == "prev" and side(cut) == "prev":
+    if side(cut) == "prev":
         # 컷 조기 — 이전 슬레이트가 끝나는 지점(다음이 읽히는 첫 프레임)까지.
+        # 직전 프레임(before)이 판독불가여도 컷 프레임이 '이전'으로 읽히면
+        # 걷는다 — before까지 요구하던 가드가 디졸브 경계의 ±1프레임 잔존
+        # 4건을 남겼다(실기 468클립 검사).
         frame, probes = cut + 1, 0
         while frame < hi and probes < max_probe:
             s = side(frame)
@@ -982,8 +986,12 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
 
+            # cut_diff=각 런을 연 컷의 지문 세기(정렬 후 최종 시작 프레임 기준) —
+            # 판독불가 블록 귀속(runs_to_segments)의 유일한 판정 신호다.
             runs = [SceneRun(start_ms=frame_boundary_ms(s, fps),
-                             end_ms=frame_boundary_ms(e, fps), text=t)
+                             end_ms=frame_boundary_ms(e, fps), text=t,
+                             cut_diff=(diffs[s - 1]
+                                       if 0 < s <= len(diffs) else 0))
                     for (s, e), t in zip(runs_f, texts)]
             return runs, thumb_count, n_frames
 
@@ -1002,7 +1010,7 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
             "thumb_count": thumb_count,
             "frame_count": len(runs),
             "runs": [{"start_ms": r.start_ms, "end_ms": r.end_ms,
-                      "text": r.text} for r in runs],
+                      "text": r.text, "cut_diff": r.cut_diff} for r in runs],
             # frames는 토큰 선택 UI 호환용 — 런 시작 시각을 샘플로 노출한다.
             "frames": [{"t_ms": r.start_ms, "text": r.text} for r in runs],
             "ocr_region": region_out,

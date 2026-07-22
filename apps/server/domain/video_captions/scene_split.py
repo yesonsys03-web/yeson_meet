@@ -14,6 +14,11 @@ from dataclasses import dataclass
 # "020"+"0150"과 "0200"+"150" 같은 충돌을 막는다.
 _KEY_SEP = "\x1f"
 
+# 판독불가 블록을 '다음 씬 머리'로 넘기는 컷 세기 비율 하한. 들어컷이 나가컷의
+# 3배 이상이면 시각 컷이 블록 앞 — 실기 분포: 이동해야 할 케이스 15~90배,
+# 애매한 케이스(슬레이트 이동 등) 1~2.5배라 3이 안전한 분리선이다.
+_UNREADABLE_MOVE_RATIO = 3
+
 
 @dataclass
 class SlateRule:
@@ -39,10 +44,12 @@ class Segment:
 @dataclass
 class SceneRun:
     """지문 컷 감지가 만든 런 — 인접 컷 사이 구간과 그 안에서 읽은 슬레이트.
-    런은 시간축에서 연속이다(runs[i].end_ms == runs[i+1].start_ms)."""
+    런은 시간축에서 연속이다(runs[i].end_ms == runs[i+1].start_ms).
+    cut_diff=이 런을 연 컷의 지문 세기(판독불가 블록 귀속 판정용, 0=미기록)."""
     start_ms: int
     end_ms: int
     text: str
+    cut_diff: int = 0
 
 
 def tokenize(text: str, delimiters: list[str]) -> list[str]:
@@ -313,21 +320,39 @@ def runs_to_segments(runs: list[SceneRun], rule: SlateRule,
     indices = _mode_indices(rule, mode)
     upto = max(indices) if indices else -1
     # [key, label, start, end] 그룹 — 흡수 패스가 키를 봐야 해서 키를 유지한다.
+    # 판독불가 런은 블록으로 모아뒀다가 다음 유효 런에서 귀속을 판정한다:
+    # 같은 키면 그냥 삼켜지고, 키가 바뀌면 블록 '들어가는 컷'이 다음 런의
+    # 컷보다 훨씬 셀 때(≥_UNREADABLE_MOVE_RATIO배)만 다음 씬의 머리로 본다 —
+    # 시각 컷이 블록 앞에 있다는 뜻이다(실기 0040→0050: 4248 vs 47, 0050
+    # 내용이 0040 꼬리에 붙어 보이던 케이스). 신호가 약하거나 미기록(구
+    # 데이터 cut_diff=0)이면 기존대로 앞 씬에 붙인다.
     groups: list[list] = []
     last_key: str | None = None
+    pending_start: int | None = None
+    pending_cut = 0
+    pending_end = 0
     for run in runs:
         toks = tokenize(run.text, rule.delimiters) if run.text else []
         key = grouping_key(toks, indices)
         if key is None:
-            if groups:
-                groups[-1][3] = run.end_ms
+            if pending_start is None:
+                pending_start, pending_cut = run.start_ms, run.cut_diff
+            pending_end = run.end_ms
             continue
         if groups and key == last_key:
             groups[-1][3] = run.end_ms
         else:
-            groups.append([key, build_label(toks, upto),
-                           run.start_ms, run.end_ms])
+            start = run.start_ms
+            if (groups and pending_start is not None and pending_cut > 0
+                    and pending_cut >= _UNREADABLE_MOVE_RATIO * run.cut_diff):
+                start = pending_start
+            if groups:
+                groups[-1][3] = start
+            groups.append([key, build_label(toks, upto), start, run.end_ms])
+        pending_start = None
         last_key = key
+    if groups and pending_start is not None:
+        groups[-1][3] = pending_end  # 꼬리 블록은 앞 씬에
 
     if absorb_flanked_ms > 0:
         for _ in range(8):  # 흡수로 새 인접 동일 키가 생기면 반복(유한)

@@ -834,9 +834,9 @@ async def test_run_scene_scan_fingerprint_happy_path(monkeypatch, tmp_path):
     assert data["total_ms"] == frame_boundary_ms(20, 24.0)
     assert data["runs"] == [
         {"start_ms": frame_boundary_ms(0, 24.0), "end_ms": cut_ms,
-         "text": "HH0307_010_0010_AC_v01"},
+         "text": "HH0307_010_0010_AC_v01", "cut_diff": 0},
         {"start_ms": cut_ms, "end_ms": frame_boundary_ms(20, 24.0),
-         "text": "HH0307_010_0020_AC_v01"},
+         "text": "HH0307_010_0020_AC_v01", "cut_diff": 192},
     ]
     # 토큰 선택 UI 호환 샘플 — 런 시작 시각·텍스트.
     assert data["frames"] == [
@@ -943,3 +943,10 @@ def test_align_cut_respects_bounds():
     read = _mk_read({f: NEXT for f in range(0, 11)})
     out = pl._align_cut(read, 10, PREV, NEXT, lo=8, hi=20, delimiters=["_", "-"])
     assert out == 9  # lo=8 → 8은 이전 런 시작이라 침범 금지, 9까지가 한계
+
+
+def test_align_cut_walks_right_even_if_before_unreadable():
+    # 직전 프레임이 판독불가(디졸브)여도 컷 프레임이 '이전'으로 읽히면 오른쪽
+    # 걷기 — before까지 요구하던 가드가 ±1프레임 잔존을 남겼다(실기 4건).
+    read = _mk_read({10: PREV, 11: NEXT})  # 9는 "" (판독불가)
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 11

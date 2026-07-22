@@ -757,3 +757,64 @@ def test_runs_absorb_flanked_keeps_edges():
     ]
     segs = runs_to_segments(runs, RULE, "scene", absorb_flanked_ms=5000)
     assert [s.label for s in segs] == ["HH0307_010_0010AC", "HH0307_010_0010"]
+
+
+# ── 판독불가 전환 블록 귀속 (cut_diff 휴리스틱) ──────────────────────────────
+# 씬 전환부에 OCR이 전혀 안 되는 구간(디졸브·슬레이트 페이드인)이 끼면 어느
+# 씬 소속인지 OCR로는 판별 불가 — 유일한 신호는 지문 컷 세기다. 블록 '들어가는
+# 컷'이 '나가는 컷'보다 훨씬 세면(≥3배) 시각 컷이 블록 앞에 있다는 뜻이라
+# 블록은 다음 씬의 머리다(실기 0040→0050: 4248 vs 47, 90배 — 0050 내용이
+# 0040 꼬리에 붙어 보이던 케이스). 애매하면 기존대로 앞 씬에 붙인다.
+
+def _runc(start_ms, end_ms, text, cut_diff=0):
+    from apps.server.domain.video_captions.scene_split import SceneRun
+    return SceneRun(start_ms=start_ms, end_ms=end_ms, text=text,
+                    cut_diff=cut_diff)
+
+
+def test_unreadable_block_moves_to_next_on_strong_entry_cut():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _runc(0, 1000, "HH0307_030_0040_AC_v01", 500),
+        _runc(1000, 1900, "", 4248),   # 판독불가 블록 — 들어컷 강함
+        _runc(1900, 3000, "HH0307_030_0050_AC_v01", 47),  # 나가컷 약함
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_030_0040", 0, 1000), ("HH0307_030_0050", 1000, 3000)]
+
+
+def test_unreadable_block_stays_with_prev_when_ambiguous():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _runc(0, 1000, "HH0307_030_0210_AC_v01", 500),
+        _runc(1000, 1900, "", 4473),
+        _runc(1900, 3000, "HH0307_030_0230_AC_v01", 1794),  # 2.5배 — 애매
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_030_0210", 0, 1900), ("HH0307_030_0230", 1900, 3000)]
+
+
+def test_unreadable_block_without_cut_diff_keeps_old_behavior():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    # cut_diff 미기록(구 데이터) — 0 vs 0은 신호 없음 → 기존(앞에 붙임) 유지.
+    runs = [
+        _runc(0, 1000, "HH0307_030_0040_AC_v01"),
+        _runc(1000, 1900, ""),
+        _runc(1900, 3000, "HH0307_030_0050_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert segs[0].end_ms == 1900
+
+
+def test_unreadable_block_between_same_key_unaffected():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _runc(0, 1000, "HH0307_030_0040_AC_v01", 500),
+        _runc(1000, 1900, "", 9999),
+        _runc(1900, 3000, "HH0307_030_0040_AC_v01", 10),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_030_0040", 0, 3000)]
