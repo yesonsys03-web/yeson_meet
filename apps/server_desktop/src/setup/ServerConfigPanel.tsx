@@ -27,7 +27,7 @@ function presence(label: string, configured: boolean): string {
 }
 
 const PROVIDERS = [
-  "gemini_hybrid_translate",
+  "gemini_hybrid",
   "gemini_live_translate",
   "gemini_live",
   "google_stt_translate",
@@ -216,8 +216,8 @@ export default function ServerConfigPanel(props: { port: number; running: boolea
             // apple provider는 실리콘맥 번들에서만 동작 — 그 외 기기에서는 보이되 비활성.
             const appleGated = APPLE_PROVIDERS.has(p) && !appleAvailable;
             const baseLabel =
-              p === "gemini_hybrid_translate"
-                ? "gemini_hybrid_translate (동시통역+단어집)"
+              p === "gemini_hybrid"
+                ? "gemini_hybrid (동시통역+단어집)"
                 : p === "apple_live_translate"
                   ? `${p} (실험적)`
                   : p === "apple_mlx_live_translate"
@@ -229,7 +229,7 @@ export default function ServerConfigPanel(props: { port: number; running: boolea
                 value={p}
                 disabled={appleGated}
                 title={
-                  p === "gemini_hybrid_translate"
+                  p === "gemini_hybrid"
                     ? "3.5 동시통역 속도(파셜) + 문장 확정 시 단어집 번역으로 파이널 교정 — 용어·숫자가 중요한 회의 권장"
                     : p === "gemini_live_translate"
                       ? "동시통역(빠름) 단독 — 단어집 미적용이라 제작용어·숫자 표기가 부정확할 수 있음"

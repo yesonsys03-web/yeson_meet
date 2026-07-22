@@ -252,7 +252,7 @@ class TestProviderRegistration:
         from apps.server.ai.gemini_live_translate import GeminiHybridTranslateProvider
         from apps.server.ws.sidecar import create_ai_provider
 
-        monkeypatch.setenv("YESON_AI_PROVIDER", "gemini_hybrid_translate")
+        monkeypatch.setenv("YESON_AI_PROVIDER", "gemini_hybrid")
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         assert create_ai_provider() is None
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")

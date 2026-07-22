@@ -143,7 +143,7 @@ def create_ai_provider(trace_extra: Mapping[str, object] | None = None) -> STTPr
         if not mlx_live_translate.mlx_live_available():
             return None  # 게이팅/모델 미설치 — S2 count-only 모드 유지
         return mlx_live_translate.MlxRefinedAppleProvider()
-    if provider_name in {"gemini_hybrid_translate", "hybrid"}:
+    if provider_name in {"gemini_hybrid", "gemini_hybrid_translate", "hybrid"}:
         if not os.environ.get("GEMINI_API_KEY"):
             return None
         return GeminiHybridTranslateProvider(trace_extra=trace_extra)
