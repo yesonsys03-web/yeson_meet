@@ -27,7 +27,7 @@ import os
 import re
 import time
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -287,6 +287,37 @@ async def _translate_final_text(text_client: Any, en: str) -> str | None:
 class GeminiLiveTranslateProvider:
     """STT+translation provider backed by Gemini 3.5 Live Translate."""
 
+    # 하이브리드(트랙 C) 스위치: True면 확정 파이널의 KO를 텍스트 모델+단어집
+    # 번역으로 교체한다. 파셜(3.5 KO 스트림)은 어느 쪽이든 그대로다.
+    _final_translate = False
+
+    async def _apply_final_translation(
+        self, utterance: TranslatedUtterance, text_client: Any
+    ) -> TranslatedUtterance:
+        """확정 파이널의 KO를 단어집 번역으로 교체. 실패·타임아웃·빈 결과는
+        3.5 KO 유지 — 어떤 경로로도 파이널을 잃지 않는다."""
+        if not self._final_translate or not utterance.text_en.strip():
+            return utterance
+        timeout_s = max(
+            1,
+            _int_env(
+                FINAL_TRANSLATION_TIMEOUT_MS_ENV, DEFAULT_FINAL_TRANSLATION_TIMEOUT_MS
+            ),
+        ) / 1000
+        try:
+            ko = await asyncio.wait_for(
+                _translate_final_text(text_client, utterance.text_en), timeout_s
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Final translation timeout — keeping live KO",
+                extra={"gemini_final_translation_timeout_s": timeout_s},
+            )
+            return utterance
+        if not ko:
+            return utterance
+        return replace(utterance, text_ko=apply_ko_corrections(ko))
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -424,6 +455,10 @@ class GeminiLiveTranslateProvider:
                                     ),
                                 },
                             )
+                        if utterance.is_final:
+                            utterance = await self._apply_final_translation(
+                                utterance, client
+                            )
                         yield utterance
                     # Once the meeting audio ends, give the model a short
                     # window to deliver the translation tail, then stop.
@@ -444,7 +479,7 @@ class GeminiLiveTranslateProvider:
                     with contextlib.suppress(BaseException):
                         await task
         for utterance in assembler.flush():
-            yield utterance
+            yield await self._apply_final_translation(utterance, client)
         logger.info("Gemini Live Translate stream ended", extra=trace)
 
 

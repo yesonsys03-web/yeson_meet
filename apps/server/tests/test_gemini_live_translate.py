@@ -1,12 +1,14 @@
 # === ANCHOR: TEST_GEMINI_LIVE_TRANSLATE_START ===
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 from apps.server.ai.gemini_live_translate import (
     GeminiLiveTranslateProvider,
     TranscriptAssembler,
 )
+from apps.server.ai.providers import TranslatedUtterance
 
 
 def make_assembler(**kwargs: int) -> TranscriptAssembler:
@@ -302,4 +304,77 @@ class TestTranslateFinalText:
         calls: list = []
         await _translate_final_text(text_client(reply="안녕.", calls=calls), "Hi.")
         assert calls[0]["model"] == "gemini-3.6-flash"
+
+
+def _final_utt(en="Hello.", ko="라이브 번역."):
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    return TranslatedUtterance(
+        seq=1, text_en=en, text_ko=ko, started_at=now, ended_at=now, is_final=True
+    )
+
+
+class TestApplyFinalTranslation:
+    async def test_hook_off_keeps_original(self) -> None:
+        provider = GeminiLiveTranslateProvider(api_key="k")
+        utt = _final_utt()
+        out = await provider._apply_final_translation(
+            utt, text_client(reply="교정본.")
+        )
+        assert out is utt
+
+    async def test_hook_on_replaces_ko_with_corrections(self) -> None:
+        provider = GeminiLiveTranslateProvider(api_key="k")
+        provider._final_translate = True
+        out = await provider._apply_final_translation(
+            _final_utt(), text_client(reply="연필 테스트 결과가 좋아요.")
+        )
+        # 교체 + 사후 교정(연필 테스트→펜슬 테스트)까지 적용
+        assert out.text_ko == "펜슬 테스트 결과가 좋아요."
+        assert out.is_final is True
+
+    async def test_timeout_keeps_live_ko(self, monkeypatch) -> None:
+        monkeypatch.setenv("GEMINI_FINAL_TRANSLATION_TIMEOUT_MS", "50")
+
+        async def slow(*, model, contents, config):
+            await asyncio.sleep(0.5)
+            return SimpleNamespace(text="늦은 교정본.")
+
+        client = SimpleNamespace(
+            aio=SimpleNamespace(models=SimpleNamespace(generate_content=slow))
+        )
+        provider = GeminiLiveTranslateProvider(api_key="k")
+        provider._final_translate = True
+        utt = _final_utt()
+        assert await provider._apply_final_translation(utt, client) is utt
+
+    async def test_empty_en_keeps_live_ko(self) -> None:
+        provider = GeminiLiveTranslateProvider(api_key="k")
+        provider._final_translate = True
+        utt = _final_utt(en="  ")
+        assert await provider._apply_final_translation(
+            utt, text_client(reply="교정본.")
+        ) is utt
+
+    async def test_stream_replaces_only_finals(self, monkeypatch) -> None:
+        monkeypatch.setenv("GEMINI_LT_MIN_FINAL_CHARS", "2")
+        session = FakeSession(
+            [
+                message(en=" Good morning."),
+                message(ko=" 좋은 아침입니다."),
+            ]
+        )
+        client = SimpleNamespace(
+            aio=SimpleNamespace(
+                live=FakeLive(session),
+                models=text_client(reply="교정된 파이널.").aio.models,
+            )
+        )
+        provider = GeminiLiveTranslateProvider(api_key="k", client=client)
+        provider._final_translate = True
+        utterances = [u async for u in provider.stream(_audio(), "en")]
+        finals = [u for u in utterances if u.is_final]
+        assert [u.text_ko for u in finals] == ["교정된 파이널."]
+        assert all(u.text_ko != "교정된 파이널." for u in utterances if not u.is_final)
 # === ANCHOR: TEST_GEMINI_LIVE_TRANSLATE_END ===
