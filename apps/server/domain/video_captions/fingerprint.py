@@ -17,23 +17,28 @@ import statistics
 from pathlib import Path
 from typing import Callable
 
-# 전부 실측 검증값(2026-07-21, HZBN307). BIN_THRESHOLD: 그레이 < 이 값 =
-# 텍스트 픽셀. MIN_CUT_DIFF: 씬 내 인접 diff는 대부분 0(중앙값 0)이라 절대
-# 하한이 주 방어선. MED_MULT: 노이즈 큰 소스는 중앙값 배수가 임계를 올린다.
-# MERGE_GAP: 디졸브가 여러 프레임에 걸쳐 임계를 넘으면 첫 프레임만 컷으로.
-BIN_THRESHOLD = 90
+# 전부 실측 검증값(2026-07-21~22, HZBN307). BIN_BUCKET: 그레이 양자화 버킷
+# 크기(16단계) — 지문 = 버킷 번호 배열이고 diff = 버킷이 바뀐 픽셀 수.
+# 초기의 '어두운 픽셀 마스크'(gray<90)는 밝은 글자 슬레이트에 신호가 0이라
+# (실기: 040_0010·140_0010 슬레이트 구간 어두운픽셀 0) 컷·페이드 감지가 전무해
+# 씬이 통째로 소실됐다 — 양자화는 밝기·극성 무관하게 어떤 텍스트 변화든 잡는다.
+# 노이즈는 다소 늘지만(인접 중앙값 0→3 실측) 중앙값 기반 임계가 흡수하고,
+# 가짜 컷은 하류 동일 라벨 병합이 흡수한다. MIN_CUT_DIFF: 절대 하한이 주 방어선.
+# MED_MULT: 노이즈 큰 소스는 중앙값 배수가 임계를 올린다. MERGE_GAP: 디졸브가
+# 여러 프레임에 걸쳐 임계를 넘으면 첫 프레임만 컷으로.
+BIN_BUCKET = 16
 MIN_CUT_DIFF = 15
 MED_MULT = 3
 MERGE_GAP = 2
 
 
 def load_fingerprint(path: str | Path):
-    """프레임 1장 → 이진 지문(어두운 픽셀=1). numpy uint8 2차원 배열(H, W)."""
+    """프레임 1장 → 양자화 지문(그레이//BIN_BUCKET). numpy uint8 2차원 배열(H, W)."""
     import numpy as np
     from PIL import Image
     with Image.open(path) as im:
         arr = np.asarray(im.convert("L"), dtype=np.uint8)
-    return (arr < BIN_THRESHOLD).astype(np.uint8)
+    return arr // BIN_BUCKET
 
 
 def adjacent_diffs(paths: list[Path],

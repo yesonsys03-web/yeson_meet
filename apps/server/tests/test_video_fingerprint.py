@@ -130,13 +130,17 @@ def _write_png(path: Path, dark_pixels: set[tuple[int, int]],
     im.save(path)
 
 
-def test_fingerprint_binarizes_dark_pixels(tmp_path):
+def test_fingerprint_quantizes_gray_polarity_free(tmp_path):
+    # 어두운 픽셀 마스크는 밝은 글자 슬레이트에 신호가 0이 된다(실기: 040_0010
+    # 슬레이트 구간 어두운픽셀 0 → 컷·페이드 감지 전무 → 씬 통째 소실).
+    # 그레이 양자화 버킷은 밝기·극성 무관 — 어떤 텍스트 변화든 버킷이 바뀐다.
     p = tmp_path / "f.png"
     _write_png(p, {(1, 1), (2, 3)})
     fp = load_fingerprint(p)
     assert fp.shape == (8, 16)  # (height, width)
-    assert int(fp.sum()) == 2
-    assert fp[1, 1] == 1 and fp[3, 2] == 1
+    assert fp[1, 1] == 0 and fp[3, 2] == 0      # 검정 → 최저 버킷
+    assert fp[0, 0] == 255 // 16                # 흰 배경 → 최고 버킷
+    assert int((fp == 0).sum()) == 2
 
 
 def test_adjacent_diffs_counts_changed_pixels(tmp_path):
@@ -241,3 +245,22 @@ def test_fade_cuts_absent_without_window_signal():
     adj=[0]*30; adj[9]=500
     cuts=detect_cuts_with_fades(adj, [0]*25, window=5)
     assert cuts == [10]
+
+
+def test_fade_cut_between_hard_cuts_not_suppressed():
+    from apps.server.domain.video_captions.fingerprint import detect_cuts_with_fades
+    # 페이드 플래토가 양끝 하드컷과 닿아 있어도(번들 실기: 페이드 구간 경계
+    # diff가 임계 아래로 내려가 하드컷 누락 → 플래토가 이웃 하드컷까지 이어짐)
+    # 하드컷에서 window보다 먼 '내부' 전환은 잡아야 한다 — 플래토 통째 억제가
+    # 0330·140_0010 씬 소실 재발의 원인이었다.
+    adj = [0] * 120
+    adj[9] = 500
+    adj[99] = 500  # 하드컷 10, 100
+    for i in range(45, 52):
+        adj[i] = 8
+    adj[48] = 12
+    win = [0] * 115
+    for k in range(43, 52):
+        win[k] = 48
+    cuts = detect_cuts_with_fades(adj, win, window=5)
+    assert cuts == [10, 49, 100]
