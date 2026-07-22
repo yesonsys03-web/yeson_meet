@@ -762,6 +762,46 @@ _FP_FALLBACK_REGION = (0.0, 0.0, 1.0, _TOP_BAND_DEFAULT)
 _FP_THUMB_INTERVAL_S = 2.0
 
 
+def _text_side(text: str | None, prev_text: str, next_text: str,
+               delimiters: list[str]) -> str | None:
+    """판독 텍스트가 이전/다음 어느 쪽 슬레이트인지 — squash 접두 상호 일치
+    (오독·꼬리 잘림 내성). 판독불가·양쪽 다 일치(공통 접두만 읽힘)면 None."""
+    def sq(s: str) -> str:
+        return "".join("".join(t.split()) for t in tokenize(s, delimiters))
+
+    x = sq(text or "")
+    if not x:
+        return None
+    prev_sq, next_sq = sq(prev_text), sq(next_text)
+    match_prev = x.startswith(prev_sq) or prev_sq.startswith(x)
+    match_next = x.startswith(next_sq) or next_sq.startswith(x)
+    if match_prev == match_next:
+        return None
+    return "next" if match_next else "prev"
+
+
+def _clamp_fp_move(ocr_side, cur: int, target: int) -> int:
+    """지문 유사도 이동을 OCR 가독성으로 캡 — 읽히는 프레임의 소속은 OCR이 권위.
+
+    유사도 정렬은 판독불가 페이드에는 옳지만, 새 슬레이트가 옛 그림 위에 일찍
+    떠오르는 반대 극성 디졸브에서는 OCR로 이미 '다음'이 읽히는 프레임까지 이전
+    쪽으로 밀어버린다(실기 090_0180 꼬리에 0190). 오른쪽 이동은 prev로 재배정될
+    구간에서 next로 읽히는 첫 프레임에서 멈추고, 왼쪽 이동은 next로 재배정될
+    구간에서 prev로 읽히는 프레임 뒤로 물린다."""
+    if target > cur:
+        for frame in range(cur, target):
+            if ocr_side(frame) == "next":
+                return frame
+        return target
+    if target < cur:
+        best = target
+        for frame in range(target, cur):
+            if ocr_side(frame) == "prev":
+                best = frame + 1
+        return best
+    return cur
+
+
 def _align_cut(read_at, cut: int, prev_text: str, next_text: str,
                lo: int, hi: int, delimiters: list[str],
                max_probe: int = 8) -> int:
@@ -774,20 +814,8 @@ def _align_cut(read_at, cut: int, prev_text: str, next_text: str,
     오른쪽으로 걷는다. 판정은 squash 접두 상호 일치(오독·꼬리 잘림 내성) —
     양쪽 다 일치(공통 접두만 읽힘)하거나 판독불가면 근거가 없으므로 멈춘다
     (보수적 — 원래 컷 유지가 기본). lo/hi는 이웃 런 침범 방지 경계(exclusive)."""
-    def sq(s: str) -> str:
-        return "".join("".join(t.split()) for t in tokenize(s, delimiters))
-
-    prev_sq, next_sq = sq(prev_text), sq(next_text)
-
     def side(frame: int) -> str | None:
-        x = sq(read_at(frame) or "")
-        if not x:
-            return None
-        match_prev = x.startswith(prev_sq) or prev_sq.startswith(x)
-        match_next = x.startswith(next_sq) or next_sq.startswith(x)
-        if match_prev == match_next:
-            return None
-        return "next" if match_next else "prev"
+        return _text_side(read_at(frame), prev_text, next_text, delimiters)
 
     before = side(cut - 1)
     if before == "next":
@@ -1023,8 +1051,16 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                     aligned = _fp_align(
                         _fp_at, starts[i], _fp_at(picks[i - 1]), _fp_at(picks[i]),
                         lo=starts[i - 1], hi=runs_f[i][1])
-                    if aligned is not None:
-                        starts[i] = aligned
+                    if aligned is not None and aligned != starts[i]:
+                        # 읽히는 프레임의 소속은 OCR이 권위 — 유사도 이동은
+                        # 판독불가 프레임 위로만 허용(_clamp_fp_move 참조).
+                        prev_t, next_t = texts_c[i - 1], texts_c[i]
+
+                        def _side(fi: int, p=prev_t, n=next_t) -> str | None:
+                            return _text_side(_read_frame(fi), p, n,
+                                              _DEFAULT_DELIMS)
+
+                        starts[i] = _clamp_fp_move(_side, starts[i], aligned)
 
                 # 정렬 결과로 런 재구성 — 연속성 유지(끝=다음 시작), 극단적으로
                 # 이웃 경계가 서로를 지나치면(짧은 런 양끝이 동시 이동) 단조 보정.

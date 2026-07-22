@@ -999,3 +999,31 @@ def test_fp_align_respects_bounds():
     fp_at, rp, rn = _mk_fp_env(flip_at=2)
     # lo=5 → 5 이전으로는 못 간다(이전 런 침범 금지) — 창 시작부터 next면 lo+1.
     assert pl._fp_align(fp_at, 10, rp, rn, lo=5, hi=30) == 6
+
+
+# ── fp 이동 OCR 캡 (_clamp_fp_move) ──────────────────────────────────────────
+# 유사도 정렬은 판독불가 페이드에는 옳지만, 새 슬레이트가 옛 그림 위에 일찍
+# 떠오르는 반대 극성 디졸브에서는 OCR로 이미 '다음'이 읽히는 프레임까지 이전
+# 쪽으로 밀어버린다(실기 090_0180 꼬리에 0190 등장). 읽히는 프레임의 소속은
+# OCR이 권위 — fp 이동을 OCR 가독성으로 캡한다.
+
+def test_clamp_blocks_right_move_at_readable_next():
+    sides = {11: None, 12: "next", 13: None}
+    assert pl._clamp_fp_move(lambda f: sides.get(f), 11, 14) == 12
+
+
+def test_clamp_allows_right_move_over_unreadable():
+    assert pl._clamp_fp_move(lambda f: None, 11, 14) == 14
+
+
+def test_clamp_blocks_left_move_at_readable_prev():
+    sides = {8: None, 9: "prev"}
+    assert pl._clamp_fp_move(lambda f: sides.get(f), 10, 8) == 10
+
+
+def test_clamp_allows_left_move_over_unreadable():
+    assert pl._clamp_fp_move(lambda f: None, 10, 8) == 8
+
+
+def test_clamp_noop_when_equal():
+    assert pl._clamp_fp_move(lambda f: "next", 10, 10) == 10
