@@ -950,3 +950,52 @@ def test_align_cut_walks_right_even_if_before_unreadable():
     # 걷기 — before까지 요구하던 가드가 ±1프레임 잔존을 남겼다(실기 4건).
     read = _mk_read({10: PREV, 11: NEXT})  # 9는 "" (판독불가)
     assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 11
+
+
+# ── 지문 유사도 경계 정렬 (_fp_align) ────────────────────────────────────────
+# 디졸브의 판독불가 페이드 프레임은 OCR로는 귀속 불가 — 프레임 지문이 이전/다음
+# 런 대표 지문 중 어느 쪽에 가까운지의 '플립 지점'이 사람 눈의 경계와 일치한다
+# (실기 030_0190→0200: 페이드 2프레임 dist 4823 vs 8044로 이전, 다음 첫 프레임
+# 7951 vs 127로 다음 — 경계가 페이드 뒤로 옮겨져야 머리 혼입이 사라진다).
+
+def _mk_fp_env(flip_at):
+    import numpy as np
+    ref_prev = np.zeros((4, 8), dtype=np.uint8)
+    ref_next = np.full((4, 8), 9, dtype=np.uint8)
+
+    def fp_at(f):
+        # flip_at 전에는 이전 지문에 가깝게(살짝 노이즈), 이후는 다음 지문에.
+        base = ref_prev if f < flip_at else ref_next
+        out = base.copy()
+        out[0, 0] = 5  # 약간의 노이즈
+        return out
+    return fp_at, ref_prev, ref_next
+
+
+def test_fp_align_moves_boundary_to_similarity_flip():
+    fp_at, rp, rn = _mk_fp_env(flip_at=13)
+    assert pl._fp_align(fp_at, 10, rp, rn, lo=0, hi=30) == 13
+
+
+def test_fp_align_keeps_exact_boundary():
+    fp_at, rp, rn = _mk_fp_env(flip_at=10)
+    assert pl._fp_align(fp_at, 10, rp, rn, lo=0, hi=30) == 10
+
+
+def test_fp_align_moves_left_when_next_starts_earlier():
+    fp_at, rp, rn = _mk_fp_env(flip_at=7)
+    assert pl._fp_align(fp_at, 10, rp, rn, lo=0, hi=30) == 7
+
+
+def test_fp_align_none_when_no_flip_in_window():
+    import numpy as np
+    rp = np.zeros((4, 8), dtype=np.uint8)
+    rn = np.full((4, 8), 9, dtype=np.uint8)
+    fp_at = lambda f: rp.copy()  # 창 전체가 이전 쪽 — 플립 없음 → 유지(None)
+    assert pl._fp_align(fp_at, 10, rp, rn, lo=0, hi=30) is None
+
+
+def test_fp_align_respects_bounds():
+    fp_at, rp, rn = _mk_fp_env(flip_at=2)
+    # lo=5 → 5 이전으로는 못 간다(이전 런 침범 금지) — 창 시작부터 next면 lo+1.
+    assert pl._fp_align(fp_at, 10, rp, rn, lo=5, hi=30) == 6

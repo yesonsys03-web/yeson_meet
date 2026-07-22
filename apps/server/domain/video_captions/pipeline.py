@@ -29,7 +29,7 @@ from .ffmpeg import (
 )
 from .fingerprint import (
     FADE_WINDOW, detect_cuts_with_fades, diff_series, frame_boundary_ms,
-    frame_runs, stable_frame,
+    frame_runs, load_fingerprint, stable_frame,
 )
 from .ingest import download_youtube
 from .scene_split import (
@@ -816,6 +816,35 @@ def _align_cut(read_at, cut: int, prev_text: str, next_text: str,
     return cut
 
 
+def _fp_align(fp_at, cut: int, ref_prev, ref_next, lo: int, hi: int,
+              window: int = 8) -> int | None:
+    """지문 유사도 플립 지점으로 컷을 정렬 — 판독불가 페이드 프레임의 귀속.
+
+    디졸브의 페이드 프레임은 OCR로 못 읽지만 픽셀은 아직 이전 슬레이트의
+    잔상이다(실기 030_0190→0200: 페이드 2프레임의 지문 거리 4823 vs 8044로
+    이전 쪽, 다음 첫 프레임은 7951 vs 127로 다음 쪽 — 사람 눈의 경계와 일치).
+    컷 주변 창에서 프레임 지문이 이전/다음 런 대표 지문(안정 프레임) 중 어느
+    쪽에 가까운지를 훑어 '다음 쪽에 처음 가까워지는 프레임'을 경계로 삼는다.
+    창 안에 플립이 없으면 None(유지). OCR 정렬과 달리 판독 불가 프레임에서도
+    동작하고, 이미 추출된 지문 PNG를 재사용해 ffmpeg·OCR 호출이 없다.
+    lo/hi는 이웃 런 침범 방지 경계(lo exclusive, hi exclusive)."""
+    import numpy as np
+
+    def is_next(frame: int) -> bool:
+        fp = fp_at(frame)
+        return int(np.sum(fp != ref_prev)) >= int(np.sum(fp != ref_next))
+
+    start = max(lo + 1, cut - window)
+    end = min(hi, cut + window + 1)
+    prior: bool | None = None
+    for frame in range(start, end):
+        cur = is_next(frame)
+        if cur and prior is not True:
+            return frame
+        prior = cur
+    return None
+
+
 async def run_scene_scan_fingerprint(external_id: UUID) -> None:
     """burned.mp4 전 프레임의 텍스트 이진화 지문으로 컷을 찾고, 컷 사이 런마다
     슬레이트를 OCR해 scenes.json에 method="fingerprint"로 저장한다. 경계는 규칙
@@ -978,6 +1007,25 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                             {"total_frames": total + len(bounds),
                              "ocr_done": total + bi + 1, "frames": [],
                              "thumb_count": thumb_count}))
+                # 지문 유사도 정렬(최종 보정) — OCR이 못 읽는 페이드 프레임의
+                # 귀속을 픽셀 잔상으로 판정한다(_fp_align 참조). 추가 ffmpeg·OCR
+                # 호출 없음(추출된 지문 PNG 재사용).
+                fp_cache: dict[int, object] = {}
+
+                def _fp_at(fi: int):
+                    fp = fp_cache.get(fi)
+                    if fp is None:
+                        fp = load_fingerprint(pngs[fi])
+                        fp_cache[fi] = fp
+                    return fp
+
+                for i in bounds:
+                    aligned = _fp_align(
+                        _fp_at, starts[i], _fp_at(picks[i - 1]), _fp_at(picks[i]),
+                        lo=starts[i - 1], hi=runs_f[i][1])
+                    if aligned is not None:
+                        starts[i] = aligned
+
                 # 정렬 결과로 런 재구성 — 연속성 유지(끝=다음 시작), 극단적으로
                 # 이웃 경계가 서로를 지나치면(짧은 런 양끝이 동시 이동) 단조 보정.
                 for i in range(1, len(starts)):
