@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from apps.server.ai.glossary import apply_ko_corrections
+from apps.server.ai.glossary import apply_ko_corrections, glossary_block
 from apps.server.ai.providers import TranslatedUtterance
 
 INPUT_SAMPLE_RATE = 16000
@@ -43,8 +43,16 @@ MAX_UTTERANCE_MS_ENV = "GEMINI_LT_MAX_UTTERANCE_MS"
 IDLE_FINAL_MS_ENV = "GEMINI_LT_IDLE_FINAL_MS"
 PARTIAL_MIN_DELTA_CHARS_ENV = "GEMINI_LT_PARTIAL_MIN_DELTA_CHARS"
 
+FINAL_TRANSLATION_MODEL_ENV = "GEMINI_FINAL_TRANSLATION_MODEL"
+FINAL_TRANSLATION_TIMEOUT_MS_ENV = "GEMINI_FINAL_TRANSLATION_TIMEOUT_MS"
+
 DEFAULT_MODEL = "gemini-3.5-live-translate-preview"
 DEFAULT_TARGET_LANGUAGE = "ko"
+# 하이브리드 파이널 번역(트랙 C): 3.5는 프롬프트 주입이 불가해 용어·숫자
+# 표기를 조종할 수 없다 — 문장 확정 시 EN을 텍스트 모델+단어집으로 재번역해
+# 파이널만 교체한다. 실패/타임아웃 시 3.5 KO를 그대로 둔다(파이널 유실 금지).
+DEFAULT_FINAL_TRANSLATION_MODEL = "gemini-2.5-flash-lite"
+DEFAULT_FINAL_TRANSLATION_TIMEOUT_MS = 3500
 # A caption line is force-finalized past this length even without sentence
 # punctuation, so a long rambling clause cannot grow one line unboundedly.
 DEFAULT_FORCE_FINAL_CHARS = 90
@@ -242,6 +250,38 @@ class TranscriptAssembler:
             is_final=is_final,
             provider_segment=self._segment,
         )
+
+
+async def _translate_final_text(text_client: Any, en: str) -> str | None:
+    """확정된 EN 문장을 텍스트 모델+단어집으로 번역. 실패/빈 결과는 None —
+    호출부가 3.5 KO 원문으로 폴백한다."""
+    stripped = en.strip()
+    if not stripped:
+        return None
+    from google.genai import types
+
+    try:
+        response = await text_client.aio.models.generate_content(
+            model=os.environ.get(
+                FINAL_TRANSLATION_MODEL_ENV, DEFAULT_FINAL_TRANSLATION_MODEL
+            ),
+            contents=(
+                "Translate this English meeting utterance into natural Korean "
+                "subtitle text. Keep numbers as digits with their units "
+                "(e.g. 5%, 4~6프레임). Return only Korean.\n"
+                + glossary_block() + "\n\n"
+                f"English: {stripped}"
+            ),
+            config=types.GenerateContentConfig(
+                temperature=0,
+                max_output_tokens=320,
+            ),
+        )
+    except Exception:
+        logger.warning("Final translation failed — keeping live KO", exc_info=True)
+        return None
+    text = (getattr(response, "text", None) or "").strip()
+    return text or None
 
 
 class GeminiLiveTranslateProvider:

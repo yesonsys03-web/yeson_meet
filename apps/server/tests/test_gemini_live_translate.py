@@ -245,4 +245,61 @@ class TestProviderRegistration:
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         provider = create_ai_provider()
         assert isinstance(provider, GeminiLiveTranslateProvider)
+
+
+def text_client(reply=None, error=None, calls=None):
+    """aio.models.generate_content만 있는 텍스트 번역용 fake client."""
+    async def generate_content(*, model, contents, config):
+        if calls is not None:
+            calls.append({"model": model, "contents": contents})
+        if error is not None:
+            raise error
+        return SimpleNamespace(text=reply)
+
+    return SimpleNamespace(
+        aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    )
+
+
+class TestTranslateFinalText:
+    async def test_success_returns_stripped_korean(self) -> None:
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        calls: list = []
+        client = text_client(reply=" 클린업 팀이 5% 컷을 재작업합니다. ", calls=calls)
+        out = await _translate_final_text(
+            client, "The cleanup team will redo five percent of the cuts."
+        )
+        assert out == "클린업 팀이 5% 컷을 재작업합니다."
+        # 단어집이 프롬프트에 주입되고 EN 원문이 포함된다
+        assert "cleanup" in calls[0]["contents"]
+        assert "five percent" in calls[0]["contents"]
+
+    async def test_empty_en_returns_none_without_call(self) -> None:
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        calls: list = []
+        client = text_client(reply="무엇이든", calls=calls)
+        assert await _translate_final_text(client, "   ") is None
+        assert calls == []
+
+    async def test_error_returns_none(self) -> None:
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        client = text_client(error=RuntimeError("boom"))
+        assert await _translate_final_text(client, "Hello.") is None
+
+    async def test_empty_reply_returns_none(self) -> None:
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        client = text_client(reply="  ")
+        assert await _translate_final_text(client, "Hello.") is None
+
+    async def test_model_env_override(self, monkeypatch) -> None:
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        monkeypatch.setenv("GEMINI_FINAL_TRANSLATION_MODEL", "gemini-3.6-flash")
+        calls: list = []
+        await _translate_final_text(text_client(reply="안녕.", calls=calls), "Hi.")
+        assert calls[0]["model"] == "gemini-3.6-flash"
 # === ANCHOR: TEST_GEMINI_LIVE_TRANSLATE_END ===
