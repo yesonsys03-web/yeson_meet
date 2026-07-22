@@ -16,7 +16,7 @@ import {
   deleteTranslateModel, downloadGpuPack, downloadTranslateModel,
   getGpuStatus, getVideoStorage, installOllama, listTranslateEngines, listTranslateModels,
   listVideoModels, rebuildVideoJob, refreshTranslateModels,
-  setGpuEnabled, uploadVideoJob, videoMediaUrl,
+  setGpuEnabled, setOcrRegion, uploadVideoJob, videoMediaUrl,
 } from "./videoApi";
 
 describe("videoApi", () => {
@@ -236,6 +236,28 @@ describe("videoApi", () => {
   it("throws on non-ok responses", async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 409, json: async () => ({ detail: "x" }) });
     await expect(listVideoModels()).rejects.toThrow(/409/);
+  });
+
+  it("JSON 본문에는 Content-Type을 자동으로 붙인다", async () => {
+    // 회귀(실기 422): 헤더를 빠뜨리면 FastAPI가 본문을 JSON으로 파싱하지 않아
+    // 422가 난다. 함수마다 손으로 붙이면 새 엔드포인트를 추가할 때 또 빠뜨린다.
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    await setOcrRegion("job-1", { x: 0.03, y: 0.04, w: 0.35, h: 0.06 });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["Content-Type"])
+      .toBe("application/json");
+  });
+
+  it("FormData 업로드에는 Content-Type을 붙이지 않는다", async () => {
+    // 멀티파트는 브라우저가 boundary와 함께 직접 설정해야 한다 — 강제로 넣으면
+    // 업로드가 깨진다.
+    fetchMock.mockResolvedValue({
+      ok: true, status: 200, json: async () => ({ job_id: "j" }),
+    });
+    await uploadVideoJob(new File(["x"], "a.mp4"), "base", "t");
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = (init.headers ?? {}) as Record<string, string>;
+    expect(headers["Content-Type"]).toBeUndefined();
   });
 
   it("refreshTranslateModels가 refresh=1로 호출한다", async () => {

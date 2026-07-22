@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatMs, mergeSegment, previewLabel, renameSegment, segmentThumbRange, tokenizeSlate } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, previewLabel, renameSegment, segmentThumbRange, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -68,6 +68,187 @@ describe("segment editing", () => {
   });
 });
 
+describe("regionFromDrag", () => {
+  const box = { left: 100, top: 50, width: 640, height: 360 };
+  it("converts a drag on the displayed frame to frame-relative fractions", () => {
+    // 표시 크기와 원본 해상도가 달라도 비율이라 그대로 쓸 수 있다.
+    expect(regionFromDrag({ x: 132, y: 68 }, { x: 452, y: 104 }, box)).toEqual(
+      { x: 0.05, y: 0.05, w: 0.5, h: 0.1 });
+  });
+  it("normalizes a drag made in any direction", () => {
+    // 오른쪽아래→왼쪽위로 끌어도 같은 사각형이어야 한다.
+    expect(regionFromDrag({ x: 452, y: 104 }, { x: 132, y: 68 }, box)).toEqual(
+      { x: 0.05, y: 0.05, w: 0.5, h: 0.1 });
+  });
+  it("clamps a drag that leaves the frame", () => {
+    const r = regionFromDrag({ x: -50, y: -20 }, { x: 9999, y: 9999 }, box);
+    expect(r).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+  });
+  it("returns null for a click without meaningful drag", () => {
+    expect(regionFromDrag({ x: 200, y: 100 }, { x: 202, y: 101 }, box)).toBeNull();
+  });
+});
+
+describe("tokenShape", () => {
+  it("summarizes a token as runs of char class + length", () => {
+    expect(tokenShape("040")).toBe("D3");
+    expect(tokenShape("HH0307")).toBe("U2D4");
+    expect(tokenShape("v01")).toBe("L1D2");
+    expect(tokenShape("0400080")).toBe("D7");
+  });
+});
+
+describe("labelTemplate", () => {
+  it("takes the modal token count and modal shape per position", () => {
+    // 대다수가 HH0307_040_0060 꼴, 하나만 오독(구분자 유실)
+    const labels = ["HH0307_040_0060", "HH0307_040_0090",
+                    "HH0307_0400080_ACV01", "HH0307_040_0110"];
+    expect(labelTemplate(labels)).toEqual(["U2D4", "D3", "D4"]);
+  });
+  it("returns null when there is no usable majority", () => {
+    expect(labelTemplate([])).toBeNull();
+  });
+});
+
+describe("suggestLabelFix", () => {
+  const tpl = ["U2D4", "D3", "D4"];
+  it("re-splits a merged-token misread using the modal template", () => {
+    // 실기: OCR이 언더스코어를 놓쳐 040_0080 → 0400080, AC_V01 → ACV01
+    expect(suggestLabelFix("HH0307_0400080_ACV01", tpl)).toBe("HH0307_040_0080");
+  });
+  it("returns null for labels that already match the template", () => {
+    expect(suggestLabelFix("HH0307_040_0060", tpl)).toBeNull();
+  });
+  it("returns null when the characters cannot fill the template", () => {
+    expect(suggestLabelFix("HH0307_04", tpl)).toBeNull();
+    expect(suggestLabelFix("VAL", tpl)).toBeNull();
+  });
+});
+
+describe("anomalousLabels", () => {
+  it("flags only the misread rows and pairs them with a suggestion", () => {
+    const labels = ["HH0307_040_0060", "HH0307_040_0090",
+                    "HH0307_0400080_ACV01", "HH0307_040_0110"];
+    expect(anomalousLabels(labels)).toEqual([
+      { index: 2, label: "HH0307_0400080_ACV01",
+        suggestion: "HH0307_040_0080", confident: true },
+    ]);
+  });
+  it("still reports an anomaly when no suggestion can be derived", () => {
+    const labels = ["HH0307_040_0060", "HH0307_040_0090", "VAL",
+                    "HH0307_040_0110"];
+    expect(anomalousLabels(labels)).toEqual([
+      { index: 2, label: "VAL", suggestion: null, confident: false },
+    ]);
+  });
+  it("marks a suggestion unconfident when a digit is left over", () => {
+    // 실기: HH0307_07510040_AC — 숫자가 8자리라 어디서 끊을지 모호하다(075|1004로
+    // 채우면 '0'이 남는다). 자동 적용 대상에서 빼고 사람이 보게 한다.
+    const labels = ["HH0307_075_0040", "HH0307_07510040_AC", "HH0307_075_0050"];
+    expect(anomalousLabels(labels)).toEqual([
+      { index: 1, label: "HH0307_07510040_AC",
+        suggestion: "HH0307_075_1004", confident: false },
+    ]);
+  });
+  it("returns nothing when every label matches the template", () => {
+    expect(anomalousLabels(["HH0307_040_0060", "HH0307_040_0090"])).toEqual([]);
+  });
+});
+
+describe("absorbFlankedMisreads", () => {
+  it("absorbs a short run flanked by identical labels (definite misread)", () => {
+    // 시퀀스A | 오독 | 시퀀스A — 시퀀스는 바뀌었다 되돌아오지 않으니 오독 확정.
+    const segs = [
+      { label: "HH_010", start_ms: 0, end_ms: 40000 },
+      { label: "HH0100160_AC", start_ms: 40000, end_ms: 40500 },  // 0.5s 오독
+      { label: "HH_010", start_ms: 40500, end_ms: 90000 },
+    ];
+    expect(absorbFlankedMisreads(segs, 5000)).toEqual([
+      { label: "HH_010", start_ms: 0, end_ms: 90000 },
+    ]);
+  });
+  it("handles alternating misreads (A|m|A|m|A) in one pass", () => {
+    const segs = [
+      { label: "A", start_ms: 0, end_ms: 1000 },
+      { label: "m1", start_ms: 1000, end_ms: 1500 },
+      { label: "A", start_ms: 1500, end_ms: 2000 },
+      { label: "m2", start_ms: 2000, end_ms: 2500 },
+      { label: "A", start_ms: 2500, end_ms: 3000 },
+    ];
+    expect(absorbFlankedMisreads(segs, 5000)).toEqual([
+      { label: "A", start_ms: 0, end_ms: 3000 },
+    ]);
+  });
+  it("keeps a long flanked run (possible real non-monotonic)", () => {
+    const segs = [
+      { label: "A", start_ms: 0, end_ms: 1000 },
+      { label: "B", start_ms: 1000, end_ms: 20000 },  // 19s — 진짜일 수 있음
+      { label: "A", start_ms: 20000, end_ms: 21000 },
+    ];
+    expect(absorbFlankedMisreads(segs, 5000)).toEqual(segs);
+  });
+});
+
+describe("mergeAdjacentSameLabel", () => {
+  it("merges consecutive segments with the same label into one span", () => {
+    // 씬 한가운데 짧은 오독이 씬을 쪼갠 뒤 교정하면 같은 라벨이 인접한다 —
+    // 이들을 시간축 이어 하나로 합친다.
+    const segs = [
+      { label: "HH_010_0210", start_ms: 0, end_ms: 1000 },
+      { label: "HH_010_0210", start_ms: 1000, end_ms: 1500 },  // 교정된 오독
+      { label: "HH_010_0210", start_ms: 1500, end_ms: 3000 },
+      { label: "HH_010_0220", start_ms: 3000, end_ms: 4000 },
+    ];
+    expect(mergeAdjacentSameLabel(segs)).toEqual([
+      { label: "HH_010_0210", start_ms: 0, end_ms: 3000 },
+      { label: "HH_010_0220", start_ms: 3000, end_ms: 4000 },
+    ]);
+  });
+  it("leaves non-adjacent same labels alone (non-monotonic slates)", () => {
+    const segs = [
+      { label: "A", start_ms: 0, end_ms: 1000 },
+      { label: "B", start_ms: 1000, end_ms: 2000 },
+      { label: "A", start_ms: 2000, end_ms: 3000 },
+    ];
+    expect(mergeAdjacentSameLabel(segs)).toEqual(segs);
+  });
+});
+
+describe("confidentFixes / applyFixes", () => {
+  const segs = [
+    { label: "HH0307_040_0060", start_ms: 0, end_ms: 1000 },
+    { label: "HH0307_0400080_ACV01", start_ms: 1000, end_ms: 2000 },
+    { label: "HH0307_07510040_AC", start_ms: 2000, end_ms: 3000 },
+    { label: "HH0307_040_0110", start_ms: 3000, end_ms: 4000 },
+  ];
+  it("lists before→after only for confident suggestions", () => {
+    // 애매한 제안(숫자 잔여)은 미리보기 목록에도 넣지 않는다 — 일괄 적용 대상이
+    // 아니므로 행별 버튼으로만 처리한다.
+    expect(confidentFixes(segs.map((s) => s.label))).toEqual([
+      { index: 1, from: "HH0307_0400080_ACV01", to: "HH0307_040_0080" },
+    ]);
+  });
+  it("ignores a fix whose 'from' no longer matches that row", () => {
+    // 회귀(실기): 씬별에서 미리보기를 연 뒤 시퀀스별로 바꾸면 옛 목록이 남는데,
+    // 인덱스만 보고 적용하면 시퀀스 구간에 씬 라벨을 덮어쓴다. from이 현재
+    // 라벨과 다르면(=다른 목록) 건너뛴다 — UI 초기화와 무관한 구조적 안전장치.
+    const stale = [{ index: 0, from: "HH0307_040_0060", to: "HH0307_999_9999" }];
+    const other = [{ label: "HH0307_010", start_ms: 0, end_ms: 9000 }];
+    expect(applyFixes(other, stale, new Set([0]))[0]!.label).toBe("HH0307_010");
+  });
+  it("applies only the selected fixes and leaves the rest untouched", () => {
+    const fixes = [
+      { index: 1, from: "HH0307_0400080_ACV01", to: "HH0307_040_0080" },
+      { index: 3, from: "HH0307_040_0110", to: "HH0307_040_0999" },
+    ];
+    const out = applyFixes(segs, fixes, new Set([1]));  // 1번만 체크
+    expect(out[1]!.label).toBe("HH0307_040_0080");
+    expect(out[3]!.label).toBe("HH0307_040_0110");     // 미체크 → 그대로
+    expect(out[1]!.start_ms).toBe(1000);               // 시간은 안 건드린다
+    expect(segs[1]!.label).toBe("HH0307_0400080_ACV01");  // 원본 불변
+  });
+});
+
 describe("segmentThumbRange", () => {
   it("maps a segment's time span to thumbnail indices", () => {
     // interval 2000ms, 10 thumbs (0..9 → t=0,2,4,...18s)
@@ -77,5 +258,15 @@ describe("segmentThumbRange", () => {
   it("clamps to available thumbnails", () => {
     expect(segmentThumbRange(0, 999000, 2000, 5)).toEqual({ from: 0, to: 4 });
     expect(segmentThumbRange(999000, 999000, 2000, 5)).toEqual({ from: 4, to: 4 });
+  });
+  it("excludes the thumbnail before a refined (non-grid) boundary", () => {
+    // 회귀(실기): 정밀화 후 경계가 2초 배수가 아니게 되면 floor(start)는 직전
+    // 구간에 속한 썸네일을 포함해, 한 칸이 두 구간에 중복 하이라이트되고 클릭 시
+    // 엉뚱한 프레임이 떴다. 썸네일 i(=시각 i*interval)는 start<=i*iv<end일 때만
+    // 그 구간 소속이다.
+    // 010: 4968~131968 → t=6000(3)부터, t=130000(65)까지
+    expect(segmentThumbRange(4968, 131968, 2000, 743)).toEqual({ from: 3, to: 65 });
+    // 020: 131968~251218 → t=132000(66)부터 (65는 아직 010)
+    expect(segmentThumbRange(131968, 251218, 2000, 743)).toEqual({ from: 66, to: 125 });
   });
 });

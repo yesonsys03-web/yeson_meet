@@ -58,6 +58,16 @@ export type BurnStyle = {
 };
 
 async function request<T>(url: string, init: RequestInit): Promise<T> {
+  // JSON 본문에는 Content-Type을 자동으로 붙인다 — 없으면 FastAPI가 본문을 JSON으로
+  // 파싱하지 않아 422가 난다(실기). 함수마다 손으로 붙이면 새 엔드포인트를 추가할
+  // 때 또 빠뜨린다. FormData(멀티파트)는 브라우저가 boundary와 함께 직접 설정해야
+  // 하므로 문자열 본문일 때만 건드린다.
+  if (typeof init.body === "string"
+      && !(init.headers as Record<string, string> | undefined)?.["Content-Type"]) {
+    init = { ...init,
+             headers: { ...(init.headers as Record<string, string> | undefined),
+                        "Content-Type": "application/json" } };
+  }
   const response = await fetch(url, init);
   if (!response.ok) throw new Error(`video api failed: HTTP ${response.status}`);
   if (response.status === 204) return undefined as T;
@@ -328,6 +338,11 @@ export type ScenesData = {
   segments_sequence: SceneSegment[];
   rule: SlateRuleInput | null;
   interval_ms?: number;
+  // 썸네일 간격/개수는 스캔 간격과 분리(성기게) — 필름스트립 격자 계산에 쓴다.
+  thumb_interval_ms?: number;
+  thumb_count?: number;
+  // 사용자가 지정한 슬레이트 구역(비율). 없으면 전체 프레임 + 상단 밴드 가정.
+  ocr_region?: OcrRegion | null;
 };
 
 export type SlateRuleInput = {
@@ -337,9 +352,11 @@ export type SlateRuleInput = {
   min_ms?: number;
 };
 
-export async function scanScenes(jobId: string): Promise<void> {
+export async function scanScenes(
+  jobId: string, intervalS = 2.0,
+): Promise<void> {
   await request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/scan`,
-    { method: "POST" });
+    { method: "POST", body: JSON.stringify({ interval_s: intervalS }) });
 }
 
 export async function getScenes(jobId: string): Promise<ScenesData> {
@@ -378,6 +395,63 @@ export async function exportScenes(
 
 export function sceneThumbUrl(jobId: string, index: number): string {
   return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/thumb/${index}`;
+}
+
+// 임의 시각 썸네일 — 정밀화된 구간 시작(2초 격자 밖) 프레임 확인용.
+export function sceneThumbAtUrl(jobId: string, tMs: number): string {
+  return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/thumb-at?t_ms=${tMs}`;
+}
+
+// 슬레이트 구역(프레임 대비 비율) — 쇼마다 위치가 달라 사용자가 드래그로 지정한다.
+export type OcrRegion = { x: number; y: number; w: number; h: number };
+
+export type SlateTemplate = {
+  name: string;
+  region: OcrRegion;
+  delimiters: string[];
+  seq_tokens: number[];
+  scene_tokens: number[];
+  scan_interval_s?: number;
+};
+
+export async function setOcrRegion(
+  jobId: string, region: OcrRegion,
+): Promise<{ ocr_region: OcrRegion }> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/ocr-region`,
+    { method: "POST", body: JSON.stringify(region) });
+}
+
+// 지정한 구역으로 한 프레임만 읽어본다 — 긴 스캔 전에 구역이 맞는지 확인.
+export async function testOcrRegion(
+  jobId: string, tMs: number, region: OcrRegion | null,
+): Promise<{ text: string; tokens: string[] }> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/ocr-test`,
+    { method: "POST", body: JSON.stringify({ t_ms: tMs, region }) });
+}
+
+// 진행 중인 스캔/정밀화/익스포트 중단.
+export async function cancelSceneOps(jobId: string): Promise<void> {
+  await request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/cancel`,
+    { method: "POST" });
+}
+
+export async function listSlateTemplates(): Promise<{ templates: SlateTemplate[] }> {
+  return request(`${apiBase()}/api/v1/video-jobs/slate-templates`, {});
+}
+
+export async function saveSlateTemplate(
+  t: SlateTemplate,
+): Promise<{ templates: SlateTemplate[] }> {
+  return request(`${apiBase()}/api/v1/video-jobs/slate-templates`,
+    { method: "POST", body: JSON.stringify(t) });
+}
+
+export async function deleteSlateTemplate(
+  name: string,
+): Promise<{ templates: SlateTemplate[] }> {
+  return request(
+    `${apiBase()}/api/v1/video-jobs/slate-templates/${encodeURIComponent(name)}`,
+    { method: "DELETE" });
 }
 
 export type ExportStatus = {

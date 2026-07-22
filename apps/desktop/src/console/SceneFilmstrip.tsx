@@ -1,6 +1,6 @@
-import { useEffect, useRef } from "react";
-import { formatMs } from "./sceneSplitLogic";
-import { sceneThumbUrl, type SceneSegment } from "./videoApi";
+import { useEffect, useRef, useState } from "react";
+import { formatMs, segmentThumbRange, type LabelAnomaly } from "./sceneSplitLogic";
+import { sceneThumbAtUrl, sceneThumbUrl, type SceneSegment } from "./videoApi";
 
 type Props = {
   jobId: string;
@@ -17,6 +17,11 @@ type Props = {
   onSelectSegment?: (i: number) => void;
   // 썸네일 클릭 → 그 시각을 팝업(실제 영상 시킹)으로 크게 보여준다.
   onThumbClick?: (tMs: number) => void;
+  // 목록에 보여줄 구간 인덱스(오독 필터 탭). null이면 전체. 인덱스는 원본 기준을
+  // 유지해야 병합/이름수정 콜백이 올바른 구간을 가리킨다.
+  visibleIndices?: number[] | null;
+  // 인덱스 → 오독 교정 제안(있으면 라벨 옆에 원클릭 적용 버튼).
+  suggestions?: Map<number, LabelAnomaly>;
 };
 
 // 다빈치 리졸브식 필름스트립: 썸네일을 시간축에 깔고 아래에 구간 목록을 얹는다.
@@ -25,11 +30,27 @@ type Props = {
 // 잘못 인식된 구간(예 'VAL')을 이웃에 병합하거나 이름을 고칠 수 있다.
 export function SceneFilmstrip(
   { jobId, segments, thumbCount, intervalMs, onMerge, onRename,
-    selectedIndex, highlight, onSelectSegment, onThumbClick }: Props,
+    selectedIndex, highlight, onSelectSegment, onThumbClick,
+    visibleIndices, suggestions }: Props,
 ) {
   const thumbs = Array.from({ length: thumbCount }, (_, i) => i);
   const editable = Boolean(onMerge || onRename);
   const stripRef = useRef<HTMLDivElement>(null);
+  // 경계 썸네일을 못 가져오면(구버전 서버 등) 그 칸을 숨긴다 — 깨진 이미지
+  // 아이콘을 늘어놓는 대신 격자 썸네일만 있는 이전 동작으로 조용히 물러난다.
+  const [failedBoundaries, setFailedBoundaries] = useState<Set<number>>(new Set());
+
+  // 구간 시작이 2초 격자 위가 아니면(정밀화된 경계) 그 시각의 실제 첫 프레임을
+  // 격자 썸네일 앞에 끼워 넣는다 — 격자 썸네일만 있으면 구간의 첫 칸이 시작보다
+  // 최대 2초 뒤라 "첫 프레임"으로 오해된다(실기: 샷 프레임번호가 1이 아닌 24로 보임).
+  const boundaryBefore = new Map<number, { seg: SceneSegment; idx: number }[]>();
+  segments.forEach((seg, idx) => {
+    const { from } = segmentThumbRange(seg.start_ms, seg.end_ms, intervalMs, thumbCount);
+    if (seg.start_ms === from * intervalMs) return;  // 격자와 일치하면 불필요
+    const list = boundaryBefore.get(from) ?? [];
+    list.push({ seg, idx });
+    boundaryBefore.set(from, list);
+  });
 
   // 선택 구간이 바뀌면 하이라이트 범위의 중앙 썸네일을 필름스트립 중앙으로 스크롤.
   useEffect(() => {
@@ -44,10 +65,36 @@ export function SceneFilmstrip(
       <div ref={stripRef}
            style={{ display: "flex", overflowX: "auto", gap: 1,
                     background: "#000", borderRadius: 6, padding: 2 }}>
-        {thumbs.map((i) => {
+        {thumbs.flatMap((i) => {
           const on = highlight ? i >= highlight.from && i <= highlight.to : false;
-          return (
+          const cells = (boundaryBefore.get(i) ?? [])
+            .filter(({ seg }) => !failedBoundaries.has(seg.start_ms))
+            .map(({ seg, idx }) => {
+            const bOn = selectedIndex === idx;
+            return (
+              <img key={`b${idx}`} data-boundary={idx}
+                   src={sceneThumbAtUrl(jobId, seg.start_ms)} alt=""
+                   // 씬 모드는 구간이 수백 개다. 경계 썸네일은 서버가 요청 시
+                   // ffmpeg로 뽑으므로, 화면에 보이는 것만 지연 로드해 한꺼번에
+                   // 수백 번 추출하는 일이 없게 한다.
+                   loading="lazy" decoding="async"
+                   onError={() => setFailedBoundaries((prev) =>
+                     prev.has(seg.start_ms) ? prev : new Set(prev).add(seg.start_ms))}
+                   title={`${seg.label} 시작 ${formatMs(seg.start_ms)} (첫 프레임) — 클릭하면 크게 보기`}
+                   onClick={() => onThumbClick?.(seg.start_ms)}
+                   style={{ height: 72, flexShrink: 0,
+                            cursor: onThumbClick ? "zoom-in" : "default",
+                            opacity: highlight && !bOn ? 0.4 : 1,
+                            // 격자 썸네일과 구분되게 경계 프레임은 호박색 테두리.
+                            outline: `2px solid ${bOn ? "#4a9eda" : "#e2b340"}`,
+                            outlineOffset: "-2px",
+                            transition: "opacity 0.15s" }} />
+            );
+          });
+          return [
+            ...cells,
             <img key={i} data-thumb={i} src={sceneThumbUrl(jobId, i)} alt=""
+                 loading="lazy" decoding="async"
                  title={`${formatMs(i * intervalMs)} — 클릭하면 크게 보기`}
                  onClick={() => onThumbClick?.(i * intervalMs)}
                  style={{ height: 72, flexShrink: 0, cursor: onThumbClick ? "zoom-in" : "default",
@@ -55,12 +102,14 @@ export function SceneFilmstrip(
                           opacity: highlight && !on ? 0.4 : 1,
                           outline: on ? "2px solid #4a9eda" : "none",
                           outlineOffset: on ? "-2px" : undefined,
-                          transition: "opacity 0.15s" }} />
-          );
+                          transition: "opacity 0.15s" }} />,
+          ];
         })}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-        {segments.map((s, i) => (
+        {segments.map((s, i) => ({ s, i }))
+          .filter(({ i }) => !visibleIndices || visibleIndices.includes(i))
+          .map(({ s, i }) => (
           <div key={i}
                onClick={() => onSelectSegment?.(i)}
                style={{ display: "flex", gap: 8, fontSize: 13, alignItems: "center",
@@ -83,6 +132,21 @@ export function SceneFilmstrip(
               <span style={{ fontFamily: "monospace", overflowWrap: "anywhere",
                              flex: 1, minWidth: 0 }}>{s.label}</span>
             )}
+            {/* 오독 교정 제안 — 누르면 그 행 라벨만 바꾼다(일괄 적용과 별개). */}
+            {(() => {
+              const a = suggestions?.get(i);
+              if (!a || !a.suggestion || a.suggestion === s.label) return null;
+              return (
+                <button type="button" style={{ ...miniBtn, flexShrink: 0,
+                          borderColor: a.confident ? "#3f9a5f" : "#e2b340",
+                          fontFamily: "monospace" }}
+                  title={a.confident
+                    ? "제안 적용" : "숫자가 남아 애매한 제안 — 프레임을 확인하세요"}
+                  onClick={(e) => { e.stopPropagation(); onRename?.(i, a.suggestion!); }}>
+                  {a.confident ? "→ " : "→? "}{a.suggestion}
+                </button>
+              );
+            })()}
             <span style={{ opacity: 0.7, flexShrink: 0 }}>
               {formatMs(s.start_ms)}–{formatMs(s.end_ms)}
             </span>

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from uuid import uuid4
 
 from apps.server.domain.video_captions import pipeline as pl
@@ -132,6 +133,67 @@ def test_pick_slate_line_no_top_band_candidate_returns_empty():
     assert pick_slate_line(lines, ["_", " ", "-"], min_tokens=2) == ""
 
 
+def test_ocr_engine_is_per_thread(monkeypatch):
+    """정밀화를 병렬로 돌리므로 엔진을 스레드끼리 공유하지 않는다 — RapidOCR
+    래퍼가 호출 중 self에 상태를 두면 동시 호출이 서로를 오염시킬 수 있다.
+    스레드마다 자기 엔진을 쓰면 그 위험 자체가 없어진다."""
+    import threading
+
+    from apps.server.domain.video_captions import slate_ocr
+    monkeypatch.setattr(slate_ocr, "_new_engine", lambda **kw: object())
+    slate_ocr._reset_engines()
+    seen = []
+    seen.append(slate_ocr._get_engine())
+    seen.append(slate_ocr._get_engine())  # 같은 스레드 → 재사용
+    other: list = []
+    t = threading.Thread(target=lambda: other.append(slate_ocr._get_engine()))
+    t.start(); t.join()
+    assert seen[0] is seen[1], "같은 스레드에서는 엔진을 재사용해야 한다"
+    assert other[0] is not seen[0], "다른 스레드는 자기 엔진을 써야 한다"
+
+
+def test_ocr_engine_caps_detection_upscale(monkeypatch):
+    """회귀(실측): RapidOCR 기본 검출 설정(limit_type=min, 736)은 작은 이미지를
+    짧은 변 기준으로 '확대'한다. 사용자가 지정한 구역(336x63)이 약 3900x736으로
+    부풀려져 판독이 1014ms까지 걸렸고, 과확대가 검출을 망가뜨려 텍스트가 잘리기도
+    했다("HH0307_030"만 읽힘). max 기준으로 바꾸면 확대가 없어진다(크롭 40ms,
+    전체 프레임도 894→675ms, 결과는 동일)."""
+    from apps.server.domain.video_captions import slate_ocr
+    captured = {}
+
+    class FakeRapidOCR:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(slate_ocr, "_new_engine", lambda **kw: FakeRapidOCR(**kw))
+    slate_ocr._reset_engines()
+    slate_ocr._get_engine()
+    assert captured.get("det_limit_type") == "max"
+    assert captured.get("det_limit_side_len") == 960
+
+
+def test_read_slate_line_full_band_when_region_cropped(monkeypatch, tmp_path):
+    """사용자가 OCR 영역을 지정하면 프레임이 그 영역으로 잘려 들어온다 — 크롭
+    자체가 영역 필터이므로 상단 밴드 가정을 적용하면 안 된다(잘린 이미지에서는
+    슬레이트가 세로 중앙·하단에 올 수 있다). top_frac=1.0으로 전 영역 허용."""
+    from PIL import Image
+
+    from apps.server.domain.video_captions import slate_ocr
+    png = tmp_path / "c.png"
+    Image.new("RGB", (640, 80)).save(png)
+    result = [
+        [[[10, 50], [400, 50], [400, 75], [10, 75]],  # y중심 0.78 — 밴드 밖
+         "HH0307_010_0010_AC_v01", 0.95],
+    ]
+    monkeypatch.setattr(slate_ocr, "_get_engine",
+                        lambda: (lambda _p: (result, 0.0)))
+    # 기본(전체 프레임 가정)에서는 걸러지고
+    assert slate_ocr.read_slate_line(png, ["_", "-"]) == ""
+    # 크롭된 입력에서는 그대로 읽힌다
+    assert slate_ocr.read_slate_line(png, ["_", "-"], top_frac=1.0) == \
+        "HH0307_010_0010_AC_v01"
+
+
 def test_read_slate_line_maps_box_y_to_fraction(monkeypatch, tmp_path):
     """read_slate_line이 박스 y중심/이미지 높이 → y_frac으로 환산해 상단
     슬레이트를 고르는지 엔드투엔드 확인(가짜 엔진 + 실제 PNG)."""
@@ -187,6 +249,99 @@ def test_compute_boundaries_centers_first_run_after_invalid_lead():
     assert segs[0].start_ms == 5000  # 6000 - interval/2
 
 
+def test_refine_runs_boundaries_concurrently(monkeypatch, tmp_path):
+    """경계끼리는 독립이라 병렬로 처리한다(실측 병목은 프레임 추출 184ms).
+    동시에 여러 경계가 진행되는지 확인하고, 결과는 순차와 같아야 한다 —
+    각 경계는 '원래' 이웃 값으로 계산하고 적용은 나중에 한 번에 한다."""
+    import asyncio
+    import math
+    import threading
+
+    from uuid import uuid4
+
+    from apps.server.domain.video_captions import pipeline as pl
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    eid = uuid4()
+    frame = 1001 / 24
+    inflight = {"now": 0, "max": 0}
+    lock = threading.Lock()
+
+    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
+        with lock:
+            inflight["now"] += 1
+            inflight["max"] = max(inflight["max"], inflight["now"])
+        time.sleep(0.02)  # 추출 지연 흉내 — 동시성이 없으면 max가 1로 남는다
+        with lock:
+            inflight["now"] -= 1
+        calls[str(dst)] = t_ms
+
+    calls: dict[str, int] = {}
+    # 경계 i의 전환 시각 = i*4000ms (각 구간 4초)
+    def fake_read(dst, delimiters, top_frac=1.0):
+        t = calls[str(dst)]
+        idx = int(math.ceil(t / 4000)) if t % 4000 else t // 4000
+        seq = min(4, max(0, int(t // 4000) + (1 if t % 4000 else 0)))
+        return f"HH_{seq:03d}_0010_AC"
+
+    monkeypatch.setattr(pl, "extract_frame", fake_extract)
+    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    segs = [{"label": f"HH_{i:03d}", "start_ms": i * 4000,
+             "end_ms": (i + 1) * 4000} for i in range(5)]
+    pl.save_scenes(eid, {
+        "scanning": False, "interval_ms": 2000, "frames": [],
+        "rule": {"delimiters": ["_"], "seq_tokens": [1], "scene_tokens": [2]},
+        "segments_sequence": segs, "segments_scene": [],
+    })
+    asyncio.run(pl.run_scene_refine(eid, "sequence"))
+    assert inflight["max"] > 1, "경계가 순차로만 처리되면 병렬화 의미가 없다"
+    out = pl.load_scenes(eid)["segments_sequence"]
+    assert len(out) == 5
+    # 시간축이 이어져 있어야 한다(구간 사이에 구멍/역전 없음)
+    for a, b in zip(out, out[1:]):
+        assert a["end_ms"] == b["start_ms"]
+        assert a["start_ms"] < a["end_ms"]
+
+
+def test_refine_clears_refining_flag_when_cancelled(monkeypatch, tmp_path):
+    """회귀(실기): 취소 엔드포인트가 플래그를 내려도, 그 직후 아직 돌던 워커가
+    진행률을 다시 써 refining=true로 되살아났다. 워커는 다음 반복에서 취소를
+    감지하고 조용히 끝나므로 플래그가 켜진 채 남아 프론트가 영원히 폴링한다.
+    멈추는 쪽이 자기 플래그를 내려야 한다."""
+    import asyncio
+
+    from uuid import uuid4
+
+    from apps.server.domain.video_captions import pipeline as pl
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    eid = uuid4()
+    calls = {"n": 0}
+
+    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
+        calls["n"] += 1
+        if calls["n"] == 3:  # 진행 중 취소(세대 증가)
+            pl._bump_generation(eid)
+
+    monkeypatch.setattr(pl, "extract_frame", fake_extract)
+    monkeypatch.setattr(pl, "read_slate_line",
+                        lambda dst, delimiters, top_frac=1.0: "HH_020_0010_AC")
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    pl.save_scenes(eid, {
+        "scanning": False, "interval_ms": 2000, "frames": [],
+        "rule": {"delimiters": ["_"], "seq_tokens": [1], "scene_tokens": [2]},
+        "segments_sequence": [
+            {"label": "HH_010", "start_ms": 0, "end_ms": 4000},
+            {"label": "HH_020", "start_ms": 4000, "end_ms": 8000},
+            {"label": "HH_030", "start_ms": 8000, "end_ms": 12000},
+        ],
+        "segments_scene": [],
+    })
+    asyncio.run(pl.run_scene_refine(eid, "sequence"))
+    st = pl.load_refine_status(eid)
+    assert st is not None and st["refining"] is False, \
+        "취소 후 refining이 켜진 채 남으면 프론트가 영원히 폴링한다"
+
+
 def test_refine_first_segment_start(monkeypatch, tmp_path):
     """회귀(실기 010 1초 유실): 첫 세그먼트 시작(>0)도 정밀화 대상 — 앞쪽
     판독실패(타이틀카드) 구간과의 전환 프레임까지 이진탐색으로 좁혀야 한다."""
@@ -206,10 +361,10 @@ def test_refine_first_segment_start(monkeypatch, tmp_path):
 
     calls: dict[str, int] = {}
 
-    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None):
+    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
         calls[str(dst)] = t_ms
 
-    def fake_read(dst, delimiters):
+    def fake_read(dst, delimiters, top_frac=1.0):
         return ("HH_010_0010_AC" if frame_pts(calls[str(dst)]) >= t_cut
                 else "")  # 타이틀 카드 = 판독실패
 
@@ -264,10 +419,10 @@ def test_refine_recovers_boundary_outside_window_with_misreads(monkeypatch, tmp_
 
     calls: dict[str, int] = {}
 
-    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None):
+    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
         calls[str(dst)] = t_ms
 
-    def fake_read(dst, delimiters):
+    def fake_read(dst, delimiters, top_frac=1.0):
         pts = frame_pts(calls[str(dst)])
         if pts < t_cut:
             return "HH_110_0310_AC"
@@ -313,10 +468,10 @@ def test_refine_boundary_is_frame_exact(monkeypatch, tmp_path):
 
     calls: dict[str, int] = {}
 
-    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None):
+    def fake_extract(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
         calls[str(dst)] = t_ms
 
-    def fake_read(dst, delimiters):
+    def fake_read(dst, delimiters, top_frac=1.0):
         return ("HH_new_x" if frame_pts(calls[str(dst)]) >= t_cut
                 else "HH_old_x")
 

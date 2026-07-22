@@ -336,6 +336,28 @@ class _KillTrackingProc:
         return -9 if self.killed else 0
 
 
+def test_kill_active_kills_every_concurrent_proc():
+    """정밀화를 병렬로 돌리면 한 잡에 ffmpeg가 여러 개 동시에 뜬다. 키당 하나만
+    추적하면 나머지는 취소를 빠져나가 계속 돈다 — 같은 키의 모든 프로세스를 죽여야
+    한다."""
+    procs = [_KillTrackingProc([]) for _ in range(3)]
+    for p in procs:
+        ff.register_proc("job-multi", p)
+    assert ff.kill_active("job-multi") is True
+    assert all(p.killed for p in procs), "동시 실행 중이던 ffmpeg가 남으면 안 된다"
+    assert ff.kill_active("job-multi") is False
+
+
+def test_unregister_removes_only_that_proc():
+    """한 프로세스가 정상 종료해도 같은 키의 다른 프로세스 추적은 유지돼야 한다."""
+    a, b = _KillTrackingProc([]), _KillTrackingProc([])
+    ff.register_proc("job-x", a)
+    ff.register_proc("job-x", b)
+    ff.unregister_proc("job-x", a)
+    assert ff.kill_active("job-x") is True
+    assert b.killed is True and a.killed is False
+
+
 def test_kill_active_kills_registered_proc(monkeypatch):
     """kill_active(key)는 등록된 프로세스를 즉시 kill/wait하고, 등록된 게 있었으면
     True를 반환한다."""

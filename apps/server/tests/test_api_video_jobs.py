@@ -692,6 +692,59 @@ async def _new_scene_job(db_session, admin_user, status="done"):
     return job
 
 
+async def test_rule_min_ms_auto_scales_with_interval(client, db_session, admin_user):
+    """회귀(실기): min_ms=2000 고정이 0.25초 스캔에서 잡은 짧은 씬(0.75초)을
+    전부 흡수했다. 흡수량은 샘플 간격에 비례해야 한다 — 2초 간격이면 1샘플
+    튐=2초라 큰 값이 필요하지만, 0.25초면 튐=0.25초라 작아야 짧은 씬이 살아남는다.
+    min_ms 미지정(None) 시 간격에 비례한 값을 자동 적용한다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    # 0.25초 간격, 0.75초짜리 짧은 씬(0020) 포함
+    frames = []
+    labels = (["HH_010_0010"] * 8 + ["HH_010_0020"] * 3 + ["HH_010_0030"] * 8)
+    for i, lb in enumerate(labels):
+        frames.append({"t_ms": i * 250, "text": lb})
+    pl.save_scenes(job.external_id, {"scanning": False, "interval_ms": 250,
+                                     "frames": frames})
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/rule",
+                          json={"seq_tokens": [1], "scene_tokens": [2]})
+    assert r.status_code == 200
+    scenes = [s["label"] for s in r.json()["segments_scene"]]
+    assert "HH_010_0020" in scenes, \
+        f"0.75초 짧은 씬이 흡수되면 안 된다: {scenes}"
+
+
+async def test_scan_accepts_interval_and_decouples_thumbs(client, db_session,
+                                                         admin_user, monkeypatch):
+    """짧은 씬(2초 미만)을 잡으려면 스캔 간격을 촘촘하게 줄 수 있어야 한다. 다만
+    썸네일까지 촘촘하면 필름스트립이 수천 칸이 되므로, 썸네일 간격은 분리해
+    성기게 유지한다(scan 0.25s여도 thumb는 2s)."""
+    captured = {}
+    monkeypatch.setattr(api_vj, "_start_scene_scan",
+                        lambda eid, interval_s: captured.update(interval=interval_s))
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan",
+                          json={"interval_s": 0.25})
+    assert r.status_code == 202
+    assert captured["interval"] == 0.25
+
+
+async def test_scan_interval_out_of_range_rejected(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan",
+                          json={"interval_s": 0.01})
+    assert r.status_code == 422
+
+
 async def test_scan_scenes_requires_done_status(client, db_session, admin_user):
     job = await _new_scene_job(db_session, admin_user, status="review")
     resp = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan")
@@ -702,7 +755,7 @@ async def test_scan_scenes_starts_task_when_done(client, db_session, admin_user,
                                                  monkeypatch):
     started = {}
     monkeypatch.setattr(api_vj, "_start_scene_scan",
-                        lambda eid: started.setdefault("eid", eid))
+                        lambda eid, interval_s: started.setdefault("eid", eid))
     job = await _new_scene_job(db_session, admin_user, status="done")
     # scan endpoint also requires burned.mp4 to exist on disk
     d = pl.job_dir(job.external_id)
@@ -720,7 +773,7 @@ async def test_scan_scenes_writes_initial_scanning_state(client, db_session,
     """재스캔 폴링 레이스 방지: 202 직후 scenes.json에 scanning 상태가 동기
     기록돼야 한다 — 프레임 추출(수 분) 동안 옛 scanned 데이터가 보이면
     프론트 폴링이 '스캔 완료(옛 데이터)'로 오판한다."""
-    monkeypatch.setattr(api_vj, "_start_scene_scan", lambda eid: None)
+    monkeypatch.setattr(api_vj, "_start_scene_scan", lambda eid, interval_s: None)
     job = await _new_scene_job(db_session, admin_user, status="done")
     d = pl.job_dir(job.external_id)
     d.mkdir(parents=True, exist_ok=True)
@@ -736,6 +789,160 @@ async def test_scan_scenes_writes_initial_scanning_state(client, db_session,
         f"/api/v1/video-jobs/{job.external_id}/scenes")).json()
     assert body["scanning"] is True
     assert body["scanned"] is False
+
+
+async def test_scene_thumb_at_extracts_and_caches(client, db_session, admin_user,
+                                                  monkeypatch, tmp_path):
+    """경계 썸네일(임의 시각)은 요청 시 추출하고 디스크에 캐시한다 — 캐시 키가
+    t_ms라 경계가 바뀌어도 무효화가 필요 없다(같은 시각=같은 프레임)."""
+    calls: list[int] = []
+
+    def fake_extract(ffmpeg, src, t_ms, dst, height=90, proc_key=None):
+        calls.append(t_ms)
+        Path(dst).parent.mkdir(parents=True, exist_ok=True)
+        Path(dst).write_bytes(b"\xff\xd8jpg")
+
+    monkeypatch.setattr(api_vj, "extract_thumbnail_at", fake_extract)
+    monkeypatch.setattr(api_vj, "locate_ffmpeg", lambda: "ffmpeg")
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+
+    url = f"/api/v1/video-jobs/{job.external_id}/scenes/thumb-at"
+    r1 = await client.get(url, params={"t_ms": 4968})
+    assert r1.status_code == 200
+    assert calls == [4968]
+    r2 = await client.get(url, params={"t_ms": 4968})  # 캐시 히트
+    assert r2.status_code == 200
+    assert calls == [4968]
+
+
+async def test_scene_thumb_at_404_without_burned(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    r = await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/thumb-at",
+        params={"t_ms": 1000})
+    assert r.status_code == 404
+
+
+async def test_cancel_scene_ops_stops_polling_states(client, db_session, admin_user,
+                                                     monkeypatch):
+    """긴 작업(스캔/정밀화)을 멈출 수단 — 지금까지는 앱을 죽여야 했다. 취소하면
+    상태 파일의 진행 플래그를 내려 프론트 폴링이 멈춰야 한다."""
+    killed = {}
+    monkeypatch.setattr(api_vj, "cancel_job_task",
+                        lambda eid: killed.setdefault("eid", eid))
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_refine_status(job.external_id, {"refining": True, "done": 3,
+                                            "total": 414, "error": None})
+    pl.save_scenes(job.external_id, {"scanning": True, "interval_ms": 2000,
+                                     "frames": [], "ocr_region": {"x": 0, "y": 0,
+                                                                  "w": 1, "h": 0.2}})
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/cancel")
+    assert r.status_code == 202
+    assert killed["eid"] == job.external_id
+    assert pl.load_refine_status(job.external_id)["refining"] is False
+    body = (await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes")).json()
+    assert body["scanning"] is False
+    assert body["scanned"] is False, "취소된 스캔을 완료로 오인하면 안 된다"
+    assert body["ocr_region"] == {"x": 0, "y": 0, "w": 1, "h": 0.2}, \
+        "취소해도 지정한 구역은 남아야 한다"
+
+
+async def test_slate_template_crud(client, monkeypatch, tmp_path):
+    """쇼 템플릿 CRUD — 구역과 토큰 규칙을 쇼 이름으로 저장해 다음 작품에서
+    골라 쓴다. 잡에 속하지 않는 전역 목록이다."""
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    payload = {"name": "HZBN307",
+               "region": {"x": 0.02, "y": 0.03, "w": 0.5, "h": 0.08},
+               "delimiters": ["_", "-"], "seq_tokens": [1], "scene_tokens": [2]}
+    r = await client.post("/api/v1/video-jobs/slate-templates", json=payload)
+    assert r.status_code == 200
+    got = (await client.get("/api/v1/video-jobs/slate-templates")).json()
+    assert [t["name"] for t in got["templates"]] == ["HZBN307"]
+    assert got["templates"][0]["seq_tokens"] == [1]
+    d = await client.delete("/api/v1/video-jobs/slate-templates/HZBN307")
+    assert d.status_code == 200
+    assert (await client.get(
+        "/api/v1/video-jobs/slate-templates")).json()["templates"] == []
+
+
+async def test_slate_template_delete_unknown_is_404(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    r = await client.delete("/api/v1/video-jobs/slate-templates/none")
+    assert r.status_code == 404
+
+
+async def test_set_and_keep_ocr_region(client, db_session, admin_user):
+    """OCR 영역(비율)은 잡에 저장되고, 재스캔해도 유지돼야 한다 — 쇼마다 슬레이트
+    위치가 달라 이 지정이 곧 그 작품의 설정이다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    pl.save_scenes(job.external_id, {"scanning": False, "interval_ms": 2000,
+                                     "frames": [{"t_ms": 0, "text": "A_B_C"}]})
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/ocr-region",
+        json={"x": 0.02, "y": 0.03, "w": 0.5, "h": 0.08})
+    assert r.status_code == 200
+    body = (await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes")).json()
+    assert body["ocr_region"] == {"x": 0.02, "y": 0.03, "w": 0.5, "h": 0.08}
+    assert body["frames"], "영역 저장이 스캔 결과를 지우면 안 된다"
+    assert pl.load_ocr_region(job.external_id) == (0.02, 0.03, 0.5, 0.08)
+
+
+async def test_rule_computation_keeps_ocr_region(client, db_session, admin_user):
+    """회귀(실기): 경계 계산이 scenes.json을 새 dict로 덮어써 사용자가 지정한
+    OCR 구역이 사라졌다 — 다음 스캔/정밀화가 전체 프레임을 훑어 느려지고, 쇼에
+    따라서는 판독 자체가 실패한다. 구역은 작업 산출물이 아니라 그 작품의 설정이다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {
+        "scanning": False, "interval_ms": 2000,
+        "frames": [{"t_ms": 0, "text": "HH_010_0010_AC"},
+                   {"t_ms": 2000, "text": "HH_020_0010_AC"}],
+        "ocr_region": {"x": 0.03, "y": 0.04, "w": 0.35, "h": 0.06},
+    })
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/rule",
+                          json={"seq_tokens": [1], "scene_tokens": [2]})
+    assert r.status_code == 200
+    assert pl.load_ocr_region(job.external_id) == (0.03, 0.04, 0.35, 0.06)
+
+
+async def test_ocr_region_rejects_out_of_range(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/ocr-region",
+        json={"x": 0.0, "y": 0.0, "w": 1.5, "h": 0.1})
+    assert r.status_code == 422
+
+
+async def test_ocr_test_read_returns_text(client, db_session, admin_user,
+                                          monkeypatch):
+    """드래그한 영역이 맞는지 25분 스캔 전에 확인하는 미리읽기."""
+    monkeypatch.setattr(api_vj, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(api_vj, "extract_frame",
+                        lambda *a, **k: Path(a[3]).write_bytes(b"x"))
+    monkeypatch.setattr(api_vj, "read_slate_line",
+                        lambda *a, **k: "HH0307_010_0010_AC_v01")
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/ocr-test",
+        json={"t_ms": 6000, "region": {"x": 0.0, "y": 0.0, "w": 0.5, "h": 0.1}})
+    assert r.status_code == 200
+    assert r.json()["text"] == "HH0307_010_0010_AC_v01"
 
 
 async def test_get_scenes_empty_before_scan(client, db_session, admin_user):

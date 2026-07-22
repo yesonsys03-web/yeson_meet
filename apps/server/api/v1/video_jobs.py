@@ -9,6 +9,7 @@ endpoints extend that same trust decision rather than being a special case.
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,7 +43,12 @@ from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
                                                         start_task, video_jobs_root)
 from apps.server.domain.video_captions.pipeline import \
     _INFLIGHT_STATUSES as INFLIGHT_STATUSES
-from apps.server.domain.video_captions.scene_split import FrameSample
+from apps.server.domain.video_captions.ffmpeg import (extract_frame,
+                                                      extract_thumbnail_at,
+                                                      locate_ffmpeg)
+from apps.server.domain.video_captions.scene_split import FrameSample, tokenize
+from apps.server.domain.video_captions.slate_ocr import read_slate_line
+from apps.server.domain.video_captions.slate_templates import (delete_template, list_templates, upsert_template)
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
 from apps.server.domain.video_captions.translate import (is_source_copy,
                                                          is_untranslated,
@@ -65,8 +71,8 @@ def _start_burn(external_id: UUID, position: str, margin_v: int,
                    run_burn_job(external_id, position, margin_v, font_size, color))
 
 
-def _start_scene_scan(external_id: UUID) -> None:  # test seam
-    start_job_task(external_id, run_scene_scan(external_id))
+def _start_scene_scan(external_id: UUID, interval_s: float) -> None:  # test seam
+    start_job_task(external_id, run_scene_scan(external_id, interval_s))
 
 
 def _start_scene_export(external_id: UUID, mode: str, out_dir: str | None) -> None:  # test seam
@@ -106,11 +112,23 @@ class BurnIn(BaseModel):
     color: str = Field(default="#FFFFFF", pattern="^#[0-9a-fA-F]{6}$")
 
 
+class OcrRegionIn(BaseModel):
+    """슬레이트 구역(프레임 대비 비율). 쇼마다 위치가 달라 사용자가 드래그로
+    지정한다. 비율이라 해상도가 달라도 같은 값을 쓸 수 있다."""
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+    w: float = Field(gt=0.0, le=1.0)
+    h: float = Field(gt=0.0, le=1.0)
+
+
 class SlateRuleIn(BaseModel):
     delimiters: list[str] = Field(default_factory=lambda: ["_", "-"])
     seq_tokens: list[int]
     scene_tokens: list[int] = Field(default_factory=list)
-    min_ms: int = Field(default=2000, ge=0, le=60000)
+    # 최소 씬 길이(ms) — 이보다 짧은 구간은 OCR 오독 튐으로 보고 직전에 흡수한다.
+    # None이면 샘플 간격에 비례한 값을 자동 적용한다(고정 2000ms는 촘촘한 스캔에서
+    # 진짜 짧은 씬을 삼켰다). 사용자가 명시하면 그 값을 쓴다.
+    min_ms: int | None = Field(default=None, ge=0, le=60000)
 
 
 class SegmentOverride(BaseModel):
@@ -283,6 +301,36 @@ async def list_video_jobs(
             out["size_bytes"] = _job_dir_size(job.external_id)
         items.append(out)
     return {"items": items}
+
+
+class SlateTemplateIn(BaseModel):
+    """쇼 템플릿 — 슬레이트 구역 + 토큰 규칙. 같은 쇼는 에피소드가 바뀌어도
+    슬레이트 위치와 포맷이 같으므로 한 벌로 묶어 저장한다."""
+    name: str = Field(min_length=1, max_length=80)
+    region: OcrRegionIn
+    delimiters: list[str] = Field(default_factory=lambda: ["_", "-"])
+    seq_tokens: list[int] = Field(default_factory=list)
+    scene_tokens: list[int] = Field(default_factory=list)
+    # 샘플 간격도 쇼 특성(컷 밀도)이라 템플릿에 함께 저장한다.
+    scan_interval_s: float = Field(default=2.0, ge=0.1, le=5.0)
+
+
+@router.get("/slate-templates")
+async def get_slate_templates() -> dict:
+    # /{external_id}보다 먼저 선언 — 선언 순서 매칭이라 뒤에 두면 UUID 파싱 422.
+    return {"templates": list_templates()}
+
+
+@router.post("/slate-templates")
+async def save_slate_template(body: SlateTemplateIn) -> dict:
+    return {"templates": upsert_template(body.model_dump())}
+
+
+@router.delete("/slate-templates/{name}")
+async def remove_slate_template(name: str) -> dict:
+    if not delete_template(name):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "템플릿을 찾을 수 없습니다.")
+    return {"templates": list_templates()}
 
 
 @router.get("/translate-engines")
@@ -534,21 +582,31 @@ async def retranslate_video_job(
             "remaining": len(targets) - retranslated}
 
 
+class ScanIn(BaseModel):
+    # 샘플 간격(초). 짧은 씬(2초 미만)이 많은 애니메틱은 촘촘하게(0.25s) 떠야
+    # 놓치지 않는다 — 크롭 OCR이 빨라져 0.25s도 25분 영상 ~7분이면 끝난다.
+    interval_s: float = Field(default=2.0, ge=0.1, le=5.0)
+
+
 @router.post("/{external_id}/scenes/scan", status_code=status.HTTP_202_ACCEPTED)
 async def scan_scenes(
     external_id: UUID,
     db: Annotated[AsyncSession, Depends(get_session)],
+    body: ScanIn | None = None,
 ) -> dict:
     job = await _get_job_or_404(db, external_id)
     if job.status != "done" or not job.burned_path or not Path(job.burned_path).exists():
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "씬 분할은 굽기 완료(done)된 작업에서만 가능합니다.")
+    interval_s = (body or ScanIn()).interval_s
     # 초기 scanning 상태를 동기 기록(익스포트/정밀화와 같은 패턴) — 프레임 추출
     # (수 분) 동안 옛 scanned 데이터가 남아 있으면 재스캔 폴링이 '스캔 완료
-    # (옛 데이터)'로 오판한다.
+    # (옛 데이터)'로 오판한다. 구역은 재스캔에도 유지되게 되싣는다.
+    prev = load_scenes(external_id) or {}
     save_scenes(external_id, {"scanning": True, "total_frames": 0,
-                              "ocr_done": 0, "frames": []})
-    _start_scene_scan(external_id)
+                              "ocr_done": 0, "frames": [],
+                              "ocr_region": prev.get("ocr_region")})
+    _start_scene_scan(external_id, interval_s)
     return {"status": "scanning"}
 
 
@@ -578,6 +636,11 @@ async def get_scenes(
         "segments_sequence": data.get("segments_sequence", []),
         "rule": data.get("rule"),
         "interval_ms": data.get("interval_ms", 2000),
+        # 썸네일은 스캔 간격과 분리(성기게) — 필름스트립 격자 계산은 이 값을 쓴다.
+        "thumb_interval_ms": data.get("thumb_interval_ms",
+                                      data.get("interval_ms", 2000)),
+        "thumb_count": data.get("thumb_count", len(data.get("frames", []))),
+        "ocr_region": data.get("ocr_region"),
     }
 
 
@@ -596,8 +659,18 @@ async def set_scene_rule(
                for i, f in enumerate(data["frames"])]
     total_ms = (samples[-1].t_ms + interval_ms) if samples else 0
     rule_dict = body.model_dump()
-    scene_data = build_scene_data(samples, rule_dict, total_ms, body.min_ms)
+    # min_ms 미지정이면 간격 비례 자동값 — 1샘플 오독 튐(≈1 interval)은 흡수하되
+    # 2샘플 이상 진짜 씬은 남기도록 1.5×interval. 이러면 0.25초 스캔에서 0.5초
+    # 이상 씬이 살아남는다(실기 0050=0.75초). rule_dict에도 실제 쓴 값을 남긴다.
+    min_ms = body.min_ms if body.min_ms is not None else round(1.5 * interval_ms)
+    rule_dict["min_ms"] = min_ms
+    scene_data = build_scene_data(samples, rule_dict, total_ms, min_ms)
     scene_data["interval_ms"] = interval_ms
+    # 사용자가 지정한 OCR 구역은 계산 산출물이 아니라 그 작품의 설정이다 —
+    # build_scene_data가 만든 새 dict에 되실어야 경계 계산으로 지워지지 않는다
+    # (지워지면 다음 스캔·정밀화가 전체 프레임을 훑어 느려지고, 쇼에 따라서는
+    # 판독 자체가 실패한다).
+    scene_data["ocr_region"] = data.get("ocr_region")
     save_scenes(external_id, scene_data)
     return {"segments_scene": scene_data["segments_scene"],
             "segments_sequence": scene_data["segments_sequence"],
@@ -701,6 +774,117 @@ async def scene_thumbnail(
     path = job_dir(external_id) / "scene_thumbs" / f"thumb_{index + 1:05d}.jpg"
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "thumbnail not found")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@router.post("/{external_id}/scenes/cancel", status_code=status.HTTP_202_ACCEPTED)
+async def cancel_scene_ops(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """진행 중인 스캔/정밀화/익스포트 중단 — 지금까지는 앱을 죽여야 했다.
+
+    세대 카운터를 올리고 ffmpeg를 죽인 뒤(cancel_job_task), 상태 파일의 진행
+    플래그를 내려 프론트 폴링이 멈추게 한다. 취소된 스캔은 완료가 아니므로
+    frames를 남기지 않는다(부분 판독을 완료로 오인하면 경계가 엉망이 된다).
+    사용자가 지정한 OCR 구역은 작업과 무관한 설정이라 보존한다.
+    """
+    await _get_job_or_404(db, external_id)
+    cancel_job_task(external_id)
+    st = load_refine_status(external_id)
+    if st and st.get("refining"):
+        save_refine_status(external_id, {**st, "refining": False})
+    ex = load_export_status(external_id)
+    if ex and ex.get("exporting"):
+        save_export_status(external_id, {**ex, "exporting": False})
+    data = load_scenes(external_id)
+    if data and data.get("scanning"):
+        save_scenes(external_id, {"scanning": False,
+                                  "interval_ms": data.get("interval_ms", 2000),
+                                  "ocr_region": data.get("ocr_region")})
+    return {"status": "canceled"}
+
+
+@router.post("/{external_id}/scenes/ocr-region")
+async def set_ocr_region(
+    external_id: UUID,
+    body: OcrRegionIn,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """OCR 영역 저장 — 스캔/정밀화가 이 영역만 잘라 판독한다(속도↑, 무관한
+    텍스트 배제). 스캔 결과는 건드리지 않고 영역만 갱신한다."""
+    await _get_job_or_404(db, external_id)
+    data = load_scenes(external_id) or {}
+    data["ocr_region"] = body.model_dump()
+    save_scenes(external_id, data)
+    return {"ocr_region": data["ocr_region"]}
+
+
+class OcrTestIn(BaseModel):
+    t_ms: int = Field(ge=0)
+    region: OcrRegionIn | None = None
+
+
+@router.post("/{external_id}/scenes/ocr-test")
+async def test_ocr_region(
+    external_id: UUID,
+    body: OcrTestIn,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """지정한 영역으로 한 프레임만 읽어본다 — 25분짜리 스캔을 돌리기 전에
+    영역이 맞는지 즉시 확인하기 위한 미리읽기."""
+    await _get_job_or_404(db, external_id)
+    burned = job_dir(external_id) / "burned.mp4"
+    if not burned.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "burned video not found")
+    ffmpeg = locate_ffmpeg()
+    if ffmpeg is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "ffmpeg를 찾을 수 없습니다.")
+    region = None
+    if body.region is not None:
+        r = body.region
+        region = (r.x, r.y, r.w, r.h)
+    tmp = job_dir(external_id) / "ocr_test.png"
+
+    def _read() -> str:
+        extract_frame(ffmpeg, burned, body.t_ms, tmp,
+                      proc_key=str(external_id), region=region)
+        try:
+            return read_slate_line(tmp, ["_", "-"],
+                                   top_frac=1.0 if region else 0.35)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    text = await asyncio.to_thread(_read)
+    return {"text": text, "tokens": tokenize(text, ["_", "-"]) if text else []}
+
+
+@router.get("/{external_id}/scenes/thumb-at")
+async def scene_thumbnail_at(
+    external_id: UUID,
+    t_ms: Annotated[int, Query(ge=0)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> FileResponse:
+    """임의 시각의 썸네일 — 정밀화된 구간 시작(2초 격자 밖) 프레임을 보여준다.
+
+    요청 시 추출하고 디스크에 캐시한다. 캐시 키가 t_ms라 경계가 바뀌어도 무효화가
+    필요 없다(같은 시각이면 같은 프레임). 정밀화·병합으로 경계가 움직여도 다음
+    렌더에서 새 시각으로 자연히 다시 뽑힌다.
+    """
+    await _get_job_or_404(db, external_id)
+    burned = job_dir(external_id) / "burned.mp4"
+    if not burned.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "burned video not found")
+    path = job_dir(external_id) / "scene_thumbs" / f"at_{t_ms:09d}.jpg"
+    if not path.exists():
+        ffmpeg = locate_ffmpeg()
+        if ffmpeg is None:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                                "ffmpeg를 찾을 수 없습니다.")
+        await asyncio.to_thread(extract_thumbnail_at, ffmpeg, burned, t_ms, path)
+        if not path.exists():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "thumbnail not found")
     return FileResponse(path, media_type="image/jpeg")
 
 

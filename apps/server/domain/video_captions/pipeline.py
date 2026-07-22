@@ -11,6 +11,8 @@ import json
 import logging
 import os
 import shutil
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import UUID
 
@@ -22,7 +24,7 @@ from . import gpu_pack
 from .ffmpeg import (
     burn_subtitles, cut_segment, ensure_preview, extract_audio, extract_frame,
     extract_frames, extract_thumbnails, kill_active, locate_ffmpeg,
-    wav_duration_seconds,
+    video_fps, wav_duration_seconds,
 )
 from .ingest import download_youtube
 from .scene_split import (
@@ -566,6 +568,27 @@ _DEFAULT_DELIMS = ["_", "-"]
 _SCAN_INTERVAL_S = 2.0
 
 
+def load_ocr_region(external_id: UUID | str) -> tuple | None:
+    """저장된 OCR 영역(비율 x,y,w,h) — 사용자가 드래그로 지정한 슬레이트 구역.
+    없으면 None(전체 프레임 + 상단 밴드 가정, 기존 동작)."""
+    data = load_scenes(external_id) or {}
+    r = data.get("ocr_region")
+    if not r:
+        return None
+    try:
+        return (float(r["x"]), float(r["y"]), float(r["w"]), float(r["h"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+# 크롭된 입력에서는 상단 밴드 가정을 쓰지 않는다 — 크롭 자체가 영역 필터다.
+def _band_for(region: tuple | None) -> float:
+    return 1.0 if region else _TOP_BAND_DEFAULT
+
+
+_TOP_BAND_DEFAULT = 0.35
+
+
 async def run_scene_scan(external_id: UUID,
                          interval_s: float = _SCAN_INTERVAL_S) -> None:
     """burned.mp4에서 프레임을 추출·OCR해 프레임별 슬레이트 텍스트를 모아
@@ -595,34 +618,58 @@ async def run_scene_scan(external_id: UUID,
                 shutil.rmtree(d, ignore_errors=True)
 
         interval_ms = int(interval_s * 1000)
+        # 썸네일 간격은 스캔(OCR) 간격과 분리한다 — 스캔을 0.25s로 촘촘히 떠도
+        # 썸네일까지 그러면 필름스트립이 수천 칸이 된다. 썸네일은 최소 2s로 성기게.
+        thumb_interval_s = max(2.0, interval_s)
+        thumb_interval_ms = int(thumb_interval_s * 1000)
+        # 사용자가 지정한 슬레이트 구역 — scenes.json을 덮어쓰기 전에 읽어두고,
+        # 이후 모든 저장에 되실어 재스캔해도 지정이 사라지지 않게 한다.
+        region = load_ocr_region(external_id)
+        band = _band_for(region)
+        region_out = ({"x": region[0], "y": region[1],
+                       "w": region[2], "h": region[3]} if region else None)
 
-        def _work() -> list[FrameSample]:
+        def _prog(extra: dict) -> dict:
+            return {"scanning": True, "interval_ms": interval_ms,
+                    "thumb_interval_ms": thumb_interval_ms,
+                    "ocr_region": region_out, **extra}
+
+        def _work() -> tuple[list[FrameSample], int]:
             extract_frames(ffmpeg, burned, frames_dir, interval_s,
-                           proc_key=str(external_id))
-            extract_thumbnails(ffmpeg, burned, thumbs_dir, interval_s,
+                           proc_key=str(external_id), region=region)
+            extract_thumbnails(ffmpeg, burned, thumbs_dir, thumb_interval_s,
                                proc_key=str(external_id))
+            thumb_count = len(list(thumbs_dir.glob("thumb_*.jpg")))
             pngs = sorted(frames_dir.glob("frame_*.png"))
             total = len(pngs)
             # 진행률 초기화 — 긴 영상은 OCR이 오래 걸려 프론트가 폴링하며 표시한다.
-            save_scenes(external_id, {"scanning": True, "interval_ms": interval_ms,
-                                      "total_frames": total, "ocr_done": 0,
-                                      "frames": []})
+            save_scenes(external_id, _prog({"total_frames": total, "ocr_done": 0,
+                                            "frames": [], "thumb_count": thumb_count}))
             samples: list[FrameSample] = []
-            for i, png in enumerate(pngs):
+            # 촘촘한 스캔은 OCR 호출이 많으므로 병렬화한다(정밀화와 같은 이유·설정).
+            def _read(ipng):
+                i, png = ipng
                 if generation != _current_generation(external_id):
                     raise StaleRunCancelled(external_id)
-                text = read_slate_line(png, _DEFAULT_DELIMS)
-                samples.append(FrameSample(index=i, t_ms=i * interval_ms, text=text))
-                # 증분 진행률 — 매 프레임 쓰면 I/O 과다라 10개마다(+마지막).
-                if (i + 1) % 10 == 0 or (i + 1) == total:
-                    save_scenes(external_id, {"scanning": True,
-                                              "interval_ms": interval_ms,
-                                              "total_frames": total,
-                                              "ocr_done": i + 1, "frames": []})
-            return samples
+                return i, read_slate_line(png, _DEFAULT_DELIMS, top_frac=band)
+
+            texts: dict[int, str] = {}
+            done = 0
+            with ThreadPoolExecutor(max_workers=_refine_workers()) as pool:
+                for i, text in pool.map(_read, enumerate(pngs)):
+                    texts[i] = text
+                    done += 1
+                    # 증분 진행률 — 매 프레임 쓰면 I/O 과다라 20개마다(+마지막).
+                    if done % 20 == 0 or done == total:
+                        save_scenes(external_id, _prog(
+                            {"total_frames": total, "ocr_done": done,
+                             "frames": [], "thumb_count": thumb_count}))
+            samples = [FrameSample(index=i, t_ms=i * interval_ms,
+                                   text=texts.get(i, "")) for i in range(total)]
+            return samples, thumb_count
 
         try:
-            samples = await asyncio.to_thread(_work)
+            samples, thumb_count = await asyncio.to_thread(_work)
         finally:
             # OCR용 원본 프레임은 크므로 제거(썸네일만 남긴다) — 실패해도 제거한다.
             shutil.rmtree(frames_dir, ignore_errors=True)
@@ -630,11 +677,19 @@ async def run_scene_scan(external_id: UUID,
         save_scenes(external_id, {
             "scanning": False,
             "interval_ms": interval_ms,
+            "thumb_interval_ms": thumb_interval_ms,
+            "thumb_count": thumb_count,
             "frame_count": len(samples),
             "frames": [{"t_ms": s.t_ms, "text": s.text} for s in samples],
+            "ocr_region": region_out,
         })
     except StaleRunCancelled:
         logger.info("scene scan %s cancelled (gen %d)", external_id, generation)
+        # 멈추는 쪽이 자기 플래그를 내린다(정밀화와 동일한 경합) — 취소 직후
+        # 이 워커의 진행률 저장이 scanning=true를 되살리면 폴링이 안 끝난다.
+        # 부분 판독은 남기지 않되(완료로 오인 방지) 구역 설정은 보존한다.
+        save_scenes(external_id, {"scanning": False, "interval_ms": interval_ms,
+                                  "ocr_region": region_out})
     except Exception:  # noqa: BLE001
         if generation != _current_generation(external_id):
             # kill_active로 죽은 ffmpeg(extract_frames/extract_thumbnails)가
@@ -697,6 +752,9 @@ async def run_scene_export(external_id: UUID, mode: str,
             raise RuntimeError("ffmpeg를 찾을 수 없습니다.")
         dest = Path(out_dir) if out_dir else (workdir / "scene_out")
         dest.mkdir(parents=True, exist_ok=True)
+        # 컷 경계를 프레임 간 간격 중앙에 놓아 경계 프레임 중복/유실을 없앤다
+        # (cut_segment 참조). 소스 전체가 동일 fps라 한 번만 프로브한다.
+        fps = video_fps(ffmpeg, burned)
         total = len(segments)
         save_export_status(external_id, {"exporting": True, "done": 0,
                                          "total": total, "out_dir": str(dest),
@@ -715,7 +773,7 @@ async def run_scene_export(external_id: UUID, mode: str,
                 out_path = dest / f"{deduped[i]}.mp4"
                 cut_segment(ffmpeg, burned, out_path,
                             seg["start_ms"], seg["end_ms"],
-                            proc_key=str(external_id))
+                            proc_key=str(external_id), fps=fps)
                 written.append(str(out_path))
                 save_export_status(external_id, {"exporting": True, "done": i + 1,
                                                  "total": total,
@@ -729,6 +787,11 @@ async def run_scene_export(external_id: UUID, mode: str,
         return written
     except StaleRunCancelled:
         logger.info("scene export %s cancelled (gen %d)", external_id, generation)
+        try:
+            st = load_export_status(external_id) or {}
+            save_export_status(external_id, {**st, "exporting": False})
+        except Exception:  # noqa: BLE001 — 정리 실패가 취소 경로를 깨뜨리지 않게
+            logger.exception("failed to clear exporting flag for %s", external_id)
         return []
     except Exception:  # noqa: BLE001
         if generation != _current_generation(external_id):
@@ -759,6 +822,27 @@ def save_refine_status(external_id: UUID | str, data: dict) -> None:
     path = refine_status_path(external_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+# 정밀화 병렬 워커 수. ffmpeg 디코딩과 onnxruntime이 이미 내부적으로 멀티스레드라
+# 프로브 하나만으로도 CPU가 거의 포화된다 — 실측(8코어 Intel, 24프로브): 순차 7.2초,
+# 4워커 5.5초(1.3배), 6워커 6.4초, 8워커 6.4초로 4를 넘기면 오히려 나빠진다.
+# 병렬화 이득은 1.3배가 상한이며, 그 이상은 추출 방식을 바꿔야 한다.
+def _refine_workers() -> int:
+    raw = os.environ.get("YESON_REFINE_WORKERS")
+    if raw and raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return max(1, min(4, (os.cpu_count() or 4) // 2))
+
+
+def _clear_refining(external_id: UUID | str) -> None:
+    """정밀화 종료(취소 포함) 시 진행 플래그를 내린다. 켜진 채 남으면 프론트가
+    끝나지 않는 작업을 영원히 폴링한다."""
+    try:
+        st = load_refine_status(external_id) or {}
+        save_refine_status(external_id, {**st, "refining": False})
+    except Exception:  # noqa: BLE001 — 정리 실패가 취소 경로를 깨뜨리지 않게
+        logger.exception("failed to clear refining flag for %s", external_id)
 
 
 def load_refine_status(external_id: UUID | str) -> dict | None:
@@ -804,10 +888,17 @@ async def run_scene_refine(external_id: UUID, mode: str) -> None:
         save_refine_status(external_id, {"refining": True, "done": 0,
                                          "total": total, "error": None})
 
+        # 스캔과 같은 영역·밴드로 읽어야 경계가 흔들리지 않는다.
+        region = load_ocr_region(external_id)
+        band = _band_for(region)
+
         def label_at(t_ms: int) -> str:
-            dst = tmpdir / f"r_{t_ms}.png"
-            extract_frame(ffmpeg, burned, t_ms, dst, proc_key=str(external_id))
-            text = read_slate_line(dst, delimiters)
+            # 파일명에 스레드 id를 넣는다 — 병렬 워커가 같은 시각을 볼 때 서로의
+            # 임시 프레임을 덮어쓰지 않도록.
+            dst = tmpdir / f"r_{threading.get_ident()}_{t_ms}.png"
+            extract_frame(ffmpeg, burned, t_ms, dst, proc_key=str(external_id),
+                          region=region)
+            text = read_slate_line(dst, delimiters, top_frac=band)
             try:
                 dst.unlink()
             except OSError:
@@ -815,84 +906,100 @@ async def run_scene_refine(external_id: UUID, mode: str) -> None:
             toks = tokenize(text, delimiters) if text else []
             return build_label(toks, upto)
 
+        # 경계 하나를 푼다 — '원래' 이웃 값만 보고 계산하며 segments를 건드리지
+        # 않는다. 그래야 경계끼리 독립이 되어 병렬로 돌릴 수 있고(적용은 나중에
+        # 한 번에), 결과가 순차 실행과 같다.
+        def _solve(i: int) -> tuple[int, int] | None:
+            if generation != _current_generation(external_id):
+                raise StaleRunCancelled(external_id)
+            if i == 0:
+                # 첫 세그 시작 — 앞머리가 타이틀카드 등 판독실패 구간이면 첫 세그
+                # 시작이 첫 유효 샘플에 붙어 실제 시작보다 최대 interval만큼 늦다
+                # (실기 010 첫 1초=24프레임 유실). 판독실패("")는 라벨 불일치라
+                # 이진탐색 오라클이 자연스럽게 '전환 전'으로 분류한다.
+                b, floor = segments[0]["start_ms"], 0
+                ceil_ms = segments[0]["end_ms"]
+                label, other = segments[0]["label"], ""
+            else:
+                b = segments[i]["start_ms"]
+                floor = segments[i - 1]["start_ms"]
+                ceil_ms = segments[i]["end_ms"]
+                label, other = segments[i]["label"], segments[i - 1]["label"]
+
+            # 오독 내성 라벨 판정 — OCR이 구분자를 놓쳐 토큰이 붙어 읽혀도
+            # ("HH0307_1200010"; 실기에서 경계 2초+ 지각) 같은 쪽으로 분류.
+            def at_target(t_ms: int) -> bool:
+                return label_matches(label_at(t_ms), label, other, delimiters)
+
+            # 창을 ±interval로 넓힌다 — 스캔 프레임시각(fps 필터)과 컷/정밀화가
+            # 쓰는 -ss 시각이 최대 ~1.5초 어긋나므로, ±half(±1초)로는 실제 전환을
+            # 못 담는다(실측). 이웃 구간 범위로 클램프해 next-next로 넘치지 않게.
+            lo = max(floor, b - interval_ms)
+            hi = min(ceil_ms, b + interval_ms)
+            # 창 시작이 이미 target이면 전환이 창보다 앞이다(오독 세그먼트가 직전에
+            # 흡수돼 사전 경계가 지각한 실측 케이스) — 직전 구간 시작까지 창을
+            # 왼쪽으로 확장한다(회당 2×interval, 유한 반복).
+            for _ in range(8):
+                if lo <= floor or not at_target(lo):
+                    break
+                lo = max(floor, lo - 2 * interval_ms)
+            # 창 끝=target, 창 시작≠target 여야 전환이 창 안에 있다(아니면 중앙정렬
+            # 유지). 종료 임계는 1프레임(50fps=20ms)보다 작아야 한다 — 150ms
+            # (≈3.6프레임@23.976)로는 경계가 전환 프레임 뒤로 수렴해(실측 10/15
+            # 지각) 새 시퀀스 첫 프레임들이 직전 클립 끝에 새 나간다.
+            if not (at_target(hi) and not at_target(lo)):
+                return None
+            while hi - lo > 20:
+                mid = (lo + hi) // 2
+                if at_target(mid):
+                    hi = mid
+                else:
+                    lo = mid
+            return (i, hi)
+
         def _work() -> list[dict]:
             tmpdir.mkdir(parents=True, exist_ok=True)
+            targets = list(range(1, len(segments)))
+            if segments and segments[0]["start_ms"] > 0:
+                targets.insert(0, 0)
+
             done = 0
+            lock = threading.Lock()
 
-            # 첫 세그 시작 정밀화 — 앞머리가 타이틀카드 등 판독실패 구간이면
-            # 첫 세그 시작이 첫 유효 샘플에 붙어 실제 시작보다 최대 interval만큼
-            # 늦다(실기 010 첫 1초=24프레임 유실). 판독실패("")는 라벨 불일치라
-            # 이진탐색 오라클이 자연스럽게 '전환 전'으로 분류한다.
-            if segments[0]["start_ms"] > 0:
-                if generation != _current_generation(external_id):
-                    raise StaleRunCancelled(external_id)
-                s0 = segments[0]["start_ms"]
-                first_label = segments[0]["label"]
+            def _run_one(i: int):
+                nonlocal done
+                out = _solve(i)
+                with lock:
+                    done += 1
+                    # 진행률 저장은 I/O라 매번 쓰지 않는다(병렬이면 더 잦다).
+                    if done % 5 == 0 or done == total:
+                        save_refine_status(external_id,
+                                           {"refining": True, "done": done,
+                                            "total": total, "error": None})
+                return out
 
-                def at_first(t_ms: int) -> bool:
-                    return label_matches(label_at(t_ms), first_label, "",
-                                         delimiters)
+            # 경계는 서로 독립이고 병목이 ffmpeg 프레임 추출(실측 184ms, 판독의 4배)
+            # 이라 병렬로 처리한다. 워커는 물리 코어 절반 수준으로 잡는다 — 더 늘리면
+            # ffmpeg끼리 경합해 이득이 줄고 메모리(스레드당 OCR 엔진)만 는다.
+            results: list[tuple[int, int] | None] = []
+            with ThreadPoolExecutor(max_workers=_refine_workers()) as pool:
+                futures = [pool.submit(_run_one, i) for i in targets]
+                try:
+                    for fut in futures:
+                        results.append(fut.result())
+                except BaseException:
+                    for fut in futures:
+                        fut.cancel()
+                    raise
 
-                lo = max(0, s0 - interval_ms)
-                hi = min(segments[0]["end_ms"], s0 + interval_ms)
-                for _ in range(8):
-                    if lo <= 0 or not at_first(lo):
-                        break
-                    lo = max(0, lo - 2 * interval_ms)
-                if at_first(hi) and not at_first(lo):
-                    while hi - lo > 20:
-                        mid = (lo + hi) // 2
-                        if at_first(mid):
-                            hi = mid
-                        else:
-                            lo = mid
-                    segments[0]["start_ms"] = hi
-                done += 1
-                save_refine_status(external_id, {"refining": True, "done": done,
-                                                 "total": total, "error": None})
-
-            for i in range(1, len(segments)):
-                if generation != _current_generation(external_id):
-                    raise StaleRunCancelled(external_id)
-                b = segments[i]["start_ms"]
-                next_label = segments[i]["label"]
-                prev_label = segments[i - 1]["label"]
-
-                # 오독 내성 라벨 판정 — OCR이 구분자를 놓쳐 토큰이 붙어 읽혀도
-                # ("HH0307_1200010"; 실기에서 경계 2초+ 지각) 같은 쪽으로 분류.
-                def at_next(t_ms: int) -> bool:
-                    return label_matches(label_at(t_ms), next_label,
-                                         prev_label, delimiters)
-
-                # 창을 ±interval로 넓힌다 — 스캔 프레임시각(fps 필터)과 컷/정밀화가
-                # 쓰는 -ss 시각이 최대 ~1.5초 어긋나므로, ±half(±1초)로는 실제 전환을
-                # 못 담는다(실측). 이웃 구간 범위로 클램프해 next-next로 넘치지 않게.
-                lo = max(segments[i - 1]["start_ms"], b - interval_ms)
-                hi = min(segments[i]["end_ms"], b + interval_ms)
-                # 창 시작이 이미 next면 전환이 창보다 앞이다(오독 세그먼트가 직전에
-                # 흡수돼 사전 경계가 지각한 실측 케이스) — 직전 구간 시작까지 창을
-                # 왼쪽으로 확장한다(회당 2×interval, 유한 반복).
-                floor = segments[i - 1]["start_ms"]
-                for _ in range(8):
-                    if lo <= floor or not at_next(lo):
-                        break
-                    lo = max(floor, lo - 2 * interval_ms)
-                # 창 끝=next, 창 시작≠next 여야 전환이 창 안에 있다(아니면 중앙정렬 유지).
-                # 종료 임계는 1프레임(50fps=20ms)보다 작아야 한다 — 150ms(≈3.6프레임
-                # @23.976)로는 경계가 전환 프레임 뒤로 수렴해(실측 10/15 지각) 새
-                # 시퀀스 첫 프레임들이 직전 클립 끝에 새 나간다. 경계당 OCR +2~3회 비용.
-                if at_next(hi) and not at_next(lo):
-                    while hi - lo > 20:
-                        mid = (lo + hi) // 2
-                        if at_next(mid):
-                            hi = mid
-                        else:
-                            lo = mid
-                    segments[i]["start_ms"] = hi
-                    segments[i - 1]["end_ms"] = hi
-                done += 1
-                save_refine_status(external_id, {"refining": True, "done": done,
-                                                 "total": total, "error": None})
+            # 적용은 순차로 한 번에 — 병렬 계산 중에는 segments를 건드리지 않았다.
+            for out in results:
+                if out is None:
+                    continue
+                i, new_start = out
+                segments[i]["start_ms"] = new_start
+                if i > 0:
+                    segments[i - 1]["end_ms"] = new_start
             return segments
 
         refined = await asyncio.to_thread(_work)
@@ -903,8 +1010,12 @@ async def run_scene_refine(external_id: UUID, mode: str) -> None:
                                          "total": total, "error": None})
     except StaleRunCancelled:
         logger.info("scene refine %s cancelled (gen %d)", external_id, generation)
+        # 멈추는 쪽이 자기 플래그를 내린다 — 취소 엔드포인트가 내려도 그 직후
+        # 이 워커가 진행률을 다시 써 refining=true로 되살아나던 경합(실기).
+        _clear_refining(external_id)
     except Exception:  # noqa: BLE001
         if generation != _current_generation(external_id):
+            _clear_refining(external_id)
             return
         logger.exception("scene refine %s failed", external_id)
         try:
