@@ -39,7 +39,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const minMs = minSceneSec.trim() === "" ? undefined
     : Math.max(0, Math.round(Number(minSceneSec) * 1000));
 
-  const delimiters = spaceDelim ? ["_", " ", "-"] : ["_", "-"];
+  const delimiters = spaceDelim ? ["_", " ", "-", "/"] : ["_", "-", "/"];
 
   // 스캔 진행률 폴링 — 서버의 scanning/error 신호로 종료를 판단한다.
   // 긴 영상은 OCR이 수 분 걸릴 수 있어 고정 타임아웃 대신 무진척이 오래

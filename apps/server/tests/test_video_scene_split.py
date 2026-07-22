@@ -818,3 +818,10 @@ def test_unreadable_block_between_same_key_unaffected():
     segs = runs_to_segments(runs, RULE, "scene")
     assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
         ("HH0307_030_0040", 0, 3000)]
+
+
+def test_tokenize_slash_misread_as_delimiter():
+    # OCR이 "_"를 "/"로 어긋 읽는 상수적 오독(실기 HH0307_075/0080·120/0010) —
+    # "/"를 구분자로 취급하면 오독 텍스트도 정상과 같은 토큰·키로 쪼개진다.
+    assert tokenize("HH0307_120/0010_AC_v01", ["_", "-", "/"]) == [
+        "HH0307", "120", "0010", "AC", "v01"]

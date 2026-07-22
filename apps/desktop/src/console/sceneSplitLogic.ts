@@ -4,7 +4,8 @@
 // 슬레이트 필드 "안"에 들어가는 경우가 많고(예: "Seq 11B"), OCR이 같은 슬레이트에서
 // 공백을 들쭉날쭉 읽으면 토큰 인덱스가 프레임마다 어긋난다. 공백을 필드 구분자로
 // 쓰는 슬레이트는 UI의 "공백도 구분자로" 토글로 명시 지정한다.
-const DEFAULT_DELIMITERS = ["_", "-"];
+// "/"는 OCR이 "_"를 어긋 읽는 상수적 오독 — 구분자로 두면 키가 정렬된다(백엔드 동일).
+const DEFAULT_DELIMITERS = ["_", "-", "/"];
 
 export function tokenizeSlate(
   text: string, delimiters: string[] = DEFAULT_DELIMITERS,
