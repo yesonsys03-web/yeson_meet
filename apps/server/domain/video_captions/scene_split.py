@@ -347,35 +347,56 @@ def runs_to_segments(runs: list[SceneRun], rule: SlateRule,
     upto = max(indices) if indices else -1
     # [key, label, start, end] 그룹 — 흡수 패스가 키를 봐야 해서 키를 유지한다.
     # 판독불가 런은 블록으로 모아뒀다가 다음 유효 런에서 귀속을 판정한다:
-    # 같은 키면 그냥 삼켜지고, 키가 바뀌면 블록 '들어가는 컷'이 다음 런의
-    # 컷보다 훨씬 셀 때(≥_UNREADABLE_MOVE_RATIO배)만 다음 씬의 머리로 본다 —
-    # 시각 컷이 블록 앞에 있다는 뜻이다(실기 0040→0050: 4248 vs 47, 0050
-    # 내용이 0040 꼬리에 붙어 보이던 케이스). 신호가 약하거나 미기록(구
-    # 데이터 cut_diff=0)이면 기존대로 앞 씬에 붙인다.
+    # 같은 키면 그냥 삼켜지고, 키가 바뀌면 ①텍스트 근거 우선 — 블록 안에
+    # 읽히긴 했지만 파싱 불가인 런("HH0307_0900190AC V01"처럼 구분자 유실이
+    # canonical화 한도를 넘은 오독; 실기 0180 꼬리에 0190 첫 런 3프레임이
+    # 붙던 케이스)이 다음 라벨과 squash 접두 일치하면 그 런부터 다음 씬이다.
+    # ②텍스트가 전혀 없으면 픽셀 근거 — 블록 '들어가는 컷'이 다음 런의
+    # 컷보다 훨씬 셀 때(≥_UNREADABLE_MOVE_RATIO배)만 다음 씬의 머리로 본다
+    # (실기 0040→0050: 4248 vs 47). 신호가 약하거나 미기록(구 데이터
+    # cut_diff=0)이면 기존대로 앞 씬에 붙인다. 블록 텍스트가 앞 라벨과
+    # 일치하면(앞 씬 꼬리 오독) 픽셀이 세도 앞 씬에 남는다 — 텍스트가 항상
+    # 픽셀보다 우선한다.
     groups: list[list] = []
     last_key: str | None = None
     pending_start: int | None = None
     pending_cut = 0
     pending_end = 0
+    pending_texts: list[tuple[int, str]] = []
     for run in runs:
         toks = tokenize(run.text, rule.delimiters) if run.text else []
         key = grouping_key(toks, indices)
         if key is None:
             if pending_start is None:
                 pending_start, pending_cut = run.start_ms, run.cut_diff
+            if run.text:
+                pending_texts.append((run.start_ms, run.text))
             pending_end = run.end_ms
             continue
         if groups and key == last_key:
             groups[-1][3] = run.end_ms
         else:
+            label = build_label(toks, upto)
             start = run.start_ms
-            if (groups and pending_start is not None and pending_cut > 0
-                    and pending_cut >= _UNREADABLE_MOVE_RATIO * run.cut_diff):
-                start = pending_start
+            if pending_start is not None:
+                prev_label = groups[-1][1] if groups else ""
+                moved = next(
+                    (st for st, txt in pending_texts
+                     if label_matches(txt, label, prev_label, rule.delimiters)),
+                    None)
+                matches_prev = any(
+                    label_matches(txt, prev_label, label, rule.delimiters)
+                    for _st, txt in pending_texts)
+                if moved is not None:
+                    start = moved
+                elif (not matches_prev and groups and pending_cut > 0
+                        and pending_cut >= _UNREADABLE_MOVE_RATIO * run.cut_diff):
+                    start = pending_start
             if groups:
                 groups[-1][3] = start
-            groups.append([key, build_label(toks, upto), start, run.end_ms])
+            groups.append([key, label, start, run.end_ms])
         pending_start = None
+        pending_texts = []
         last_key = key
     if groups and pending_start is not None:
         groups[-1][3] = pending_end  # 꼬리 블록은 앞 씬에

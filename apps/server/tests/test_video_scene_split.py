@@ -820,6 +820,69 @@ def test_unreadable_block_between_same_key_unaffected():
         ("HH0307_030_0040", 0, 3000)]
 
 
+# ── 전환 블록 텍스트 근거 우선 (읽히는 런은 OCR이 결정) ─────────────────────
+# 다음 씬 첫 런이 읽히긴 했지만 구분자 유실이 canonical화 한도를 넘어 파싱
+# 불가면 판독불가 블록으로 취급됐고, 픽셀 비율이 앞 씬에 붙여 꼬리 오염이
+# 생겼다(실기 0180 꼬리에 0190 첫 런 3프레임, 0170 꼬리에 0180 3프레임).
+# squash 접두 일치(label_matches)로 어느 쪽 라벨인지 먼저 판정하고, 픽셀
+# 비율은 텍스트가 전혀 없을 때만 쓴다.
+
+def test_readable_unparseable_block_goes_to_matching_next():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    # 실기 090_0180→0190: 들어컷 4646 vs 나가컷 2271(2배)이라 픽셀 비율로는
+    # 앞 씬에 붙지만, 텍스트가 0190이므로 그 런부터 다음 씬이다.
+    runs = [
+        _runc(0, 5839, "HH0307_090_0180_AC_v01", 500),
+        _runc(5839, 5964, "HH0307_0900190AC V01", 4646),
+        _runc(5964, 6715, "HH0307_090_0190_AC_v01", 2271),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_090_0180", 0, 5839), ("HH0307_090_0190", 5839, 6715)]
+
+
+def test_readable_unparseable_block_matching_prev_stays():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    # 블록 텍스트가 앞 라벨과 일치(앞 씬 꼬리 오독) — 들어컷이 세도 앞 씬 소속.
+    runs = [
+        _runc(0, 1000, "HH0307_030_0040_AC_v01", 500),
+        _runc(1000, 1900, "HH0307_0300040AC", 4248),
+        _runc(1900, 3000, "HH0307_030_0050_AC_v01", 47),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_030_0040", 0, 1900), ("HH0307_030_0050", 1900, 3000)]
+
+
+def test_mixed_block_cut_at_first_next_matching_text():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    # 진짜 판독불가(페이드) 뒤에 파싱불가 오독이 오는 혼합 블록 — 컷은 다음
+    # 라벨과 일치하는 첫 런의 시작이고, 그 앞 판독불가는 앞 씬에 남는다.
+    runs = [
+        _runc(0, 1000, "HH0307_030_0040_AC_v01", 500),
+        _runc(1000, 1400, "", 300),
+        _runc(1400, 1900, "HH0307_0300050ACv01", 4248),
+        _runc(1900, 3000, "HH0307_030_0050_AC_v01", 47),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_030_0040", 0, 1400), ("HH0307_030_0050", 1400, 3000)]
+
+
+def test_leading_unparseable_head_joins_first_scene():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    # 선두 블록도 같은 원칙: 타이틀카드는 버리되, 첫 라벨과 일치하는 오독
+    # 런부터는 첫 씬의 머리다.
+    runs = [
+        _runc(0, 400, "TITLECARD", 0),
+        _runc(400, 525, "HH0307_0100010ACv01", 3000),
+        _runc(525, 2000, "HH0307_010_0010_AC_v01", 100),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010_0010", 400, 2000)]
+
+
 def test_tokenize_slash_misread_as_delimiter():
     # OCR이 "_"를 "/"로 어긋 읽는 상수적 오독(실기 HH0307_075/0080·120/0010) —
     # "/"를 구분자로 취급하면 오독 텍스트도 정상과 같은 토큰·키로 쪼개진다.
