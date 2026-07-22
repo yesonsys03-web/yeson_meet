@@ -572,3 +572,341 @@ def test_compute_boundaries_keeps_single_sample_at_edges():
     keyed = [(0, "A", "A"), (2000, "A", "A"), (4000, "B", "B")]
     seq = compute_boundaries(keyed, 6000, min_ms=0, interval_ms=2000, absorb_single=True)
     assert [s.label for s in seq] == ["A", "B"]
+
+
+# ── runs_to_segments (지문 컷 감지) ──────────────────────────────────────────
+# 런 = 지문 컷 사이 구간 + 그 안에서 읽은 슬레이트. 경계는 이미 프레임 정확한
+# 컷이므로 min_ms·중앙정렬·정밀화가 없고, 같은 키의 연속 런 병합(가짜 컷 흡수)과
+# 판독실패 홀드만 한다.
+
+RULE = SlateRule(delimiters=["_", "-"], seq_tokens=[1], scene_tokens=[2])
+
+
+def _run(start_ms, end_ms, text):
+    from apps.server.domain.video_captions.scene_split import SceneRun
+    return SceneRun(start_ms=start_ms, end_ms=end_ms, text=text)
+
+
+def test_runs_merge_consecutive_same_key():
+    # 씬 내부 가짜 컷(반투명 바 뒤 애니 움직임)으로 런이 갈라져도 같은 키면 병합.
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 100, "HH0307_010_0010_AC_v01"),
+        _run(100, 250, "HH0307_010_0010_AC_v01"),
+        _run(250, 500, "HH0307_010_0020_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010_0010", 0, 250), ("HH0307_010_0020", 250, 500)]
+
+
+def test_runs_drop_leading_unreadable():
+    # 선두 판독실패(타이틀카드) 런은 버린다 — 첫 유효 런의 시작이 곧 실제 컷.
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 5000, ""),
+        _run(5000, 8000, "HH0307_010_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010_0010", 5000, 8000)]
+
+
+def test_runs_hold_mid_unreadable_to_previous():
+    # 중간 판독실패 런은 직전 세그먼트의 연속으로 본다(hold_keys와 같은 홀드).
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 100, "HH0307_010_0010_AC_v01"),
+        _run(100, 200, ""),
+        _run(200, 300, "HH0307_010_0020_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010_0010", 0, 200), ("HH0307_010_0020", 200, 300)]
+
+
+def test_runs_unreadable_then_same_key_still_merges():
+    # A | 실패 | A — 실패 런이 직전에 붙은 뒤 다음 A도 같은 키라 한 세그로.
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 100, "HH0307_010_0010_AC_v01"),
+        _run(100, 200, ""),
+        _run(200, 300, "HH0307_010_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010_0010", 0, 300)]
+
+
+def test_runs_sequence_mode_groups_by_seq_tokens_only():
+    # 시퀀스 모드: 씬 토큰이 달라도 seq 토큰이 같으면 한 세그먼트.
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 100, "HH0307_010_0010_AC_v01"),
+        _run(100, 200, "HH0307_010_0020_AC_v01"),
+        _run(200, 300, "HH0307_020_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "sequence")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010", 0, 200), ("HH0307_020", 200, 300)]
+
+
+def test_runs_contiguous_no_gaps():
+    # 어떤 흡수·병합 후에도 시간축은 연속이어야 한다(빈틈=프레임 유실).
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 700, ""),
+        _run(700, 1000, "HH0307_010_0010_AC_v01"),
+        _run(1000, 1400, ""),
+        _run(1400, 2000, "HH0307_010_0020_AC_v01"),
+        _run(2000, 2600, "HH0307_010_0020_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert segs[0].start_ms == 700 and segs[-1].end_ms == 2600
+    for a, b in zip(segs, segs[1:]):
+        assert a.end_ms == b.start_ms
+
+
+# ── 런 텍스트 canonical화 (지문 오독 원천 차단) ─────────────────────────────
+# 지문 방식은 런 중간(가짜 컷을 만든 흐릿한 프레임 근처)을 읽어 구분자 유실
+# 오독률이 간격 스캔의 10배(실기 11.5%)다. 그룹핑 전에 데이터 자신의 최빈
+# 토큰 모양(템플릿)으로 오독을 재분해해 키가 갈라지는 것을 원천 차단한다
+# (프론트 sceneSplitLogic.ts tokenShape/labelTemplate/reparse의 서버 이식 —
+# 경계 계산의 단일 출처는 서버다).
+
+def test_token_shape_runs():
+    from apps.server.domain.video_captions.scene_split import token_shape
+    assert token_shape("HH0307") == "U2D4"
+    assert token_shape("v01") == "L1D2"
+    assert token_shape("Seq 11B") == "U1L2D2U1"  # 내부 공백은 squash
+
+
+def test_label_template_modal_shapes():
+    from apps.server.domain.video_captions.scene_split import label_template
+    texts = ["HH0307_010_0010_AC_v01"] * 5 + ["HH0307010_0020_AC_v01", "VAL"]
+    assert label_template(texts, ["_", "-"]) == ["U2D4", "D3", "D4", "U2", "L1D2"]
+
+
+def test_canonicalize_fixes_delimiter_loss():
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["HH0307_010_0010_AC_v01"] * 5
+             + ["HH0307010_0020_AC_v01",    # 쇼+시퀀스 붙음(실기)
+                "HH0307_0100030_ACv01"])    # 시퀀스+씬·AC+v01 붙음(실기)
+    out = canonicalize_texts(texts, ["_", "-"])
+    assert out[:5] == texts[:5]  # 정상은 그대로
+    assert out[5] == "HH0307_010_0020_AC_v01"
+    assert out[6] == "HH0307_010_0030_AC_v01"
+
+
+def test_canonicalize_leaves_ambiguous_and_corrupt():
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["HH0307_010_0010_AC_v01"] * 5
+             + ["HH0307_010_00305_AC_v01",  # 자릿수 남음 — 억지 교정 금지
+                "HH030Z_140_0010_AC_v01",   # 문자 오독 — 템플릿 불일치
+                ""])                         # 판독 실패
+    out = canonicalize_texts(texts, ["_", "-"])
+    assert out[5:] == texts[5:]
+
+
+# ── 클러스터 갈라짐 흡수 (runs_to_segments absorb_flanked_ms) ────────────────
+# 같은 키 두 세그 사이에 낀 '연속' 오독 블록(총 길이 ≤ cap)을 통째로 흡수한다.
+# 단일 낀 것만 잡는 프론트 정리로는 연속 오독(A|X|Y|A)이 남는다(실기 시퀀스
+# 322→104 잔존). 캡이 진짜 비단조(A|B|A에서 B가 긴 경우)를 보존한다.
+
+def test_runs_absorb_flanked_cluster():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 1000, "HH0307_010_0010_AC_v01"),
+        _run(1000, 1100, "HH0307_010_0010AC_v01"),   # 오독 X
+        _run(1100, 1200, "HH03070100010_AC_v01"),    # 오독 Y (연속 클러스터)
+        _run(1200, 2000, "HH0307_010_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene", absorb_flanked_ms=5000)
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010_0010", 0, 2000)]
+
+
+def test_runs_absorb_flanked_respects_cap():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 1000, "HH0307_010_0010_AC_v01"),
+        _run(1000, 7000, "HH0307_010_0020_AC_v01"),  # 6초 — 진짜 씬(비단조) 보존
+        _run(7000, 8000, "HH0307_010_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene", absorb_flanked_ms=5000)
+    assert [s.label for s in segs] == [
+        "HH0307_010_0010", "HH0307_010_0020", "HH0307_010_0010"]
+
+
+def test_runs_absorb_flanked_default_off():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 1000, "HH0307_010_0010_AC_v01"),
+        _run(1000, 1100, "HH0307_010_0010AC_v01"),
+        _run(1100, 2000, "HH0307_010_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert len(segs) == 3  # absorb_flanked_ms 미지정=기존 동작
+
+
+def test_runs_absorb_flanked_keeps_edges():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _run(0, 100, "HH0307_010_0010AC_v01"),       # 선두 오독 — 흡수 짝 없음
+        _run(100, 1000, "HH0307_010_0010_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene", absorb_flanked_ms=5000)
+    assert [s.label for s in segs] == ["HH0307_010_0010AC", "HH0307_010_0010"]
+
+
+# ── 판독불가 전환 블록 귀속 (cut_diff 휴리스틱) ──────────────────────────────
+# 씬 전환부에 OCR이 전혀 안 되는 구간(디졸브·슬레이트 페이드인)이 끼면 어느
+# 씬 소속인지 OCR로는 판별 불가 — 유일한 신호는 지문 컷 세기다. 블록 '들어가는
+# 컷'이 '나가는 컷'보다 훨씬 세면(≥3배) 시각 컷이 블록 앞에 있다는 뜻이라
+# 블록은 다음 씬의 머리다(실기 0040→0050: 4248 vs 47, 90배 — 0050 내용이
+# 0040 꼬리에 붙어 보이던 케이스). 애매하면 기존대로 앞 씬에 붙인다.
+
+def _runc(start_ms, end_ms, text, cut_diff=0):
+    from apps.server.domain.video_captions.scene_split import SceneRun
+    return SceneRun(start_ms=start_ms, end_ms=end_ms, text=text,
+                    cut_diff=cut_diff)
+
+
+def test_unreadable_block_moves_to_next_on_strong_entry_cut():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _runc(0, 1000, "HH0307_030_0040_AC_v01", 500),
+        _runc(1000, 1900, "", 4248),   # 판독불가 블록 — 들어컷 강함
+        _runc(1900, 3000, "HH0307_030_0050_AC_v01", 47),  # 나가컷 약함
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_030_0040", 0, 1000), ("HH0307_030_0050", 1000, 3000)]
+
+
+def test_unreadable_block_stays_with_prev_when_ambiguous():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _runc(0, 1000, "HH0307_030_0210_AC_v01", 500),
+        _runc(1000, 1900, "", 4473),
+        _runc(1900, 3000, "HH0307_030_0230_AC_v01", 1794),  # 2.5배 — 애매
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_030_0210", 0, 1900), ("HH0307_030_0230", 1900, 3000)]
+
+
+def test_unreadable_block_without_cut_diff_keeps_old_behavior():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    # cut_diff 미기록(구 데이터) — 0 vs 0은 신호 없음 → 기존(앞에 붙임) 유지.
+    runs = [
+        _runc(0, 1000, "HH0307_030_0040_AC_v01"),
+        _runc(1000, 1900, ""),
+        _runc(1900, 3000, "HH0307_030_0050_AC_v01"),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert segs[0].end_ms == 1900
+
+
+def test_unreadable_block_between_same_key_unaffected():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    runs = [
+        _runc(0, 1000, "HH0307_030_0040_AC_v01", 500),
+        _runc(1000, 1900, "", 9999),
+        _runc(1900, 3000, "HH0307_030_0040_AC_v01", 10),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_030_0040", 0, 3000)]
+
+
+# ── 전환 블록 텍스트 근거 우선 (읽히는 런은 OCR이 결정) ─────────────────────
+# 다음 씬 첫 런이 읽히긴 했지만 구분자 유실이 canonical화 한도를 넘어 파싱
+# 불가면 판독불가 블록으로 취급됐고, 픽셀 비율이 앞 씬에 붙여 꼬리 오염이
+# 생겼다(실기 0180 꼬리에 0190 첫 런 3프레임, 0170 꼬리에 0180 3프레임).
+# squash 접두 일치(label_matches)로 어느 쪽 라벨인지 먼저 판정하고, 픽셀
+# 비율은 텍스트가 전혀 없을 때만 쓴다.
+
+def test_readable_unparseable_block_goes_to_matching_next():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    # 실기 090_0180→0190: 들어컷 4646 vs 나가컷 2271(2배)이라 픽셀 비율로는
+    # 앞 씬에 붙지만, 텍스트가 0190이므로 그 런부터 다음 씬이다.
+    runs = [
+        _runc(0, 5839, "HH0307_090_0180_AC_v01", 500),
+        _runc(5839, 5964, "HH0307_0900190AC V01", 4646),
+        _runc(5964, 6715, "HH0307_090_0190_AC_v01", 2271),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_090_0180", 0, 5839), ("HH0307_090_0190", 5839, 6715)]
+
+
+def test_readable_unparseable_block_matching_prev_stays():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    # 블록 텍스트가 앞 라벨과 일치(앞 씬 꼬리 오독) — 들어컷이 세도 앞 씬 소속.
+    runs = [
+        _runc(0, 1000, "HH0307_030_0040_AC_v01", 500),
+        _runc(1000, 1900, "HH0307_0300040AC", 4248),
+        _runc(1900, 3000, "HH0307_030_0050_AC_v01", 47),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_030_0040", 0, 1900), ("HH0307_030_0050", 1900, 3000)]
+
+
+def test_mixed_block_cut_at_first_next_matching_text():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    # 진짜 판독불가(페이드) 뒤에 파싱불가 오독이 오는 혼합 블록 — 컷은 다음
+    # 라벨과 일치하는 첫 런의 시작이고, 그 앞 판독불가는 앞 씬에 남는다.
+    runs = [
+        _runc(0, 1000, "HH0307_030_0040_AC_v01", 500),
+        _runc(1000, 1400, "", 300),
+        _runc(1400, 1900, "HH0307_0300050ACv01", 4248),
+        _runc(1900, 3000, "HH0307_030_0050_AC_v01", 47),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_030_0040", 0, 1400), ("HH0307_030_0050", 1400, 3000)]
+
+
+def test_leading_unparseable_head_joins_first_scene():
+    from apps.server.domain.video_captions.scene_split import runs_to_segments
+    # 선두 블록도 같은 원칙: 타이틀카드는 버리되, 첫 라벨과 일치하는 오독
+    # 런부터는 첫 씬의 머리다.
+    runs = [
+        _runc(0, 400, "TITLECARD", 0),
+        _runc(400, 525, "HH0307_0100010ACv01", 3000),
+        _runc(525, 2000, "HH0307_010_0010_AC_v01", 100),
+    ]
+    segs = runs_to_segments(runs, RULE, "scene")
+    assert [(s.label, s.start_ms, s.end_ms) for s in segs] == [
+        ("HH0307_010_0010", 400, 2000)]
+
+
+def test_tokenize_slash_misread_as_delimiter():
+    # OCR이 "_"를 "/"로 어긋 읽는 상수적 오독(실기 HH0307_075/0080·120/0010) —
+    # "/"를 구분자로 취급하면 오독 텍스트도 정상과 같은 토큰·키로 쪼개진다.
+    assert tokenize("HH0307_120/0010_AC_v01", ["_", "-", "/"]) == [
+        "HH0307", "120", "0010", "AC", "v01"]
+
+
+def test_canonicalize_fixes_single_inserted_char():
+    # OCR이 '_'를 숫자 '1'로 읽는 환각 삽입(실기 HH0307_07510040_AC → 075_0040
+    # 오독) — 한 글자를 삭제해 템플릿에 '유일하게' 들어맞으면 확신 교정한다.
+    # 진짜 다른 씬(0040 vs 0050)은 삭제로는 못 맞추므로 안전하다.
+    # 같은 씬의 깨끗한 판독이 코퍼스에 존재하는 게 교정 근거다.
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["HH0307_075_0030_AC_v01"] * 4
+             + ["HH0307_075_0040_AC_v01"]
+             + ["HH0307_07510040_AC_v01"])
+    out = canonicalize_texts(texts, ["_", "-"])
+    assert out[5] == "HH0307_075_0040_AC_v01"
+
+
+def test_canonicalize_rejects_ambiguous_deletion():
+    # 삭제 위치에 따라 서로 다른 결과가 나오면(모호) 교정하지 않는다.
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["HH0307_075_0030_AC_v01"] * 5
+             + ["HH0307_07512340_AC_v01"])  # 8자리: 어느 숫자를 지워도 7자리
+    out = canonicalize_texts(texts, ["_", "-"])   # 가 되지만 결과가 제각각 → 유지
+    assert out[5] == "HH0307_07512340_AC_v01"

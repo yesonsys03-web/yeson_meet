@@ -28,6 +28,7 @@ from apps.server.db.models import AppUser, VideoJob, VideoSegment
 from apps.server.db.session import get_session
 from apps.server.domain.video_captions.ingest import save_upload
 from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
+                                                        build_fingerprint_segments,
                                                         build_scene_data,
                                                         cancel_job_task, job_dir,
                                                         load_export_status,
@@ -36,7 +37,9 @@ from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
                                                         prune_old_video_jobs,
                                                         run_burn_job, run_scene_export,
                                                         run_scene_refine,
-                                                        run_scene_scan, run_video_job,
+                                                        run_scene_scan,
+                                                        run_scene_scan_fingerprint,
+                                                        run_video_job,
                                                         save_export_status,
                                                         save_refine_status,
                                                         save_scenes, start_job_task,
@@ -73,6 +76,10 @@ def _start_burn(external_id: UUID, position: str, margin_v: int,
 
 def _start_scene_scan(external_id: UUID, interval_s: float) -> None:  # test seam
     start_job_task(external_id, run_scene_scan(external_id, interval_s))
+
+
+def _start_scene_scan_fingerprint(external_id: UUID) -> None:  # test seam
+    start_job_task(external_id, run_scene_scan_fingerprint(external_id))
 
 
 def _start_scene_export(external_id: UUID, mode: str, out_dir: str | None) -> None:  # test seam
@@ -313,6 +320,8 @@ class SlateTemplateIn(BaseModel):
     scene_tokens: list[int] = Field(default_factory=list)
     # 샘플 간격도 쇼 특성(컷 밀도)이라 템플릿에 함께 저장한다.
     scan_interval_s: float = Field(default=2.0, ge=0.1, le=5.0)
+    # 스캔 방식(간격/지문)도 쇼 단위로 정해지는 값이라 같이 저장한다.
+    method: str = Field(default="interval", pattern="^(interval|fingerprint)$")
 
 
 @router.get("/slate-templates")
@@ -586,6 +595,10 @@ class ScanIn(BaseModel):
     # 샘플 간격(초). 짧은 씬(2초 미만)이 많은 애니메틱은 촘촘하게(0.25s) 떠야
     # 놓치지 않는다 — 크롭 OCR이 빨라져 0.25s도 25분 영상 ~7분이면 끝난다.
     interval_s: float = Field(default=2.0, ge=0.1, le=5.0)
+    # 스캔 방식 — interval(간격 OCR 샘플링+정밀화, 기존)과 fingerprint(전 프레임
+    # 지문 컷 감지, 프레임 정확·정밀화 불필요)를 나란히 둔다. 지문에 리스크
+    # (가짜 컷 등)가 보이면 기존 방식으로 폴백할 수 있어야 한다(사용자 결정).
+    method: str = Field(default="interval", pattern="^(interval|fingerprint)$")
 
 
 @router.post("/{external_id}/scenes/scan", status_code=status.HTTP_202_ACCEPTED)
@@ -598,15 +611,20 @@ async def scan_scenes(
     if job.status != "done" or not job.burned_path or not Path(job.burned_path).exists():
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "씬 분할은 굽기 완료(done)된 작업에서만 가능합니다.")
-    interval_s = (body or ScanIn()).interval_s
+    scan_in = body or ScanIn()
     # 초기 scanning 상태를 동기 기록(익스포트/정밀화와 같은 패턴) — 프레임 추출
     # (수 분) 동안 옛 scanned 데이터가 남아 있으면 재스캔 폴링이 '스캔 완료
-    # (옛 데이터)'로 오판한다. 구역은 재스캔에도 유지되게 되싣는다.
+    # (옛 데이터)'로 오판한다. 구역은 재스캔에도 유지되게 되싣고, method도 실어
+    # 재진입 폴링이 방식을 안다.
     prev = load_scenes(external_id) or {}
     save_scenes(external_id, {"scanning": True, "total_frames": 0,
                               "ocr_done": 0, "frames": [],
+                              "method": scan_in.method,
                               "ocr_region": prev.get("ocr_region")})
-    _start_scene_scan(external_id, interval_s)
+    if scan_in.method == "fingerprint":
+        _start_scene_scan_fingerprint(external_id)
+    else:
+        _start_scene_scan(external_id, scan_in.interval_s)
     return {"status": "scanning"}
 
 
@@ -641,6 +659,11 @@ async def get_scenes(
                                       data.get("interval_ms", 2000)),
         "thumb_count": data.get("thumb_count", len(data.get("frames", []))),
         "ocr_region": data.get("ocr_region"),
+        # 스캔 방식 — 프론트가 정밀화 단계 표시/생략을 이 값으로 가른다.
+        "method": data.get("method", "interval"),
+        # 지문 스캔의 영상 전체 길이(마지막 런 끝) — 간격 방식은 프레임 격자로
+        # 길이를 유도하지만 지문 런은 격자가 없어 명시 값이 필요하다.
+        "total_ms": data.get("total_ms"),
     }
 
 
@@ -654,6 +677,18 @@ async def set_scene_rule(
     data = load_scenes(external_id)
     if not data or not data.get("frames"):
         raise HTTPException(status.HTTP_409_CONFLICT, "먼저 씬 스캔을 실행하세요.")
+    if data.get("method") == "fingerprint":
+        # 지문 스캔: 경계는 이미 프레임 정확한 컷(런) — 규칙은 런들을 같은 키로
+        # 병합하는 데만 쓴다(min_ms 흡수·중앙정렬·정밀화 없음). data를 update로
+        # 고쳐 method·runs·ocr_region·total_ms를 보존한다(규칙 재확정 가능해야).
+        rule_dict = body.model_dump()
+        segs = build_fingerprint_segments(data.get("runs") or [], rule_dict)
+        data.update(segs)
+        data["rule"] = rule_dict
+        save_scenes(external_id, data)
+        return {"segments_scene": data["segments_scene"],
+                "segments_sequence": data["segments_sequence"],
+                "rule": rule_dict}
     interval_ms = data.get("interval_ms", 1000)
     samples = [FrameSample(index=i, t_ms=f["t_ms"], text=f.get("text", ""))
                for i, f in enumerate(data["frames"])]
@@ -744,6 +779,10 @@ async def refine_scenes(
     key = "segments_sequence" if body.mode == "sequence" else "segments_scene"
     if not data or not data.get("rule") or len(data.get(key) or []) < 2:
         raise HTTPException(status.HTTP_409_CONFLICT, "먼저 규칙을 확정하세요.")
+    if data.get("method") == "fingerprint":
+        # 지문 경계는 이미 프레임 정확 — 정밀화는 무의미하고 수십 분을 태운다.
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "지문 컷 감지 경계는 이미 프레임 정확합니다 — 정밀화가 필요 없습니다.")
     save_refine_status(external_id, {"refining": True, "done": 0,
                                      "total": len(data[key]) - 1, "error": None})
     _start_scene_refine(external_id, body.mode)
@@ -801,6 +840,9 @@ async def cancel_scene_ops(
     if data and data.get("scanning"):
         save_scenes(external_id, {"scanning": False,
                                   "interval_ms": data.get("interval_ms", 2000),
+                                  # 방식 선택도 설정이다 — 지우면 다음 GET이
+                                  # interval로 오판해 UI 선택이 되돌아간다.
+                                  "method": data.get("method", "interval"),
                                   "ocr_region": data.get("ocr_region")})
     return {"status": "canceled"}
 

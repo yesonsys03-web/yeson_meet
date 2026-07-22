@@ -399,6 +399,23 @@ def extract_frames(ffmpeg: str, src: Path, out_dir: Path,
           str(out_dir / "frame_%05d.png")], proc_key=proc_key)
 
 
+def extract_fingerprint_frames(ffmpeg: str, src: Path, out_dir: Path,
+                               region: OcrRegion, scale_w: int = 160,
+                               proc_key: str | None = None) -> None:
+    """지문 컷 감지용: 슬레이트 구역의 '모든' 프레임을 작게 축소해 추출.
+
+    fps 필터를 쓰지 않아 출력 f_%06d.png의 인덱스가 소스 프레임 번호와 1:1이다
+    (컷을 프레임 정확하게 찾는 전제 — 호출자는 인덱스(1-based)로 프레임
+    idx = index-1을 부여한다). scale은 지문 해상도만 낮춘다 — 텍스트 유무 변화만
+    보면 충분(실측 140px 검증)하고, 25분 영상 3.6만 프레임의 PNG 용량과 지문
+    계산량을 잡는다. 판독(OCR)은 이 축소본이 아니라 extract_frame 원본 크롭을
+    쓴다."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    vf = crop_filter(region) + f",scale={scale_w}:-2"
+    _run([ffmpeg, "-y", "-i", str(src), "-vf", vf,
+          str(out_dir / "f_%06d.png")], proc_key=proc_key)
+
+
 def extract_thumbnails(ffmpeg: str, src: Path, out_dir: Path,
                        interval_s: float = 1.0, height: int = 90,
                        proc_key: str | None = None) -> None:
@@ -407,6 +424,56 @@ def extract_thumbnails(ffmpeg: str, src: Path, out_dir: Path,
     _run([ffmpeg, "-y", "-i", str(src), "-vf",
           f"fps=1/{interval_s},scale=-2:{height}",
           str(out_dir / "thumb_%05d.jpg")], proc_key=proc_key)
+
+
+# select 식 항 수 상한 — ffmpeg 표현식 파서는 연쇄 연산 ~100항을 넘기면
+# 'Cannot allocate memory'로 필터 초기화에 실패한다(번들 8.1.2 실측: 100 OK,
+# 150 FAIL — 파서 재귀 한도라 플랫폼 무관). 100에 딱 붙이지 않고 여유를 둔다.
+_SELECT_CHUNK = 96
+
+
+def extract_frames_at(ffmpeg: str, src: Path, frame_indices: list[int],
+                      out_dir: Path, region: OcrRegion,
+                      proc_key: str | None = None,
+                      chunk_size: int = _SELECT_CHUNK,
+                      workers: int = 1) -> dict[int, Path]:
+    """지정한 프레임 번호(0-based 디코드 순서)들을 select 디코드 패스로 일괄
+    추출한다 — 프레임마다 입력 -ss 시킹(실측 830ms×수천 회=수 분)을 하지 않는다.
+
+    select 식은 chunk_size 항씩 나눠 여러 패스로 돌린다(위 _SELECT_CHUNK 참조).
+    각 패스는 -frames:v로 청크의 마지막 프레임을 내보낸 뒤 디코드를 멈추므로
+    뒤 청크만 영상 깊숙이 디코드하고, workers>1이면 청크들을 병렬로 돌린다
+    (청크는 서로 독립 — proc_key 레지스트리는 키당 집합이라 동시 등록·일괄
+    취소가 안전하다). 그래프는 파일(-filter_script:v)로 전달한다 — Windows
+    커맨드라인 32K 한도와 이스케이프 문제를 원천 회피. -fps_mode vfr로 선택된
+    프레임만 순서대로 나오며, 출력 번호는 청크 내 오름차순과 1:1 대응한다.
+    반환은 프레임번호→경로 매핑(파일 생성 여부는 확인하지 않는다 — 판독
+    실패는 호출자의 폴백이 받는다)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ordered = sorted(set(frame_indices))
+    chunks = [ordered[i:i + chunk_size]
+              for i in range(0, len(ordered), chunk_size)]
+
+    def _one(ci_chunk: tuple[int, list[int]]) -> None:
+        ci, chunk = ci_chunk
+        expr = "+".join(f"eq(n\\,{n})" for n in chunk)
+        graph = out_dir / f"select_{ci:03d}.vf"
+        graph.write_text(f"select={expr},{crop_filter(region)}",
+                         encoding="utf-8")
+        _run([ffmpeg, "-y", "-i", str(src), "-filter_script:v", str(graph),
+              "-fps_mode", "vfr", "-frames:v", str(len(chunk)),
+              str(out_dir / f"c{ci:03d}_%05d.png")], proc_key=proc_key)
+
+    if workers > 1 and len(chunks) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            list(pool.map(_one, enumerate(chunks)))
+    else:
+        for item in enumerate(chunks):
+            _one(item)
+    return {n: out_dir / f"c{ci:03d}_{k:05d}.png"
+            for ci, chunk in enumerate(chunks)
+            for k, n in enumerate(chunk, 1)}
 
 
 def cut_segment(ffmpeg: str, src: Path, dst: Path, start_ms: int, end_ms: int,

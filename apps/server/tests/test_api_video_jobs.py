@@ -1030,3 +1030,143 @@ async def test_export_status_empty_when_never_run(client, db_session, admin_user
     job = await _new_scene_job(db_session, admin_user, status="done")
     r = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes/export/status")
     assert r.json()["exporting"] is False
+
+
+# ── 지문 컷 감지 method 분기 ─────────────────────────────────────────────────
+
+async def test_scan_method_fingerprint_starts_fp_task(client, db_session,
+                                                      admin_user, monkeypatch):
+    """method=fingerprint면 지문 스캔 시임으로 분기하고(간격 시임 미호출),
+    초기 동기 기록에도 method가 실려 재진입 폴링이 방식을 안다."""
+    started = {}
+    monkeypatch.setattr(api_vj, "_start_scene_scan_fingerprint",
+                        lambda eid: started.setdefault("fp", eid))
+    monkeypatch.setattr(api_vj, "_start_scene_scan",
+                        lambda eid, interval_s: started.setdefault("interval", eid))
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan",
+                          json={"method": "fingerprint"})
+    assert r.status_code == 202
+    assert started == {"fp": job.external_id}
+    body = (await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes")).json()
+    assert body["scanning"] is True
+    assert body["method"] == "fingerprint"
+
+
+async def test_scan_method_default_is_interval(client, db_session, admin_user,
+                                               monkeypatch):
+    """method 미지정은 기존 간격 스캔 그대로 — 하위 호환."""
+    started = {}
+    monkeypatch.setattr(api_vj, "_start_scene_scan_fingerprint",
+                        lambda eid: started.setdefault("fp", eid))
+    monkeypatch.setattr(api_vj, "_start_scene_scan",
+                        lambda eid, interval_s: started.setdefault("interval", eid))
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan")
+    assert r.status_code == 202
+    assert started == {"interval": job.external_id}
+
+
+async def test_scan_method_invalid_rejected(client, db_session, admin_user):
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/scan",
+                          json={"method": "psychic"})
+    assert r.status_code == 422
+
+
+async def test_rule_on_fingerprint_data_groups_runs(client, db_session,
+                                                    admin_user):
+    """지문 스캔 데이터에 규칙을 확정하면 런을 키로 병합해 양 모드 세그먼트를
+    만든다 — min_ms 흡수·중앙정렬 없이 런 경계(프레임 정확) 그대로."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    runs = [
+        {"start_ms": 21, "end_ms": 250, "text": "HH_010_0010_AC"},
+        {"start_ms": 250, "end_ms": 400, "text": "HH_010_0010_AC"},  # 가짜 컷
+        {"start_ms": 400, "end_ms": 900, "text": "HH_010_0020_AC"},
+        {"start_ms": 900, "end_ms": 1400, "text": "HH_020_0010_AC"},
+    ]
+    pl.save_scenes(job.external_id, {
+        "scanning": False, "method": "fingerprint", "total_ms": 1400,
+        "runs": runs,
+        "frames": [{"t_ms": r["start_ms"], "text": r["text"]} for r in runs],
+        "ocr_region": {"x": 0.1, "y": 0.2, "w": 0.5, "h": 0.1},
+    })
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/rule",
+                          json={"seq_tokens": [1], "scene_tokens": [2]})
+    assert r.status_code == 200
+    body = r.json()
+    assert [(s["label"], s["start_ms"], s["end_ms"])
+            for s in body["segments_scene"]] == [
+        ("HH_010_0010", 21, 400), ("HH_010_0020", 400, 900),
+        ("HH_020_0010", 900, 1400)]
+    assert [s["label"] for s in body["segments_sequence"]] == [
+        "HH_010", "HH_020"]
+    # 저장본에도 반영되고 method·runs·구역은 보존된다(재계산 가능해야 하므로).
+    saved = pl.load_scenes(job.external_id)
+    assert saved["method"] == "fingerprint"
+    assert saved["runs"] == runs
+    assert saved["ocr_region"] == {"x": 0.1, "y": 0.2, "w": 0.5, "h": 0.1}
+    got = (await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes")).json()
+    assert got["method"] == "fingerprint"
+    assert got["total_ms"] == 1400
+
+
+async def test_refine_rejected_on_fingerprint_data(client, db_session,
+                                                   admin_user):
+    """지문 경계는 이미 프레임 정확 — 정밀화 요청은 409(수십 분 낭비 방지)."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {
+        "scanning": False, "method": "fingerprint",
+        "rule": {"seq_tokens": [1], "scene_tokens": [2]},
+        "frames": [{"t_ms": 0, "text": "HH_010_0010"}],
+        "segments_scene": [
+            {"label": "HH_010_0010", "start_ms": 0, "end_ms": 500},
+            {"label": "HH_010_0020", "start_ms": 500, "end_ms": 900}],
+        "segments_sequence": [],
+    })
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/refine",
+                          json={"mode": "scene"})
+    assert r.status_code == 409
+
+
+async def test_cancel_scene_ops_preserves_method(client, db_session, admin_user):
+    """스캔 취소가 방식 선택을 지우면 다음 GET이 interval로 오판한다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {"scanning": True, "method": "fingerprint",
+                                     "total_frames": 0, "ocr_done": 0,
+                                     "frames": []})
+    r = await client.post(f"/api/v1/video-jobs/{job.external_id}/scenes/cancel")
+    assert r.status_code == 202
+    got = (await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes")).json()
+    assert got["scanning"] is False
+    assert got["method"] == "fingerprint"
+
+
+async def test_slate_template_accepts_method(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    payload = {"name": "HZBN307",
+               "region": {"x": 0.02, "y": 0.03, "w": 0.5, "h": 0.08},
+               "delimiters": ["_", "-"], "seq_tokens": [1], "scene_tokens": [2],
+               "method": "fingerprint"}
+    r = await client.post("/api/v1/video-jobs/slate-templates", json=payload)
+    assert r.status_code == 200
+    got = (await client.get("/api/v1/video-jobs/slate-templates")).json()
+    assert got["templates"][0]["method"] == "fingerprint"

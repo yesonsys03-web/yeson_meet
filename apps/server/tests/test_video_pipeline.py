@@ -741,3 +741,300 @@ async def test_run_burn_job_stale_generation_stops_and_keeps_cancelled(
         select(VideoJob).where(VideoJob.id == job_id))).scalar_one()
     assert loaded.status == "cancelled"  # error로 덮어쓰지 않음
     assert loaded.burned_path is None    # done 처리도 되지 않음
+
+
+# ── 지문 컷 감지 스캔 (run_scene_scan_fingerprint) ───────────────────────────
+
+def test_build_fingerprint_segments_groups_both_modes():
+    """지문 런 + 규칙 → 양 모드 세그먼트(순수) — 씬은 씬 토큰까지, 시퀀스는
+    seq 토큰만으로 그룹. 경계는 런 경계 그대로(흡수·정렬·정밀화 없음)."""
+    runs = [
+        {"start_ms": 0, "end_ms": 100, "text": "HH0307_010_0010_AC_v01"},
+        {"start_ms": 100, "end_ms": 250, "text": "HH0307_010_0010_AC_v01"},
+        {"start_ms": 250, "end_ms": 500, "text": "HH0307_010_0020_AC_v01"},
+        {"start_ms": 500, "end_ms": 900, "text": "HH0307_020_0010_AC_v01"},
+    ]
+    rule = {"delimiters": ["_", "-"], "seq_tokens": [1], "scene_tokens": [2]}
+    out = pl.build_fingerprint_segments(runs, rule)
+    assert [(s["label"], s["start_ms"], s["end_ms"])
+            for s in out["segments_scene"]] == [
+        ("HH0307_010_0010", 0, 250), ("HH0307_010_0020", 250, 500),
+        ("HH0307_020_0010", 500, 900)]
+    assert [(s["label"], s["start_ms"], s["end_ms"])
+            for s in out["segments_sequence"]] == [
+        ("HH0307_010", 0, 500), ("HH0307_020", 500, 900)]
+
+
+async def test_run_scene_scan_fingerprint_happy_path(monkeypatch, tmp_path):
+    """추출→지문 diff(진짜 계산)→컷→런 중간 OCR→scenes.json 저장 전 구간.
+
+    페이크 추출이 프레임 10에서 패턴이 바뀌는 PNG 20장을 만들고, 지문 diff가
+    실제로 그 컷 하나를 찾는지, 런 경계가 frame_boundary_ms 규약으로 기록되는지,
+    method/runs/frames(호환 샘플)/total_ms/video_fps가 저장되는지 확인한다."""
+    from PIL import Image
+
+    from apps.server.domain.video_captions.fingerprint import frame_boundary_ms
+
+    eid = uuid4()
+    workdir = pl.job_dir(eid)
+    workdir.mkdir(parents=True)
+    (workdir / "burned.mp4").write_bytes(b"v")
+
+    def fake_extract_fp(ffmpeg, src, out_dir, region, scale_w=160,
+                        proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(20):
+            im = Image.new("L", (32, 8), 255)
+            for x in (range(0, 20) if i < 10 else range(12, 32)):
+                for y in range(8):
+                    im.putpixel((x, y), 0)
+            im.save(out_dir / f"f_{i + 1:06d}.png")
+
+    def fake_thumbs(ffmpeg, src, out_dir, interval_s, proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "thumb_00001.jpg").write_bytes(b"j")
+
+    def fake_extract_frame(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(str(t_ms))  # 판독 페이크가 어느 프레임인지 알 수 있게
+
+    # 배치 추출 페이크 — 실제 구현과 같은 프레임번호→경로 계약으로, 파일에
+    # 그 프레임의 중앙 시각을 적어 판독 페이크가 라벨을 결정할 수 있게 한다.
+    def fake_extract_at(ffmpeg, src, frame_indices, out_dir, region,
+                        proc_key=None, workers=1):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = {}
+        for k, n in enumerate(sorted(set(frame_indices)), 1):
+            p = out_dir / f"at_{k:05d}.png"
+            p.write_text(str(frame_boundary_ms(n, 24.0)))
+            out[n] = p
+        return out
+
+    cut_ms = frame_boundary_ms(10, 24.0)
+
+    def fake_read(path, delimiters, min_tokens=2, top_frac=0.35):
+        t_ms = int(Path(path).read_text())
+        return ("HH0307_010_0010_AC_v01" if t_ms < cut_ms
+                else "HH0307_010_0020_AC_v01")
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
+    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+
+    await pl.run_scene_scan_fingerprint(eid)
+
+    data = pl.load_scenes(eid)
+    assert data["scanning"] is False and data.get("error") is None
+    assert data["method"] == "fingerprint"
+    assert data["video_fps"] == 24.0
+    assert data["total_ms"] == frame_boundary_ms(20, 24.0)
+    assert data["runs"] == [
+        {"start_ms": frame_boundary_ms(0, 24.0), "end_ms": cut_ms,
+         "text": "HH0307_010_0010_AC_v01", "cut_diff": 0},
+        {"start_ms": cut_ms, "end_ms": frame_boundary_ms(20, 24.0),
+         "text": "HH0307_010_0020_AC_v01", "cut_diff": 192},
+    ]
+    # 토큰 선택 UI 호환 샘플 — 런 시작 시각·텍스트.
+    assert data["frames"] == [
+        {"t_ms": r["start_ms"], "text": r["text"]} for r in data["runs"]]
+    assert data["thumb_count"] == 1
+    # 지문 프레임 임시 디렉토리는 정리된다(크기가 크다).
+    assert not (workdir / "scene_fp_frames").exists()
+
+
+async def test_run_scene_scan_fingerprint_failure_writes_error(
+        monkeypatch, tmp_path):
+    """진짜 실패(추출 예외)는 error를 기록해 프론트 폴링이 멈추게 한다 —
+    method도 남겨 방식 선택이 유지되게."""
+    eid = uuid4()
+    workdir = pl.job_dir(eid)
+    workdir.mkdir(parents=True)
+    (workdir / "burned.mp4").write_bytes(b"v")
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+
+    def boom(*a, **kw):
+        raise FfmpegError("x")
+
+    monkeypatch.setattr(pl, "extract_fingerprint_frames", boom)
+    await pl.run_scene_scan_fingerprint(eid)
+    data = pl.load_scenes(eid)
+    assert data["scanning"] is False
+    assert data["error"]
+    assert data["method"] == "fingerprint"
+
+
+def test_build_fingerprint_segments_canonicalizes_and_absorbs():
+    """지문 오독 대응 배선: ①구분자 유실 오독은 canonical화로 같은 키가 되어
+    병합되고 ②교정 불가 오독(문자 오독)은 클러스터 흡수(≤5s)로 사라진다 —
+    실기(HZBN307)에서 씬 806→481·시퀀스 322→19를 만든 조합."""
+    runs = [
+        {"start_ms": 0, "end_ms": 1000, "text": "HH0307_010_0010_AC_v01"},
+        # 구분자 유실 오독 — canonical화가 고쳐 위와 같은 키로 병합돼야 한다.
+        {"start_ms": 1000, "end_ms": 1200, "text": "HH0307010_0010_AC_v01"},
+        # 문자 오독(Z) — 교정 불가지만 같은 키 사이 짧은 클러스터라 흡수된다.
+        {"start_ms": 1200, "end_ms": 1300, "text": "HH030Z_010_0010_AC_v01"},
+        {"start_ms": 1300, "end_ms": 2000, "text": "HH0307_010_0010_AC_v01"},
+        {"start_ms": 2000, "end_ms": 3000, "text": "HH0307_010_0020_AC_v01"},
+    ]
+    rule = {"delimiters": ["_", "-"], "seq_tokens": [1], "scene_tokens": [2]}
+    out = pl.build_fingerprint_segments(runs, rule)
+    assert [(s["label"], s["start_ms"], s["end_ms"])
+            for s in out["segments_scene"]] == [
+        ("HH0307_010_0010", 0, 2000), ("HH0307_010_0020", 2000, 3000)]
+    assert [(s["label"], s["start_ms"], s["end_ms"])
+            for s in out["segments_sequence"]] == [("HH0307_010", 0, 3000)]
+
+
+# ── 디졸브 경계 OCR 정렬 (_align_cut) ────────────────────────────────────────
+# 지문 컷=픽셀 전환 지점은 디졸브에서 슬레이트 '가독' 전환과 어긋난다(실기:
+# 130→140 컷이 6프레임 지각 — 끝 6프레임이 다음 시퀀스로 읽힘, 030→040은
+# 1프레임 조기). 컷을 '다음 슬레이트가 읽히는 첫 프레임'으로 옮긴다.
+
+def _mk_read(mapping):
+    return lambda f: mapping.get(f, "")
+
+
+PREV = "HH0307_130_0330_AC_v01"
+NEXT = "HH0307_140_0010_AC_v01"
+
+
+def test_align_cut_keeps_exact_boundary():
+    read = _mk_read({9: PREV, 10: NEXT})
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 10
+
+
+def test_align_cut_moves_left_when_next_leaks_before():
+    # 컷 지각: d-1..d-6이 이미 다음 슬레이트로 읽힘 → 첫 다음-프레임(4)으로.
+    read = _mk_read({3: PREV, **{f: NEXT for f in range(4, 11)}})
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 4
+
+
+def test_align_cut_moves_right_when_prev_lingers():
+    # 컷 조기: d·d+1이 아직 이전 슬레이트 → 다음이 읽히는 첫 프레임(12)으로.
+    read = _mk_read({9: PREV, 10: PREV, 11: PREV, 12: NEXT})
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 12
+
+
+def test_align_cut_conservative_on_unreadable():
+    # 전환 프레임이 흐릿해 판독불가면 판단 근거가 없다 — 원래 컷 유지.
+    read = _mk_read({})
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 10
+
+
+def test_align_cut_stops_left_walk_at_unreadable():
+    # 왼쪽 걷기 중 판독불가를 만나면 마지막으로 확인된 다음-프레임에서 멈춘다.
+    read = _mk_read({6: NEXT, 7: NEXT, 8: NEXT, 9: NEXT, 10: NEXT})  # 5는 ""
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 6
+
+
+def test_align_cut_tolerates_fused_misreads():
+    # 오독(구분자 유실)도 squash 접두 일치로 같은 쪽으로 분류돼야 한다.
+    read = _mk_read({9: "HH0307130_0330AC", 10: "HH03071400010_AC"})
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 10
+
+
+def test_align_cut_respects_bounds():
+    # 이전 런 시작(lo)·다음 런 끝(hi)을 넘어가지 않는다.
+    read = _mk_read({f: NEXT for f in range(0, 11)})
+    out = pl._align_cut(read, 10, PREV, NEXT, lo=8, hi=20, delimiters=["_", "-"])
+    assert out == 9  # lo=8 → 8은 이전 런 시작이라 침범 금지, 9까지가 한계
+
+
+def test_align_cut_walks_right_even_if_before_unreadable():
+    # 직전 프레임이 판독불가(디졸브)여도 컷 프레임이 '이전'으로 읽히면 오른쪽
+    # 걷기 — before까지 요구하던 가드가 ±1프레임 잔존을 남겼다(실기 4건).
+    read = _mk_read({10: PREV, 11: NEXT})  # 9는 "" (판독불가)
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 11
+
+
+# ── 지문 유사도 경계 정렬 (_fp_align) ────────────────────────────────────────
+# 디졸브의 판독불가 페이드 프레임은 OCR로는 귀속 불가 — 프레임 지문이 이전/다음
+# 런 대표 지문 중 어느 쪽에 가까운지의 '플립 지점'이 사람 눈의 경계와 일치한다
+# (실기 030_0190→0200: 페이드 2프레임 dist 4823 vs 8044로 이전, 다음 첫 프레임
+# 7951 vs 127로 다음 — 경계가 페이드 뒤로 옮겨져야 머리 혼입이 사라진다).
+
+def _mk_fp_env(flip_at):
+    import numpy as np
+    ref_prev = np.zeros((4, 8), dtype=np.uint8)
+    ref_next = np.full((4, 8), 9, dtype=np.uint8)
+
+    def fp_at(f):
+        # flip_at 전에는 이전 지문에 가깝게(살짝 노이즈), 이후는 다음 지문에.
+        base = ref_prev if f < flip_at else ref_next
+        out = base.copy()
+        out[0, 0] = 5  # 약간의 노이즈
+        return out
+    return fp_at, ref_prev, ref_next
+
+
+def test_fp_align_moves_boundary_to_similarity_flip():
+    fp_at, rp, rn = _mk_fp_env(flip_at=13)
+    assert pl._fp_align(fp_at, 10, rp, rn, lo=0, hi=30) == 13
+
+
+def test_fp_align_keeps_exact_boundary():
+    fp_at, rp, rn = _mk_fp_env(flip_at=10)
+    assert pl._fp_align(fp_at, 10, rp, rn, lo=0, hi=30) == 10
+
+
+def test_fp_align_moves_left_when_next_starts_earlier():
+    fp_at, rp, rn = _mk_fp_env(flip_at=7)
+    assert pl._fp_align(fp_at, 10, rp, rn, lo=0, hi=30) == 7
+
+
+def test_fp_align_none_when_no_flip_in_window():
+    import numpy as np
+    rp = np.zeros((4, 8), dtype=np.uint8)
+    rn = np.full((4, 8), 9, dtype=np.uint8)
+    fp_at = lambda f: rp.copy()  # 창 전체가 이전 쪽 — 플립 없음 → 유지(None)
+    assert pl._fp_align(fp_at, 10, rp, rn, lo=0, hi=30) is None
+
+
+def test_fp_align_respects_bounds():
+    fp_at, rp, rn = _mk_fp_env(flip_at=2)
+    # lo=5 → 5 이전으로는 못 간다(이전 런 침범 금지) — 창 시작부터 next면 lo+1.
+    assert pl._fp_align(fp_at, 10, rp, rn, lo=5, hi=30) == 6
+
+
+# ── fp 이동 OCR 캡 (_clamp_fp_move) ──────────────────────────────────────────
+# 유사도 정렬은 판독불가 페이드에는 옳지만, 새 슬레이트가 옛 그림 위에 일찍
+# 떠오르는 반대 극성 디졸브에서는 OCR로 이미 '다음'이 읽히는 프레임까지 이전
+# 쪽으로 밀어버린다(실기 090_0180 꼬리에 0190 등장). 읽히는 프레임의 소속은
+# OCR이 권위 — fp 이동을 OCR 가독성으로 캡한다.
+
+def test_clamp_blocks_right_move_at_readable_next():
+    sides = {11: None, 12: "next", 13: None}
+    assert pl._clamp_fp_move(lambda f: sides.get(f), 11, 14) == 12
+
+
+def test_clamp_allows_right_move_over_unreadable():
+    assert pl._clamp_fp_move(lambda f: None, 11, 14) == 14
+
+
+def test_clamp_blocks_left_move_at_readable_prev():
+    sides = {8: None, 9: "prev"}
+    assert pl._clamp_fp_move(lambda f: sides.get(f), 10, 8) == 10
+
+
+def test_clamp_allows_left_move_over_unreadable():
+    assert pl._clamp_fp_move(lambda f: None, 10, 8) == 8
+
+
+def test_clamp_noop_when_equal():
+    assert pl._clamp_fp_move(lambda f: "next", 10, 10) == 10
+
+
+def test_text_side_is_case_insensitive():
+    # OCR이 v01을 V01로 읽는 순간 대소문자 구분 비교가 '어느 쪽도 아님'을
+    # 만들어 OCR 권위가 무력화됐다(실기 090_0180 꼬리 2프레임 잔존).
+    assert pl._text_side("HH0307_090_0190_AC_V01",
+                         "HH0307_090_0180_AC_v01",
+                         "HH0307_090_0190_AC_v01", ["_", "-", "/"]) == "next"
+    assert pl._text_side("HH03070900180AC-V01",
+                         "HH0307_090_0180_AC_v01",
+                         "HH0307_090_0190_AC_v01", ["_", "-", "/"]) == "prev"

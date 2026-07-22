@@ -14,6 +14,11 @@ from dataclasses import dataclass
 # "020"+"0150"과 "0200"+"150" 같은 충돌을 막는다.
 _KEY_SEP = "\x1f"
 
+# 판독불가 블록을 '다음 씬 머리'로 넘기는 컷 세기 비율 하한. 들어컷이 나가컷의
+# 3배 이상이면 시각 컷이 블록 앞 — 실기 분포: 이동해야 할 케이스 15~90배,
+# 애매한 케이스(슬레이트 이동 등) 1~2.5배라 3이 안전한 분리선이다.
+_UNREADABLE_MOVE_RATIO = 3
+
 
 @dataclass
 class SlateRule:
@@ -34,6 +39,17 @@ class Segment:
     label: str
     start_ms: int
     end_ms: int
+
+
+@dataclass
+class SceneRun:
+    """지문 컷 감지가 만든 런 — 인접 컷 사이 구간과 그 안에서 읽은 슬레이트.
+    런은 시간축에서 연속이다(runs[i].end_ms == runs[i+1].start_ms).
+    cut_diff=이 런을 연 컷의 지문 세기(판독불가 블록 귀속 판정용, 0=미기록)."""
+    start_ms: int
+    end_ms: int
+    text: str
+    cut_diff: int = 0
 
 
 def tokenize(text: str, delimiters: list[str]) -> list[str]:
@@ -180,6 +196,237 @@ def compute_boundaries(
         merged[0][2] = max(keyed[0][0], merged[0][2] - interval_ms // 2)
 
     return [Segment(label=lbl, start_ms=st, end_ms=en) for _, lbl, st, en in merged]
+
+
+def token_shape(token: str) -> str:
+    """토큰을 문자종류(U=대문자, L=소문자, D=숫자, X=기타) 런과 길이로 요약.
+    프론트 sceneSplitLogic.tokenShape와 동일 규칙 — 경계 계산의 단일 출처는
+    서버라, 오독 정규화도 서버가 한다."""
+    out = ""
+    cur = ""
+    count = 0
+    for c in _squash_ws(token):
+        kind = ("D" if c.isdigit() else "U" if c.isupper()
+                else "L" if c.islower() else "X")
+        if kind == cur:
+            count += 1
+            continue
+        if cur:
+            out += f"{cur}{count}"
+        cur, count = kind, 1
+    if cur:
+        out += f"{cur}{count}"
+    return out
+
+
+def _mode_of(values: list[str]) -> str | None:
+    counts: dict[str, int] = {}
+    for v in values:
+        counts[v] = counts.get(v, 0) + 1
+    best = None
+    best_n = 0
+    for k, n in counts.items():
+        if n > best_n:
+            best, best_n = k, n
+    return best
+
+
+def label_template(texts: list[str], delimiters: list[str]) -> list[str] | None:
+    """텍스트 집합의 대표 모양 — 최빈 토큰 개수를 고르고, 그 개수를 가진
+    텍스트들에서 위치별 최빈 모양을 뽑는다. 작품별 포맷을 하드코딩하지 않고
+    데이터 자신의 다수 모양을 기준으로 삼는다."""
+    tokenized = [tokenize(t, delimiters) for t in texts]
+    modal = _mode_of([str(len(t)) for t in tokenized if t])
+    if not modal:
+        return None
+    n = int(modal)
+    rows = [t for t in tokenized if len(t) == n]
+    template: list[str] = []
+    for i in range(n):
+        shape = _mode_of([token_shape(r[i]) for r in rows])
+        if not shape:
+            return None
+        template.append(shape)
+    return template
+
+
+_SHAPE_RE = re.compile(r"([ULDX])(\d+)")
+
+
+def _fill_template(flat: str, template: list[str]) -> str | None:
+    """squash된 문자열을 템플릿 모양대로 채운다 — 못 채우거나 숫자가 남으면
+    None(어디서 끊을지 모호한 자릿수 잔여는 억지 교정 금지)."""
+    def cls(c: str) -> str:
+        return ("D" if c.isdigit() else "U" if c.isupper()
+                else "L" if c.islower() else "X")
+
+    pos = 0
+    out: list[str] = []
+    for shape in template:
+        piece = ""
+        for kind, length in _SHAPE_RE.findall(shape):
+            for _ in range(int(length)):
+                if pos >= len(flat) or cls(flat[pos]) != kind:
+                    return None
+                piece += flat[pos]
+                pos += 1
+        out.append(piece)
+    if pos < len(flat) and cls(flat[pos]) == "D":
+        return None
+    return "_".join(out)
+
+
+def _reparse(text: str, template: list[str], delimiters: list[str],
+             known: frozenset[str] = frozenset()) -> str | None:
+    """구분자를 잃고 붙은 텍스트를 템플릿 모양대로 다시 쪼갠다. 직접 채우기가
+    실패하면 '한 글자 삭제' 관용을 시도한다 — OCR이 구분자를 숫자로 환각하는
+    삽입 오독(실기 '_'→'1': HH0307_07510040) 대응. 숫자열은 어느 숫자를 지워도
+    형태가 맞아 유일성만으로는 판정 불가 — 삭제 후보 중 **코퍼스에서 깨끗하게
+    읽힌 텍스트(known)와 일치하는 것이 정확히 하나**일 때만 교정한다(같은
+    씬의 정상 판독이 다른 런에 존재한다는 게 근거; Z-오염류 가짜 후보는
+    코퍼스에 없어 자동 배제)."""
+    toks = tokenize(text, delimiters)
+    if (len(toks) == len(template)
+            and all(token_shape(t) == s for t, s in zip(toks, template))):
+        return None  # 이미 정상
+    flat = "".join(_squash_ws(t) for t in toks)
+    fixed = _fill_template(flat, template)
+    if fixed is not None:
+        return fixed
+    if known:
+        matched = {c for i in range(len(flat))
+                   if (c := _fill_template(flat[:i] + flat[i + 1:],
+                                           template)) is not None and c in known}
+        if len(matched) == 1:
+            return matched.pop()
+    return None
+
+
+def canonicalize_texts(texts: list[str], delimiters: list[str]) -> list[str]:
+    """런 텍스트들을 데이터 자신의 최빈 템플릿으로 정규화한다(확신 교정만).
+
+    지문 방식은 런 중간 — 가짜 컷을 만든 흐릿한 프레임 근처 — 을 읽어 구분자
+    유실 오독률이 간격 스캔의 10배(실기 11.5%)다. 그룹핑 전에 정규화해야
+    오독 하나가 세그먼트 하나로 굳는 것을 원천 차단한다(실기: 시퀀스 322→147).
+    교정 못 하는 텍스트(문자 오독·잔여 숫자·판독 실패)는 원문 그대로 둔다 —
+    이후 클러스터 흡수(runs_to_segments absorb_flanked_ms)가 받는다."""
+    template = label_template([t for t in texts if t], delimiters)
+    if not template:
+        return list(texts)
+    # 코퍼스의 '깨끗한' 텍스트(canonical형) — 삽입 오독 삭제 후보의 근거 집합.
+    known = frozenset(
+        "_".join(_squash_ws(t) for t in toks)
+        for text in texts if text
+        for toks in [tokenize(text, delimiters)]
+        if len(toks) == len(template)
+        and all(token_shape(t) == s for t, s in zip(toks, template)))
+    out: list[str] = []
+    for text in texts:
+        fixed = _reparse(text, template, delimiters, known) if text else None
+        out.append(fixed if fixed is not None else text)
+    return out
+
+
+def runs_to_segments(runs: list[SceneRun], rule: SlateRule,
+                     mode: str, absorb_flanked_ms: int = 0) -> list[Segment]:
+    """지문 런 → 세그먼트(순수 함수, 지문 방식의 compute_boundaries 대응).
+
+    경계는 이미 프레임 정확한 컷이므로 min_ms 흡수·중앙정렬·정밀화가 없다.
+    같은 키의 연속 런은 병합한다 — 씬 내부 가짜 컷(반투명 바 뒤 애니 움직임)이
+    이 병합으로 흡수된다. 판독 실패 런은 직전 세그먼트의 연속으로 본다
+    (hold_keys와 같은 홀드 규칙 — 슬레이트는 씬 내내 떠 있으므로 새 라벨이
+    읽히기 전까지는 같은 씬이다). 선두의 판독 실패 런(타이틀카드 등)은 버린다 —
+    첫 유효 런의 시작이 곧 실제 컷이라 간격 방식처럼 시작을 당길 필요가 없다.
+
+    absorb_flanked_ms>0이면 같은 키 두 그룹 사이에 낀 '연속' 다른-키 블록
+    (총 길이 ≤ 이 값)을 통째로 흡수한다 — canonical화가 못 고친 오독(문자
+    오독·꼬리 잘림)은 연속 클러스터(A|X|Y|A)로 남는데, 단일 낀 것만 잡는
+    정리로는 부족하다(실기 시퀀스 322→104 잔존, 클러스터 흡수로 19). 캡이
+    진짜 비단조(A|B|A에서 B가 긴 경우)를 보존한다."""
+    indices = _mode_indices(rule, mode)
+    upto = max(indices) if indices else -1
+    # [key, label, start, end] 그룹 — 흡수 패스가 키를 봐야 해서 키를 유지한다.
+    # 판독불가 런은 블록으로 모아뒀다가 다음 유효 런에서 귀속을 판정한다:
+    # 같은 키면 그냥 삼켜지고, 키가 바뀌면 ①텍스트 근거 우선 — 블록 안에
+    # 읽히긴 했지만 파싱 불가인 런("HH0307_0900190AC V01"처럼 구분자 유실이
+    # canonical화 한도를 넘은 오독; 실기 0180 꼬리에 0190 첫 런 3프레임이
+    # 붙던 케이스)이 다음 라벨과 squash 접두 일치하면 그 런부터 다음 씬이다.
+    # ②텍스트가 전혀 없으면 픽셀 근거 — 블록 '들어가는 컷'이 다음 런의
+    # 컷보다 훨씬 셀 때(≥_UNREADABLE_MOVE_RATIO배)만 다음 씬의 머리로 본다
+    # (실기 0040→0050: 4248 vs 47). 신호가 약하거나 미기록(구 데이터
+    # cut_diff=0)이면 기존대로 앞 씬에 붙인다. 블록 텍스트가 앞 라벨과
+    # 일치하면(앞 씬 꼬리 오독) 픽셀이 세도 앞 씬에 남는다 — 텍스트가 항상
+    # 픽셀보다 우선한다.
+    groups: list[list] = []
+    last_key: str | None = None
+    pending_start: int | None = None
+    pending_cut = 0
+    pending_end = 0
+    pending_texts: list[tuple[int, str]] = []
+    for run in runs:
+        toks = tokenize(run.text, rule.delimiters) if run.text else []
+        key = grouping_key(toks, indices)
+        if key is None:
+            if pending_start is None:
+                pending_start, pending_cut = run.start_ms, run.cut_diff
+            if run.text:
+                pending_texts.append((run.start_ms, run.text))
+            pending_end = run.end_ms
+            continue
+        if groups and key == last_key:
+            groups[-1][3] = run.end_ms
+        else:
+            label = build_label(toks, upto)
+            start = run.start_ms
+            if pending_start is not None:
+                prev_label = groups[-1][1] if groups else ""
+                moved = next(
+                    (st for st, txt in pending_texts
+                     if label_matches(txt, label, prev_label, rule.delimiters)),
+                    None)
+                matches_prev = any(
+                    label_matches(txt, prev_label, label, rule.delimiters)
+                    for _st, txt in pending_texts)
+                if moved is not None:
+                    start = moved
+                elif (not matches_prev and groups and pending_cut > 0
+                        and pending_cut >= _UNREADABLE_MOVE_RATIO * run.cut_diff):
+                    start = pending_start
+            if groups:
+                groups[-1][3] = start
+            groups.append([key, label, start, run.end_ms])
+        pending_start = None
+        pending_texts = []
+        last_key = key
+    if groups and pending_start is not None:
+        groups[-1][3] = pending_end  # 꼬리 블록은 앞 씬에
+
+    if absorb_flanked_ms > 0:
+        for _ in range(8):  # 흡수로 새 인접 동일 키가 생기면 반복(유한)
+            merged: list[list] = []
+            i = 0
+            changed = False
+            while i < len(groups):
+                if merged:
+                    # 직전 그룹과 같은 키가 다시 나오는 지점까지의 블록을 찾아,
+                    # 블록 총 길이가 캡 이하면 (블록+복귀 그룹)을 통째로 잇는다.
+                    j = i
+                    while j < len(groups) and groups[j][0] != merged[-1][0]:
+                        j += 1
+                    if (j < len(groups) and j > i
+                            and groups[j - 1][3] - groups[i][2] <= absorb_flanked_ms):
+                        merged[-1][3] = groups[j][3]
+                        i = j + 1
+                        changed = True
+                        continue
+                merged.append(list(groups[i]))
+                i += 1
+            groups = merged
+            if not changed:
+                break
+
+    return [Segment(label=lbl, start_ms=st, end_ms=en)
+            for _key, lbl, st, en in groups]
 
 
 def label_matches(text_label: str, target: str, other: str,
