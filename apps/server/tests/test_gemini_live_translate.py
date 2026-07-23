@@ -319,6 +319,21 @@ class TestTranslateFinalText:
         await _translate_final_text(text_client(reply="안녕.", calls=calls), "Hi.")
         assert calls[0]["model"] == "gemini-3.6-flash"
 
+    async def test_prompt_pins_fahrenheit_to_celsius(self) -> None:
+        """미국 화자의 '90 degrees'(화씨)가 맨 '90도'(섭씨로 읽힘)로 나가지
+        않도록, 프롬프트가 섭씨 환산 표기('약 32도')를 고정한다 — 한국 자막은
+        섭씨 기준(실기 2026-07-23: '90도' 방치와 '37.8도' 무언 환산 혼재)."""
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        calls: list = []
+        await _translate_final_text(
+            text_client(reply="약 32도 날씨예요.", calls=calls),
+            "It's 90 degree weather.",
+        )
+        assert "Fahrenheit" in calls[0]["contents"]
+        assert "Celsius" in calls[0]["contents"]
+        assert "약 32도" in calls[0]["contents"]
+
 
 def _final_utt(en="Hello.", ko="라이브 번역."):
     from datetime import datetime, timezone
