@@ -146,6 +146,9 @@ export default function GlossaryPanel({ serverPort, running }: Props) {
           </button>
         ))}
         <span style={{ flex: 1 }} />
+        <button style={styles.button} onClick={() => void load()} disabled={busy}>
+          새로고침
+        </button>
         <button style={styles.button} onClick={() => setPreview((p) => !p)}>
           {preview ? "편집" : "미리보기"}
         </button>
