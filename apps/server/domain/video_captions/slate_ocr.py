@@ -80,6 +80,39 @@ def pick_slate_line(
     return scored[0][2]
 
 
+# 축소 재판독 배율 — 검출기(det max/960)가 원본 해상도의 흐릿한 경계 프레임에서
+# 획이 뭉개져 통째로 실패하는 경우가 있다(실기 040_0200 무컷 전환 17프레임:
+# 원본 판독 0/17, 0.6× 축소 판독 17/17 — LANCZOS 축소가 실효 획을 또렷하게).
+_RESCALE_FRAC = 0.6
+
+
+def read_slate_line_rescaled(
+    image_path: str | Path, delimiters: list[str], min_tokens: int = 2,
+    top_frac: float = _TOP_BAND_FRAC,
+) -> str:
+    """이미지를 _RESCALE_FRAC로 축소해 한 번 더 판독 — 원본 해상도 판독이
+    실패한 프레임의 3차 시도(1차 타이트 크롭, 2차 패딩 크롭 다음). 축소본은
+    원본 옆 임시 파일로 쓰고 지운다."""
+    try:
+        from PIL import Image  # RapidOCR 전이의존(lock 고정) — 지연 import
+        src = Path(image_path)
+        dst = src.with_name(src.stem + "_rs" + src.suffix)
+        with Image.open(src) as im:
+            im.resize((max(1, int(im.width * _RESCALE_FRAC)),
+                       max(1, int(im.height * _RESCALE_FRAC))),
+                      Image.LANCZOS).save(dst)
+        try:
+            return read_slate_line(dst, delimiters, min_tokens, top_frac)
+        finally:
+            try:
+                dst.unlink()
+            except OSError:
+                pass
+    except Exception:  # noqa: BLE001 — 한 프레임 재판독 실패가 스캔을 막지 않게
+        logger.exception("rescaled OCR failed for %s", image_path)
+        return ""
+
+
 def read_slate_line(
     image_path: str | Path, delimiters: list[str], min_tokens: int = 2,
     top_frac: float = _TOP_BAND_FRAC,

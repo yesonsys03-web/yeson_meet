@@ -819,6 +819,9 @@ async def test_run_scene_scan_fingerprint_happy_path(monkeypatch, tmp_path):
 
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(pl, "build_scan_source",
+                        lambda ffmpeg, src, dst, region, proc_key=None:
+                        dst.write_bytes(b"s"))
     monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
     monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
     monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
@@ -860,6 +863,9 @@ async def test_run_scene_scan_fingerprint_failure_writes_error(
     def boom(*a, **kw):
         raise FfmpegError("x")
 
+    monkeypatch.setattr(pl, "build_scan_source",
+                        lambda ffmpeg, src, dst, region, proc_key=None:
+                        dst.write_bytes(b"s"))
     monkeypatch.setattr(pl, "extract_fingerprint_frames", boom)
     await pl.run_scene_scan_fingerprint(eid)
     data = pl.load_scenes(eid)
@@ -1038,3 +1044,351 @@ def test_text_side_is_case_insensitive():
     assert pl._text_side("HH03070900180AC-V01",
                          "HH0307_090_0180_AC_v01",
                          "HH0307_090_0190_AC_v01", ["_", "-", "/"]) == "prev"
+
+
+# ── 판독불가 블록 프레임 단위 귀속 (_resolve_unreadable_blocks) ──────────────
+# 실기 HH0304(2026-07-23): 서로 다른 라벨 사이의 ''(판독불가) 블록이 통째로
+# 앞 씬에 붙어 시퀀스 3·씬 48클립에 꼬리/머리 혼입. 텍스트 근거가 전혀 없을 때
+# 컷 세기 비율(runs_to_segments)은 애매 밴드(1.1~2.4배)에서 판정 불가 —
+# 스캔 단계에서 블록 프레임을 지문 근접+OCR로 직접 귀속한다.
+
+def _A(v):
+    import numpy as np
+    return np.full(4, v, dtype="uint8")
+
+
+_DELIMS = ["_", "-", "/"]
+_LBL_A = "HH0307_010_0010_AC_v01"
+_LBL_B = "HH0307_010_0020_AC_v01"
+
+
+def _resolve(runs_f, texts, picks, fp_map, reads):
+    return pl._resolve_unreadable_blocks(
+        runs_f, texts, picks, _DELIMS,
+        fp_at=lambda f: fp_map[f], read_frame=lambda f: reads.get(f, ""))
+
+
+def test_resolve_block_wholly_next_by_fp():
+    # 블록 전 프레임이 다음 런 지문에 가까움 + OCR 침묵 → 경계=블록 시작.
+    fp = {f: _A(0) for f in range(10)} | {f: _A(1) for f in range(10, 24)}
+    runs, texts = _resolve([(0, 10), (10, 14), (14, 24)],
+                           [_LBL_A, "", _LBL_B], [5, 11, 19], fp, {})
+    assert runs == [(0, 10), (10, 24)]
+    assert texts == [_LBL_A, _LBL_B]
+
+
+def test_resolve_block_internal_flip_splits():
+    # 블록 안에서 지문이 prev→next로 뒤집힘 → 그 프레임이 경계.
+    fp = ({f: _A(0) for f in range(12)} | {f: _A(1) for f in range(12, 24)})
+    runs, texts = _resolve([(0, 10), (10, 14), (14, 24)],
+                           [_LBL_A, "", _LBL_B], [5, 11, 19], fp, {})
+    assert runs == [(0, 12), (12, 24)]
+    assert texts == [_LBL_A, _LBL_B]
+
+
+def test_resolve_ocr_overrides_fp():
+    # 지문은 블록 전체를 next라 하지만 첫 프레임이 prev로 '읽히면' OCR이 이긴다.
+    fp = {f: _A(0) for f in range(10)} | {f: _A(1) for f in range(10, 24)}
+    runs, texts = _resolve([(0, 10), (10, 14), (14, 24)],
+                           [_LBL_A, "", _LBL_B], [5, 11, 19], fp,
+                           {10: _LBL_A})
+    assert runs == [(0, 11), (11, 24)]
+    assert texts == [_LBL_A, _LBL_B]
+
+
+def test_resolve_ocr_next_pulls_boundary():
+    # 지문이 전부 prev여도 블록 프레임이 next로 읽히면 그 프레임부터 next.
+    fp = {f: _A(0) for f in range(24)}
+    runs, texts = _resolve([(0, 10), (10, 14), (14, 24)],
+                           [_LBL_A, "", _LBL_B], [5, 11, 19], fp,
+                           {13: _LBL_B})
+    assert runs == [(0, 13), (13, 24)]
+    assert texts == [_LBL_A, _LBL_B]
+
+
+def test_resolve_conflicting_ocr_keeps_block():
+    # OCR 제약이 모순(앞프레임 next, 뒷프레임 prev)이면 보수적으로 무변경.
+    fp = {f: _A(0) for f in range(24)}
+    runs, texts = _resolve([(0, 10), (10, 14), (14, 24)],
+                           [_LBL_A, "", _LBL_B], [5, 11, 19], fp,
+                           {10: _LBL_B, 13: _LBL_A})
+    assert runs == [(0, 10), (10, 14), (14, 24)]
+    assert texts == [_LBL_A, "", _LBL_B]
+
+
+def test_resolve_same_label_flanks_untouched():
+    # 같은 씬 안의 판독불가 런은 기존 흡수(연속 병합)가 담당 — 건드리지 않는다.
+    fp = {f: _A(0) for f in range(24)}
+    runs, texts = _resolve([(0, 10), (10, 14), (14, 24)],
+                           [_LBL_A, "", _LBL_A], [5, 11, 19], fp, {})
+    assert runs == [(0, 10), (10, 14), (14, 24)]
+    assert texts == [_LBL_A, "", _LBL_A]
+
+
+def test_resolve_edge_blocks_untouched():
+    # 선두/꼬리 블록(한쪽 이웃 없음)은 기존 규칙(선두 드롭·꼬리 앞씬)에 맡긴다.
+    fp = {f: _A(0) for f in range(20)}
+    runs, texts = _resolve([(0, 6), (6, 14), (14, 20)],
+                           ["", _LBL_A, ""], [3, 9, 17], fp, {})
+    assert runs == [(0, 6), (6, 14), (14, 20)]
+    assert texts == ["", _LBL_A, ""]
+
+
+def test_resolve_multi_run_block_and_canonical_flanks():
+    # 연속 '' 런 여러 개=한 블록. 플랭크 라벨이 구분자 오독으로만 다르면 같은
+    # 씬으로 보고 무변경(canonical 비교).
+    fp = {f: _A(0) for f in range(30)}
+    runs, texts = _resolve(
+        [(0, 10), (10, 12), (12, 14), (14, 30)],
+        ["HH0307 010 0010 AC v01", "", "", _LBL_A], [5, 11, 13, 20], fp, {})
+    assert runs == [(0, 10), (10, 12), (12, 14), (14, 30)]
+    # 다른 라벨이면 하나의 블록으로 귀속된다.
+    fp2 = {f: _A(0) for f in range(12)} | {f: _A(1) for f in range(12, 30)}
+    runs2, texts2 = _resolve(
+        [(0, 10), (10, 12), (12, 14), (14, 30)],
+        [_LBL_A, "", "", _LBL_B], [5, 11, 13, 20], fp2, {})
+    assert runs2 == [(0, 12), (12, 30)]
+    assert texts2 == [_LBL_A, _LBL_B]
+
+
+@pytest.mark.anyio
+async def test_run_scene_scan_fingerprint_resolves_unreadable_block(
+        monkeypatch, tmp_path):
+    """스캔 전 구간에서 판독불가 블록 귀속이 동작하는지 — 프레임 10에서 다음
+    씬(내용)이 시작되지만 14 전까지 OCR이 못 읽는 상황(실기 030→040 패턴).
+    수정 전엔 [10,14)가 앞 씬 런에 남아 경계가 14로 늦었다 — 이제 지문
+    근접(10부터 다음 런 지문과 동일)이 경계를 10으로 되돌린다."""
+    from PIL import Image
+
+    from apps.server.domain.video_captions.fingerprint import frame_boundary_ms
+
+    eid = uuid4()
+    workdir = pl.job_dir(eid)
+    workdir.mkdir(parents=True)
+    (workdir / "burned.mp4").write_bytes(b"v")
+
+    def _img(pattern: int) -> Image.Image:
+        im = Image.new("L", (32, 8), 255)
+        cols = {0: range(0, 20), 1: range(12, 32), 2: range(14, 32)}[pattern]
+        for x in cols:
+            for y in range(8):
+                im.putpixel((x, y), 0)
+        return im
+
+    def fake_extract_fp(ffmpeg, src, out_dir, region, scale_w=160,
+                        proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(30):
+            # 0-9=씬A(P0), 10-13=씬B 도입부(P1, 판독불가), 14-29=씬B(P2).
+            # P1↔P2 차이(2컬럼=16px)는 임계(15) 위라 14에도 컷이 선다 —
+            # 씬B 도입부가 별도 '' 런이 되는 실기 구조 재현.
+            p = 0 if i < 10 else (1 if i < 14 else 2)
+            _img(p).save(out_dir / f"f_{i + 1:06d}.png")
+
+    def fake_thumbs(ffmpeg, src, out_dir, interval_s, proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "thumb_00001.jpg").write_bytes(b"j")
+
+    def fake_extract_frame(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(str(t_ms))
+
+    def fake_extract_at(ffmpeg, src, frame_indices, out_dir, region,
+                        proc_key=None, workers=1):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = {}
+        for k, n in enumerate(sorted(set(frame_indices)), 1):
+            p = out_dir / f"at_{k:05d}.png"
+            p.write_text(str(frame_boundary_ms(n, 24.0)))
+            out[n] = p
+        return out
+
+    b10 = frame_boundary_ms(10, 24.0)
+    b14 = frame_boundary_ms(14, 24.0)
+
+    def fake_read(path, delimiters, min_tokens=2, top_frac=0.35):
+        t_ms = int(Path(path).read_text())
+        if t_ms < b10:
+            return "HH0307_010_0010_AC_v01"
+        if t_ms < b14:
+            return ""  # 도입부 4프레임은 저대비로 판독불가
+        return "HH0307_010_0020_AC_v01"
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(pl, "build_scan_source",
+                        lambda ffmpeg, src, dst, region, proc_key=None:
+                        dst.write_bytes(b"s"))
+    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
+    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+
+    await pl.run_scene_scan_fingerprint(eid)
+
+    data = pl.load_scenes(eid)
+    assert data["scanning"] is False and data.get("error") is None
+    # '' 도입부 [10,14)가 다음 씬 런에 병합돼 경계가 10(진짜 컷)이어야 한다.
+    assert [(r["start_ms"], r["end_ms"], r["text"]) for r in data["runs"]] == [
+        (frame_boundary_ms(0, 24.0), b10, "HH0307_010_0010_AC_v01"),
+        (b10, frame_boundary_ms(30, 24.0), "HH0307_010_0020_AC_v01"),
+    ]
+
+
+def test_align_cut_right_walk_skips_unreadable():
+    # 오른쪽 걷기 중 판독불가 1프레임(디졸브 블러)이 걷기를 끊어 컷이 안 옮겨
+    # 지던 실기 잔존(090_0060·020_0250 머리 혼입) — 근거 없는 프레임은 건너
+    # 뛰고 '다음이 읽히는 첫 프레임'까지 걷는다. 건너뛴 프레임은 이전 쪽 유지.
+    read = _mk_read({10: PREV, 12: NEXT})  # 11은 "" (판독불가)
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 12
+
+
+def test_align_cut_right_walk_returns_cut_when_no_next_found():
+    # 걷는 내내 다음이 안 읽히면(전부 판독불가/이전) 원래 컷 유지.
+    read = _mk_read({10: PREV})
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 10
+
+
+def test_align_cut_probe_cap_covers_long_lingering():
+    # 이전 슬레이트가 10+프레임 지속되는 느린 전환(실기 020_0250) — 기존 캡 8은
+    # 못 닿았다. 걷기는 텍스트 변경 경계에서만 돌므로 캡 확대 비용은 미미.
+    read = _mk_read({**{f: PREV for f in range(10, 22)}, 22: NEXT})
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=40, delimiters=["_", "-"]) == 22
+
+
+def test_resolve_ocr_walk_pushes_flip_through_readable_prev():
+    # 지문이 블러에 속아 플립을 당겨도(실기 130_0160), 플립 이후 프레임들이
+    # '이전'으로 읽히면 걷기가 블록 끝까지 민다 → 블록 전체 이전 귀속 유지.
+    fp = {f: _A(0) for f in range(10)} | {f: _A(1) for f in range(10, 24)}
+    runs, texts = _resolve([(0, 10), (10, 14), (14, 24)],
+                           [_LBL_A, "", _LBL_B], [5, 11, 19], fp,
+                           {10: _LBL_A, 11: _LBL_A, 12: _LBL_A, 13: _LBL_A})
+    assert runs == [(0, 14), (14, 24)]
+    assert texts == [_LBL_A, _LBL_B]
+
+
+def test_pad_region_expands_and_clamps():
+    x, y, w, h = pl._pad_region((0.3, 0.3, 0.2, 0.1))
+    assert x < 0.3 and y < 0.3 and w > 0.2 and h > 0.1
+    assert x + w <= 1.0 and y + h <= 1.0
+    # 원점 근처는 0으로 클램프되고 우하단도 1을 넘지 않는다.
+    x2, y2, w2, h2 = pl._pad_region((0.0073, 0.0259, 0.3271, 0.2056))
+    assert x2 == 0.0 and y2 == 0.0
+    assert 0 < w2 <= 1.0 and 0 < h2 <= 1.0
+
+
+@pytest.mark.anyio
+async def test_run_scene_scan_fingerprint_padded_batch_recovers_text(
+        monkeypatch, tmp_path):
+    """타이트 구역 판독이 전부 실패한 런도 패딩 배치 재판독이 텍스트를 회수해
+    씬으로 살아난다(실기 110_0330~0350: 씬 통째가 이 경로로만 복구)."""
+    from PIL import Image
+
+    from apps.server.domain.video_captions.fingerprint import frame_boundary_ms
+
+    eid = uuid4()
+    workdir = pl.job_dir(eid)
+    workdir.mkdir(parents=True)
+    (workdir / "burned.mp4").write_bytes(b"v")
+    # 사용자 지정 타이트 구역 — 미지정이면 폴백 밴드(w=1.0)라 패딩 구역과
+    # 구분이 안 돼 이 테스트가 패딩 경로를 타지 않는다.
+    pl.save_scenes(eid, {"ocr_region": {"x": 0.0073, "y": 0.0259,
+                                        "w": 0.3271, "h": 0.2056}})
+
+    def fake_extract_fp(ffmpeg, src, out_dir, region, scale_w=160,
+                        proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(20):
+            im = Image.new("L", (32, 8), 255)
+            for x in (range(0, 20) if i < 10 else range(12, 32)):
+                for y in range(8):
+                    im.putpixel((x, y), 0)
+            im.save(out_dir / f"f_{i + 1:06d}.png")
+
+    def fake_thumbs(ffmpeg, src, out_dir, interval_s, proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "thumb_00001.jpg").write_bytes(b"j")
+
+    def fake_extract_frame(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(f"{t_ms}|{region[2]:.4f}" if region else str(t_ms))
+
+    # 배치 추출이 구역 너비를 파일에 남겨, 판독 페이크가 패딩 여부를 안다.
+    def fake_extract_at(ffmpeg, src, frame_indices, out_dir, region,
+                        proc_key=None, workers=1):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = {}
+        for k, n in enumerate(sorted(set(frame_indices)), 1):
+            p = out_dir / f"at_{k:05d}.png"
+            p.write_text(f"{frame_boundary_ms(n, 24.0)}|{region[2]:.4f}")
+            out[n] = p
+        return out
+
+    cut_ms = frame_boundary_ms(10, 24.0)
+    # 스캔은 중간본(패딩 크롭) 좌표계로 돈다 — 타이트 구역은 상대 폭이 된다.
+    region = (0.0073, 0.0259, 0.3271, 0.2056)
+    tight_w = pl._relative_region(region, pl._pad_region(region))[2]
+
+    def fake_read(path, delimiters, min_tokens=2, top_frac=0.35):
+        raw = Path(path).read_text().split("|")
+        t_ms, w = int(raw[0]), float(raw[1]) if len(raw) > 1 else tight_w
+        if t_ms < cut_ms:
+            return "HH0307_010_0010_AC_v01"
+        # 컷 뒤 씬은 저대비 — 패딩(중간본 전체, w=1.0)에서만 읽힌다.
+        return "HH0307_010_0020_AC_v01" if w > tight_w + 0.001 else ""
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(pl, "build_scan_source",
+                        lambda ffmpeg, src, dst, region, proc_key=None:
+                        dst.write_bytes(b"s"))
+    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
+    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+
+    await pl.run_scene_scan_fingerprint(eid)
+
+    data = pl.load_scenes(eid)
+    assert data["scanning"] is False and data.get("error") is None
+    assert [(r["start_ms"], r["end_ms"], r["text"]) for r in data["runs"]] == [
+        (frame_boundary_ms(0, 24.0), cut_ms, "HH0307_010_0010_AC_v01"),
+        (cut_ms, frame_boundary_ms(20, 24.0), "HH0307_010_0020_AC_v01"),
+    ]
+
+
+def test_relative_region_maps_tight_into_padded():
+    tight = (0.0073, 0.0259, 0.3271, 0.2056)
+    pad = pl._pad_region(tight)
+    rel = pl._relative_region(tight, pad)
+    # 패딩 원점이 0으로 클램프된 경우 타이트 구역의 절대 오프셋이 그대로 남는다.
+    assert 0.0 <= rel[0] and 0.0 <= rel[1]
+    assert rel[0] + rel[2] <= 1.0 and rel[1] + rel[3] <= 1.0
+    # 상대 폭 = 타이트 폭 / 패딩 폭.
+    assert abs(rel[2] - tight[2] / pad[2]) < 1e-9
+    # 퇴화 outer는 전체 프레임으로 폴백.
+    assert pl._relative_region(tight, (0, 0, 0, 0)) == (0.0, 0.0, 1.0, 1.0)
+
+
+def test_align_cut_left_walk_starts_over_unreadable_cut_minus_one():
+    # 실기 040_0200: 슬레이트만 바뀌는 무컷 전환에서 컷 직전 프레임 판독이
+    # 깜박이면 왼쪽 걷기가 시작조차 안 돼 꼬리 혼입 ~22프레임이 남았다.
+    # 컷 프레임이 '다음'으로 읽히면 더 왼쪽을 살펴, '다음'으로 확인된 가장
+    # 깊은 프레임까지 이동한다(판독불가는 건너뛰되 이동 근거 아님).
+    read = _mk_read({13: NEXT, 11: NEXT, 10: PREV})  # 12는 "" (판독불가)
+    assert pl._align_cut(read, 13, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 11
+
+
+def test_align_cut_left_walk_no_confirmed_next_keeps_cut():
+    # 컷 왼쪽이 전부 판독불가면 이동 근거가 없다 — 컷 유지.
+    read = _mk_read({13: NEXT})
+    assert pl._align_cut(read, 13, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 13
+
+
+def test_align_cut_left_walk_skips_unreadable_mid_walk():
+    # before가 '다음'으로 시작한 걷기도 중간 판독불가를 건너뛰고 더 깊은
+    # 확인-다음 프레임까지 간다(기존: 판독불가에서 확장 중단 → 잔존 혼입).
+    read = _mk_read({9: NEXT, 7: NEXT, 6: PREV})  # 8은 ""
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 7

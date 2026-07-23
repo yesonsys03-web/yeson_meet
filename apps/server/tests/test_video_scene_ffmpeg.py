@@ -316,3 +316,55 @@ def test_extract_frames_at_chunks_large_sets(monkeypatch, tmp_path: Path):
     assert out[3].name == "c000_00002.png"
     assert out[5].name == "c001_00001.png"
     assert out[9].name == "c001_00002.png"
+
+
+def test_build_scan_source_preserves_frames_and_select_mapping(tmp_path: Path):
+    """실 ffmpeg 통합: 스캔 중간본은 원본과 프레임 수가 1:1이어야 하고(프레임
+    번호 select·frame_boundary_ms 시킹의 전제), 같은 프레임 번호 select가
+    원본 크롭과 같은 시점의 그림을 내야 한다(내용 근사 일치)."""
+    import json as _json
+    import shutil as _shutil
+
+    import pytest
+    ffmpeg = _shutil.which("ffmpeg")
+    ffprobe = _shutil.which("ffprobe")
+    if not ffmpeg or not ffprobe:
+        pytest.skip("ffmpeg/ffprobe 없음")
+    src = tmp_path / "src.mp4"
+    subprocess.run([ffmpeg, "-y", "-f", "lavfi", "-i",
+                    "testsrc2=duration=2:size=320x180:rate=24",
+                    "-pix_fmt", "yuv420p",
+                    "-c:v", "libx264", "-preset", "veryfast", str(src)],
+                   check=True, capture_output=True)
+    scan = tmp_path / "scan.mp4"
+    region = (0.05, 0.10, 0.52, 0.33)
+    ff.build_scan_source(ffmpeg, src, scan, region)
+
+    def nframes(path: Path) -> int:
+        probe = subprocess.run(
+            [ffprobe, "-v", "error", "-count_frames", "-select_streams", "v:0",
+             "-show_entries", "stream=nb_read_frames,width,height", "-of",
+             "json", str(path)], check=True, capture_output=True, text=True)
+        st = _json.loads(probe.stdout)["streams"][0]
+        # 420 인코딩 제약 — 폭·높이는 짝수여야 한다.
+        assert st["width"] % 2 == 0 and st["height"] % 2 == 0
+        return int(st["nb_read_frames"])
+
+    assert nframes(scan) == 48
+
+    # 같은 프레임 번호를 원본(구역 크롭)과 중간본(전체)에서 뽑아 내용 근사 비교
+    # — crf 10 재인코딩 노이즈만 허용(평균 절대차 작음).
+    picks = [0, 13, 47]
+    a = ff.extract_frames_at(ffmpeg, src, picks, tmp_path / "a", region)
+    b = ff.extract_frames_at(ffmpeg, scan, picks, tmp_path / "b",
+                             (0.0, 0.0, 1.0, 1.0))
+    import numpy as np
+    from PIL import Image
+    for n in picks:
+        ia = np.asarray(Image.open(a[n]).convert("L"), dtype=float)
+        ib = np.asarray(Image.open(b[n]).convert("L"), dtype=float)
+        # 짝수 절사로 1px 차이가 날 수 있다 — 공통 영역만 비교.
+        h = min(ia.shape[0], ib.shape[0])
+        w = min(ia.shape[1], ib.shape[1])
+        diff = np.abs(ia[:h, :w] - ib[:h, :w]).mean()
+        assert diff < 4.0, f"frame {n} 내용 불일치(평균차 {diff:.2f})"

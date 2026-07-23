@@ -910,3 +910,61 @@ def test_canonicalize_rejects_ambiguous_deletion():
              + ["HH0307_07512340_AC_v01"])  # 8자리: 어느 숫자를 지워도 7자리
     out = canonicalize_texts(texts, ["_", "-"])   # 가 되지만 결과가 제각각 → 유지
     assert out[5] == "HH0307_07512340_AC_v01"
+
+
+def test_canonicalize_disambiguates_insertion_by_neighbor_context():
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    # '_'→'1' 삽입 오독 'HH03041130_0040': 한 글자 삭제 후보가 코퍼스의
+    # 130_0040('1' 삭제)·110_0040('3' 삭제) 둘 다와 일치해 유일성 판정이
+    # 죽는다(실기 22:28 블록이 별개 씬으로 남은 원인). 이웃 런이 130_0040을
+    # 깨끗하게 읽었으면 그쪽으로 판별한다(슬레이트 지속성 — 오독의 정답은
+    # 대개 바로 이웃 런에 있다).
+    texts = [
+        "HH0304_110_0040_AC_v01",   # 먼 곳의 정상 판독(코퍼스 오염원)
+        "HH0304_090_0010_AC_v01",
+        "HH0304_090_0020_AC_v01",
+        "HH0304_090_0030_AC_v01",
+        "HH0304_090_0040_AC_v01",
+        "HH0304_130_0030_AC_v01",
+        "HH0304_130_0040_AC_v01",   # 이웃 정상 판독
+        "HH03041130_0040_AC_v01",   # 삽입 오독
+        "HH0304_130_0050_AC_v01",
+    ]
+    out = canonicalize_texts(texts, ["_", "-", "/"])
+    assert out[7] == "HH0304_130_0040_AC_v01"
+    assert out[0] == "HH0304_110_0040_AC_v01"  # 정상 판독은 그대로
+
+
+def test_canonicalize_insertion_stays_ambiguous_without_neighbor():
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    # 이웃 창 안에 판별 근거가 없으면 교정하지 않는다 — 억지 교정 금지.
+    texts = (["HH0304_110_0040_AC_v01"] + ["HH0304_090_0010_AC_v01"] * 8
+             + ["HH0304_130_0040_AC_v01"] + ["HH0304_090_0020_AC_v01"] * 8
+             + ["HH03041130_0040_AC_v01"] + ["HH0304_090_0030_AC_v01"] * 8)
+    out = canonicalize_texts(texts, ["_", "-", "/"])
+    assert out[18] == "HH03041130_0040_AC_v01"
+
+
+def test_read_slate_line_rescaled_recovers_native_fail(monkeypatch, tmp_path):
+    """축소 재판독 — 검출기가 원본 해상도의 흐릿한 경계 프레임에서 통째로
+    실패하는 케이스(실기 040_0200 전환 17프레임: 원본 0/17, 0.6× 축소 17/17).
+    가짜 엔진이 '작은 이미지에서만 읽히는' 상황을 재현한다."""
+    from PIL import Image
+
+    from apps.server.domain.video_captions import slate_ocr
+    png = tmp_path / "b.png"
+    Image.new("RGB", (800, 200)).save(png)
+
+    def fake_engine(path):
+        with Image.open(path) as im:
+            if im.width >= 500:
+                return None, 0.0
+        return ([[[[5, 5], [300, 5], [300, 30], [5, 30]],
+                  "HH0304_040_0210_AC_v01", 0.9]], 0.0)
+
+    monkeypatch.setattr(slate_ocr, "_get_engine", lambda: fake_engine)
+    assert slate_ocr.read_slate_line(png, ["_", "-"], top_frac=1.0) == ""
+    assert slate_ocr.read_slate_line_rescaled(png, ["_", "-"], top_frac=1.0) \
+        == "HH0304_040_0210_AC_v01"
+    # 축소 임시 파일은 남지 않는다.
+    assert list(tmp_path.glob("*_rs*")) == []

@@ -22,7 +22,8 @@ from apps.server.db.models import VideoJob, VideoSegment
 from apps.server.db.session import AsyncSessionLocal
 from . import gpu_pack
 from .ffmpeg import (
-    burn_subtitles, cut_segment, ensure_preview, extract_audio, extract_frame,
+    build_scan_source, burn_subtitles, cut_segment, ensure_preview,
+    extract_audio, extract_frame,
     extract_fingerprint_frames, extract_frames, extract_frames_at,
     extract_thumbnails, kill_active, locate_ffmpeg, video_fps,
     wav_duration_seconds,
@@ -37,7 +38,7 @@ from .scene_split import (
     compute_boundaries, dedupe_labels, hold_keys, label_matches,
     runs_to_segments, tokenize,
 )
-from .slate_ocr import read_slate_line
+from .slate_ocr import read_slate_line, read_slate_line_rescaled
 from .srt import SubSegment, build_force_style, segments_to_srt
 from .transcribe import StaleRunCancelled, transcribe_audio
 from .translate import maybe_aclose_translator, translate_segments
@@ -806,7 +807,7 @@ def _clamp_fp_move(ocr_side, cur: int, target: int) -> int:
 
 def _align_cut(read_at, cut: int, prev_text: str, next_text: str,
                lo: int, hi: int, delimiters: list[str],
-               max_probe: int = 8) -> int:
+               max_probe: int = 24) -> int:
     """지문 컷을 '다음 슬레이트가 읽히는 첫 프레임'으로 정렬한다.
 
     지문 컷(픽셀 전환 지점)은 디졸브에서 슬레이트 '가독' 전환과 어긋난다
@@ -820,12 +821,22 @@ def _align_cut(read_at, cut: int, prev_text: str, next_text: str,
         return _text_side(read_at(frame), prev_text, next_text, delimiters)
 
     before = side(cut - 1)
-    if before == "next":
+    if before == "next" or (before is None and side(cut) == "next"):
         # 컷 지각 — 다음 슬레이트가 읽히는 가장 이른 프레임까지 왼쪽으로.
-        new = cut - 1
+        # 컷 직전 프레임이 판독불가여도 컷 프레임이 '다음'으로 읽히면 더
+        # 왼쪽을 살핀다 — 슬레이트만 바뀌고 그림이 이어지는 무컷 전환에서
+        # 경계 프레임 판독 깜박임 하나가 걷기 시작을 막아 꼬리 혼입
+        # ~22프레임이 남았다(실기 040_0200). 이동은 '다음'으로 확인된 가장
+        # 깊은 프레임까지만: 판독불가는 건너뛰되 이동 근거가 되지 않고(그
+        # 구간의 귀속은 원래 컷 쪽 유지), '이전'이 읽히면 멈춘다.
+        new = cut - 1 if before == "next" else cut
         frame, probes = cut - 2, 0
-        while frame > lo and probes < max_probe and side(frame) == "next":
-            new = frame
+        while frame > lo and probes < max_probe:
+            s = side(frame)
+            if s == "prev":
+                break
+            if s == "next":
+                new = frame
             frame -= 1
             probes += 1
         return new
@@ -833,14 +844,19 @@ def _align_cut(read_at, cut: int, prev_text: str, next_text: str,
         # 컷 조기 — 이전 슬레이트가 끝나는 지점(다음이 읽히는 첫 프레임)까지.
         # 직전 프레임(before)이 판독불가여도 컷 프레임이 '이전'으로 읽히면
         # 걷는다 — before까지 요구하던 가드가 디졸브 경계의 ±1프레임 잔존
-        # 4건을 남겼다(실기 468클립 검사).
+        # 4건을 남겼다(실기 468클립 검사). 컷 프레임이 판독불가면 걷지 않는다
+        # — 무판독 구간의 귀속은 지문(①_fp_align·블록 귀속)의 몫이라, 여기서
+        # 걷어 다음-읽힘 프레임까지 밀면 지문이 next로 귀속한 구간을 도로
+        # 빼앗는다(통합 테스트로 잠금).
         frame, probes = cut + 1, 0
         while frame < hi and probes < max_probe:
             s = side(frame)
             if s == "next":
                 return frame
-            if s != "prev":
-                break
+            # 판독불가/양쪽공통 프레임은 근거가 없을 뿐 — 걷기를 끊지 않고
+            # 건너뛴다(디졸브 블러 1프레임이 걷기를 끊어 다음이 읽히는데도
+            # 컷이 안 옮겨지던 실기 머리 혼입 090_0060·020_0250). '다음'을
+            # 못 찾고 끝나면 컷 유지라 건너뛴 프레임은 이전 쪽에 남는다.
             frame += 1
             probes += 1
     return cut
@@ -873,6 +889,135 @@ def _fp_align(fp_at, cut: int, ref_prev, ref_next, lo: int, hi: int,
             return frame
         prior = cur
     return None
+
+
+# 패딩 재판독 배율 — 경계 프레임 판독은 검출기 여백·저대비에 민감해, 같은
+# 프레임이 구역을 넓히면 읽히는 경우가 실측으로 확인됐다(HH0304: 130_0160
+# 디졸브 블러·020_0250 잔존 프레임 모두 타이트 구역 ''→패딩 구역 정상 판독).
+# 1차는 스캔과 동일 구역(판독 조건 일관), 실패 시에만 패딩으로 근거를 회수한다.
+_READ_PAD_FRAC = 0.3
+
+
+def _pad_region(region) -> tuple[float, float, float, float]:
+    """경계 재판독용 패딩 구역 — 사방으로 w·h의 _READ_PAD_FRAC만큼 넓힌다
+    (0..1 클램프). 판독에만 쓰며 지문·경계 계산 구역은 그대로다."""
+    x, y, w, h = region
+    nx = max(0.0, x - w * _READ_PAD_FRAC)
+    ny = max(0.0, y - h * _READ_PAD_FRAC)
+    nw = min(1.0 - nx, x + w * (1.0 + _READ_PAD_FRAC) - nx)
+    nh = min(1.0 - ny, y + h * (1.0 + _READ_PAD_FRAC) - ny)
+    return (nx, ny, nw, nh)
+
+
+def _relative_region(inner, outer) -> tuple[float, float, float, float]:
+    """outer 크롭본 좌표계에서 본 inner 구역(비율, 0..1 클램프).
+
+    스캔 중간본(build_scan_source가 만든 패딩 크롭 영상) 위에서 타이트 구역
+    판독을 계속하기 위한 변환 — 중간본 전체 프레임(0,0,1,1)이 곧 패딩 구역이고,
+    타이트 구역은 그 안의 부분 사각형이 된다."""
+    ix, iy, iw, ih = inner
+    ox, oy, ow, oh = outer
+    if ow <= 0 or oh <= 0:
+        return (0.0, 0.0, 1.0, 1.0)
+    x = min(max((ix - ox) / ow, 0.0), 1.0)
+    y = min(max((iy - oy) / oh, 0.0), 1.0)
+    w = min(max(iw / ow, 0.0), 1.0 - x)
+    h = min(max(ih / oh, 0.0), 1.0 - y)
+    return (x, y, w, h)
+
+
+def _resolve_unreadable_blocks(
+    runs_f: list[tuple[int, int]], texts: list[str], picks: list[int],
+    delimiters: list[str], fp_at, read_frame,
+) -> tuple[list[tuple[int, int]], list[str]]:
+    """서로 다른 라벨 사이에 낀 판독불가('') 런 블록을 프레임 단위로 귀속한다.
+
+    텍스트 근거가 전혀 없는 블록은 runs_to_segments의 컷 세기 비율만으로는
+    판정이 안 된다(실기 HH0304 2026-07-23: 문제 경계 전부가 애매 밴드
+    1.1~2.4배 → 블록이 통째 앞 씬에 붙어 시퀀스 3·씬 48클립에 이웃 프레임
+    혼입). 여기서 ①블록 각 프레임의 지문이 이전/다음 런 대표 지문(안정
+    프레임) 중 어느 쪽에 가까운지로 플립 프레임을 찾고(_fp_align과 같은
+    판정을 블록 전체 폭으로), ②블록 가장자리·플립 주변 프레임을 OCR해
+    읽히는 프레임의 소속으로 플립을 캡한다(OCR 가독 > 픽셀 유사도 원칙).
+    블록은 플립에서 갈라 양옆 런에 병합돼 사라진다 — 이후 경계 정렬(bounds)이
+    읽히는 경계가 된 이 지점을 ±8프레임 OCR로 최종 다듬는다.
+
+    같은 canonical 라벨 사이 블록(씬 내부 가짜컷·오독)은 연속 병합이 맞고,
+    선두/꼬리 블록(한쪽 이웃 없음)은 기존 규칙(선두 드롭·꼬리 앞씬)이 맞으므로
+    건드리지 않는다. OCR 제약이 모순(비단조 판독)이면 보수적으로 무변경."""
+    import numpy as np
+
+    def sq(s: str) -> str:
+        return "".join("".join(t.split())
+                       for t in tokenize(s, delimiters)).lower()
+
+    blocks: list[tuple[int, int]] = []
+    i = 0
+    while i < len(texts):
+        if texts[i].strip():
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(texts) and not texts[j + 1].strip():
+            j += 1
+        blocks.append((i, j))
+        i = j + 1
+
+    resolved: dict[int, tuple[int, int]] = {}  # bi -> (bj, flip)
+    for bi, bj in blocks:
+        a, b = bi - 1, bj + 1
+        if a < 0 or b >= len(texts):
+            continue
+        if sq(texts[a]) == sq(texts[b]):
+            continue
+        s, e = runs_f[bi][0], runs_f[bj][1]
+        ref_prev, ref_next = fp_at(picks[a]), fp_at(picks[b])
+
+        def is_next(f: int) -> bool:
+            # _fp_align의 >=와 달리 엄격 부등호 — 지문이 무정보(양쪽 동거리)면
+            # 이동 근거가 없으므로 기존 귀속(앞 씬)에 남긴다. OCR 캡이 최종 권위.
+            fp = fp_at(f)
+            return int(np.sum(fp != ref_prev)) > int(np.sum(fp != ref_next))
+
+        flip = e
+        for f in range(s, e):
+            if is_next(f):
+                flip = f
+                break
+        lo, hi = s, e
+        for f in sorted({s, e - 1, max(s, flip - 1), min(e - 1, flip)}):
+            side = _text_side(read_frame(f), texts[a], texts[b], delimiters)
+            if side == "prev":
+                lo = max(lo, f + 1)
+            elif side == "next":
+                hi = min(hi, f)
+        if lo > hi:
+            continue
+        resolved[bi] = (bj, min(max(flip, lo), hi))
+
+    if not resolved:
+        return list(runs_f), list(texts)
+
+    out_runs: list[tuple[int, int]] = []
+    out_texts: list[str] = []
+    override_start: int | None = None
+    i = 0
+    while i < len(runs_f):
+        if i in resolved:
+            bj, flip = resolved[i]
+            if out_runs and flip > runs_f[i][0]:
+                out_runs[-1] = (out_runs[-1][0], flip)
+            override_start = flip
+            i = bj + 1
+            continue
+        s, e = runs_f[i]
+        if override_start is not None:
+            s = override_start
+            override_start = None
+        out_runs.append((s, e))
+        out_texts.append(texts[i])
+        i += 1
+    return out_runs, out_texts
 
 
 async def run_scene_scan_fingerprint(external_id: UUID) -> None:
@@ -921,9 +1066,21 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
             if generation != _current_generation(external_id):
                 raise StaleRunCancelled(external_id)
 
+        # 스캔 전용 크롭 중간본 — 이후 지문·판독·정렬의 모든 디코드가 1080p
+        # 원본 대신 이 초소형 영상을 대상으로 한다(build_scan_source 참조).
+        # 중간본 전체 프레임=패딩 구역이므로, 타이트 구역은 상대 좌표로 변환해
+        # 쓰고 패딩 판독은 크롭 없이(전체 프레임) 읽는다.
+        scan_src = workdir / "fp_scan_src.mp4"
+        pad_abs = _pad_region(eff_region)
+        tight_rel = _relative_region(eff_region, pad_abs)
+        _FULL_REL = (0.0, 0.0, 1.0, 1.0)
+
         def _work() -> tuple[list[SceneRun], int, int]:
-            extract_fingerprint_frames(ffmpeg, burned, frames_dir, eff_region,
+            build_scan_source(ffmpeg, burned, scan_src, pad_abs,
+                              proc_key=str(external_id))
+            extract_fingerprint_frames(ffmpeg, scan_src, frames_dir, tight_rel,
                                        proc_key=str(external_id))
+            # 썸네일은 전체 화면이 필요하다(필름스트립) — 원본 유지.
             extract_thumbnails(ffmpeg, burned, thumbs_dir, _FP_THUMB_INTERVAL_S,
                                proc_key=str(external_id))
             thumb_count = len(list(thumbs_dir.glob("thumb_*.jpg")))
@@ -952,35 +1109,21 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
             # 일괄 추출한다 — 런마다 -ss 시킹하면 830ms×수천 런=수 분이 시킹에
             # 녹고(실측 총 9분), 흐릿한 중간 프레임을 읽어 오독도 는다.
             picks = [stable_frame(diffs, s, e) for s, e in runs_f]
-            batch = extract_frames_at(ffmpeg, burned, picks, tmpdir, eff_region,
-                                      proc_key=str(external_id),
+            batch = extract_frames_at(ffmpeg, scan_src, picks, tmpdir,
+                                      tight_rel, proc_key=str(external_id),
                                       workers=_refine_workers())
 
             def _read_run(item: tuple[int, tuple[int, int]]) -> str:
-                idx, (start_f, end_f) = item
+                # 배치 프레임만 읽는다 — 실패분의 재시도는 아래 패딩 배치와
+                # 잔여 시킹 단계가 맡는다. 예전엔 여기서 런마다 개별 시킹
+                # 폴백(0.25/0.75)을 했는데, '' 런이 많은 실기(HH0304 1011런)
+                # 에서 시킹에만 ~10분이 녹았고 그 뒤의 패딩 배치가 어차피
+                # 95%를 살렸다(순서 비효율).
+                idx, _span = item
                 _check_cancel()
                 png = batch.get(picks[idx])
-                text = (read_slate_line(png, _DEFAULT_DELIMS, top_frac=1.0)
+                return (read_slate_line(png, _DEFAULT_DELIMS, top_frac=1.0)
                         if png is not None else "")
-                if text:
-                    return text
-                # 배치 프레임 판독 실패 — 컷에서 떨어진 다른 프레임을 시킹
-                # 추출해 재시도(드묾: 실기 2658런 중 14). 런 내부는 텍스트가
-                # 동일하다는 게 지문 방식의 전제라 자리만 바꿔 본다.
-                span = end_f - start_f
-                for frac in (0.25, 0.75):
-                    fi = min(end_f - 1, start_f + int(span * frac))
-                    dst = tmpdir / f"r_{threading.get_ident()}_{fi}.png"
-                    extract_frame(ffmpeg, burned, frame_boundary_ms(fi, fps), dst,
-                                  proc_key=str(external_id), region=eff_region)
-                    text = read_slate_line(dst, _DEFAULT_DELIMS, top_frac=1.0)
-                    try:
-                        dst.unlink()
-                    except OSError:
-                        pass
-                    if text:
-                        return text
-                return ""
 
             texts: list[str] = []
             done = 0
@@ -995,40 +1138,68 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                                 {"total_frames": total, "ocr_done": done,
                                  "frames": [], "thumb_count": thumb_count}))
 
-                # 디졸브 경계 정렬 — 텍스트가 달라지는 컷마다 전후 프레임을 읽어
-                # 슬레이트 가독 전환 프레임으로 옮긴다(_align_cut 참조). 전후
-                # 프레임은 배치로 미리 뜨고, 걷기(드묾)만 개별 시킹한다.
-                texts_c = canonicalize_texts(texts, _DEFAULT_DELIMS)
-                bounds = [i for i in range(1, len(runs_f))
-                          if texts_c[i - 1] and texts_c[i]
-                          and texts_c[i - 1] != texts_c[i]]
-                align_dir = tmpdir / "align"
-                prefetch = (extract_frames_at(
-                    ffmpeg, burned,
-                    sorted({f for i in bounds
-                            for f in (runs_f[i][0] - 1, runs_f[i][0])}),
-                    align_dir, eff_region, proc_key=str(external_id),
-                    workers=_refine_workers()) if bounds else {})
-                read_cache: dict[int, str] = {}
+                # ── 패딩 재판독 배치 — 타이트 구역이 못 읽은 런의 안정 프레임을
+                # 패딩 구역(_pad_region)으로 한 번 더 일괄 판독한다. 실기 HH0304:
+                # '' 1011런의 상당수가 패딩에서 정상 판독(110_0330~0350은 씬
+                # 통째가 이 경로로만 복구). 추가 비용은 미판독 런 수만큼의
+                # select 배치 1회.
+                miss = [i for i, t in enumerate(texts) if not t.strip()]
+                if miss:
+                    pad_batch = extract_frames_at(
+                        ffmpeg, scan_src, [picks[i] for i in miss],
+                        tmpdir / "pad", _FULL_REL,
+                        proc_key=str(external_id), workers=_refine_workers())
+                    for i in miss:
+                        _check_cancel()
+                        png = pad_batch.get(picks[i])
+                        if png is not None:
+                            t = (read_slate_line(png, _DEFAULT_DELIMS,
+                                                 top_frac=1.0)
+                                 or read_slate_line_rescaled(
+                                     png, _DEFAULT_DELIMS, top_frac=1.0))
+                            if t:
+                                texts[i] = t
 
-                def _read_frame(fi: int) -> str:
-                    if fi in read_cache:
-                        return read_cache[fi]
-                    png = prefetch.get(fi)
-                    if png is None:
-                        png = align_dir / f"nb_{fi}.png"
-                        extract_frame(ffmpeg, burned,
-                                      frame_boundary_ms(fi, fps), png,
-                                      proc_key=str(external_id),
-                                      region=eff_region)
-                    text = read_slate_line(png, _DEFAULT_DELIMS, top_frac=1.0)
-                    read_cache[fi] = text
-                    return text
+                # 패딩 배치도 못 살린 잔여 런만 개별 시킹 재시도(실기 1011→55).
+                # 자리를 바꿔(0.25/0.75) 타이트→패딩 순으로 읽는다 — 런 내부는
+                # 텍스트가 동일하다는 지문 방식의 전제 그대로.
+                def _retry_run(i: int) -> tuple[int, str]:
+                    _check_cancel()
+                    start_f, end_f = runs_f[i]
+                    span = end_f - start_f
+                    for frac in (0.25, 0.75):
+                        fi = min(end_f - 1, start_f + int(span * frac))
+                        for region in (tight_rel, _FULL_REL):
+                            dst = tmpdir / f"r_{threading.get_ident()}_{fi}.png"
+                            extract_frame(ffmpeg, scan_src,
+                                          frame_boundary_ms(fi, fps), dst,
+                                          proc_key=str(external_id),
+                                          region=region)
+                            text = read_slate_line(dst, _DEFAULT_DELIMS,
+                                                   top_frac=1.0)
+                            if not text and region is _FULL_REL:
+                                text = read_slate_line_rescaled(
+                                    dst, _DEFAULT_DELIMS, top_frac=1.0)
+                            try:
+                                dst.unlink()
+                            except OSError:
+                                pass
+                            if text:
+                                return i, text
+                    return i, ""
 
-                starts = [s for s, _e in runs_f]
-                # ① 지문 유사도 정렬 — OCR이 못 읽는 페이드 프레임의 귀속을
-                # 픽셀 잔상으로 판정한다(_fp_align 참조). 이동은 OCR 가독성으로
-                # 캡(_clamp_fp_move). 추가 ffmpeg·OCR 호출 없음(지문 PNG 재사용).
+                still = [i for i, t in enumerate(texts) if not t.strip()]
+                if still:
+                    with ThreadPoolExecutor(
+                            max_workers=_refine_workers()) as retry_pool:
+                        for i, text in retry_pool.map(_retry_run, still):
+                            if text:
+                                texts[i] = text
+
+                # ── 판독불가 블록 프레임 단위 귀속 — 서로 다른 라벨 사이 ''
+                # 블록이 통째 앞 씬에 붙는 혼입(실기 HH0304 씬 48클립)의 근본
+                # 수정. 아래 bounds 정렬은 양쪽이 읽힌 경계만 보므로, 한쪽이
+                # ''인 경계는 여기서 먼저 없앤다(블록을 플립에서 갈라 병합).
                 fp_cache: dict[int, object] = {}
 
                 def _fp_at(fi: int):
@@ -1038,6 +1209,81 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                         fp_cache[fi] = fp
                     return fp
 
+                seek_texts: dict[int, str] = {}
+
+                def _read_seek(fi: int) -> str:
+                    if fi not in seek_texts:
+                        _check_cancel()
+                        dst = tmpdir / f"rb_{fi}.png"
+                        extract_frame(ffmpeg, scan_src,
+                                      frame_boundary_ms(fi, fps), dst,
+                                      proc_key=str(external_id),
+                                      region=tight_rel)
+                        text = read_slate_line(dst, _DEFAULT_DELIMS,
+                                               top_frac=1.0)
+                        if not text:
+                            pdst = tmpdir / f"rbp_{fi}.png"
+                            extract_frame(ffmpeg, scan_src,
+                                          frame_boundary_ms(fi, fps), pdst,
+                                          proc_key=str(external_id),
+                                          region=_FULL_REL)
+                            text = (read_slate_line(pdst, _DEFAULT_DELIMS,
+                                                    top_frac=1.0)
+                                    or read_slate_line_rescaled(
+                                        pdst, _DEFAULT_DELIMS, top_frac=1.0))
+                        seek_texts[fi] = text
+                    return seek_texts[fi]
+
+                runs_f, texts = _resolve_unreadable_blocks(
+                    runs_f, texts, picks, _DEFAULT_DELIMS, _fp_at, _read_seek)
+                picks = [stable_frame(diffs, s, e) for s, e in runs_f]
+
+                # 디졸브 경계 정렬 — 텍스트가 달라지는 컷마다 전후 프레임을 읽어
+                # 슬레이트 가독 전환 프레임으로 옮긴다(_align_cut 참조). 전후
+                # 프레임은 배치로 미리 뜨고, 걷기(드묾)만 개별 시킹한다.
+                texts_c = canonicalize_texts(texts, _DEFAULT_DELIMS)
+                bounds = [i for i in range(1, len(runs_f))
+                          if texts_c[i - 1] and texts_c[i]
+                          and texts_c[i - 1] != texts_c[i]]
+                align_dir = tmpdir / "align"
+                prefetch = (extract_frames_at(
+                    ffmpeg, scan_src,
+                    sorted({f for i in bounds
+                            for f in (runs_f[i][0] - 1, runs_f[i][0])}),
+                    align_dir, tight_rel, proc_key=str(external_id),
+                    workers=_refine_workers()) if bounds else {})
+                read_cache: dict[int, str] = {}
+
+                def _read_frame(fi: int) -> str:
+                    if fi in read_cache:
+                        return read_cache[fi]
+                    png = prefetch.get(fi)
+                    if png is None:
+                        png = align_dir / f"nb_{fi}.png"
+                        extract_frame(ffmpeg, scan_src,
+                                      frame_boundary_ms(fi, fps), png,
+                                      proc_key=str(external_id),
+                                      region=tight_rel)
+                    text = read_slate_line(png, _DEFAULT_DELIMS, top_frac=1.0)
+                    if not text:
+                        # 패딩 재판독 — 경계 프레임의 판독 깜박임이 걷기·정렬의
+                        # 근거를 지우던 것의 회수. 중간본 전체 프레임=패딩 구역.
+                        pdst = align_dir / f"nbp_{fi}.png"
+                        extract_frame(ffmpeg, scan_src,
+                                      frame_boundary_ms(fi, fps), pdst,
+                                      proc_key=str(external_id),
+                                      region=_FULL_REL)
+                        text = (read_slate_line(pdst, _DEFAULT_DELIMS,
+                                                top_frac=1.0)
+                                or read_slate_line_rescaled(
+                                    pdst, _DEFAULT_DELIMS, top_frac=1.0))
+                    read_cache[fi] = text
+                    return text
+
+                starts = [s for s, _e in runs_f]
+                # ① 지문 유사도 정렬 — OCR이 못 읽는 페이드 프레임의 귀속을
+                # 픽셀 잔상으로 판정한다(_fp_align 참조). 이동은 OCR 가독성으로
+                # 캡(_clamp_fp_move). _fp_at은 위 블록 귀속과 캐시를 공유한다.
                 for i in bounds:
                     _check_cancel()
                     aligned = _fp_align(
@@ -1089,8 +1335,13 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
         try:
             runs, thumb_count, n_frames = await asyncio.to_thread(_work)
         finally:
-            # 지문용 프레임은 수만 장이라 크다 — 실패해도 제거한다.
+            # 지문용 프레임은 수만 장이라 크고, 스캔 중간본도 수백 MB다 —
+            # 실패해도 제거한다.
             shutil.rmtree(frames_dir, ignore_errors=True)
+            try:
+                scan_src.unlink()
+            except OSError:
+                pass
 
         save_scenes(external_id, {
             "scanning": False,
