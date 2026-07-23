@@ -438,15 +438,19 @@ def build_scan_source(ffmpeg: str, src: Path, dst: Path, region: OcrRegion,
 
     규약: 프레임 수·순서·타임스탬프가 원본과 1:1이어야 프레임 번호 select와
     frame_boundary_ms 시킹이 그대로 성립한다 — fps/vfr류 필터 금지, 오디오
-    제거. crf 10=텍스트 판독에 시각적 무손실, -g 48=짧은 GOP로 -ss 시킹 저비용,
-    -bf 0=재정렬 없는 단순 시킹. 크롭 폭·높이는 420 서브샘플링 제약으로 짝수
-    절사(오프셋은 무관)."""
+    제거. **-qp 0(무손실) 필수**: 소스가 420이라 크롭+무손실 인코딩은 픽셀
+    단위로 원본 크롭과 동일 — crf 10으로 했더니 프레임마다 다른 인코딩
+    노이즈가 지문 양자화 버킷을 흔들어 컷 집합이 ±1프레임 밖 534건 어긋났고,
+    무손실로 바꾸니 5456런이 컷 하나까지 기준과 완전 일치(실기 HH0304,
+    비용은 35→51s·272→360MB뿐). -g 48=짧은 GOP로 -ss 시킹 저비용, -bf 0=
+    재정렬 없는 단순 시킹. 크롭 폭·높이는 420 제약으로 짝수 절사(오프셋 무관).
+    """
     x, y, w, h = region
     vf = (f"crop=trunc(in_w*{w:.4f}/2)*2:trunc(in_h*{h:.4f}/2)*2:"
           f"in_w*{x:.4f}:in_h*{y:.4f}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     _run([ffmpeg, "-y", "-i", str(src), "-vf", vf, "-an",
-          "-c:v", "libx264", "-preset", "ultrafast", "-crf", "10",
+          "-c:v", "libx264", "-preset", "ultrafast", "-qp", "0",
           "-g", "48", "-bf", "0", str(dst)], proc_key=proc_key)
 
 
