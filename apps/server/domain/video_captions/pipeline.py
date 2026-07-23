@@ -1074,30 +1074,16 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                                       workers=_refine_workers())
 
             def _read_run(item: tuple[int, tuple[int, int]]) -> str:
-                idx, (start_f, end_f) = item
+                # 배치 프레임만 읽는다 — 실패분의 재시도는 아래 패딩 배치와
+                # 잔여 시킹 단계가 맡는다. 예전엔 여기서 런마다 개별 시킹
+                # 폴백(0.25/0.75)을 했는데, '' 런이 많은 실기(HH0304 1011런)
+                # 에서 시킹에만 ~10분이 녹았고 그 뒤의 패딩 배치가 어차피
+                # 95%를 살렸다(순서 비효율).
+                idx, _span = item
                 _check_cancel()
                 png = batch.get(picks[idx])
-                text = (read_slate_line(png, _DEFAULT_DELIMS, top_frac=1.0)
+                return (read_slate_line(png, _DEFAULT_DELIMS, top_frac=1.0)
                         if png is not None else "")
-                if text:
-                    return text
-                # 배치 프레임 판독 실패 — 컷에서 떨어진 다른 프레임을 시킹
-                # 추출해 재시도(드묾: 실기 2658런 중 14). 런 내부는 텍스트가
-                # 동일하다는 게 지문 방식의 전제라 자리만 바꿔 본다.
-                span = end_f - start_f
-                for frac in (0.25, 0.75):
-                    fi = min(end_f - 1, start_f + int(span * frac))
-                    dst = tmpdir / f"r_{threading.get_ident()}_{fi}.png"
-                    extract_frame(ffmpeg, burned, frame_boundary_ms(fi, fps), dst,
-                                  proc_key=str(external_id), region=eff_region)
-                    text = read_slate_line(dst, _DEFAULT_DELIMS, top_frac=1.0)
-                    try:
-                        dst.unlink()
-                    except OSError:
-                        pass
-                    if text:
-                        return text
-                return ""
 
             texts: list[str] = []
             done = 0
@@ -1132,6 +1118,39 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                                                 top_frac=1.0)
                             if t:
                                 texts[i] = t
+
+                # 패딩 배치도 못 살린 잔여 런만 개별 시킹 재시도(실기 1011→55).
+                # 자리를 바꿔(0.25/0.75) 타이트→패딩 순으로 읽는다 — 런 내부는
+                # 텍스트가 동일하다는 지문 방식의 전제 그대로.
+                def _retry_run(i: int) -> tuple[int, str]:
+                    _check_cancel()
+                    start_f, end_f = runs_f[i]
+                    span = end_f - start_f
+                    for frac in (0.25, 0.75):
+                        fi = min(end_f - 1, start_f + int(span * frac))
+                        for region in (eff_region, pad_region):
+                            dst = tmpdir / f"r_{threading.get_ident()}_{fi}.png"
+                            extract_frame(ffmpeg, burned,
+                                          frame_boundary_ms(fi, fps), dst,
+                                          proc_key=str(external_id),
+                                          region=region)
+                            text = read_slate_line(dst, _DEFAULT_DELIMS,
+                                                   top_frac=1.0)
+                            try:
+                                dst.unlink()
+                            except OSError:
+                                pass
+                            if text:
+                                return i, text
+                    return i, ""
+
+                still = [i for i, t in enumerate(texts) if not t.strip()]
+                if still:
+                    with ThreadPoolExecutor(
+                            max_workers=_refine_workers()) as retry_pool:
+                        for i, text in retry_pool.map(_retry_run, still):
+                            if text:
+                                texts[i] = text
 
                 # ── 판독불가 블록 프레임 단위 귀속 — 서로 다른 라벨 사이 ''
                 # 블록이 통째 앞 씬에 붙는 혼입(실기 HH0304 씬 48클립)의 근본
