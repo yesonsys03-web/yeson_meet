@@ -509,7 +509,29 @@ fn live_session_count(server_port: u16) -> Result<u32, String> {
     rt.block_on(fetch_live_session_count(server_port))
 }
 
+/// 프로브 전체(연결→요청→본문)의 상한. 포트를 점유한 외부 프로세스가 TCP만
+/// 받고 HTTP 응답을 안 하면(실기 Windows 10001 — 보안SW 포트 감시류) 이
+/// 왕복이 무한정 걸린다. 이 함수는 1초 상태 폴링 경로에서 불리므로 상한이
+/// 없으면 앱이 통째로 얼었다. 타임아웃=Err(fail-closed) — 라이프사이클은
+/// unknown count를 "재시작 금지"로 보는 기존 규약 그대로다.
+const LIVE_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
 async fn fetch_live_session_count(server_port: u16) -> Result<u32, String> {
+    tokio::time::timeout(
+        LIVE_PROBE_TIMEOUT,
+        fetch_live_session_count_inner(server_port),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "live-session probe timed out after {}s on 127.0.0.1:{server_port} \
+             (port answered TCP but not HTTP — foreign process on the port?)",
+            LIVE_PROBE_TIMEOUT.as_secs()
+        )
+    })?
+}
+
+async fn fetch_live_session_count_inner(server_port: u16) -> Result<u32, String> {
     use http_body_util::{BodyExt, Full};
     use hyper::body::Bytes;
     use hyper::{Request, StatusCode};
@@ -664,12 +686,17 @@ pub fn tunnel_status_cmd(state: tauri::State<'_, TunnelState>) -> Result<TunnelS
 /// hides/disables "Go live (public)" while a meeting is active (the command-level
 /// refuse in `start_tunnel_cmd` is the backstop). Returns the count when the
 /// server is running, or `None` when it is not (no meeting can be live then).
+/// async 커맨드 — 동기 커맨드는 Tauri v2에서 메인 스레드에서 실행되므로,
+/// 이 1초 주기 폴링이 네트워크에서 지연되면(위 LIVE_PROBE_TIMEOUT 참조)
+/// 그 시간만큼 UI 전체가 굳는다. async로 런타임 풀에서 돌리면 최악의 경우에도
+/// 폴링 한 번이 늦을 뿐 앱은 살아 있다.
 #[tauri::command]
-pub fn live_session_count_cmd(
+pub async fn live_session_count_cmd(
     server_state: tauri::State<'_, crate::server_process::ServerProcessState>,
 ) -> Result<Option<u32>, String> {
-    match crate::server_process::current_port(&server_state) {
-        Some(port) => live_session_count(port).map(Some),
+    let port = crate::server_process::current_port(&server_state);
+    match port {
+        Some(port) => fetch_live_session_count(port).await.map(Some),
         None => Ok(None),
     }
 }
@@ -828,6 +855,30 @@ mod tests {
         assert!(!alive, "cloudflared process group must be reaped (no orphan)");
 
         std::env::remove_var(CLOUDFLARED_BIN_ENV);
+    }
+
+    // Windows 실기(2026-07-23, 포트 10001): 포트를 점유한 외부 프로세스가 TCP만
+    // 받고 HTTP 응답을 안 하면 프로브가 무한 대기 → 1초 폴링 경로에서 앱 전체
+    // 프리즈. 상한(LIVE_PROBE_TIMEOUT)이 빠른 Err로 끊어야 한다.
+    #[test]
+    fn live_session_probe_times_out_on_silent_listener() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // accept만 하고 아무 응답도 하지 않는 리스너를 잡아둔다.
+        let hold = std::thread::spawn(move || {
+            let conn = listener.accept();
+            std::thread::sleep(Duration::from_secs(6));
+            drop(conn);
+        });
+        let started = Instant::now();
+        let out = live_session_count(port);
+        assert!(out.is_err(), "silent listener must fail the probe");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "probe must be bounded by LIVE_PROBE_TIMEOUT, took {:?}",
+            started.elapsed()
+        );
+        let _ = hold.join();
     }
 }
 // === ANCHOR: TUNNEL_TESTS_END ===

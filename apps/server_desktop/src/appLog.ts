@@ -91,14 +91,31 @@ export function filterLogEntries(
   });
 }
 
+// 내보내기 표기: 로컬 시간 + UTC 오프셋. 저장(ts)은 UTC ISO지만 사람이 읽는
+// 내보내기 파일이 UTC 그대로면 시계가 틀려 보인다(실기 Windows 보고 — KST에서
+// 9시간 어긋나 보임). 오프셋을 명시해 기계 파싱 가능성은 유지한다.
+export function formatLocalTimestamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? "+" : "-";
+  const abs = Math.abs(off);
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}` +
+    `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+  );
+}
+
 export function formatAppLogEntry(entry: AppLogEntry): string {
-  return `[${entry.ts}] ${entry.level.toUpperCase()} source=${entry.source} message=${entry.message}`;
+  return `[${formatLocalTimestamp(entry.ts)}] ${entry.level.toUpperCase()} source=${entry.source} message=${entry.message}`;
 }
 
 export function formatAppLogSnapshot(snapshot: AppLogEntry[]): string {
   return [
     "yeson server console log",
-    `exported_at=${new Date().toISOString()}`,
+    `exported_at=${formatLocalTimestamp(new Date().toISOString())}`,
     `entries=${snapshot.length}`,
     "",
     ...snapshot.map(formatAppLogEntry),
