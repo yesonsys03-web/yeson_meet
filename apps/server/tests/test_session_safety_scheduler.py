@@ -271,3 +271,26 @@ async def test_stamp_live_sessions_disconnected_stamps_only_null_live(
         ).scalar_one()
     assert refreshed_null.disconnected_at == now
     assert refreshed_already.disconnected_at == now - timedelta(minutes=2)
+
+
+@pytest.mark.asyncio
+async def test_startup_reaper_emits_reports(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """부팅 시 고아 세션 정리도 보고서를 자동방출해야 한다 — 앱 강제 종료로
+    끝난 회의가 '저장 안 된 회의'로 남던 문제(2026-07-23)의 안전망."""
+    calls: list = []
+
+    async def fake_finalize(storage_root, snap_meeting, snap_utts, external_id):
+        calls.append(external_id)
+
+    monkeypatch.setattr(
+        "apps.server.api.v1.sessions._finalize_report_and_index", fake_finalize)
+    now = datetime.now(timezone.utc)
+    meeting = await _create_live_meeting(db_session, now - timedelta(seconds=5))
+
+    ended = await end_live_sessions_at_startup(_factory(db_session))
+    assert ended == 1
+    await asyncio.sleep(0)
+    assert calls == [meeting.external_id]

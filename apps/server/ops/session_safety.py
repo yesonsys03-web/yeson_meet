@@ -2,6 +2,8 @@
 """Meeting duration safety controls for Gemini cost containment."""
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -20,6 +22,34 @@ DEFAULT_MAX_DURATION_HOURS = 3.0
 MAX_DURATION_ENV = "YESON_MEETING_MAX_DURATION_HOURS"
 DEFAULT_DISCONNECT_GRACE_SECONDS = 300.0
 DISCONNECT_GRACE_ENV = "YESON_MEETING_DISCONNECT_GRACE_SECONDS"
+
+logger = logging.getLogger(__name__)
+
+# emit_forced_end_report의 백그라운드 태스크 강참조 — GC로 방출이 중간에
+# 끊기지 않게 완료 시까지 붙잡는다(asyncio.create_task 표준 패턴).
+_report_tasks: set["asyncio.Task[None]"] = set()
+
+
+async def emit_forced_end_report(db: AsyncSession, meeting: Session) -> None:
+    """강제 종료 세션의 보고서 자동방출(베스트 에포트).
+
+    정상 종료(end_session)만 보고서를 방출하고 워치독·리퍼 경로는 status만
+    바꿔서, 담당자가 저장 없이 앱을 닫은 회의는 교정 검토가 불가능했다
+    (2026-07-23 실사용 보고). 동일 산출물을 백그라운드로 남기되, 방출 실패가
+    종료 처리를 깨지 않도록 전부 삼키고 로그만 남긴다. 임포트는 지연 —
+    api 계층과의 순환 가능성을 원천 차단."""
+    try:
+        from apps.server.api.v1.sessions import emit_session_report_background
+
+        task = await emit_session_report_background(db, meeting)
+        _report_tasks.add(task)
+        task.add_done_callback(_report_tasks.discard)
+    except Exception:
+        logger.warning(
+            "Forced-end report emission failed session=%s",
+            meeting.external_id,
+            exc_info=True,
+        )
 
 
 # === ANCHOR: SESSION_SAFETY_MEETING_MAX_DURATION_START ===
@@ -60,6 +90,7 @@ async def enforce_meeting_duration_limit(
     meeting.status = "ended"
     meeting.ended_at = ended_at
     await db.commit()
+    await emit_forced_end_report(db, meeting)
     raise_meeting_max_duration_alert(str(meeting.external_id))
     await bus.publish(
         meeting.external_id,
@@ -117,6 +148,7 @@ async def enforce_sidecar_disconnect_limit(
     meeting.status = "ended"
     meeting.ended_at = ended_at
     await db.commit()
+    await emit_forced_end_report(db, meeting)
     raise_meeting_disconnect_alert(str(meeting.external_id))
     await bus.publish(
         meeting.external_id,
