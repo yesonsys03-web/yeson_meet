@@ -315,4 +315,29 @@ def apply_ko_corrections(text: str) -> str:
         if wrong in text:
             text = text.replace(wrong, right)
     return text
+
+
+def glossary_file_path() -> Path:
+    """용어집 오버라이드 파일 경로 — 편집 API가 로더와 같은 해석을 쓰게 공개."""
+    return _candidate_path()
+
+
+def ko_corrections_file_path() -> Path:
+    """사후 교정 오버라이드 파일 경로 — 편집 API 공용."""
+    return _ko_corrections_path()
+
+
+def invalid_glossary_lines(text: str) -> list[tuple[int, str]]:
+    """parse_glossary_file이 조용히 버릴 (줄번호, 원문) 목록 — 편집기 저장 검증용.
+
+    파서는 잘못된 줄을 무시하므로, 편집기에선 오타 한 줄이 소리 없이
+    사전에서 빠지는 사고를 저장 시점에 알려야 한다."""
+    bad: list[tuple[int, str]] = []
+    for i, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if not parse_glossary_file(line):
+            bad.append((i, raw))
+    return bad
 # === ANCHOR: GLOSSARY_END ===
