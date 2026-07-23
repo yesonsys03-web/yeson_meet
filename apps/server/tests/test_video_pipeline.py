@@ -1239,3 +1239,107 @@ def test_align_cut_right_walk_returns_cut_when_no_next_found():
     # 걷는 내내 다음이 안 읽히면(전부 판독불가/이전) 원래 컷 유지.
     read = _mk_read({10: PREV})
     assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 10
+
+
+def test_align_cut_probe_cap_covers_long_lingering():
+    # 이전 슬레이트가 10+프레임 지속되는 느린 전환(실기 020_0250) — 기존 캡 8은
+    # 못 닿았다. 걷기는 텍스트 변경 경계에서만 돌므로 캡 확대 비용은 미미.
+    read = _mk_read({**{f: PREV for f in range(10, 22)}, 22: NEXT})
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=40, delimiters=["_", "-"]) == 22
+
+
+def test_resolve_ocr_walk_pushes_flip_through_readable_prev():
+    # 지문이 블러에 속아 플립을 당겨도(실기 130_0160), 플립 이후 프레임들이
+    # '이전'으로 읽히면 걷기가 블록 끝까지 민다 → 블록 전체 이전 귀속 유지.
+    fp = {f: _A(0) for f in range(10)} | {f: _A(1) for f in range(10, 24)}
+    runs, texts = _resolve([(0, 10), (10, 14), (14, 24)],
+                           [_LBL_A, "", _LBL_B], [5, 11, 19], fp,
+                           {10: _LBL_A, 11: _LBL_A, 12: _LBL_A, 13: _LBL_A})
+    assert runs == [(0, 14), (14, 24)]
+    assert texts == [_LBL_A, _LBL_B]
+
+
+def test_pad_region_expands_and_clamps():
+    x, y, w, h = pl._pad_region((0.3, 0.3, 0.2, 0.1))
+    assert x < 0.3 and y < 0.3 and w > 0.2 and h > 0.1
+    assert x + w <= 1.0 and y + h <= 1.0
+    # 원점 근처는 0으로 클램프되고 우하단도 1을 넘지 않는다.
+    x2, y2, w2, h2 = pl._pad_region((0.0073, 0.0259, 0.3271, 0.2056))
+    assert x2 == 0.0 and y2 == 0.0
+    assert 0 < w2 <= 1.0 and 0 < h2 <= 1.0
+
+
+@pytest.mark.anyio
+async def test_run_scene_scan_fingerprint_padded_batch_recovers_text(
+        monkeypatch, tmp_path):
+    """타이트 구역 판독이 전부 실패한 런도 패딩 배치 재판독이 텍스트를 회수해
+    씬으로 살아난다(실기 110_0330~0350: 씬 통째가 이 경로로만 복구)."""
+    from PIL import Image
+
+    from apps.server.domain.video_captions.fingerprint import frame_boundary_ms
+
+    eid = uuid4()
+    workdir = pl.job_dir(eid)
+    workdir.mkdir(parents=True)
+    (workdir / "burned.mp4").write_bytes(b"v")
+    # 사용자 지정 타이트 구역 — 미지정이면 폴백 밴드(w=1.0)라 패딩 구역과
+    # 구분이 안 돼 이 테스트가 패딩 경로를 타지 않는다.
+    pl.save_scenes(eid, {"ocr_region": {"x": 0.0073, "y": 0.0259,
+                                        "w": 0.3271, "h": 0.2056}})
+
+    def fake_extract_fp(ffmpeg, src, out_dir, region, scale_w=160,
+                        proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(20):
+            im = Image.new("L", (32, 8), 255)
+            for x in (range(0, 20) if i < 10 else range(12, 32)):
+                for y in range(8):
+                    im.putpixel((x, y), 0)
+            im.save(out_dir / f"f_{i + 1:06d}.png")
+
+    def fake_thumbs(ffmpeg, src, out_dir, interval_s, proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "thumb_00001.jpg").write_bytes(b"j")
+
+    def fake_extract_frame(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(f"{t_ms}|{region[2]:.4f}" if region else str(t_ms))
+
+    # 배치 추출이 구역 너비를 파일에 남겨, 판독 페이크가 패딩 여부를 안다.
+    def fake_extract_at(ffmpeg, src, frame_indices, out_dir, region,
+                        proc_key=None, workers=1):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = {}
+        for k, n in enumerate(sorted(set(frame_indices)), 1):
+            p = out_dir / f"at_{k:05d}.png"
+            p.write_text(f"{frame_boundary_ms(n, 24.0)}|{region[2]:.4f}")
+            out[n] = p
+        return out
+
+    cut_ms = frame_boundary_ms(10, 24.0)
+    tight_w = 0.3271
+
+    def fake_read(path, delimiters, min_tokens=2, top_frac=0.35):
+        raw = Path(path).read_text().split("|")
+        t_ms, w = int(raw[0]), float(raw[1]) if len(raw) > 1 else tight_w
+        if t_ms < cut_ms:
+            return "HH0307_010_0010_AC_v01"
+        # 컷 뒤 씬은 저대비 — 패딩 구역(너비가 타이트보다 넓음)에서만 읽힌다.
+        return "HH0307_010_0020_AC_v01" if w > tight_w + 0.001 else ""
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
+    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+
+    await pl.run_scene_scan_fingerprint(eid)
+
+    data = pl.load_scenes(eid)
+    assert data["scanning"] is False and data.get("error") is None
+    assert [(r["start_ms"], r["end_ms"], r["text"]) for r in data["runs"]] == [
+        (frame_boundary_ms(0, 24.0), cut_ms, "HH0307_010_0010_AC_v01"),
+        (cut_ms, frame_boundary_ms(20, 24.0), "HH0307_010_0020_AC_v01"),
+    ]

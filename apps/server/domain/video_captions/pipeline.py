@@ -806,7 +806,7 @@ def _clamp_fp_move(ocr_side, cur: int, target: int) -> int:
 
 def _align_cut(read_at, cut: int, prev_text: str, next_text: str,
                lo: int, hi: int, delimiters: list[str],
-               max_probe: int = 8) -> int:
+               max_probe: int = 24) -> int:
     """지문 컷을 '다음 슬레이트가 읽히는 첫 프레임'으로 정렬한다.
 
     지문 컷(픽셀 전환 지점)은 디졸브에서 슬레이트 '가독' 전환과 어긋난다
@@ -833,7 +833,10 @@ def _align_cut(read_at, cut: int, prev_text: str, next_text: str,
         # 컷 조기 — 이전 슬레이트가 끝나는 지점(다음이 읽히는 첫 프레임)까지.
         # 직전 프레임(before)이 판독불가여도 컷 프레임이 '이전'으로 읽히면
         # 걷는다 — before까지 요구하던 가드가 디졸브 경계의 ±1프레임 잔존
-        # 4건을 남겼다(실기 468클립 검사).
+        # 4건을 남겼다(실기 468클립 검사). 컷 프레임이 판독불가면 걷지 않는다
+        # — 무판독 구간의 귀속은 지문(①_fp_align·블록 귀속)의 몫이라, 여기서
+        # 걷어 다음-읽힘 프레임까지 밀면 지문이 next로 귀속한 구간을 도로
+        # 빼앗는다(통합 테스트로 잠금).
         frame, probes = cut + 1, 0
         while frame < hi and probes < max_probe:
             s = side(frame)
@@ -875,6 +878,24 @@ def _fp_align(fp_at, cut: int, ref_prev, ref_next, lo: int, hi: int,
             return frame
         prior = cur
     return None
+
+
+# 패딩 재판독 배율 — 경계 프레임 판독은 검출기 여백·저대비에 민감해, 같은
+# 프레임이 구역을 넓히면 읽히는 경우가 실측으로 확인됐다(HH0304: 130_0160
+# 디졸브 블러·020_0250 잔존 프레임 모두 타이트 구역 ''→패딩 구역 정상 판독).
+# 1차는 스캔과 동일 구역(판독 조건 일관), 실패 시에만 패딩으로 근거를 회수한다.
+_READ_PAD_FRAC = 0.3
+
+
+def _pad_region(region) -> tuple[float, float, float, float]:
+    """경계 재판독용 패딩 구역 — 사방으로 w·h의 _READ_PAD_FRAC만큼 넓힌다
+    (0..1 클램프). 판독에만 쓰며 지문·경계 계산 구역은 그대로다."""
+    x, y, w, h = region
+    nx = max(0.0, x - w * _READ_PAD_FRAC)
+    ny = max(0.0, y - h * _READ_PAD_FRAC)
+    nw = min(1.0 - nx, x + w * (1.0 + _READ_PAD_FRAC) - nx)
+    nh = min(1.0 - ny, y + h * (1.0 + _READ_PAD_FRAC) - ny)
+    return (nx, ny, nw, nh)
 
 
 def _resolve_unreadable_blocks(
@@ -1091,6 +1112,27 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                                 {"total_frames": total, "ocr_done": done,
                                  "frames": [], "thumb_count": thumb_count}))
 
+                # ── 패딩 재판독 배치 — 타이트 구역이 못 읽은 런의 안정 프레임을
+                # 패딩 구역(_pad_region)으로 한 번 더 일괄 판독한다. 실기 HH0304:
+                # '' 1011런의 상당수가 패딩에서 정상 판독(110_0330~0350은 씬
+                # 통째가 이 경로로만 복구). 추가 비용은 미판독 런 수만큼의
+                # select 배치 1회.
+                pad_region = _pad_region(eff_region)
+                miss = [i for i, t in enumerate(texts) if not t.strip()]
+                if miss:
+                    pad_batch = extract_frames_at(
+                        ffmpeg, burned, [picks[i] for i in miss],
+                        tmpdir / "pad", pad_region,
+                        proc_key=str(external_id), workers=_refine_workers())
+                    for i in miss:
+                        _check_cancel()
+                        png = pad_batch.get(picks[i])
+                        if png is not None:
+                            t = read_slate_line(png, _DEFAULT_DELIMS,
+                                                top_frac=1.0)
+                            if t:
+                                texts[i] = t
+
                 # ── 판독불가 블록 프레임 단위 귀속 — 서로 다른 라벨 사이 ''
                 # 블록이 통째 앞 씬에 붙는 혼입(실기 HH0304 씬 48클립)의 근본
                 # 수정. 아래 bounds 정렬은 양쪽이 읽힌 경계만 보므로, 한쪽이
@@ -1114,8 +1156,17 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                                       frame_boundary_ms(fi, fps), dst,
                                       proc_key=str(external_id),
                                       region=eff_region)
-                        seek_texts[fi] = read_slate_line(
-                            dst, _DEFAULT_DELIMS, top_frac=1.0)
+                        text = read_slate_line(dst, _DEFAULT_DELIMS,
+                                               top_frac=1.0)
+                        if not text:
+                            pdst = tmpdir / f"rbp_{fi}.png"
+                            extract_frame(ffmpeg, burned,
+                                          frame_boundary_ms(fi, fps), pdst,
+                                          proc_key=str(external_id),
+                                          region=pad_region)
+                            text = read_slate_line(pdst, _DEFAULT_DELIMS,
+                                                   top_frac=1.0)
+                        seek_texts[fi] = text
                     return seek_texts[fi]
 
                 runs_f, texts = _resolve_unreadable_blocks(
@@ -1149,6 +1200,16 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                                       proc_key=str(external_id),
                                       region=eff_region)
                     text = read_slate_line(png, _DEFAULT_DELIMS, top_frac=1.0)
+                    if not text:
+                        # 패딩 재판독(_pad_region 참조) — 경계 프레임의 판독
+                        # 깜박임이 걷기·정렬의 근거를 지우던 것의 회수.
+                        pdst = align_dir / f"nbp_{fi}.png"
+                        extract_frame(ffmpeg, burned,
+                                      frame_boundary_ms(fi, fps), pdst,
+                                      proc_key=str(external_id),
+                                      region=pad_region)
+                        text = read_slate_line(pdst, _DEFAULT_DELIMS,
+                                               top_frac=1.0)
                     read_cache[fi] = text
                     return text
 
