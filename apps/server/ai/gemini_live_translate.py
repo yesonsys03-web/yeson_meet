@@ -267,9 +267,17 @@ async def _translate_final_text(text_client: Any, en: str) -> str | None:
             ),
             contents=(
                 "Translate this English meeting utterance into natural Korean "
-                "subtitle text. Keep numbers as digits with their units "
-                "(e.g. 5%, 4~6프레임). Return only Korean.\n"
+                "subtitle text.\n"
                 + glossary_block() + "\n\n"
+                # 규칙은 용어집 '뒤'(입력 직전)에 둔다 — 380항목 목록 앞에 두면
+                # 입력과 멀어져 준수도가 떨어진다(실기: 온도 규칙이 긴 문장에서
+                # 무시되던 케이스가 재배치로 해소).
+                "Rules: Keep numbers as digits with their units (e.g. 5%, "
+                "4~6프레임). Any temperature or 'N degree(s)' from an English "
+                "speaker is Fahrenheit — convert to Celsius, rounded, rendered "
+                "as '약 M도' (e.g. '90, 93 degree weather' → '약 32도, 34도 "
+                "날씨'); never leave a Fahrenheit number as a bare N도. "
+                "Return only Korean.\n\n"
                 f"English: {stripped}"
             ),
             config=types.GenerateContentConfig(
