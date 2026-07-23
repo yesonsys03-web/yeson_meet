@@ -346,6 +346,26 @@ async def _finalize_report_and_index(
 # === ANCHOR: SESSIONS_FINALIZE_REPORT_AND_INDEX_END ===
 
 
+async def emit_session_report_background(
+    db: AsyncSession, meeting: Session
+) -> "asyncio.Task[None]":
+    """강제 종료 경로(워치독·부팅 리퍼)용 보고서 자동방출.
+
+    end_session과 동일한 산출물(전 포맷+요약+FTS 인덱스)을 백그라운드
+    태스크로 남긴다 — 담당자가 저장 없이 앱을 닫아도 보고서가 남아
+    번역 교정 검토가 가능하다. 스냅샷은 이 코루틴 안(db 유효 구간)에서
+    뜨고, 태스크 자체는 db 없이 돈다."""
+    utterances = await _session_utterances(db, meeting.id)
+    return asyncio.create_task(
+        _finalize_report_and_index(
+            _storage_root(),
+            _snap_meeting(meeting),
+            _snap_utterances(utterances),
+            meeting.external_id,
+        )
+    )
+
+
 @router.post("/{external_id}/end", response_model=SessionEndOut)
 # === ANCHOR: SESSIONS_END_SESSION_START ===
 async def end_session(

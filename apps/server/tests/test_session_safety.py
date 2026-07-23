@@ -302,3 +302,74 @@ async def test_stamp_sidecar_disconnected_skips_ended(
 
     await db_session.refresh(meeting)
     assert meeting.disconnected_at is None
+
+
+# ── 강제 종료 보고서 자동방출 (2026-07-23) ──────────────────────────────
+# 담당자가 저장 없이 앱을 닫으면 워치독이 세션을 강제 종료하는데, 이 경로는
+# 정상 종료(end_session)와 달리 보고서를 방출하지 않아 교정 검토가 불가능했다.
+# 강제 종료도 동일 산출물을 백그라운드로 남겨야 한다.
+
+@pytest.mark.asyncio
+async def test_enforce_duration_limit_emits_report_in_background(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    calls: list = []
+
+    async def fake_finalize(storage_root, snap_meeting, snap_utts, external_id):
+        calls.append(external_id)
+
+    monkeypatch.setattr(
+        "apps.server.api.v1.sessions._finalize_report_and_index", fake_finalize)
+    monkeypatch.setenv("YESON_MEETING_MAX_DURATION_HOURS", "3")
+    now = datetime.now(timezone.utc)
+    meeting = await _create_meeting(db_session, now - timedelta(hours=3, minutes=1))
+
+    assert await enforce_meeting_duration_limit(db_session, meeting, now=now) is True
+    await asyncio.sleep(0)
+    assert calls == [meeting.external_id]
+
+
+@pytest.mark.asyncio
+async def test_enforce_disconnect_limit_emits_report_in_background(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    calls: list = []
+
+    async def fake_finalize(storage_root, snap_meeting, snap_utts, external_id):
+        calls.append(external_id)
+
+    monkeypatch.setattr(
+        "apps.server.api.v1.sessions._finalize_report_and_index", fake_finalize)
+    now = datetime.now(timezone.utc)
+    meeting = await _create_meeting(db_session, now - timedelta(days=1))
+    meeting.disconnected_at = now - timedelta(days=1)
+    await db_session.commit()
+
+    assert await enforce_sidecar_disconnect_limit(db_session, meeting, now=now) is True
+    await asyncio.sleep(0)
+    assert calls == [meeting.external_id]
+
+
+@pytest.mark.asyncio
+async def test_forced_end_report_failure_does_not_break_end(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """방출 실패(스냅샷·태스크 생성 등 어디서든)는 종료 처리에 영향이 없어야 한다."""
+    async def boom(db, meeting):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "apps.server.api.v1.sessions.emit_session_report_background", boom)
+    monkeypatch.setenv("YESON_MEETING_MAX_DURATION_HOURS", "3")
+    now = datetime.now(timezone.utc)
+    meeting = await _create_meeting(db_session, now - timedelta(hours=3, minutes=1))
+
+    assert await enforce_meeting_duration_limit(db_session, meeting, now=now) is True
+    assert meeting.status == "ended"

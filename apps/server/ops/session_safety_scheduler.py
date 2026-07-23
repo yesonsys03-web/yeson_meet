@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from apps.server.db.models import Session
 from apps.server.db.session import AsyncSessionLocal
 from apps.server.ops.session_safety import (
+    emit_forced_end_report,
     enforce_meeting_duration_limit,
     enforce_sidecar_disconnect_limit,
 )
@@ -125,6 +126,10 @@ async def end_live_sessions_at_startup(
             ended += 1
         if ended:
             await db.commit()
+            # 강제 종료된 고아 세션도 보고서를 남긴다 — 앱 강제 종료로 끝난
+            # 회의가 '저장 안 된 회의'로 사라지지 않게(베스트 에포트).
+            for meeting in live:
+                await emit_forced_end_report(db, meeting)
     return ended
 # === ANCHOR: SESSION_SAFETY_SCHEDULER_END_LIVE_AT_STARTUP_END ===
 
