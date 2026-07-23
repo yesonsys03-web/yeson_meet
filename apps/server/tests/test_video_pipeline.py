@@ -819,6 +819,9 @@ async def test_run_scene_scan_fingerprint_happy_path(monkeypatch, tmp_path):
 
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(pl, "build_scan_source",
+                        lambda ffmpeg, src, dst, region, proc_key=None:
+                        dst.write_bytes(b"s"))
     monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
     monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
     monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
@@ -860,6 +863,9 @@ async def test_run_scene_scan_fingerprint_failure_writes_error(
     def boom(*a, **kw):
         raise FfmpegError("x")
 
+    monkeypatch.setattr(pl, "build_scan_source",
+                        lambda ffmpeg, src, dst, region, proc_key=None:
+                        dst.write_bytes(b"s"))
     monkeypatch.setattr(pl, "extract_fingerprint_frames", boom)
     await pl.run_scene_scan_fingerprint(eid)
     data = pl.load_scenes(eid)
@@ -1210,6 +1216,9 @@ async def test_run_scene_scan_fingerprint_resolves_unreadable_block(
 
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(pl, "build_scan_source",
+                        lambda ffmpeg, src, dst, region, proc_key=None:
+                        dst.write_bytes(b"s"))
     monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
     monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
     monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
@@ -1317,18 +1326,23 @@ async def test_run_scene_scan_fingerprint_padded_batch_recovers_text(
         return out
 
     cut_ms = frame_boundary_ms(10, 24.0)
-    tight_w = 0.3271
+    # 스캔은 중간본(패딩 크롭) 좌표계로 돈다 — 타이트 구역은 상대 폭이 된다.
+    region = (0.0073, 0.0259, 0.3271, 0.2056)
+    tight_w = pl._relative_region(region, pl._pad_region(region))[2]
 
     def fake_read(path, delimiters, min_tokens=2, top_frac=0.35):
         raw = Path(path).read_text().split("|")
         t_ms, w = int(raw[0]), float(raw[1]) if len(raw) > 1 else tight_w
         if t_ms < cut_ms:
             return "HH0307_010_0010_AC_v01"
-        # 컷 뒤 씬은 저대비 — 패딩 구역(너비가 타이트보다 넓음)에서만 읽힌다.
+        # 컷 뒤 씬은 저대비 — 패딩(중간본 전체, w=1.0)에서만 읽힌다.
         return "HH0307_010_0020_AC_v01" if w > tight_w + 0.001 else ""
 
     monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(pl, "build_scan_source",
+                        lambda ffmpeg, src, dst, region, proc_key=None:
+                        dst.write_bytes(b"s"))
     monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
     monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
     monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
@@ -1343,3 +1357,16 @@ async def test_run_scene_scan_fingerprint_padded_batch_recovers_text(
         (frame_boundary_ms(0, 24.0), cut_ms, "HH0307_010_0010_AC_v01"),
         (cut_ms, frame_boundary_ms(20, 24.0), "HH0307_010_0020_AC_v01"),
     ]
+
+
+def test_relative_region_maps_tight_into_padded():
+    tight = (0.0073, 0.0259, 0.3271, 0.2056)
+    pad = pl._pad_region(tight)
+    rel = pl._relative_region(tight, pad)
+    # 패딩 원점이 0으로 클램프된 경우 타이트 구역의 절대 오프셋이 그대로 남는다.
+    assert 0.0 <= rel[0] and 0.0 <= rel[1]
+    assert rel[0] + rel[2] <= 1.0 and rel[1] + rel[3] <= 1.0
+    # 상대 폭 = 타이트 폭 / 패딩 폭.
+    assert abs(rel[2] - tight[2] / pad[2]) < 1e-9
+    # 퇴화 outer는 전체 프레임으로 폴백.
+    assert pl._relative_region(tight, (0, 0, 0, 0)) == (0.0, 0.0, 1.0, 1.0)

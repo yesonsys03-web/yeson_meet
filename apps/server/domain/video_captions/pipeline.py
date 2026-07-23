@@ -22,7 +22,8 @@ from apps.server.db.models import VideoJob, VideoSegment
 from apps.server.db.session import AsyncSessionLocal
 from . import gpu_pack
 from .ffmpeg import (
-    burn_subtitles, cut_segment, ensure_preview, extract_audio, extract_frame,
+    build_scan_source, burn_subtitles, cut_segment, ensure_preview,
+    extract_audio, extract_frame,
     extract_fingerprint_frames, extract_frames, extract_frames_at,
     extract_thumbnails, kill_active, locate_ffmpeg, video_fps,
     wav_duration_seconds,
@@ -898,6 +899,23 @@ def _pad_region(region) -> tuple[float, float, float, float]:
     return (nx, ny, nw, nh)
 
 
+def _relative_region(inner, outer) -> tuple[float, float, float, float]:
+    """outer 크롭본 좌표계에서 본 inner 구역(비율, 0..1 클램프).
+
+    스캔 중간본(build_scan_source가 만든 패딩 크롭 영상) 위에서 타이트 구역
+    판독을 계속하기 위한 변환 — 중간본 전체 프레임(0,0,1,1)이 곧 패딩 구역이고,
+    타이트 구역은 그 안의 부분 사각형이 된다."""
+    ix, iy, iw, ih = inner
+    ox, oy, ow, oh = outer
+    if ow <= 0 or oh <= 0:
+        return (0.0, 0.0, 1.0, 1.0)
+    x = min(max((ix - ox) / ow, 0.0), 1.0)
+    y = min(max((iy - oy) / oh, 0.0), 1.0)
+    w = min(max(iw / ow, 0.0), 1.0 - x)
+    h = min(max(ih / oh, 0.0), 1.0 - y)
+    return (x, y, w, h)
+
+
 def _resolve_unreadable_blocks(
     runs_f: list[tuple[int, int]], texts: list[str], picks: list[int],
     delimiters: list[str], fp_at, read_frame,
@@ -1038,9 +1056,21 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
             if generation != _current_generation(external_id):
                 raise StaleRunCancelled(external_id)
 
+        # 스캔 전용 크롭 중간본 — 이후 지문·판독·정렬의 모든 디코드가 1080p
+        # 원본 대신 이 초소형 영상을 대상으로 한다(build_scan_source 참조).
+        # 중간본 전체 프레임=패딩 구역이므로, 타이트 구역은 상대 좌표로 변환해
+        # 쓰고 패딩 판독은 크롭 없이(전체 프레임) 읽는다.
+        scan_src = workdir / "fp_scan_src.mp4"
+        pad_abs = _pad_region(eff_region)
+        tight_rel = _relative_region(eff_region, pad_abs)
+        _FULL_REL = (0.0, 0.0, 1.0, 1.0)
+
         def _work() -> tuple[list[SceneRun], int, int]:
-            extract_fingerprint_frames(ffmpeg, burned, frames_dir, eff_region,
+            build_scan_source(ffmpeg, burned, scan_src, pad_abs,
+                              proc_key=str(external_id))
+            extract_fingerprint_frames(ffmpeg, scan_src, frames_dir, tight_rel,
                                        proc_key=str(external_id))
+            # 썸네일은 전체 화면이 필요하다(필름스트립) — 원본 유지.
             extract_thumbnails(ffmpeg, burned, thumbs_dir, _FP_THUMB_INTERVAL_S,
                                proc_key=str(external_id))
             thumb_count = len(list(thumbs_dir.glob("thumb_*.jpg")))
@@ -1069,8 +1099,8 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
             # 일괄 추출한다 — 런마다 -ss 시킹하면 830ms×수천 런=수 분이 시킹에
             # 녹고(실측 총 9분), 흐릿한 중간 프레임을 읽어 오독도 는다.
             picks = [stable_frame(diffs, s, e) for s, e in runs_f]
-            batch = extract_frames_at(ffmpeg, burned, picks, tmpdir, eff_region,
-                                      proc_key=str(external_id),
+            batch = extract_frames_at(ffmpeg, scan_src, picks, tmpdir,
+                                      tight_rel, proc_key=str(external_id),
                                       workers=_refine_workers())
 
             def _read_run(item: tuple[int, tuple[int, int]]) -> str:
@@ -1103,12 +1133,11 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                 # '' 1011런의 상당수가 패딩에서 정상 판독(110_0330~0350은 씬
                 # 통째가 이 경로로만 복구). 추가 비용은 미판독 런 수만큼의
                 # select 배치 1회.
-                pad_region = _pad_region(eff_region)
                 miss = [i for i, t in enumerate(texts) if not t.strip()]
                 if miss:
                     pad_batch = extract_frames_at(
-                        ffmpeg, burned, [picks[i] for i in miss],
-                        tmpdir / "pad", pad_region,
+                        ffmpeg, scan_src, [picks[i] for i in miss],
+                        tmpdir / "pad", _FULL_REL,
                         proc_key=str(external_id), workers=_refine_workers())
                     for i in miss:
                         _check_cancel()
@@ -1128,9 +1157,9 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                     span = end_f - start_f
                     for frac in (0.25, 0.75):
                         fi = min(end_f - 1, start_f + int(span * frac))
-                        for region in (eff_region, pad_region):
+                        for region in (tight_rel, _FULL_REL):
                             dst = tmpdir / f"r_{threading.get_ident()}_{fi}.png"
-                            extract_frame(ffmpeg, burned,
+                            extract_frame(ffmpeg, scan_src,
                                           frame_boundary_ms(fi, fps), dst,
                                           proc_key=str(external_id),
                                           region=region)
@@ -1171,18 +1200,18 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                     if fi not in seek_texts:
                         _check_cancel()
                         dst = tmpdir / f"rb_{fi}.png"
-                        extract_frame(ffmpeg, burned,
+                        extract_frame(ffmpeg, scan_src,
                                       frame_boundary_ms(fi, fps), dst,
                                       proc_key=str(external_id),
-                                      region=eff_region)
+                                      region=tight_rel)
                         text = read_slate_line(dst, _DEFAULT_DELIMS,
                                                top_frac=1.0)
                         if not text:
                             pdst = tmpdir / f"rbp_{fi}.png"
-                            extract_frame(ffmpeg, burned,
+                            extract_frame(ffmpeg, scan_src,
                                           frame_boundary_ms(fi, fps), pdst,
                                           proc_key=str(external_id),
-                                          region=pad_region)
+                                          region=_FULL_REL)
                             text = read_slate_line(pdst, _DEFAULT_DELIMS,
                                                    top_frac=1.0)
                         seek_texts[fi] = text
@@ -1201,10 +1230,10 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                           and texts_c[i - 1] != texts_c[i]]
                 align_dir = tmpdir / "align"
                 prefetch = (extract_frames_at(
-                    ffmpeg, burned,
+                    ffmpeg, scan_src,
                     sorted({f for i in bounds
                             for f in (runs_f[i][0] - 1, runs_f[i][0])}),
-                    align_dir, eff_region, proc_key=str(external_id),
+                    align_dir, tight_rel, proc_key=str(external_id),
                     workers=_refine_workers()) if bounds else {})
                 read_cache: dict[int, str] = {}
 
@@ -1214,19 +1243,19 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                     png = prefetch.get(fi)
                     if png is None:
                         png = align_dir / f"nb_{fi}.png"
-                        extract_frame(ffmpeg, burned,
+                        extract_frame(ffmpeg, scan_src,
                                       frame_boundary_ms(fi, fps), png,
                                       proc_key=str(external_id),
-                                      region=eff_region)
+                                      region=tight_rel)
                     text = read_slate_line(png, _DEFAULT_DELIMS, top_frac=1.0)
                     if not text:
-                        # 패딩 재판독(_pad_region 참조) — 경계 프레임의 판독
-                        # 깜박임이 걷기·정렬의 근거를 지우던 것의 회수.
+                        # 패딩 재판독 — 경계 프레임의 판독 깜박임이 걷기·정렬의
+                        # 근거를 지우던 것의 회수. 중간본 전체 프레임=패딩 구역.
                         pdst = align_dir / f"nbp_{fi}.png"
-                        extract_frame(ffmpeg, burned,
+                        extract_frame(ffmpeg, scan_src,
                                       frame_boundary_ms(fi, fps), pdst,
                                       proc_key=str(external_id),
-                                      region=pad_region)
+                                      region=_FULL_REL)
                         text = read_slate_line(pdst, _DEFAULT_DELIMS,
                                                top_frac=1.0)
                     read_cache[fi] = text
@@ -1287,8 +1316,13 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
         try:
             runs, thumb_count, n_frames = await asyncio.to_thread(_work)
         finally:
-            # 지문용 프레임은 수만 장이라 크다 — 실패해도 제거한다.
+            # 지문용 프레임은 수만 장이라 크고, 스캔 중간본도 수백 MB다 —
+            # 실패해도 제거한다.
             shutil.rmtree(frames_dir, ignore_errors=True)
+            try:
+                scan_src.unlink()
+            except OSError:
+                pass
 
         save_scenes(external_id, {
             "scanning": False,

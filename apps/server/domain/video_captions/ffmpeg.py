@@ -426,6 +426,30 @@ def extract_thumbnails(ffmpeg: str, src: Path, out_dir: Path,
           str(out_dir / "thumb_%05d.jpg")], proc_key=proc_key)
 
 
+def build_scan_source(ffmpeg: str, src: Path, dst: Path, region: OcrRegion,
+                      proc_key: str | None = None) -> None:
+    """슬레이트 구역만 잘라낸 스캔 전용 초소형 중간 영상(프레임 1:1)을 만든다.
+
+    지문 스캔 시간의 대부분은 후속 패스들이 1080p 원본을 반복 디코드하는 데
+    녹았다(실기 44분 중 ~28분: 픽 배치의 select 청크가 각각 영상 처음부터
+    재디코드해 총 디코드량이 영상의 ~28배, 패딩 배치·정렬 시킹도 원본 대상).
+    구역 크롭본(픽셀 ~1/13)을 한 번 만들어 두면 이후 모든 디코드가 초 단위로
+    떨어진다 — 스캔 자체를 구역 위에서 돌리자는 운영자 제안(2026-07-23)의 구현.
+
+    규약: 프레임 수·순서·타임스탬프가 원본과 1:1이어야 프레임 번호 select와
+    frame_boundary_ms 시킹이 그대로 성립한다 — fps/vfr류 필터 금지, 오디오
+    제거. crf 10=텍스트 판독에 시각적 무손실, -g 48=짧은 GOP로 -ss 시킹 저비용,
+    -bf 0=재정렬 없는 단순 시킹. 크롭 폭·높이는 420 서브샘플링 제약으로 짝수
+    절사(오프셋은 무관)."""
+    x, y, w, h = region
+    vf = (f"crop=trunc(in_w*{w:.4f}/2)*2:trunc(in_h*{h:.4f}/2)*2:"
+          f"in_w*{x:.4f}:in_h*{y:.4f}")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    _run([ffmpeg, "-y", "-i", str(src), "-vf", vf, "-an",
+          "-c:v", "libx264", "-preset", "ultrafast", "-crf", "10",
+          "-g", "48", "-bf", "0", str(dst)], proc_key=proc_key)
+
+
 # select 식 항 수 상한 — ffmpeg 표현식 파서는 연쇄 연산 ~100항을 넘기면
 # 'Cannot allocate memory'로 필터 초기화에 실패한다(번들 8.1.2 실측: 100 OK,
 # 150 FAIL — 파서 재귀 한도라 플랫폼 무관). 100에 딱 붙이지 않고 여유를 둔다.
