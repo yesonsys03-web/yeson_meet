@@ -943,3 +943,28 @@ def test_canonicalize_insertion_stays_ambiguous_without_neighbor():
              + ["HH03041130_0040_AC_v01"] + ["HH0304_090_0030_AC_v01"] * 8)
     out = canonicalize_texts(texts, ["_", "-", "/"])
     assert out[18] == "HH03041130_0040_AC_v01"
+
+
+def test_read_slate_line_rescaled_recovers_native_fail(monkeypatch, tmp_path):
+    """축소 재판독 — 검출기가 원본 해상도의 흐릿한 경계 프레임에서 통째로
+    실패하는 케이스(실기 040_0200 전환 17프레임: 원본 0/17, 0.6× 축소 17/17).
+    가짜 엔진이 '작은 이미지에서만 읽히는' 상황을 재현한다."""
+    from PIL import Image
+
+    from apps.server.domain.video_captions import slate_ocr
+    png = tmp_path / "b.png"
+    Image.new("RGB", (800, 200)).save(png)
+
+    def fake_engine(path):
+        with Image.open(path) as im:
+            if im.width >= 500:
+                return None, 0.0
+        return ([[[[5, 5], [300, 5], [300, 30], [5, 30]],
+                  "HH0304_040_0210_AC_v01", 0.9]], 0.0)
+
+    monkeypatch.setattr(slate_ocr, "_get_engine", lambda: fake_engine)
+    assert slate_ocr.read_slate_line(png, ["_", "-"], top_frac=1.0) == ""
+    assert slate_ocr.read_slate_line_rescaled(png, ["_", "-"], top_frac=1.0) \
+        == "HH0304_040_0210_AC_v01"
+    # 축소 임시 파일은 남지 않는다.
+    assert list(tmp_path.glob("*_rs*")) == []

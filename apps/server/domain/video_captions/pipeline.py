@@ -38,7 +38,7 @@ from .scene_split import (
     compute_boundaries, dedupe_labels, hold_keys, label_matches,
     runs_to_segments, tokenize,
 )
-from .slate_ocr import read_slate_line
+from .slate_ocr import read_slate_line, read_slate_line_rescaled
 from .srt import SubSegment, build_force_style, segments_to_srt
 from .transcribe import StaleRunCancelled, transcribe_audio
 from .translate import maybe_aclose_translator, translate_segments
@@ -1153,8 +1153,10 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                         _check_cancel()
                         png = pad_batch.get(picks[i])
                         if png is not None:
-                            t = read_slate_line(png, _DEFAULT_DELIMS,
-                                                top_frac=1.0)
+                            t = (read_slate_line(png, _DEFAULT_DELIMS,
+                                                 top_frac=1.0)
+                                 or read_slate_line_rescaled(
+                                     png, _DEFAULT_DELIMS, top_frac=1.0))
                             if t:
                                 texts[i] = t
 
@@ -1175,6 +1177,9 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                                           region=region)
                             text = read_slate_line(dst, _DEFAULT_DELIMS,
                                                    top_frac=1.0)
+                            if not text and region is _FULL_REL:
+                                text = read_slate_line_rescaled(
+                                    dst, _DEFAULT_DELIMS, top_frac=1.0)
                             try:
                                 dst.unlink()
                             except OSError:
@@ -1222,8 +1227,10 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                                           frame_boundary_ms(fi, fps), pdst,
                                           proc_key=str(external_id),
                                           region=_FULL_REL)
-                            text = read_slate_line(pdst, _DEFAULT_DELIMS,
-                                                   top_frac=1.0)
+                            text = (read_slate_line(pdst, _DEFAULT_DELIMS,
+                                                    top_frac=1.0)
+                                    or read_slate_line_rescaled(
+                                        pdst, _DEFAULT_DELIMS, top_frac=1.0))
                         seek_texts[fi] = text
                     return seek_texts[fi]
 
@@ -1266,8 +1273,10 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                                       frame_boundary_ms(fi, fps), pdst,
                                       proc_key=str(external_id),
                                       region=_FULL_REL)
-                        text = read_slate_line(pdst, _DEFAULT_DELIMS,
-                                               top_frac=1.0)
+                        text = (read_slate_line(pdst, _DEFAULT_DELIMS,
+                                                top_frac=1.0)
+                                or read_slate_line_rescaled(
+                                    pdst, _DEFAULT_DELIMS, top_frac=1.0))
                     read_cache[fi] = text
                     return text
 
