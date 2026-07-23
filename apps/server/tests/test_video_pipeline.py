@@ -1370,3 +1370,25 @@ def test_relative_region_maps_tight_into_padded():
     assert abs(rel[2] - tight[2] / pad[2]) < 1e-9
     # 퇴화 outer는 전체 프레임으로 폴백.
     assert pl._relative_region(tight, (0, 0, 0, 0)) == (0.0, 0.0, 1.0, 1.0)
+
+
+def test_align_cut_left_walk_starts_over_unreadable_cut_minus_one():
+    # 실기 040_0200: 슬레이트만 바뀌는 무컷 전환에서 컷 직전 프레임 판독이
+    # 깜박이면 왼쪽 걷기가 시작조차 안 돼 꼬리 혼입 ~22프레임이 남았다.
+    # 컷 프레임이 '다음'으로 읽히면 더 왼쪽을 살펴, '다음'으로 확인된 가장
+    # 깊은 프레임까지 이동한다(판독불가는 건너뛰되 이동 근거 아님).
+    read = _mk_read({13: NEXT, 11: NEXT, 10: PREV})  # 12는 "" (판독불가)
+    assert pl._align_cut(read, 13, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 11
+
+
+def test_align_cut_left_walk_no_confirmed_next_keeps_cut():
+    # 컷 왼쪽이 전부 판독불가면 이동 근거가 없다 — 컷 유지.
+    read = _mk_read({13: NEXT})
+    assert pl._align_cut(read, 13, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 13
+
+
+def test_align_cut_left_walk_skips_unreadable_mid_walk():
+    # before가 '다음'으로 시작한 걷기도 중간 판독불가를 건너뛰고 더 깊은
+    # 확인-다음 프레임까지 간다(기존: 판독불가에서 확장 중단 → 잔존 혼입).
+    read = _mk_read({9: NEXT, 7: NEXT, 6: PREV})  # 8은 ""
+    assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 7

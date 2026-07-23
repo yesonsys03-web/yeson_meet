@@ -277,7 +277,8 @@ def _fill_template(flat: str, template: list[str]) -> str | None:
 
 
 def _reparse(text: str, template: list[str], delimiters: list[str],
-             known: frozenset[str] = frozenset()) -> str | None:
+             known: frozenset[str] = frozenset(),
+             context: frozenset[str] = frozenset()) -> str | None:
     """구분자를 잃고 붙은 텍스트를 템플릿 모양대로 다시 쪼갠다. 직접 채우기가
     실패하면 '한 글자 삭제' 관용을 시도한다 — OCR이 구분자를 숫자로 환각하는
     삽입 오독(실기 '_'→'1': HH0307_07510040) 대응. 숫자열은 어느 숫자를 지워도
@@ -299,7 +300,21 @@ def _reparse(text: str, template: list[str], delimiters: list[str],
                                            template)) is not None and c in known}
         if len(matched) == 1:
             return matched.pop()
+        # 코퍼스 유일성이 죽는 경우('HH03041130_0040'은 '1' 삭제→130_0040,
+        # '3' 삭제→110_0040 둘 다 실존) — 이웃 런의 깨끗한 판독(context)으로
+        # 판별한다. 슬레이트는 씬 내내 같으므로 오독의 정답은 대개 바로 이웃
+        # 런에 있다(실기 22:28 블록이 별개 씬으로 살아남던 원인).
+        if len(matched) > 1 and context:
+            ctx_hit = matched & context
+            if len(ctx_hit) == 1:
+                return ctx_hit.pop()
     return None
+
+
+# 이웃-맥락 판별 창(런 수) — 삽입 오독의 정답 후보가 이 안의 깨끗한 판독에
+# 있어야 교정한다. 씬 하나가 보통 수~수십 런이라 4면 같은 씬을 벗어나기 어렵고,
+# 멀리 있는 동형 라벨(다른 시퀀스의 같은 씬 번호)이 오염원이 되는 것을 막는다.
+_CTX_WINDOW = 4
 
 
 def canonicalize_texts(texts: list[str], delimiters: list[str]) -> list[str]:
@@ -320,9 +335,22 @@ def canonicalize_texts(texts: list[str], delimiters: list[str]) -> list[str]:
         for toks in [tokenize(text, delimiters)]
         if len(toks) == len(template)
         and all(token_shape(t) == s for t, s in zip(toks, template)))
-    out: list[str] = []
+    # 이웃 창의 깨끗한 판독 — 삽입 오독 삭제 후보가 코퍼스에서 둘 이상과
+    # 일치할 때의 판별 근거(_reparse context). 창은 ±_CTX_WINDOW 런.
+    clean: list[str | None] = []
     for text in texts:
-        fixed = _reparse(text, template, delimiters, known) if text else None
+        toks = tokenize(text, delimiters) if text else []
+        ok = (len(toks) == len(template)
+              and all(token_shape(t) == s for t, s in zip(toks, template)))
+        clean.append("_".join(_squash_ws(t) for t in toks) if ok else None)
+    out: list[str] = []
+    for i, text in enumerate(texts):
+        ctx = frozenset(
+            c for j in range(max(0, i - _CTX_WINDOW),
+                             min(len(texts), i + _CTX_WINDOW + 1))
+            if j != i and (c := clean[j]) is not None)
+        fixed = (_reparse(text, template, delimiters, known, ctx)
+                 if text else None)
         out.append(fixed if fixed is not None else text)
     return out
 

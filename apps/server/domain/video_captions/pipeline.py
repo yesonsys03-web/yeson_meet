@@ -821,12 +821,22 @@ def _align_cut(read_at, cut: int, prev_text: str, next_text: str,
         return _text_side(read_at(frame), prev_text, next_text, delimiters)
 
     before = side(cut - 1)
-    if before == "next":
+    if before == "next" or (before is None and side(cut) == "next"):
         # 컷 지각 — 다음 슬레이트가 읽히는 가장 이른 프레임까지 왼쪽으로.
-        new = cut - 1
+        # 컷 직전 프레임이 판독불가여도 컷 프레임이 '다음'으로 읽히면 더
+        # 왼쪽을 살핀다 — 슬레이트만 바뀌고 그림이 이어지는 무컷 전환에서
+        # 경계 프레임 판독 깜박임 하나가 걷기 시작을 막아 꼬리 혼입
+        # ~22프레임이 남았다(실기 040_0200). 이동은 '다음'으로 확인된 가장
+        # 깊은 프레임까지만: 판독불가는 건너뛰되 이동 근거가 되지 않고(그
+        # 구간의 귀속은 원래 컷 쪽 유지), '이전'이 읽히면 멈춘다.
+        new = cut - 1 if before == "next" else cut
         frame, probes = cut - 2, 0
-        while frame > lo and probes < max_probe and side(frame) == "next":
-            new = frame
+        while frame > lo and probes < max_probe:
+            s = side(frame)
+            if s == "prev":
+                break
+            if s == "next":
+                new = frame
             frame -= 1
             probes += 1
         return new

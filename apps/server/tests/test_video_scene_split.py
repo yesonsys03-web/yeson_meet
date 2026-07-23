@@ -910,3 +910,36 @@ def test_canonicalize_rejects_ambiguous_deletion():
              + ["HH0307_07512340_AC_v01"])  # 8자리: 어느 숫자를 지워도 7자리
     out = canonicalize_texts(texts, ["_", "-"])   # 가 되지만 결과가 제각각 → 유지
     assert out[5] == "HH0307_07512340_AC_v01"
+
+
+def test_canonicalize_disambiguates_insertion_by_neighbor_context():
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    # '_'→'1' 삽입 오독 'HH03041130_0040': 한 글자 삭제 후보가 코퍼스의
+    # 130_0040('1' 삭제)·110_0040('3' 삭제) 둘 다와 일치해 유일성 판정이
+    # 죽는다(실기 22:28 블록이 별개 씬으로 남은 원인). 이웃 런이 130_0040을
+    # 깨끗하게 읽었으면 그쪽으로 판별한다(슬레이트 지속성 — 오독의 정답은
+    # 대개 바로 이웃 런에 있다).
+    texts = [
+        "HH0304_110_0040_AC_v01",   # 먼 곳의 정상 판독(코퍼스 오염원)
+        "HH0304_090_0010_AC_v01",
+        "HH0304_090_0020_AC_v01",
+        "HH0304_090_0030_AC_v01",
+        "HH0304_090_0040_AC_v01",
+        "HH0304_130_0030_AC_v01",
+        "HH0304_130_0040_AC_v01",   # 이웃 정상 판독
+        "HH03041130_0040_AC_v01",   # 삽입 오독
+        "HH0304_130_0050_AC_v01",
+    ]
+    out = canonicalize_texts(texts, ["_", "-", "/"])
+    assert out[7] == "HH0304_130_0040_AC_v01"
+    assert out[0] == "HH0304_110_0040_AC_v01"  # 정상 판독은 그대로
+
+
+def test_canonicalize_insertion_stays_ambiguous_without_neighbor():
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    # 이웃 창 안에 판별 근거가 없으면 교정하지 않는다 — 억지 교정 금지.
+    texts = (["HH0304_110_0040_AC_v01"] + ["HH0304_090_0010_AC_v01"] * 8
+             + ["HH0304_130_0040_AC_v01"] + ["HH0304_090_0020_AC_v01"] * 8
+             + ["HH03041130_0040_AC_v01"] + ["HH0304_090_0030_AC_v01"] * 8)
+    out = canonicalize_texts(texts, ["_", "-", "/"])
+    assert out[18] == "HH03041130_0040_AC_v01"
