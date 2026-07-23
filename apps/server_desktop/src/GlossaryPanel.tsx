@@ -238,7 +238,10 @@ export default function GlossaryPanel({ serverPort, running }: Props) {
 }
 
 const styles: Record<string, CSSProperties> = {
-  wrap: { display: "flex", flexDirection: "column", gap: 8, minHeight: 0 },
+  // 부모 섹션(viewScroll: flex+overflow)의 가시 높이를 그대로 채우고, 에디터/
+  // 미리보기가 남는 세로 공간을 flex로 흡수한다 — 창을 키우면 편집 영역이
+  // 같이 커진다(고정 420px이던 실사용 불만 수정, 2026-07-23).
+  wrap: { display: "flex", flexDirection: "column", gap: 8, minHeight: 0, height: "100%" },
   tabRow: { display: "flex", gap: 8, alignItems: "center" },
   tab: {
     padding: "6px 12px",
@@ -273,7 +276,8 @@ const styles: Record<string, CSSProperties> = {
   invalidLine: { fontFamily: "monospace", fontSize: 12, color: "#ffb3b3" },
   editor: {
     width: "100%",
-    minHeight: 420,
+    flex: "1 1 auto",
+    minHeight: 200,
     resize: "vertical",
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     fontSize: 13,
@@ -291,7 +295,8 @@ const styles: Record<string, CSSProperties> = {
     padding: 12,
     background: "#161b26",
     overflowY: "auto",
-    minHeight: 420,
+    flex: "1 1 auto",
+    minHeight: 200,
   },
   h4: { margin: "12px 0 4px", color: "#e6ebf5" },
   dim: { margin: "4px 0", fontSize: 12, color: "#8a94a8" },
