@@ -839,8 +839,10 @@ def _align_cut(read_at, cut: int, prev_text: str, next_text: str,
             s = side(frame)
             if s == "next":
                 return frame
-            if s != "prev":
-                break
+            # 판독불가/양쪽공통 프레임은 근거가 없을 뿐 — 걷기를 끊지 않고
+            # 건너뛴다(디졸브 블러 1프레임이 걷기를 끊어 다음이 읽히는데도
+            # 컷이 안 옮겨지던 실기 머리 혼입 090_0060·020_0250). '다음'을
+            # 못 찾고 끝나면 컷 유지라 건너뛴 프레임은 이전 쪽에 남는다.
             frame += 1
             probes += 1
     return cut
@@ -873,6 +875,100 @@ def _fp_align(fp_at, cut: int, ref_prev, ref_next, lo: int, hi: int,
             return frame
         prior = cur
     return None
+
+
+def _resolve_unreadable_blocks(
+    runs_f: list[tuple[int, int]], texts: list[str], picks: list[int],
+    delimiters: list[str], fp_at, read_frame,
+) -> tuple[list[tuple[int, int]], list[str]]:
+    """서로 다른 라벨 사이에 낀 판독불가('') 런 블록을 프레임 단위로 귀속한다.
+
+    텍스트 근거가 전혀 없는 블록은 runs_to_segments의 컷 세기 비율만으로는
+    판정이 안 된다(실기 HH0304 2026-07-23: 문제 경계 전부가 애매 밴드
+    1.1~2.4배 → 블록이 통째 앞 씬에 붙어 시퀀스 3·씬 48클립에 이웃 프레임
+    혼입). 여기서 ①블록 각 프레임의 지문이 이전/다음 런 대표 지문(안정
+    프레임) 중 어느 쪽에 가까운지로 플립 프레임을 찾고(_fp_align과 같은
+    판정을 블록 전체 폭으로), ②블록 가장자리·플립 주변 프레임을 OCR해
+    읽히는 프레임의 소속으로 플립을 캡한다(OCR 가독 > 픽셀 유사도 원칙).
+    블록은 플립에서 갈라 양옆 런에 병합돼 사라진다 — 이후 경계 정렬(bounds)이
+    읽히는 경계가 된 이 지점을 ±8프레임 OCR로 최종 다듬는다.
+
+    같은 canonical 라벨 사이 블록(씬 내부 가짜컷·오독)은 연속 병합이 맞고,
+    선두/꼬리 블록(한쪽 이웃 없음)은 기존 규칙(선두 드롭·꼬리 앞씬)이 맞으므로
+    건드리지 않는다. OCR 제약이 모순(비단조 판독)이면 보수적으로 무변경."""
+    import numpy as np
+
+    def sq(s: str) -> str:
+        return "".join("".join(t.split())
+                       for t in tokenize(s, delimiters)).lower()
+
+    blocks: list[tuple[int, int]] = []
+    i = 0
+    while i < len(texts):
+        if texts[i].strip():
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(texts) and not texts[j + 1].strip():
+            j += 1
+        blocks.append((i, j))
+        i = j + 1
+
+    resolved: dict[int, tuple[int, int]] = {}  # bi -> (bj, flip)
+    for bi, bj in blocks:
+        a, b = bi - 1, bj + 1
+        if a < 0 or b >= len(texts):
+            continue
+        if sq(texts[a]) == sq(texts[b]):
+            continue
+        s, e = runs_f[bi][0], runs_f[bj][1]
+        ref_prev, ref_next = fp_at(picks[a]), fp_at(picks[b])
+
+        def is_next(f: int) -> bool:
+            # _fp_align의 >=와 달리 엄격 부등호 — 지문이 무정보(양쪽 동거리)면
+            # 이동 근거가 없으므로 기존 귀속(앞 씬)에 남긴다. OCR 캡이 최종 권위.
+            fp = fp_at(f)
+            return int(np.sum(fp != ref_prev)) > int(np.sum(fp != ref_next))
+
+        flip = e
+        for f in range(s, e):
+            if is_next(f):
+                flip = f
+                break
+        lo, hi = s, e
+        for f in sorted({s, e - 1, max(s, flip - 1), min(e - 1, flip)}):
+            side = _text_side(read_frame(f), texts[a], texts[b], delimiters)
+            if side == "prev":
+                lo = max(lo, f + 1)
+            elif side == "next":
+                hi = min(hi, f)
+        if lo > hi:
+            continue
+        resolved[bi] = (bj, min(max(flip, lo), hi))
+
+    if not resolved:
+        return list(runs_f), list(texts)
+
+    out_runs: list[tuple[int, int]] = []
+    out_texts: list[str] = []
+    override_start: int | None = None
+    i = 0
+    while i < len(runs_f):
+        if i in resolved:
+            bj, flip = resolved[i]
+            if out_runs and flip > runs_f[i][0]:
+                out_runs[-1] = (out_runs[-1][0], flip)
+            override_start = flip
+            i = bj + 1
+            continue
+        s, e = runs_f[i]
+        if override_start is not None:
+            s = override_start
+            override_start = None
+        out_runs.append((s, e))
+        out_texts.append(texts[i])
+        i += 1
+    return out_runs, out_texts
 
 
 async def run_scene_scan_fingerprint(external_id: UUID) -> None:
@@ -995,6 +1091,37 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                                 {"total_frames": total, "ocr_done": done,
                                  "frames": [], "thumb_count": thumb_count}))
 
+                # ── 판독불가 블록 프레임 단위 귀속 — 서로 다른 라벨 사이 ''
+                # 블록이 통째 앞 씬에 붙는 혼입(실기 HH0304 씬 48클립)의 근본
+                # 수정. 아래 bounds 정렬은 양쪽이 읽힌 경계만 보므로, 한쪽이
+                # ''인 경계는 여기서 먼저 없앤다(블록을 플립에서 갈라 병합).
+                fp_cache: dict[int, object] = {}
+
+                def _fp_at(fi: int):
+                    fp = fp_cache.get(fi)
+                    if fp is None:
+                        fp = load_fingerprint(pngs[fi])
+                        fp_cache[fi] = fp
+                    return fp
+
+                seek_texts: dict[int, str] = {}
+
+                def _read_seek(fi: int) -> str:
+                    if fi not in seek_texts:
+                        _check_cancel()
+                        dst = tmpdir / f"rb_{fi}.png"
+                        extract_frame(ffmpeg, burned,
+                                      frame_boundary_ms(fi, fps), dst,
+                                      proc_key=str(external_id),
+                                      region=eff_region)
+                        seek_texts[fi] = read_slate_line(
+                            dst, _DEFAULT_DELIMS, top_frac=1.0)
+                    return seek_texts[fi]
+
+                runs_f, texts = _resolve_unreadable_blocks(
+                    runs_f, texts, picks, _DEFAULT_DELIMS, _fp_at, _read_seek)
+                picks = [stable_frame(diffs, s, e) for s, e in runs_f]
+
                 # 디졸브 경계 정렬 — 텍스트가 달라지는 컷마다 전후 프레임을 읽어
                 # 슬레이트 가독 전환 프레임으로 옮긴다(_align_cut 참조). 전후
                 # 프레임은 배치로 미리 뜨고, 걷기(드묾)만 개별 시킹한다.
@@ -1028,16 +1155,7 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                 starts = [s for s, _e in runs_f]
                 # ① 지문 유사도 정렬 — OCR이 못 읽는 페이드 프레임의 귀속을
                 # 픽셀 잔상으로 판정한다(_fp_align 참조). 이동은 OCR 가독성으로
-                # 캡(_clamp_fp_move). 추가 ffmpeg·OCR 호출 없음(지문 PNG 재사용).
-                fp_cache: dict[int, object] = {}
-
-                def _fp_at(fi: int):
-                    fp = fp_cache.get(fi)
-                    if fp is None:
-                        fp = load_fingerprint(pngs[fi])
-                        fp_cache[fi] = fp
-                    return fp
-
+                # 캡(_clamp_fp_move). _fp_at은 위 블록 귀속과 캐시를 공유한다.
                 for i in bounds:
                     _check_cancel()
                     aligned = _fp_align(
