@@ -15,3 +15,24 @@ button:not(:disabled):active {
   filter: brightness(0.82);
   transform: translateY(1px);
 }
+
+/* 필름스트립 가로 스크롤바 — macOS 웹뷰는 오버레이 스크롤바라 스크롤 중에만
+ * 잠깐 보여, 753칸 썸네일을 어디까지 봤는지/드래그 핸들이 없다(윈도는 항상 보임).
+ * ::-webkit-scrollbar를 지정하면 그 요소만 항상 보이는 스크롤바로 바뀐다. */
+.filmstrip-scroll::-webkit-scrollbar {
+  height: 14px;
+}
+.filmstrip-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.10);
+  border-radius: 7px;
+}
+.filmstrip-scroll::-webkit-scrollbar-thumb {
+  background: #6db6ff;            /* 파란 강조색 — 검은 필름스트립 위에서 또렷하게 */
+  border-radius: 7px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.filmstrip-scroll::-webkit-scrollbar-thumb:hover {
+  background: #9acdff;
+  background-clip: content-box;
+}

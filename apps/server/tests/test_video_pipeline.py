@@ -1392,3 +1392,47 @@ def test_align_cut_left_walk_skips_unreadable_mid_walk():
     # 확인-다음 프레임까지 간다(기존: 판독불가에서 확장 중단 → 잔존 혼입).
     read = _mk_read({9: NEXT, 7: NEXT, 6: PREV})  # 8은 ""
     assert pl._align_cut(read, 10, PREV, NEXT, lo=0, hi=20, delimiters=["_", "-"]) == 7
+
+
+async def test_scene_export_flags_error_when_file_not_written(monkeypatch):
+    """ffmpeg가 코드 0으로 끝났는데 실제 출력 파일이 없으면(권한·경로·AV 격리 등)
+    조용히 '완료'로 넘어가지 않고 error로 표면화해야 한다 — 실기 Windows의
+    '카운트만 오르고 파일이 안 생김'을 진단 가능하게(컷 직후 파일 존재 검증)."""
+    ext = uuid4()
+    pl.save_scenes(ext, {"segments_scene": [
+        {"label": "0010", "start_ms": 0, "end_ms": 1000},
+        {"label": "0020", "start_ms": 1000, "end_ms": 2000},
+    ]})
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "video_fps", lambda *a, **k: 24.0)
+    # cut_segment가 '성공'하지만 파일을 만들지 않는 상황을 재현(no-op).
+    monkeypatch.setattr(pl, "cut_segment", lambda *a, **k: None)
+
+    written = await pl.run_scene_export(ext, "scene")
+
+    assert written == []  # 파일이 없으니 성공 목록은 비어야 한다
+    st = pl.load_export_status(ext)
+    assert st is not None and st.get("exporting") is False
+    assert st.get("error")  # 조용한 성공이 아니라 에러로 표면화됨
+
+
+async def test_scene_export_writes_files_and_completes(monkeypatch):
+    """정상 경로: cut_segment가 파일을 만들면 검증을 통과하고 완료(error 없음)."""
+    ext = uuid4()
+    pl.save_scenes(ext, {"segments_scene": [
+        {"label": "0010", "start_ms": 0, "end_ms": 1000},
+    ]})
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "video_fps", lambda *a, **k: 24.0)
+
+    def _fake_cut(_ffmpeg, _src, dst, *a, **k):
+        Path(dst).write_bytes(b"\x00\x01")  # 실제 파일 생성 시늉
+
+    monkeypatch.setattr(pl, "cut_segment", _fake_cut)
+
+    written = await pl.run_scene_export(ext, "scene")
+
+    assert len(written) == 1 and Path(written[0]).exists()
+    st = pl.load_export_status(ext)
+    assert st and st.get("exporting") is False and not st.get("error")
+    assert st.get("done") == 1

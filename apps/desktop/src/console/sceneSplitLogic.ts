@@ -279,6 +279,80 @@ export function segmentThumbRange(
   return { from, to };
 }
 
+// 구간의 '마지막 프레임' 시각(ms). 필름스트립 격자(2초)는 씬 경계와 무관해
+// 머리/꼬리 혼입(±1~3프레임)을 격자 썸네일로는 검증할 수 없다 — 씬을 클릭하면
+// 이 시각의 실제 프레임을 thumb-at으로 뽑아 꼬리를 본다. end_ms는 배타적 경계
+// (다음 씬 시작)이라 한 프레임 이상 당겨야 다음 씬 첫 프레임을 집지 않는다
+// (썸네일 추출 -ss가 snap-up이라 end 근처를 주면 다음 씬이 잡힌다). 1.5프레임
+// 당겨 [1f,2f) 중앙을 노리면 fps 추정이 조금 어긋나도 항상 이 씬의 마지막
+// 프레임에 떨어진다(경계는 넘지 않는다). 초단편 씬은 시작으로 클램프. 기본
+// 24fps는 23.976 NTSC에서도 오차 <1프레임이라 프레임 정확하다.
+export function segmentTailMs(startMs: number, endMs: number, fps = NTSC_FPS): number {
+  const frameMs = 1000 / (fps > 0 ? fps : NTSC_FPS);
+  // 익스포트 클립의 '실제 마지막 프레임'을 익스포트와 같은 공식으로 잡는다:
+  //   -ss start(snap-up)로 첫 프레임 f0 = ceil(start/frameMs),
+  //   -frames:v N (N=round((end-start)*fps/1000))로 N장 → 마지막 = f0+N-1.
+  // 이전의 end-1.5f 어림값은 마지막보다 한 프레임 일렀다(실기 _0070: 189 vs 190).
+  const f0 = Math.ceil(startMs / frameMs - 1e-6);
+  const n = Math.max(1, Math.round((endMs - startMs) / frameMs));
+  const lastFrame = f0 + n - 1;
+  // 그 프레임을 -ss snap-up이 집도록 직전 프레임과의 간극중앙을 준다(머리와 대칭).
+  return Math.max(startMs, Math.round((lastFrame - 0.5) * frameMs));
+}
+
+// fps 미상 시 가정값 — 자막 소스는 대부분 NTSC 23.976(24000/1001)이다. 서버가
+// 측정 fps(video_fps)를 보내면 그 값을 쓴다(정확). 24로 가정하면 경계에서 프레임
+// 인덱스가 1 어긋난다(실측: 28924ms가 24fps→695, 23.976fps→694).
+export const NTSC_FPS = 24000 / 1001;
+
+// 머리·꼬리 프레임을 팝업(HTML5 <video>)으로 크게 볼 때의 시킹 시각(ms).
+// 서버 썸네일은 -ss(입력시킹) snap-up(PTS≥t)이라 경계 간극중앙 start_ms에서 그
+// 씬 첫 프레임을 정확히 집는다. 그러나 <video>.currentTime=t는 t를 '포함'하는
+// 프레임(=직전 프레임=이전 씬 마지막)을 보여줘 팝업만 한 프레임 앞으로 어긋난다
+// (실기: _020 머리 클릭→_010_0180). 그래서 팝업은 '썸네일이 집은 그 프레임'의
+// 표시구간 중앙으로 시킹한다 — 소스 fps로 프레임 인덱스를 잡아야 정확하다.
+export function frameSeekMs(ms: number, fps = NTSC_FPS): number {
+  const frameMs = 1000 / (fps > 0 ? fps : NTSC_FPS);
+  const idx = Math.max(0, Math.ceil(ms / frameMs - 1e-6)); // -ss snap-up이 고르는 프레임
+  return Math.round((idx + 0.5) * frameMs);                // 그 프레임 표시구간 중앙
+}
+
+// 인접 두 씬의 공유 경계를 정확히 deltaFrames 프레임만큼 옮긴 새 경계 시각(ms).
+// 스캔이 못 잡는 디졸브/와이프에서 머리·꼬리에 붙은 프레임을 이웃 씬으로 넘길 때
+// 쓴다. 경계는 export -ss(snap-up)가 '뒤 세그먼트 첫 프레임'을 집는 값이라, 그
+// 프레임 인덱스 k=ceil(boundary/frameMs)에 delta를 더한 프레임의 간극중앙을 돌려준다
+// → 새 경계로 잘라도 프레임 정확(±1프레임씩 이동, 프레임 수 보존). delta>0이면 경계가
+// 뒤로(뒤 세그가 줄고 앞 세그가 늘어남), <0이면 앞으로.
+export function shiftBoundaryMs(boundaryMs: number, fps: number, deltaFrames: number): number {
+  const frameMs = 1000 / (fps > 0 ? fps : NTSC_FPS);
+  const k = Math.ceil(boundaryMs / frameMs - 1e-6);  // export -ss가 집는 뒤 세그 첫 프레임
+  return Math.max(0, Math.round((k + deltaFrames - 0.5) * frameMs));
+}
+
+// 특정 시각의 '프레임 번호'(1부터). HTML5 <video>는 currentTime t를 포함하는
+// 프레임(floor(t·fps))을 보여주므로 그 인덱스에 +1 한 값이 사람이 세는 프레임
+// 번호다(첫 프레임 = 1). 팝업 프레임 카운터·오류 프레임 입력 기준.
+export function frameNumberAt(ms: number, fps = NTSC_FPS): number {
+  const frameMs = 1000 / (fps > 0 ? fps : NTSC_FPS);
+  return Math.max(1, Math.floor(ms / frameMs + 1e-6) + 1);
+}
+
+// 익스포트 클립 안에서의 프레임 번호(1부터)와 총 프레임 수. k는 이 구간의 몇 번째
+// 프레임인지(머리=1 … 꼬리=n), n은 익스포트가 뽑는 프레임 수(segmentTailMs와 동일
+// 수식: f0=ceil(start/frameMs), n=round((end-start)·fps/1000)). 오류난 프레임을
+// '머리에서 k번째'로 읽으면 그대로 경계 교정 프레임 수가 된다. 범위를 벗어난 시각은
+// [1,n]으로 클램프.
+export function segFrameNumber(
+  ms: number, startMs: number, endMs: number, fps = NTSC_FPS,
+): { k: number; n: number } {
+  const frameMs = 1000 / (fps > 0 ? fps : NTSC_FPS);
+  const f0 = Math.ceil(startMs / frameMs - 1e-6);
+  const n = Math.max(1, Math.round((endMs - startMs) / frameMs));
+  const abs0 = Math.floor(ms / frameMs + 1e-6);
+  const k = Math.min(n, Math.max(1, abs0 - f0 + 1));
+  return { k, n };
+}
+
 // 구간 이름(=파일명) 수정.
 export function renameSegment(
   segs: SceneSegment[], i: number, label: string,

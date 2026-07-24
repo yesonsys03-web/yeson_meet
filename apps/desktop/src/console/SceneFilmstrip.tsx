@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { formatMs, segmentThumbRange, type LabelAnomaly } from "./sceneSplitLogic";
+import { formatMs, frameSeekMs, NTSC_FPS, segmentTailMs, segmentThumbRange, type LabelAnomaly } from "./sceneSplitLogic";
 import { sceneThumbAtUrl, sceneThumbUrl, type SceneSegment } from "./videoApi";
 
 type Props = {
@@ -11,17 +11,31 @@ type Props = {
   // 편집 콜백(선택). 주어지면 각 구간에 병합/이름수정 컨트롤을 렌더한다.
   onMerge?: (i: number, into: "prev" | "next") => void;
   onRename?: (i: number, label: string) => void;
-  // 선택된 구간(리스트 클릭) — 해당 썸네일 범위를 하이라이트·중앙정렬한다.
+  // 선택된 구간(리스트 클릭) — 격자 대신 그 씬의 실제 머리·꼬리 프레임만 크게
+  // 보여준다(격자 2초 간격으로는 프레임 단위 혼입을 못 본다). highlight는 선택이
+  // 없을 때(전체 필름스트립)만 쓰인다.
   selectedIndex?: number | null;
   highlight?: { from: number; to: number } | null;
   onSelectSegment?: (i: number) => void;
-  // 썸네일 클릭 → 그 시각을 팝업(실제 영상 시킹)으로 크게 보여준다.
-  onThumbClick?: (tMs: number) => void;
+  // 머리·꼬리 뷰에서 "전체 필름스트립"으로 돌아가기(선택 해제).
+  onClearSelection?: () => void;
+  // 꼬리 프레임 시각 계산용 실제 fps(없으면 24 가정 — 23.976 NTSC에서도 정확).
+  videoFps?: number;
+  // 썸네일 클릭 → 그 시각을 팝업(실제 영상 시킹)으로 크게 보여준다. 구간(seg)과
+  // 인덱스·클릭한 쪽(머리/꼬리)을 함께 넘기면 팝업이 그 구간 [start,end)로 재생을
+  // 제한하고, 팝업 안에서 경계를 프레임 단위로 편집할 수 있다(분할 교정).
+  onThumbClick?: (tMs: number, seg?: SceneSegment, segIndex?: number,
+                  side?: "head" | "tail") => void;
   // 목록에 보여줄 구간 인덱스(오독 필터 탭). null이면 전체. 인덱스는 원본 기준을
   // 유지해야 병합/이름수정 콜백이 올바른 구간을 가리킨다.
   visibleIndices?: number[] | null;
   // 인덱스 → 오독 교정 제안(있으면 라벨 옆에 원클릭 적용 버튼).
   suggestions?: Map<number, LabelAnomaly>;
+  // 병합 되돌리기 — undoIndex(방금 병합한 '생존 구간')와 같은 줄에만 되돌리기 버튼을
+  // 병합 버튼 오른쪽에 렌더한다(여러 단계 undo 스택의 top). null이면 되돌릴 병합이
+  // 없어 아무 줄에도 안 뜬다. 실수로 병합했을 때 그 자리에서 바로 물릴 수 있다.
+  undoIndex?: number | null;
+  onUndoMerge?: () => void;
 };
 
 // 다빈치 리졸브식 필름스트립: 썸네일을 시간축에 깔고 아래에 구간 목록을 얹는다.
@@ -30,8 +44,8 @@ type Props = {
 // 잘못 인식된 구간(예 'VAL')을 이웃에 병합하거나 이름을 고칠 수 있다.
 export function SceneFilmstrip(
   { jobId, segments, thumbCount, intervalMs, onMerge, onRename,
-    selectedIndex, highlight, onSelectSegment, onThumbClick,
-    visibleIndices, suggestions }: Props,
+    selectedIndex, highlight, onSelectSegment, onClearSelection, videoFps,
+    onThumbClick, visibleIndices, suggestions, undoIndex, onUndoMerge }: Props,
 ) {
   const thumbs = Array.from({ length: thumbCount }, (_, i) => i);
   const editable = Boolean(onMerge || onRename);
@@ -39,6 +53,11 @@ export function SceneFilmstrip(
   // 경계 썸네일을 못 가져오면(구버전 서버 등) 그 칸을 숨긴다 — 깨진 이미지
   // 아이콘을 늘어놓는 대신 격자 썸네일만 있는 이전 동작으로 조용히 물러난다.
   const [failedBoundaries, setFailedBoundaries] = useState<Set<number>>(new Set());
+
+  // 리스트에서 씬을 고르면 격자 대신 그 씬의 머리·꼬리 프레임만 본다.
+  const selectedSeg = selectedIndex != null ? segments[selectedIndex] ?? null : null;
+  // 머리·꼬리 프레임을 못 가져온 시각(구버전 서버 등) — 깨진 아이콘 대신 안내.
+  const [failedFrames, setFailedFrames] = useState<Set<number>>(new Set());
 
   // 구간 시작이 2초 격자 위가 아니면(정밀화된 경계) 그 시각의 실제 첫 프레임을
   // 격자 썸네일 앞에 끼워 넣는다 — 격자 썸네일만 있으면 구간의 첫 칸이 시작보다
@@ -60,9 +79,88 @@ export function SceneFilmstrip(
     el?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
   }, [highlight?.from, highlight?.to]);
 
+  // 소스 fps — 팝업 시킹의 프레임 인덱스가 여기에 민감하다(경계에서 24 vs 23.976이
+  // 프레임을 1 어긋냄). 서버가 측정값을 보내면 그걸, 없으면 NTSC를 쓴다.
+  const fps = videoFps && videoFps > 0 ? videoFps : NTSC_FPS;
+
+  // 선택된 씬의 머리·꼬리 검수 카드 한 장(실제 첫/끝 프레임 + 이웃 라벨 안내).
+  const renderHeadTail = (seg: SceneSegment, idx: number) => {
+    const prevLabel = idx > 0 ? segments[idx - 1]!.label : "(없음 · 영상 시작)";
+    const nextLabel = idx < segments.length - 1
+      ? segments[idx + 1]!.label : "(없음 · 영상 끝)";
+    const tailMs = segmentTailMs(seg.start_ms, seg.end_ms, fps);
+    // 썸네일 이미지는 ms(경계) 그대로 — 서버 -ss snap-up이 이 씬 첫/끝 프레임을
+    // 집는다. 팝업(HTML5)만 그 프레임 중앙으로 시킹해야 같은 프레임이 뜬다.
+    const frame = (ms: number, kind: "head" | "tail") => {
+      const accent = kind === "head" ? "#4a9eda" : "#e2b340";
+      const seekMs = frameSeekMs(ms, fps);
+      const failed = failedFrames.has(ms);
+      return (
+        <figure style={{ margin: 0, flex: "1 1 320px", minWidth: 240,
+                         display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: accent }}>
+            {kind === "head" ? "머리 · 첫 프레임" : "꼬리 · 마지막 프레임"}
+            <span style={{ opacity: 0.6, fontWeight: 400, marginLeft: 6 }}>
+              {formatMs(kind === "head" ? seg.start_ms : seg.end_ms)}
+            </span>
+          </div>
+          {failed ? (
+            <div style={{ height: 150, display: "flex", alignItems: "center",
+                          justifyContent: "center", background: "#111",
+                          borderRadius: 4, fontSize: 12, opacity: 0.6,
+                          outline: `2px solid ${accent}`, outlineOffset: "-2px" }}>
+              프레임을 가져올 수 없습니다
+            </div>
+          ) : (
+            <img src={sceneThumbAtUrl(jobId, ms, 240)} alt=""
+                 loading="lazy" decoding="async"
+                 onError={() => setFailedFrames((p) =>
+                   p.has(ms) ? p : new Set(p).add(ms))}
+                 title={`${formatMs(ms)} — 클릭하면 크게 보기`}
+                 onClick={() => onThumbClick?.(seekMs, seg, idx, kind)}
+                 style={{ width: "100%", height: 150, objectFit: "contain",
+                          background: "#000", borderRadius: 4,
+                          cursor: onThumbClick ? "zoom-in" : "default",
+                          outline: `2px solid ${accent}`, outlineOffset: "-2px" }} />
+          )}
+          <small style={{ fontSize: 11, opacity: 0.7 }}>
+            {kind === "head"
+              ? `이전 씬(${prevLabel}) 슬레이트가 보이면 머리 혼입`
+              : `다음 씬(${nextLabel}) 슬레이트가 보이면 꼬리 혼입`}
+          </small>
+        </figure>
+      );
+    };
+    return (
+      <div style={{ background: "#000", borderRadius: 6, padding: 10,
+                    display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10,
+                      flexWrap: "wrap" }}>
+          <strong style={{ fontFamily: "monospace", fontSize: 14 }}>{seg.label}</strong>
+          <span style={{ fontSize: 12, opacity: 0.7 }}>
+            {formatMs(seg.start_ms)}–{formatMs(seg.end_ms)}
+          </span>
+          {onClearSelection ? (
+            <button type="button" style={{ ...miniBtn, marginLeft: "auto" }}
+              onClick={onClearSelection}>◀ 전체 필름스트립</button>
+          ) : null}
+        </div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {frame(seg.start_ms, "head")}
+          {frame(tailMs, "tail")}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div ref={stripRef}
+      {/* 검수 뷰(격자/머리·꼬리)를 상단에 고정 — 400+ 리스트에서 아래로 스크롤해
+          씬을 클릭해도 미리보기가 화면 밖으로 사라지지 않게(위로 다시 안 가도 됨). */}
+      <div style={{ position: "sticky", top: 0, zIndex: 5,
+                    background: "var(--ys-bg-app)", paddingBottom: 6 }}>
+      {selectedSeg ? renderHeadTail(selectedSeg, selectedIndex!) : (
+      <div ref={stripRef} className="filmstrip-scroll"
            style={{ display: "flex", overflowX: "auto", gap: 1,
                     background: "#000", borderRadius: 6, padding: 2 }}>
         {thumbs.flatMap((i) => {
@@ -81,7 +179,7 @@ export function SceneFilmstrip(
                    onError={() => setFailedBoundaries((prev) =>
                      prev.has(seg.start_ms) ? prev : new Set(prev).add(seg.start_ms))}
                    title={`${seg.label} 시작 ${formatMs(seg.start_ms)} (첫 프레임) — 클릭하면 크게 보기`}
-                   onClick={() => onThumbClick?.(seg.start_ms)}
+                   onClick={() => onThumbClick?.(frameSeekMs(seg.start_ms, fps), seg, idx, "head")}
                    style={{ height: 72, flexShrink: 0,
                             cursor: onThumbClick ? "zoom-in" : "default",
                             opacity: highlight && !bOn ? 0.4 : 1,
@@ -105,6 +203,8 @@ export function SceneFilmstrip(
                           transition: "opacity 0.15s" }} />,
           ];
         })}
+      </div>
+      )}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
         {segments.map((s, i) => ({ s, i }))
@@ -161,6 +261,14 @@ export function SceneFilmstrip(
                   disabled={i === segments.length - 1}
                   style={miniBtn}
                   onClick={(e) => { e.stopPropagation(); onMerge(i, "next"); }}>병합▶</button>
+                {/* 되돌리기 — 방금 병합한 이 구간에만 뜬다. 여러 번 누르면 한
+                    단계씩 이전 병합까지 거슬러 올라간다(실수 복구용). */}
+                {onUndoMerge && undoIndex === i ? (
+                  <button type="button" title="방금 병합을 되돌립니다"
+                    style={{ ...miniBtn, color: "#6db6ff",
+                             borderColor: "rgba(109,182,255,0.5)" }}
+                    onClick={(e) => { e.stopPropagation(); onUndoMerge(); }}>↩되돌리기</button>
+                ) : null}
               </span>
             ) : null}
           </div>
@@ -168,7 +276,8 @@ export function SceneFilmstrip(
       </div>
       {editable && segments.length > 0 ? (
         <p style={{ fontSize: 11, opacity: 0.55, margin: 0 }}>
-          구간을 클릭하면 필름스트립에서 위치가 하이라이트됩니다. 썸네일을 클릭하면 크게 볼 수 있어요.
+          구간을 클릭하면 그 씬의 머리·꼬리 프레임만 크게 보여줍니다 — 머리에 이전 씬,
+          꼬리에 다음 씬 슬레이트가 보이면 경계 혼입입니다. 프레임을 클릭하면 더 크게 볼 수 있어요.
           잘못 인식된 구간은 ◀/▶ 병합으로 이웃에 흡수하고 이름은 직접 고친 뒤 "수정사항 저장"을 누르세요.
         </p>
       ) : null}

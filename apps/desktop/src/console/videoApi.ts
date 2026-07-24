@@ -352,6 +352,12 @@ export type ScenesData = {
   // 지문 스캔의 영상 전체 길이(마지막 런 끝) — 간격 방식은 프레임 격자로
   // 유도하지만 지문 런은 격자가 없어 명시 값을 쓴다.
   total_ms?: number | null;
+  // 실제 영상 fps(측정값). 머리·꼬리 검수에서 구간 끝 프레임 시각을 프레임 단위로
+  // 잡는 데 쓴다. 서버가 아직 안 보내면 24로 가정(23.976 NTSC에서도 정확).
+  video_fps?: number;
+  // 경계 오류(혼입) 검사 결과 — 씬 모드 세그먼트 중 머리/꼬리 프레임에 이웃
+  // 슬레이트가 잡힌 구간(플래그된 것만). '⚠ 경계 오류' 필터 탭이 index를 쓴다.
+  boundary_issues?: Array<{ index: number; label: string; head: boolean; tail: boolean }>;
 };
 
 export type SlateRuleInput = {
@@ -406,9 +412,12 @@ export function sceneThumbUrl(jobId: string, index: number): string {
   return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/thumb/${index}`;
 }
 
-// 임의 시각 썸네일 — 정밀화된 구간 시작(2초 격자 밖) 프레임 확인용.
-export function sceneThumbAtUrl(jobId: string, tMs: number): string {
-  return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/thumb-at?t_ms=${tMs}`;
+// 임의 시각 썸네일 — 정밀화된 구간 시작(2초 격자 밖) 프레임 확인용. heightPx를 주면
+// 그 높이로 추출한다(머리·꼬리 검수는 슬레이트를 읽어야 해 크게 요청). 미지정=서버
+// 기본 90(필름스트립 격자용). 옛 서버는 h 파라미터를 무시하고 90을 준다(무해).
+export function sceneThumbAtUrl(jobId: string, tMs: number, heightPx?: number): string {
+  const h = heightPx ? `&h=${heightPx}` : "";
+  return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/thumb-at?t_ms=${tMs}${h}`;
 }
 
 // 슬레이트 구역(프레임 대비 비율) — 쇼마다 위치가 달라 사용자가 드래그로 지정한다.
@@ -497,4 +506,24 @@ export async function refineScenes(
 
 export async function getRefineStatus(jobId: string): Promise<RefineStatus> {
   return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/refine/status`, {});
+}
+
+export type BoundaryStatus = {
+  checking: boolean;
+  done: number;
+  total: number;
+  error: string | null;
+};
+
+// 경계 오류(혼입) 검사 시작 — 씬 모드 세그먼트의 머리·꼬리 프레임을 OCR해 이웃
+// 슬레이트가 잡힌 구간을 표시한다. 결과는 getScenes의 boundary_issues에 실린다.
+export async function startBoundaryCheck(jobId: string): Promise<void> {
+  await request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/boundary-check`, {
+    method: "POST",
+  });
+}
+
+export async function getBoundaryStatus(jobId: string): Promise<BoundaryStatus> {
+  return request(
+    `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/boundary-check/status`, {});
 }
