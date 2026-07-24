@@ -113,6 +113,22 @@ def read_slate_line_rescaled(
         return ""
 
 
+def read_frame_text(image_path: str | Path) -> str:
+    """프레임의 모든 OCR 텍스트를 이어붙여 반환 — 슬레이트 한 줄만 고르지 않고
+    프레임에 '보이는 모든 라벨'을 본다. 경계 오버랩(디졸브/와이프에서 두 슬레이트가
+    동시에 보임) 감지용: 이웃 씬 번호열이 경계 프레임에 나타나는지 부분일치로 확인해,
+    한 줄만 고르는 read_slate_line이 자기 슬레이트를 골라 오버랩을 놓치는 문제를 피한다.
+    판독 실패는 "" 반환."""
+    try:
+        result, _elapse = _get_engine()(str(image_path))
+        if not result:
+            return ""
+        return " ".join(str(item[1]) for item in result)
+    except Exception:  # noqa: BLE001 — 한 프레임 판독 실패가 검사를 막지 않게
+        logger.exception("OCR failed for %s", image_path)
+        return ""
+
+
 def read_slate_line(
     image_path: str | Path, delimiters: list[str], min_tokens: int = 2,
     top_frac: float = _TOP_BAND_FRAC,

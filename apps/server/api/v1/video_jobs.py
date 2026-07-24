@@ -31,15 +31,18 @@ from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
                                                         build_fingerprint_segments,
                                                         build_scene_data,
                                                         cancel_job_task, job_dir,
+                                                        load_boundary_status,
                                                         load_export_status,
                                                         load_refine_status,
                                                         load_scenes,
                                                         prune_old_video_jobs,
+                                                        run_boundary_check,
                                                         run_burn_job, run_scene_export,
                                                         run_scene_refine,
                                                         run_scene_scan,
                                                         run_scene_scan_fingerprint,
                                                         run_video_job,
+                                                        save_boundary_status,
                                                         save_export_status,
                                                         save_refine_status,
                                                         save_scenes, start_job_task,
@@ -88,6 +91,10 @@ def _start_scene_export(external_id: UUID, mode: str, out_dir: str | None) -> No
 
 def _start_scene_refine(external_id: UUID, mode: str) -> None:  # test seam
     start_job_task(external_id, run_scene_refine(external_id, mode))
+
+
+def _start_boundary_check(external_id: UUID) -> None:  # test seam
+    start_job_task(external_id, run_boundary_check(external_id))
 
 
 def _prune_old_jobs() -> None:  # test seam
@@ -664,6 +671,12 @@ async def get_scenes(
         # 지문 스캔의 영상 전체 길이(마지막 런 끝) — 간격 방식은 프레임 격자로
         # 길이를 유도하지만 지문 런은 격자가 없어 명시 값이 필요하다.
         "total_ms": data.get("total_ms"),
+        # 측정 fps — 머리·꼬리 검수 팝업이 경계 프레임을 프레임 단위로 시킹하는 데
+        # 쓴다. 24 가정은 경계에서 인덱스를 1 어긋내므로 측정값을 그대로 내려준다.
+        "video_fps": data.get("video_fps"),
+        # 경계 오류(혼입) 검사 결과 — 씬 모드 세그먼트 중 머리/꼬리 프레임에 이웃
+        # 슬레이트가 잡힌 구간. 프론트 '⚠ 경계 오류' 필터 탭이 이 인덱스를 쓴다.
+        "boundary_issues": data.get("boundary_issues", []),
     }
 
 
@@ -802,6 +815,38 @@ async def scene_refine_status(
             "total": st.get("total", 0), "error": st.get("error")}
 
 
+@router.post("/{external_id}/scenes/boundary-check",
+             status_code=status.HTTP_202_ACCEPTED)
+async def boundary_check_scenes(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """씬 모드 세그먼트의 경계 프레임을 OCR해 head/tail 혼입 구간을 표시한다.
+    익스포트 직전 자동 흐름의 마지막 단계 — 결과는 GET /scenes의 boundary_issues."""
+    await _get_job_or_404(db, external_id)
+    data = load_scenes(external_id)
+    segments = (data or {}).get("segments_scene") or []
+    if len(segments) < 1:
+        raise HTTPException(status.HTTP_409_CONFLICT, "먼저 규칙을 확정하세요.")
+    save_boundary_status(external_id, {"checking": True, "done": 0,
+                                       "total": len(segments), "error": None})
+    _start_boundary_check(external_id)
+    return {"status": "checking", "total": len(segments)}
+
+
+@router.get("/{external_id}/scenes/boundary-check/status")
+async def scene_boundary_status(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    await _get_job_or_404(db, external_id)
+    st = load_boundary_status(external_id)
+    if not st:
+        return {"checking": False, "done": 0, "total": 0, "error": None}
+    return {"checking": bool(st.get("checking")), "done": st.get("done", 0),
+            "total": st.get("total", 0), "error": st.get("error")}
+
+
 @router.get("/{external_id}/scenes/thumb/{index}")
 async def scene_thumbnail(
     external_id: UUID,
@@ -833,6 +878,9 @@ async def cancel_scene_ops(
     st = load_refine_status(external_id)
     if st and st.get("refining"):
         save_refine_status(external_id, {**st, "refining": False})
+    bs = load_boundary_status(external_id)
+    if bs and bs.get("checking"):
+        save_boundary_status(external_id, {**bs, "checking": False})
     ex = load_export_status(external_id)
     if ex and ex.get("exporting"):
         save_export_status(external_id, {**ex, "exporting": False})
@@ -907,24 +955,30 @@ async def scene_thumbnail_at(
     external_id: UUID,
     t_ms: Annotated[int, Query(ge=0)],
     db: Annotated[AsyncSession, Depends(get_session)],
+    h: Annotated[int, Query(ge=48, le=720)] = 90,
 ) -> FileResponse:
     """임의 시각의 썸네일 — 정밀화된 구간 시작(2초 격자 밖) 프레임을 보여준다.
 
-    요청 시 추출하고 디스크에 캐시한다. 캐시 키가 t_ms라 경계가 바뀌어도 무효화가
-    필요 없다(같은 시각이면 같은 프레임). 정밀화·병합으로 경계가 움직여도 다음
-    렌더에서 새 시각으로 자연히 다시 뽑힌다.
+    요청 시 추출하고 디스크에 캐시한다. 캐시 키가 t_ms(+높이)라 경계가 바뀌어도
+    무효화가 필요 없다(같은 시각이면 같은 프레임). 정밀화·병합으로 경계가 움직여도
+    다음 렌더에서 새 시각으로 자연히 다시 뽑힌다.
+
+    h=높이(px). 기본 90(필름스트립 격자용). 머리·꼬리 검수는 슬레이트를 읽을 수
+    있게 더 큰 값을 요청한다. 기본 90은 파일명을 그대로 둬 기존 캐시와 호환한다.
     """
     await _get_job_or_404(db, external_id)
     burned = job_dir(external_id) / "burned.mp4"
     if not burned.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "burned video not found")
-    path = job_dir(external_id) / "scene_thumbs" / f"at_{t_ms:09d}.jpg"
+    name = f"at_{t_ms:09d}.jpg" if h == 90 else f"at_{t_ms:09d}_h{h}.jpg"
+    path = job_dir(external_id) / "scene_thumbs" / name
     if not path.exists():
         ffmpeg = locate_ffmpeg()
         if ffmpeg is None:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
                                 "ffmpeg를 찾을 수 없습니다.")
-        await asyncio.to_thread(extract_thumbnail_at, ffmpeg, burned, t_ms, path)
+        await asyncio.to_thread(extract_thumbnail_at, ffmpeg, burned, t_ms, path,
+                                h)
         if not path.exists():
             raise HTTPException(status.HTTP_404_NOT_FOUND, "thumbnail not found")
     return FileResponse(path, media_type="image/jpeg")

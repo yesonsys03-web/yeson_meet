@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, previewLabel, renameSegment, segmentThumbRange, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -268,5 +268,72 @@ describe("segmentThumbRange", () => {
     expect(segmentThumbRange(4968, 131968, 2000, 743)).toEqual({ from: 3, to: 65 });
     // 020: 131968~251218 → t=132000(66)부터 (65는 아직 010)
     expect(segmentThumbRange(131968, 251218, 2000, 743)).toEqual({ from: 66, to: 125 });
+  });
+});
+
+describe("segmentTailMs", () => {
+  it("targets the last frame (1.5 frames before the exclusive end)", () => {
+    // 24fps → frameMs≈41.67, 1.5f≈62.5 → end-62.5 반올림 = 4938.
+    // 이 시각은 다음 씬 시작(=end)보다 한 프레임 이상 앞이라 꼬리 프레임을 집는다.
+    expect(segmentTailMs(0, 5000, 24)).toBe(4938);
+  });
+  it("clamps to start for ultra-short scenes", () => {
+    // 30ms(<1.5프레임) 구간은 당기면 시작보다 앞이 되므로 시작으로 클램프.
+    expect(segmentTailMs(1000, 1030, 24)).toBe(1000);
+  });
+  it("defaults to NTSC fps when fps is unknown or zero", () => {
+    expect(segmentTailMs(0, 5000, 0)).toBe(segmentTailMs(0, 5000, NTSC_FPS));
+    expect(segmentTailMs(0, 5000)).toBe(segmentTailMs(0, 5000, NTSC_FPS));
+  });
+  it("lands on the exported clip's LAST frame, not one before it", () => {
+    // 회귀(실기 HH0304_010_0070, 23.976fps): 클립 [28924, 36849) 은 익스포트가
+    // f0=ceil(28924/frameMs)=694 부터 N=round((36849-28924)*fps/1000)=190장 →
+    // 마지막 프레임 883(=클립 190번째). 이전 end-1.5f 어림은 882(=189번째)로 한
+    // 프레임 일렀다. 꼬리 시각을 서버 -ss snap-up 하면 883이 나와야 한다.
+    const frameMs = 1000 / NTSC_FPS;
+    const tail = segmentTailMs(28924, 36849, NTSC_FPS);
+    const snapUpFrame = Math.ceil(tail / frameMs - 1e-6); // 서버 썸네일이 집는 프레임
+    const f0 = Math.ceil(28924 / frameMs - 1e-6);
+    const n = Math.round((36849 - 28924) / frameMs);
+    expect(snapUpFrame).toBe(f0 + n - 1); // = 883 = 익스포트 마지막 프레임
+    expect(snapUpFrame - f0 + 1).toBe(190); // 클립의 190번째(=마지막) 프레임
+  });
+});
+
+describe("frameSeekMs", () => {
+  it("targets the middle of the frame the server -ss thumbnail selects", () => {
+    // 실기 경계(HH0304 23.976fps): start_ms=28924는 프레임 693/694 간극중앙.
+    // 서버 -ss snap-up은 프레임 694(=이 씬 첫 프레임)를 집는데, HTML5 video는
+    // 28924를 '포함'하는 프레임 693(이전 씬)을 보여준다 → 팝업은 694 중앙으로.
+    const seek = frameSeekMs(28924, NTSC_FPS);
+    const frameMs = 1000 / NTSC_FPS;
+    expect(Math.floor(seek / frameMs)).toBe(694); // HTML5가 표시할 프레임 = 694
+  });
+  it("uses source fps — 24fps vs NTSC differ by a frame at boundaries", () => {
+    const frameMs24 = 1000 / 24;
+    const frameMsN = 1000 / NTSC_FPS;
+    // 같은 경계라도 fps가 다르면 인덱스가 갈린다(사용자 지적: 소스 fps를 따라야).
+    expect(Math.floor(frameSeekMs(28924, 24) / frameMs24)).toBe(695);
+    expect(Math.floor(frameSeekMs(28924, NTSC_FPS) / frameMsN)).toBe(694);
+  });
+  it("defaults to NTSC when fps unknown/zero", () => {
+    expect(frameSeekMs(28924, 0)).toBe(frameSeekMs(28924, NTSC_FPS));
+    expect(frameSeekMs(28924)).toBe(frameSeekMs(28924, NTSC_FPS));
+  });
+});
+
+describe("shiftBoundaryMs", () => {
+  const frameOf = (ms: number) => Math.ceil(ms / (1000 / NTSC_FPS) - 1e-6);
+  it("moves a shared boundary by exactly N frames, frame-aligned", () => {
+    const b = 28924; // 실기 _0070 시작 — export -ss가 집는 뒤 세그 첫 프레임 = 694
+    expect(frameOf(b)).toBe(694);
+    // +1: 경계가 뒤로 → 뒤 세그 첫 프레임 695(앞 세그가 프레임 하나 흡수)
+    expect(frameOf(shiftBoundaryMs(b, NTSC_FPS, 1))).toBe(695);
+    // -2: 경계가 앞으로 → 뒤 세그 첫 프레임 692(뒤 세그가 두 프레임 흡수)
+    expect(frameOf(shiftBoundaryMs(b, NTSC_FPS, -2))).toBe(692);
+  });
+  it("clamps at zero and defaults fps when unknown", () => {
+    expect(shiftBoundaryMs(10, NTSC_FPS, -100)).toBe(0);
+    expect(shiftBoundaryMs(28924, 0, 0)).toBe(shiftBoundaryMs(28924, NTSC_FPS, 0));
   });
 });

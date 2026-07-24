@@ -1,18 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, mergeAdjacentSameLabel, mergeSegment,
-  previewLabel, renameSegment, segmentThumbRange, tokenizeSlate,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameSeekMs, mergeAdjacentSameLabel, mergeSegment,
+  NTSC_FPS, previewLabel, renameSegment, segmentTailMs, segmentThumbRange, shiftBoundaryMs, tokenizeSlate,
   type LabelFix,
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
-  cancelSceneOps, exportScenes, getExportStatus, getRefineStatus, getScenes,
-  listSlateTemplates, overrideSceneSegments, refineScenes, scanScenes,
-  setOcrRegion as setOcrRegionApi, setSceneRule, videoMediaUrl,
-  type ExportStatus, type OcrRegion, type RefineStatus, type SceneMethod,
-  type ScenesData, type SceneSegment, type SlateTemplate,
+  cancelSceneOps, exportScenes, getBoundaryStatus, getExportStatus, getRefineStatus,
+  getScenes, listSlateTemplates, overrideSceneSegments, refineScenes, scanScenes,
+  setOcrRegion as setOcrRegionApi, setSceneRule, startBoundaryCheck, videoMediaUrl,
+  type BoundaryStatus, type ExportStatus, type OcrRegion, type RefineStatus,
+  type SceneMethod, type ScenesData, type SceneSegment, type SlateTemplate,
 } from "./videoApi";
 import { SlateRegionPicker } from "./SlateRegionPicker";
 
@@ -185,6 +185,65 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     throw new Error("정밀화가 시간 내 끝나지 않았습니다.");
   };
 
+  // 경계 오류(혼입) 검사 — 비차단 백그라운드. "전체 실행"이 경계계산까지 끝나면
+  // 곧바로 완료되고, 이 검사는 뒤에서 돌다가 끝나면 ⚠ 필터 숫자만 채운다(체감 대기
+  // 0). 새 실행이 시작되면 boundaryRunRef로 옛 폴링을 버린다. 실패는 조용히 무시.
+  const boundaryRunRef = useRef(0);
+  const runBoundaryCheckInBackground = async () => {
+    const myRun = ++boundaryRunRef.current;
+    try {
+      await startBoundaryCheck(jobId);
+    } catch {
+      return;  // 시작 실패(구형 서버 등)면 조용히 건너뛴다.
+    }
+    let pollFails = 0;
+    for (let i = 0; i < 3600; i++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      if (boundaryRunRef.current !== myRun) return;  // 새 실행/취소 — 옛 폴링 중단
+      let st: BoundaryStatus;
+      try {
+        st = await getBoundaryStatus(jobId);
+      } catch {
+        pollFails += 1;
+        if (pollFails >= 20) return;
+        continue;
+      }
+      pollFails = 0;
+      if (st.error) return;
+      if (!st.checking) break;
+    }
+    if (boundaryRunRef.current !== myRun) return;
+    try {
+      const fresh = await getScenes(jobId);
+      if (boundaryRunRef.current !== myRun) return;
+      // boundary_issues만 병합 — 검사 중 사용자가 편집한 세그먼트를 덮지 않는다.
+      setData((prev) => (prev
+        ? { ...prev, boundary_issues: fresh.boundary_issues } : prev));
+      const n = fresh.boundary_issues?.length ?? 0;
+      setNotice(n > 0
+        ? `⚠ 경계 오류 ${n}건 발견 — "⚠ 경계 오류" 탭에서 확인하세요.`
+        : "경계 오류 검사 완료 — 발견된 혼입 없음.");
+    } catch { /* 조용히 — 부가 기능이라 흐름을 막지 않는다 */ }
+  };
+
+  // 경계 오류만 다시 검사 — 현재(편집된) 세그먼트 그대로 OCR 재검증한다. "경계 계산"
+  // 은 세그먼트를 런에서 재계산해 수동 편집을 날리므로, 고친 뒤 재검증엔 이걸 쓴다.
+  // 미저장 편집은 먼저 저장(서버가 저장본을 검사하므로).
+  const recheckBoundaries = async () => {
+    if (dirtyModes.has("scene")) {
+      try {
+        await overrideSceneSegments(jobId, "scene",
+          data?.segments_scene ?? []);
+        setDirtyModes((prev) => { const nx = new Set(prev); nx.delete("scene"); return nx; });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        return;
+      }
+    }
+    setNotice("경계 오류 다시 검사 중… (뒤에서 진행)");
+    void runBoundaryCheckInBackground();
+  };
+
   const doRefine = async (m: Mode = mode) => {
     setError(null); setNotice(null); setBusy(true);
     cancelledRef.current = false;
@@ -244,7 +303,11 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       setData(await getScenes(jobId));
       setSelectedSeg(null);
       setNotice(`전체 완료 — 시퀀스 ${res.segments_sequence.length}개 · 씬 `
-        + `${res.segments_scene.length}개, 양쪽 다 프레임 단위 경계입니다.`);
+        + `${res.segments_scene.length}개, 양쪽 다 프레임 단위 경계입니다. `
+        + `경계 오류 검사를 백그라운드에서 진행합니다(끝나면 ⚠ 탭에 표시).`);
+      // 경계 오류 검사는 비차단으로 뒤에서 돌린다 — 전체 실행은 여기서 완료되어
+      // 바로 검수를 시작할 수 있고, 검사가 끝나면 ⚠ 필터 숫자만 채워진다(체감 대기 0).
+      void runBoundaryCheckInBackground();
     } catch (e) {
       if (!cancelledRef.current) {
         setError(e instanceof Error ? e.message : String(e));
@@ -313,20 +376,190 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       : { ...data, segments_scene: next });
     setDirtyModes((prev) => new Set(prev).add(mode));
   };
+  // 사용자가 고친 씬은 경계 오류에서 즉시 빠져야 한다 — boundary_issues는 검사
+  // 시점 스냅샷이라, 편집한 씬의 플래그를 라벨로 제거한다(다음 검사 전까지 낙관적).
+  const clearBoundaryFlags = (labels: Array<string | undefined>) => {
+    const drop = new Set(labels.filter((l): l is string => Boolean(l)));
+    if (drop.size === 0) return;
+    setData((prev) => (prev && prev.boundary_issues
+      ? { ...prev, boundary_issues: prev.boundary_issues.filter((b) => !drop.has(b.label)) }
+      : prev));
+  };
   const mergeSeg = (i: number, into: "prev" | "next") => {
+    // 병합한 두 씬의 경계 오류 플래그를 뺀다(사라진 라벨 + 살아남은 라벨 둘 다).
+    const gone = segments[i]?.label;
+    const survivorLabel = into === "prev" ? segments[i - 1]?.label : segments[i + 1]?.label;
     setSegments(mergeSegment(segments, i, into));
+    clearBoundaryFlags([gone, survivorLabel]);
     // 병합하면 배열이 줄어 기존 선택 인덱스가 다른 구간을 가리킨다 — 살아남은
     // 구간을 선택해 필름스트립 하이라이트와 경계 썸네일이 병합 결과(넓어진 범위,
     // 당겨진 시작 시각)를 곧바로 보여주게 한다.
     const survivor = into === "prev" ? Math.max(0, i - 1) : i;
     setSelectedSeg(survivor);
   };
-  const renameSeg = (i: number, label: string) =>
+  const renameSeg = (i: number, label: string) => {
+    clearBoundaryFlags([segments[i]?.label]);  // 이름 바꾼 씬은 플래그 해제(라벨도 바뀜)
     setSegments(renameSegment(segments, i, label));
+  };
 
   // 리스트에서 클릭한 구간 → 필름스트립 하이라이트 범위. 썸네일 클릭 → 팝업 시각.
   const [selectedSeg, setSelectedSeg] = useState<number | null>(null);
-  const [previewMs, setPreviewMs] = useState<number | null>(null);
+  // 팝업 프리뷰 — seekMs(첫 표시 프레임)와, 구간이면 그 [start,end)·라벨·프레임정확
+  // 재생/정지 시각. playStartMs=첫 프레임 중앙, lastFrameMs=마지막(꼬리) 프레임 중앙
+  // (둘 다 소스 fps로 계산). 구간이면 재생을 그 범위로 묶어 분할을 확인하게 한다.
+  const [preview, setPreview] = useState<
+    { seekMs: number; startMs?: number; endMs?: number; label?: string;
+      playStartMs?: number; lastFrameMs?: number; fps?: number;
+      segIndex?: number; side?: "head" | "tail" } | null>(null);
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
+  // 구간 반복재생(기본 꺼짐) — 완료 시 꼬리 프레임에 정지해 꼬리를 확인하게 한다.
+  // 켜면 [첫 프레임, 꼬리 프레임]을 반복한다.
+  const [loopSeg, setLoopSeg] = useState(false);
+  // 경계 교정 시 한 번에 옮길 프레임 수 — 디졸브/와이프는 9프레임 이상 어긋나기도
+  // 해서 한 클릭에 N프레임 이동. 미세조정은 1로.
+  const [nudgeFrames, setNudgeFrames] = useState(1);
+  // 재생 감시가 최신 preview/loop을 읽도록 ref로 미러링(재생 중 갱신 반영).
+  const previewRef = useRef(preview);
+  const loopRef = useRef(loopSeg);
+  const rafRef = useRef<number | null>(null);
+  const rvfcRef = useRef<number | null>(null);
+  useEffect(() => { previewRef.current = preview; }, [preview]);
+  useEffect(() => { loopRef.current = loopSeg; }, [loopSeg]);
+  const stopGuards = () => {
+    const v = previewVideoRef.current;
+    if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    if (rvfcRef.current != null && v && typeof v.cancelVideoFrameCallback === "function") {
+      v.cancelVideoFrameCallback(rvfcRef.current); rvfcRef.current = null;
+    }
+  };
+  // 팝업이 닫히면 감시 루프를 확실히 멈춘다.
+  useEffect(() => { if (preview == null) stopGuards(); }, [preview]);
+
+  // 재생 시작 시 '꼬리 프레임'에 도달하면 멈춘다(반복이면 첫 프레임으로 되감음).
+  // 프레임 정확한 requestVideoFrameCallback.mediaTime으로 현재 프레임 인덱스를 재
+  // 프레임 단위로 비교한다 — 정확히 잡으면 시킹 없이 그 자리에서 정지해 깜빡임이
+  // 없다. video.currentTime은 브라우저가 드물게(~4Hz) 갱신해 폴링해도 뒤처지므로
+  // (실제 화면은 이미 다음 씬) rVFC가 없을 때만 폴백으로 쓴다.
+  const startSegmentGuard = () => {
+    const v = previewVideoRef.current;
+    if (!v) return;
+    stopGuards();
+    const lastIdxOf = (p: { lastFrameMs?: number; fps?: number }) =>
+      Math.round((p.lastFrameMs ?? 0) / (1000 / (p.fps || NTSC_FPS)) - 0.5);
+    if (typeof v.requestVideoFrameCallback === "function") {
+      const step = (_now: number, meta: { mediaTime: number }) => {
+        const vv = previewVideoRef.current;
+        const p = previewRef.current;
+        if (!vv || vv.paused || !p || p.lastFrameMs == null || !p.fps) { rvfcRef.current = null; return; }
+        const frameMs = 1000 / p.fps;
+        const lastIdx = lastIdxOf(p);
+        const curIdx = Math.round(meta.mediaTime * 1000 / frameMs);
+        // 한 프레임 일찍(마지막-1) 멈춘다 — rVFC가 프레임을 ~1프레임 늦게 잡아서,
+        // 마지막 프레임에서 멈추게 하면 실제로는 다음 씬을 한 프레임 보여준 뒤
+        // 되돌아가 깜빡였다(실기). 마지막-1에서 잡으면 재생 중엔 다음 씬에 절대
+        // 닿지 않고, 정지 후 꼬리 프레임으로 스냅해 최종만 정확히 맞춘다.
+        if (curIdx >= lastIdx - 1) {
+          if (loopRef.current && p.playStartMs != null) {
+            vv.currentTime = p.playStartMs / 1000;
+            rvfcRef.current = vv.requestVideoFrameCallback(step);
+          } else {
+            vv.pause();
+            vv.currentTime = p.lastFrameMs / 1000;  // 꼬리 프레임에 정확히 스냅
+            rvfcRef.current = null;
+          }
+        } else {
+          rvfcRef.current = vv.requestVideoFrameCallback(step);
+        }
+      };
+      rvfcRef.current = v.requestVideoFrameCallback(step);
+      return;
+    }
+    // 폴백(rVFC 미지원): rAF로 currentTime 폴링(값이 뒤처져 약간의 오버슈트 감수).
+    const tick = () => {
+      const vv = previewVideoRef.current;
+      const p = previewRef.current;
+      if (!vv || vv.paused || !p || p.lastFrameMs == null) { rafRef.current = null; return; }
+      const halfFrameSec = p.fps && p.fps > 0 ? 0.5 / p.fps : 0.02;
+      if (vv.currentTime >= p.lastFrameMs / 1000 - halfFrameSec) {
+        if (loopRef.current && p.playStartMs != null) {
+          vv.currentTime = p.playStartMs / 1000;
+        } else {
+          vv.pause();
+          vv.currentTime = p.lastFrameMs / 1000;
+          rafRef.current = null;
+          return;
+        }
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  };
+
+  // 프리뷰(팝업) 상태를 세그먼트로부터 구성 — 프레임 정확 재생/편집 값 포함.
+  const buildSegPreview = (s: SceneSegment, segIndex: number, seekMs: number,
+                           side: "head" | "tail") => {
+    const fps = data?.video_fps && data.video_fps > 0 ? data.video_fps : NTSC_FPS;
+    return {
+      seekMs, segIndex, side, label: s.label,
+      startMs: s.start_ms, endMs: s.end_ms, fps,
+      playStartMs: frameSeekMs(s.start_ms, fps),
+      lastFrameMs: frameSeekMs(segmentTailMs(s.start_ms, s.end_ms, fps), fps),
+    };
+  };
+
+  // 팝업에서 머리/꼬리 경계를 delta 프레임 이동 — 그 프레임을 이웃 씬으로 넘기거나
+  // 이웃에서 가져온다(스캔이 못 잡는 디졸브/와이프 수동 교정). 인접 두 세그먼트를
+  // 같은 새 경계로 갱신(dirty)하고, 팝업 영상을 편집한 경계 프레임으로 시킹해 즉시
+  // 확인시킨다. 경계가 프레임 정렬을 유지하므로 익스포트도 프레임 정확.
+  const nudgeBoundary = (side: "head" | "tail", delta: number) => {
+    if (!data || preview?.segIndex == null || delta === 0) return;
+    const i = preview.segIndex;
+    const fps = data.video_fps && data.video_fps > 0 ? data.video_fps : NTSC_FPS;
+    const frameMs = 1000 / fps;
+    const frames = (s: SceneSegment) =>
+      Math.max(1, Math.round((s.end_ms - s.start_ms) / frameMs));
+    const segs = segments.slice();
+    let focusMs: number;
+    if (side === "tail") {
+      if (i >= segs.length - 1) return;
+      // 빈 씬 방지 클램프: delta<0(이 씬이 넘김)은 이 씬이 1프레임 남게, delta>0(다음
+      // 씬에서 가져옴)은 다음 씬이 1프레임 남게. 요청 N이 넘치면 가능한 만큼만 이동.
+      const d = Math.max(-(frames(segs[i]!) - 1),
+                         Math.min(frames(segs[i + 1]!) - 1, delta));
+      if (d === 0) return;
+      const nb = shiftBoundaryMs(segs[i]!.end_ms, fps, d);
+      segs[i] = { ...segs[i]!, end_ms: nb };
+      segs[i + 1] = { ...segs[i + 1]!, start_ms: nb };
+      focusMs = frameSeekMs(segmentTailMs(segs[i]!.start_ms, segs[i]!.end_ms, fps), fps);
+    } else {
+      if (i <= 0) return;
+      const d = Math.max(-(frames(segs[i - 1]!) - 1),
+                         Math.min(frames(segs[i]!) - 1, delta));
+      if (d === 0) return;
+      const nh = shiftBoundaryMs(segs[i]!.start_ms, fps, d);
+      segs[i - 1] = { ...segs[i - 1]!, end_ms: nh };
+      segs[i] = { ...segs[i]!, start_ms: nh };
+      focusMs = frameSeekMs(segs[i]!.start_ms, fps);
+    }
+    setSegments(segs);  // dirty — "수정사항 저장" 후 익스포트에 반영
+    // 교정한 씬(+맞닿은 이웃)의 경계 오류 플래그를 뺀다 — 고쳤으면 필터에서 빠져야.
+    clearBoundaryFlags([segs[i]!.label,
+                        side === "tail" ? segs[i + 1]?.label : segs[i - 1]?.label]);
+    setPreview(buildSegPreview(segs[i]!, i, focusMs, side));
+    const v = previewVideoRef.current;
+    if (v) { v.pause(); v.currentTime = focusMs / 1000; }
+  };
+  // 팝업 영상을 특정 프레임 시각으로 이동(머리/꼬리 확인용).
+  const seekPreview = (ms?: number) => {
+    const v = previewVideoRef.current;
+    if (v && ms != null) { v.pause(); v.currentTime = ms / 1000; }
+  };
+  const editBtn: CSSProperties = {
+    fontSize: 12, padding: "4px 9px", borderRadius: 5, whiteSpace: "nowrap",
+    border: "1px solid rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.10)",
+    color: "#fff", cursor: "pointer",
+  };
+
   const intervalMs = data?.interval_ms ?? 2000;
   // 필름스트립은 썸네일 격자(성긴 간격)로 그린다 — 스캔 간격과 다르다.
   const thumbIntervalMs = data?.thumb_interval_ms ?? intervalMs;
@@ -342,8 +575,21 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const anomalies = anomalousLabels(segments.map((s) => s.label), delimiters);
   const anomalyIdx = anomalies.map((a) => a.index);
   const suggestionOf = new Map(anomalies.map((a) => [a.index, a]));
+  // 경계 오류(혼입) — 씬 모드 전용(boundary_issues는 segments_scene 기준). 다른
+  // 모드에선 빈 목록이라 필터 탭이 숨겨진다.
+  const [onlyBoundaryErrors, setOnlyBoundaryErrors] = useState(false);
+  const boundaryIssues = mode === "scene" ? (data?.boundary_issues ?? []) : [];
+  // 플래그를 저장된 인덱스가 아니라 '현재 세그먼트의 라벨'로 다시 찾는다 — 병합·
+  // 이름수정으로 라벨이 사라지면 자동 제외되고, 편집으로 인덱스가 밀려도 어긋나지
+  // 않는다(편집 콜백의 clearBoundaryFlags가 고친 씬을 즉시 빼는 것과 합쳐 이중 안전).
+  const curLabelToIdx = new Map(segments.map((s, i) => [s.label, i] as const));
+  const boundaryIdx = boundaryIssues
+    .map((b) => curLabelToIdx.get(b.label))
+    .filter((i): i is number => i != null);
+  const boundaryCount = boundaryIdx.length;
   // 탭을 바꿔도 인덱스는 원본 기준을 유지한다(병합/이름수정 콜백이 인덱스를 쓴다).
-  const visibleIndices = onlyAnomalies ? anomalyIdx : null;
+  const visibleIndices = onlyAnomalies ? anomalyIdx
+    : onlyBoundaryErrors ? boundaryIdx : null;
 
   // 일괄 적용은 곧바로 바꾸지 않는다 — 무엇이 어떻게 바뀌는지 before→after로
   // 먼저 보여주고, 체크한 것만 적용한다. 적용 후에도 한 번은 되돌릴 수 있다.
@@ -359,6 +605,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setFixChecked(new Set());
     setUndoSnapshot(null);
     setOnlyAnomalies(false);
+    setOnlyBoundaryErrors(false);
     setSelectedSeg(null);
   }, [mode]);
 
@@ -691,17 +938,46 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
           {/* 구간 목록 탭 — 오독 의심 행만 모아 일괄 교정할 수 있게 한다. */}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <button type="button"
-              style={onlyAnomalies ? consoleStyles.mutedAction : consoleStyles.action}
-              onClick={() => { setOnlyAnomalies(false); setSelectedSeg(null); }}>
+              style={(onlyAnomalies || onlyBoundaryErrors)
+                ? consoleStyles.mutedAction : consoleStyles.action}
+              onClick={() => {
+                setOnlyAnomalies(false); setOnlyBoundaryErrors(false);
+                setSelectedSeg(null);
+              }}>
               전체 ({segments.length})
             </button>
             <button type="button"
               style={onlyAnomalies ? consoleStyles.action : consoleStyles.mutedAction}
               disabled={anomalies.length === 0}
-              onClick={() => { setOnlyAnomalies(true); setSelectedSeg(null); }}>
+              onClick={() => {
+                setOnlyAnomalies(true); setOnlyBoundaryErrors(false);
+                setSelectedSeg(null);
+              }}>
               {anomalies.length > 0
                 ? `⚠ 확인 필요 (${anomalies.length})` : "확인 필요 없음"}
             </button>
+            {/* 경계 오류(혼입) — 씬 모드 전용. 머리/꼬리 프레임에 이웃 슬레이트가
+                잡힌 구간만 모아 본다(runAll 마지막 단계가 채운다). */}
+            {mode === "scene" ? (
+              <button type="button"
+                style={onlyBoundaryErrors ? consoleStyles.action : consoleStyles.mutedAction}
+                disabled={boundaryCount === 0}
+                onClick={() => {
+                  setOnlyBoundaryErrors(true); setOnlyAnomalies(false);
+                  setSelectedSeg(null);
+                }}>
+                {boundaryCount > 0
+                  ? `⚠ 경계 오류 (${boundaryCount})` : "경계 오류 없음"}
+              </button>
+            ) : null}
+            {/* 고친 뒤 재검증 — 현재 세그먼트 그대로 경계만 다시 OCR 검사(세그먼트
+                재계산 없음). 편집한 씬은 즉시 필터에서 빠지고, 이 버튼으로 전체를
+                다시 확인할 수 있다(미저장 편집은 자동 저장 후 검사). */}
+            {mode === "scene" && (data?.scanned ?? false) ? (
+              <button type="button" style={consoleStyles.mutedAction}
+                disabled={busy}
+                onClick={() => void recheckBoundaries()}>🔄 경계 다시 검사</button>
+            ) : null}
             {onlyAnomalies && anomalies.some((a) => a.suggestion && a.confident) ? (
               <button type="button" style={consoleStyles.mutedAction}
                 onClick={openFixPreview}>
@@ -777,6 +1053,13 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
               일괄 적용에서 빠집니다 — 썸네일을 눌러 실제 프레임을 확인하세요.
             </p>
           ) : null}
+          {onlyBoundaryErrors ? (
+            <p style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>
+              경계(머리·꼬리) 프레임에 이웃 씬의 슬레이트가 잡힌 구간입니다 —
+              익스포트 시 앞뒤 씬이 한두 프레임 섞일 수 있습니다. 썸네일을 눌러 실제
+              경계 프레임을 확인하고, 필요하면 병합하거나 경계를 조정하세요.
+            </p>
+          ) : null}
           <SceneFilmstrip jobId={jobId} segments={segments}
             thumbCount={thumbCount}
             intervalMs={thumbIntervalMs}
@@ -786,7 +1069,19 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
             selectedIndex={selectedSeg} highlight={highlight}
             visibleIndices={visibleIndices}
             suggestions={suggestionOf}
-            onSelectSegment={setSelectedSeg} onThumbClick={setPreviewMs} />
+            videoFps={data.video_fps ?? undefined}
+            onSelectSegment={setSelectedSeg}
+            onClearSelection={() => setSelectedSeg(null)}
+            onThumbClick={(seekMs, seg, segIndex, side) => {
+              if (!seg || segIndex == null) { setPreview({ seekMs }); return; }
+              setPreview(buildSegPreview(seg, segIndex, seekMs, side ?? "head"));
+            }} />
+          {/* 저장·익스포트를 하단에 고정 — 400+ 리스트를 끝까지 스크롤하지 않아도
+              항상 접근 가능하게. */}
+          <div style={{ position: "sticky", bottom: 0, zIndex: 5,
+                        background: "var(--ys-bg-app)", marginTop: 4,
+                        paddingTop: 10, paddingBottom: 4,
+                        borderTop: "1px solid rgba(255,255,255,0.08)" }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <button type="button" style={consoleStyles.mutedAction}
               disabled={busy || !dirty}
@@ -820,28 +1115,122 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
               </p>
             </div>
           ) : null}
+          </div>
         </>
       )}
 
-      {/* 썸네일 클릭 팝업 — 작은 썸네일 대신 실제 영상을 그 시각으로 시킹해 크게
-          보여준다(슬레이트를 읽을 수 있게). 배경/닫기 클릭 시 닫힘. */}
-      {previewMs != null ? (
-        <div onClick={() => setPreviewMs(null)}
-          style={{ position: "fixed", inset: 0, zIndex: 1000,
-                   background: "rgba(0,0,0,0.8)", display: "flex",
+      {/* 썸네일 클릭 팝업 — 실제 영상을 그 시각으로 시킹해 크게 보여준다. 구간에서
+          열면(머리·꼬리 클릭) 재생을 그 구간 [start,end)로 묶어, 소스 전체가 아니라
+          그 컷만 재생·반복하며 분할 경계를 확인할 수 있다. 배경/닫기 클릭 시 닫힘. */}
+      {preview != null ? (
+        <div onClick={() => setPreview(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex",
                    alignItems: "center", justifyContent: "center", padding: 24 }}>
+          {/* 어두운 배경 틴트는 영상의 '조상'이 아니라 '형제'로 둔다 — 조상 div에
+              반투명 배경을 주면 WebKit이 하드웨어 합성한 <video>를 그 틴트 아래로
+              합성해 영상이 어둡게 보인다(실기: 네이티브 플레이어보다 어두움). */}
+          <div style={{ position: "absolute", inset: 0,
+                        background: "rgba(0,0,0,0.8)" }} />
           <div onClick={(e) => e.stopPropagation()}
-            style={{ position: "relative", maxWidth: "90vw", maxHeight: "90vh" }}>
-            <video
-              src={videoMediaUrl(jobId)} controls autoPlay={false}
-              onLoadedMetadata={(e) => { e.currentTarget.currentTime = previewMs / 1000; }}
-              style={{ maxWidth: "90vw", maxHeight: "82vh", borderRadius: 8,
-                       background: "#000" }} />
-            <div style={{ display: "flex", justifyContent: "space-between",
-                          alignItems: "center", marginTop: 6, color: "#fff" }}>
-              <span style={{ fontSize: 13, opacity: 0.85 }}>이 지점: {formatMs(previewMs)}</span>
-              <button type="button" style={consoleStyles.mutedAction}
-                onClick={() => setPreviewMs(null)}>닫기</button>
+            style={{ position: "relative", zIndex: 1,
+                     maxWidth: "90vw", maxHeight: "90vh" }}>
+            {/* 네이티브 controls는 마우스 오버 시 영상 위에 어두운 스크림을 덧씌워
+                검수용 밝기 비교를 방해한다 — 끄고 영상 클릭으로 재생/일시정지한다. */}
+            <video ref={previewVideoRef}
+              src={videoMediaUrl(jobId)} autoPlay={false}
+              onLoadedMetadata={(e) => { e.currentTarget.currentTime = preview.seekMs / 1000; }}
+              onPlay={startSegmentGuard}
+              onClick={() => {
+                const v = previewVideoRef.current;
+                if (!v) return;
+                if (v.paused) void v.play(); else v.pause();
+              }}
+              style={{ maxWidth: "90vw", maxHeight: "78vh", borderRadius: 8,
+                       cursor: "pointer" }} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 6,
+                          marginTop: 6, color: "#fff" }}>
+              <div style={{ display: "flex", justifyContent: "space-between",
+                            alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 13, opacity: 0.85 }}>
+                  {preview.label ? `${preview.label} · ` : ""}
+                  {preview.startMs != null && preview.endMs != null
+                    ? `${formatMs(preview.startMs)}–${formatMs(preview.endMs)}`
+                    : `이 지점: ${formatMs(preview.seekMs)}`}
+                  {preview.startMs != null && preview.endMs != null ? (
+                    <span style={{ opacity: 0.7, marginLeft: 6 }}>
+                      · {Math.max(1, Math.round((preview.endMs - preview.startMs)
+                          / (1000 / (preview.fps || NTSC_FPS))))}프레임
+                    </span>
+                  ) : null}
+                  <span style={{ opacity: 0.55, marginLeft: 8 }}>· 영상 클릭: 재생/일시정지</span>
+                </span>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {preview.playStartMs != null ? (
+                    <button type="button" style={consoleStyles.action}
+                      onClick={() => {
+                        const v = previewVideoRef.current;
+                        if (v && preview.playStartMs != null) {
+                          v.currentTime = preview.playStartMs / 1000;
+                          void v.play();
+                        }
+                      }}>▶ 구간 재생</button>
+                  ) : null}
+                  {preview.playStartMs != null ? (
+                    <button type="button" style={consoleStyles.mutedAction}
+                      onClick={() => seekPreview(preview.playStartMs)}>머리로</button>
+                  ) : null}
+                  {preview.lastFrameMs != null ? (
+                    <button type="button" style={consoleStyles.mutedAction}
+                      onClick={() => seekPreview(preview.lastFrameMs)}>꼬리로</button>
+                  ) : null}
+                  {preview.startMs != null ? (
+                    <button type="button" style={consoleStyles.mutedAction}
+                      onClick={() => setLoopSeg((l) => !l)}>
+                      {loopSeg ? "🔁 반복 켜짐" : "반복 꺼짐"}
+                    </button>
+                  ) : null}
+                  <button type="button" style={consoleStyles.mutedAction}
+                    onClick={() => setPreview(null)}>닫기</button>
+                </div>
+              </div>
+              {/* 경계 프레임 편집 — 머리/꼬리에 붙은 프레임을 이웃 씬으로 넘기거나
+                  이웃에서 가져온다(스캔이 못 잡는 디졸브/와이프 수동 교정). 누를 때마다
+                  영상이 그 경계 프레임으로 이동하니 눈으로 확인하며 맞춘다. 편집 후
+                  "닫기"→"수정사항 저장" 해야 익스포트에 반영된다. */}
+              {preview.segIndex != null ? (
+                <div style={{ display: "flex", gap: 6, alignItems: "center",
+                              flexWrap: "wrap", fontSize: 12 }}>
+                  <span style={{ opacity: 0.7 }}>경계 교정</span>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 4,
+                                  opacity: 0.85 }}>
+                    <input type="number" min={1} max={999} value={nudgeFrames}
+                      onChange={(e) => setNudgeFrames(
+                        Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                      style={{ width: 46, fontSize: 12, padding: "3px 5px", borderRadius: 4,
+                               textAlign: "right", background: "rgba(255,255,255,0.10)",
+                               color: "#fff", border: "1px solid rgba(255,255,255,0.25)" }} />
+                    프레임씩:
+                  </label>
+                  <button type="button" style={editBtn} disabled={preview.segIndex === 0}
+                    onClick={() => nudgeBoundary("head", nudgeFrames)}>
+                    머리 {nudgeFrames}f → 이전 씬</button>
+                  <button type="button" style={editBtn} disabled={preview.segIndex === 0}
+                    onClick={() => nudgeBoundary("head", -nudgeFrames)}>
+                    이전 씬 → 머리 {nudgeFrames}f</button>
+                  <span style={{ opacity: 0.3, padding: "0 2px" }}>|</span>
+                  <button type="button" style={editBtn}
+                    disabled={preview.segIndex >= segments.length - 1}
+                    onClick={() => nudgeBoundary("tail", -nudgeFrames)}>
+                    꼬리 {nudgeFrames}f → 다음 씬</button>
+                  <button type="button" style={editBtn}
+                    disabled={preview.segIndex >= segments.length - 1}
+                    onClick={() => nudgeBoundary("tail", nudgeFrames)}>
+                    다음 씬 → 꼬리 {nudgeFrames}f</button>
+                  {dirty ? (
+                    <span style={{ color: "#e2b340", marginLeft: 4 }}>· 저장 필요</span>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
