@@ -279,19 +279,26 @@ async def create_upload_job(
     return {"job_id": str(external_id)}
 
 
-def _job_dir_size(external_id: UUID | str) -> int:
-    """작업 폴더의 총 바이트. pathlib만 사용 — Windows/POSIX 공통. 스캔 중
-    사라진 파일(동시 프루닝)은 무시한다."""
+def _tree_size(root: Path) -> int:
+    """디렉토리 트리의 총 바이트(동기 blocking I/O). 파일 수만 개(씬 스캔이 만드는
+    수백 썸네일 등) + AV(실기 Kaspersky)가 매 stat을 가로채는 환경에선 수 초가
+    걸릴 수 있다 — async 핸들러에서 직접 돌리면 이벤트 루프를 막아, 폴링 중인 다른
+    요청들이 DB 커넥션을 쥔 채 정지→풀 고갈(QueuePool timeout)→앱 얼음을 유발한다.
+    반드시 asyncio.to_thread로 감싸 호출할 것. 스캔 중 사라진 파일(동시 프루닝)은 무시."""
     total = 0
-    d = job_dir(external_id)
-    if d.exists():
-        for path in d.rglob("*"):
+    if root.exists():
+        for path in root.rglob("*"):
             if path.is_file():
                 try:
                     total += path.stat().st_size
                 except OSError:
                     pass
     return total
+
+
+def _job_dir_size(external_id: UUID | str) -> int:
+    """작업 폴더의 총 바이트. pathlib만 사용 — Windows/POSIX 공통."""
+    return _tree_size(job_dir(external_id))
 
 
 @router.get("")
@@ -312,7 +319,9 @@ async def list_video_jobs(
     for job in jobs:
         out = _job_out(job)
         if with_sizes:
-            out["size_bytes"] = _job_dir_size(job.external_id)
+            # 디스크 트리 walk는 blocking — 이벤트 루프를 막지 않게 스레드로 돌린다.
+            out["size_bytes"] = await asyncio.to_thread(
+                _job_dir_size, job.external_id)
         items.append(out)
     return {"items": items}
 
@@ -361,15 +370,10 @@ async def get_storage_usage(
     db: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
     # 반드시 /{external_id} 동적 라우트보다 먼저 선언 — translate-engines와 동일 이유.
-    root = video_jobs_root()
-    total = 0
-    if root.exists():
-        for path in root.rglob("*"):
-            if path.is_file():
-                try:
-                    total += path.stat().st_size
-                except OSError:
-                    pass  # 스캔 도중 사라진 파일은 무시
+    # 콘솔이 3초마다 폴링하는 핫패스 — 디스크 트리 walk(_tree_size)를 async 핸들러에서
+    # 직접 돌리면 이벤트 루프를 막아 다른 요청이 DB 커넥션을 쥔 채 정지→풀 고갈→앱
+    # 얼음(실기 로그: QueuePool timeout 30). 반드시 스레드로 오프로드한다.
+    total = await asyncio.to_thread(_tree_size, video_jobs_root())
     count = (await db.execute(
         select(func.count()).select_from(VideoJob))).scalar_one()
     return {"total_bytes": total, "job_count": count, "keep": RETENTION_KEEP}

@@ -1432,6 +1432,10 @@ async def run_scene_export(external_id: UUID, mode: str,
         save_export_status(external_id, {"exporting": True, "done": 0,
                                          "total": total, "out_dir": str(dest),
                                          "error": None})
+        # 어디에 쓰는지 로그로 남긴다 — "파일이 안 생긴다" 신고 시 실제 대상 폴더를
+        # 확인하는 결정적 단서(사용자가 다른 폴더를 보고 있는지, 서버가 못 쓰는지).
+        logger.info("scene export %s → %s (%d개 세그먼트, fps=%s)",
+                    external_id, dest, total, fps)
 
         def _work() -> list[str]:
             written: list[str] = []
@@ -1447,10 +1451,19 @@ async def run_scene_export(external_id: UUID, mode: str,
                 cut_segment(ffmpeg, burned, out_path,
                             seg["start_ms"], seg["end_ms"],
                             proc_key=str(external_id), fps=fps)
+                # 컷 직후 실제 파일 생성을 검증 — ffmpeg가 코드 0으로 끝났는데도
+                # 출력이 없거나 0바이트면(권한·경로·디스크·AV 격리 등) 조용히 넘어가면
+                # "카운트만 오르고 파일이 없다"가 된다. 실패로 표면화해 원인을 남긴다.
+                if not out_path.exists() or out_path.stat().st_size == 0:
+                    raise RuntimeError(
+                        f"익스포트 파일이 생성되지 않았습니다: {out_path} "
+                        "— 저장 폴더의 쓰기 권한/경로를 확인하세요.")
                 written.append(str(out_path))
                 save_export_status(external_id, {"exporting": True, "done": i + 1,
                                                  "total": total,
                                                  "out_dir": str(dest), "error": None})
+            logger.info("scene export %s 완료: %d개 파일 → %s",
+                        external_id, len(written), dest)
             return written
 
         written = await asyncio.to_thread(_work)

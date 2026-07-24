@@ -29,6 +29,27 @@ async def _install_model(name: str = "small"):
     (d / "model.bin").write_bytes(b"x")
 
 
+async def test_storage_usage_offloads_blocking_walk(client, monkeypatch):
+    """디스크 트리 walk가 이벤트 루프를 막지 않아야 한다 — blocking _tree_size를
+    asyncio.to_thread로 오프로드하므로 워커 스레드(≠루프 스레드)에서 실행된다.
+    회귀(async 핸들러에서 직접 rglob)면 루프가 막혀 폴링 요청들이 DB 커넥션을 쥔 채
+    정지→QueuePool 고갈→앱 얼음(실기 Windows 로그의 근본원인)."""
+    import threading
+    main_ident = threading.get_ident()
+    captured: dict = {}
+
+    def _spy_tree(_root):
+        captured["ident"] = threading.get_ident()
+        return 4242
+
+    monkeypatch.setattr(api_vj, "_tree_size", _spy_tree)
+    resp = await client.get("/api/v1/video-jobs/storage")
+    assert resp.status_code == 200
+    assert resp.json()["total_bytes"] == 4242
+    # 루프 스레드가 아니라 워커 스레드에서 walk가 돌았는지 — 오프로드 증명.
+    assert captured["ident"] != main_ident
+
+
 async def test_create_youtube_job(client, admin_user, db_session):
     await _install_model()
     resp = await client.post("/api/v1/video-jobs",
