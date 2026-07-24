@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameSeekMs, mergeAdjacentSameLabel, mergeSegment,
-  NTSC_FPS, previewLabel, renameSegment, segmentTailMs, segmentThumbRange, shiftBoundaryMs, tokenizeSlate,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment,
+  NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, tokenizeSlate,
   type LabelFix,
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
@@ -385,17 +385,40 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       ? { ...prev, boundary_issues: prev.boundary_issues.filter((b) => !drop.has(b.label)) }
       : prev));
   };
+  // 병합 되돌리기 스택 — 개별 병합(mergeSeg)마다 직전 상태를 쌓아 여러 단계 물릴 수
+  // 있게 한다. 각 항목=병합 전 세그먼트·경계플래그 스냅샷 + 병합 결과 '생존 구간'
+  // 인덱스(되돌리기 버튼을 그 줄에만 렌더). 모드 전환·저장·일괄교정 시 비운다(구간
+  // 목록이 재편돼 인덱스가 무의미). undoSnapshot(일괄교정 한 단계)과는 별개.
+  const [mergeUndo, setMergeUndo] = useState<
+    { segs: SceneSegment[]; issues: ScenesData["boundary_issues"]; survivor: number }[]
+  >([]);
   const mergeSeg = (i: number, into: "prev" | "next") => {
     // 병합한 두 씬의 경계 오류 플래그를 뺀다(사라진 라벨 + 살아남은 라벨 둘 다).
     const gone = segments[i]?.label;
     const survivorLabel = into === "prev" ? segments[i - 1]?.label : segments[i + 1]?.label;
+    // 병합하면 배열이 줄어 기존 선택 인덱스가 다른 구간을 가리킨다 — 살아남은 구간을
+    // 선택해 필름스트립 하이라이트와 경계 썸네일이 병합 결과(넓어진 범위, 당겨진 시작
+    // 시각)를 곧바로 보여주게 한다.
+    const survivor = into === "prev" ? Math.max(0, i - 1) : i;
+    // 되돌리기용: 병합 전 세그먼트·경계플래그와 생존 구간을 스택에 쌓는다(여러 단계).
+    setMergeUndo((prev) => [
+      ...prev, { segs: segments, issues: data?.boundary_issues, survivor }]);
     setSegments(mergeSegment(segments, i, into));
     clearBoundaryFlags([gone, survivorLabel]);
-    // 병합하면 배열이 줄어 기존 선택 인덱스가 다른 구간을 가리킨다 — 살아남은
-    // 구간을 선택해 필름스트립 하이라이트와 경계 썸네일이 병합 결과(넓어진 범위,
-    // 당겨진 시작 시각)를 곧바로 보여주게 한다.
-    const survivor = into === "prev" ? Math.max(0, i - 1) : i;
     setSelectedSeg(survivor);
+  };
+  // 개별 병합 되돌리기 — 스택 top의 병합 전 상태(세그먼트·경계플래그)로 복원하고 그
+  // 병합의 생존 구간을 다시 선택한다. 여러 번 누르면 한 단계씩 거슬러 올라간다. 아직
+  // 저장 전이므로 dirty는 유지(복원본도 서버 저장본과는 다르다).
+  const undoMerge = () => {
+    if (mergeUndo.length === 0 || !data) return;
+    const top = mergeUndo[mergeUndo.length - 1]!;
+    setData(mode === "sequence"
+      ? { ...data, segments_sequence: top.segs, boundary_issues: top.issues }
+      : { ...data, segments_scene: top.segs, boundary_issues: top.issues });
+    setDirtyModes((prev) => new Set(prev).add(mode));
+    setSelectedSeg(top.survivor);
+    setMergeUndo((prev) => prev.slice(0, -1));
   };
   const renameSeg = (i: number, label: string) => {
     clearBoundaryFlags([segments[i]?.label]);  // 이름 바꾼 씬은 플래그 해제(라벨도 바뀜)
@@ -418,6 +441,12 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   // 경계 교정 시 한 번에 옮길 프레임 수 — 디졸브/와이프는 9프레임 이상 어긋나기도
   // 해서 한 클릭에 N프레임 이동. 미세조정은 1로.
   const [nudgeFrames, setNudgeFrames] = useState(1);
+  // 팝업 플레이어 컨트롤 — 현재 재생 위치(ms)·재생 여부·영상 길이(ms). 프레임
+  // 카운터(1부터)·스크러버·재생/정지 버튼이 쓴다. 프로그램적 시킹은 <video onSeeked>,
+  // 재생 중 갱신은 onTimeUpdate(~4Hz)가 previewMs를 맞춘다.
+  const [previewMs, setPreviewMs] = useState(0);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [previewDur, setPreviewDur] = useState(0);
   // 재생 감시가 최신 preview/loop을 읽도록 ref로 미러링(재생 중 갱신 반영).
   const previewRef = useRef(preview);
   const loopRef = useRef(loopSeg);
@@ -425,6 +454,9 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const rvfcRef = useRef<number | null>(null);
   useEffect(() => { previewRef.current = preview; }, [preview]);
   useEffect(() => { loopRef.current = loopSeg; }, [loopSeg]);
+  // 팝업이 열리거나 경계 편집으로 preview가 바뀌면 프레임 카운터/스크러버를 그 시각으로
+  // 초기화한다(직후 onSeeked가 실제 currentTime으로 정밀 보정).
+  useEffect(() => { if (preview) setPreviewMs(preview.seekMs); }, [preview]);
   const stopGuards = () => {
     const v = previewVideoRef.current;
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
@@ -554,6 +586,43 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const v = previewVideoRef.current;
     if (v && ms != null) { v.pause(); v.currentTime = ms / 1000; }
   };
+  // 한 프레임씩 이동 — 정지 후 그 프레임 중앙으로 시킹한다(오류 프레임을 눈으로
+  // 한 칸씩 찾는다). 소스 fps로 프레임 인덱스를 계산해 프레임 정확. 0 미만은 클램프.
+  const stepPreviewFrame = (delta: number) => {
+    const v = previewVideoRef.current;
+    if (!v) return;
+    const p = previewRef.current;
+    const fps = p?.fps || NTSC_FPS;
+    const frameMs = 1000 / fps;
+    const cur = Math.floor((v.currentTime * 1000) / frameMs + 1e-6);
+    let target = Math.max(0, cur + delta);
+    // 구간 프리뷰면 이 씬의 첫/마지막 프레임을 벗어나지 못하게 클램프 — 스텝이든
+    // 스크러버든 해당 씬 밖(이전/다음 씬)으로 넘어가면 안 된다(익스포트 컷과 동일
+    // 프레임 수식: f0=ceil(start/frameMs), N=round((end-start)·fps/1000)).
+    if (p?.startMs != null && p.endMs != null) {
+      const f0 = Math.ceil(p.startMs / frameMs - 1e-6);
+      const n = Math.max(1, Math.round((p.endMs - p.startMs) / frameMs));
+      target = Math.min(f0 + n - 1, Math.max(f0, target));
+    }
+    v.pause();
+    v.currentTime = ((target + 0.5) * frameMs) / 1000;  // 그 프레임 표시구간 중앙
+  };
+  const togglePreviewPlay = () => {
+    const v = previewVideoRef.current;
+    if (!v) return;
+    if (!v.paused) { v.pause(); return; }
+    // 재생 시작: 구간 재생이 꼬리 프레임에서 멈춘 상태(=한 번 완료)면 다시 누를 때
+    // 머리부터 재생한다 — 안 그러면 꼬리에서 play()하자마자 구간 감시가 "이미 꼬리
+    // 도달"로 즉시 멈춰 재생이 안 되는 것처럼 보인다. 중간 정지면 그 자리서 이어재생.
+    const p = previewRef.current;
+    if (p?.playStartMs != null && p.lastFrameMs != null) {
+      const halfFrame = p.fps ? 0.5 / p.fps : 0.02;
+      if (v.currentTime >= p.lastFrameMs / 1000 - halfFrame) {
+        v.currentTime = p.playStartMs / 1000;
+      }
+    }
+    void v.play();
+  };
   const editBtn: CSSProperties = {
     fontSize: 12, padding: "4px 9px", borderRadius: 5, whiteSpace: "nowrap",
     border: "1px solid rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.10)",
@@ -604,6 +673,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setPendingFixes(null);
     setFixChecked(new Set());
     setUndoSnapshot(null);
+    setMergeUndo([]);  // 모드가 바뀌면 병합 되돌리기 스택의 인덱스가 무의미
     setOnlyAnomalies(false);
     setOnlyBoundaryErrors(false);
     setSelectedSeg(null);
@@ -656,6 +726,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const applied = pendingFixes.filter((f) => fixChecked.has(f.index));
     if (applied.length === 0) { setPendingFixes(null); return; }
     setUndoSnapshot(segments);  // 되돌리기용 스냅샷
+    setMergeUndo([]);           // 일괄교정은 배열을 재편 — 개별 병합 스택 무효화
     // 교정으로 같아진 인접 라벨을 바로 병합한다 — 안 그러면 한 씬이 여러 조각으로
     // 남는다(오독이 씬 한가운데를 쪼갠 케이스).
     const fixed = applyFixes(segments, pendingFixes, fixChecked);
@@ -675,6 +746,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const n = segments.length - mergedSegs.length;
     if (n === 0) { setNotice("인접 중복이 없습니다."); return; }
     setUndoSnapshot(segments);
+    setMergeUndo([]);
     setSegments(mergedSegs);
     setNotice(`인접 중복 ${n}건을 병합했습니다 — 저장 전입니다.`);
   };
@@ -690,6 +762,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const n = segments.length - out.length;
     if (n === 0) { setNotice("정리할 오독 갈라짐이 없습니다."); return; }
     setUndoSnapshot(segments);
+    setMergeUndo([]);
     setSegments(out);
     setNotice(`오독으로 갈라진 ${n}건을 흡수했습니다 — 저장 전입니다. 되돌리기 가능.`);
   };
@@ -698,6 +771,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     if (!undoSnapshot) return;
     setSegments(undoSnapshot);
     setUndoSnapshot(null);
+    setMergeUndo([]);
     setNotice("되돌렸습니다.");
   };
 
@@ -709,6 +783,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       setDirtyModes((prev) => {
         const next = new Set(prev); next.delete(mode); return next;
       });
+      setMergeUndo([]);  // 저장하면 병합 되돌리기 히스토리 초기화(스냅샷은 저장 전 상태)
       const otherDirty = dirtyModes.has(mode === "scene" ? "sequence" : "scene");
       setNotice(otherDirty
         ? `${mode === "scene" ? "씬" : "시퀀스"} 저장 완료 — `
@@ -1066,6 +1141,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
             totalMs={data.total_ms
               ?? ((data.frames.at(-1)?.t_ms ?? 0) + intervalMs)}
             onMerge={mergeSeg} onRename={renameSeg}
+            undoIndex={mergeUndo.length ? mergeUndo[mergeUndo.length - 1]!.survivor : null}
+            onUndoMerge={undoMerge}
             selectedIndex={selectedSeg} highlight={highlight}
             visibleIndices={visibleIndices}
             suggestions={suggestionOf}
@@ -1138,17 +1215,59 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                 검수용 밝기 비교를 방해한다 — 끄고 영상 클릭으로 재생/일시정지한다. */}
             <video ref={previewVideoRef}
               src={videoMediaUrl(jobId)} autoPlay={false}
-              onLoadedMetadata={(e) => { e.currentTarget.currentTime = preview.seekMs / 1000; }}
-              onPlay={startSegmentGuard}
-              onClick={() => {
-                const v = previewVideoRef.current;
-                if (!v) return;
-                if (v.paused) void v.play(); else v.pause();
+              onLoadedMetadata={(e) => {
+                setPreviewDur(e.currentTarget.duration * 1000);
+                e.currentTarget.currentTime = preview.seekMs / 1000;
               }}
+              onPlay={() => { setPreviewPlaying(true); startSegmentGuard(); }}
+              onPause={() => setPreviewPlaying(false)}
+              onTimeUpdate={(e) => setPreviewMs(e.currentTarget.currentTime * 1000)}
+              onSeeked={(e) => setPreviewMs(e.currentTarget.currentTime * 1000)}
+              onClick={togglePreviewPlay}
               style={{ maxWidth: "90vw", maxHeight: "78vh", borderRadius: 8,
                        cursor: "pointer" }} />
             <div style={{ display: "flex", flexDirection: "column", gap: 6,
                           marginTop: 6, color: "#fff" }}>
+              {/* 재생 컨트롤러 — 네이티브 controls는 영상 위에 어두운 스크림을 씌워
+                  검수용 밝기 비교를 방해하므로 끄고 직접 만든다. 프레임 스텝(◀/▶)으로
+                  오류 프레임을 한 칸씩 찾고, 프레임 카운터(1부터)로 몇 번째 프레임인지
+                  읽어 경계 교정에 그대로 입력한다. 스크러버로 임의 위치로 이동. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8,
+                            flexWrap: "wrap" }}>
+                <button type="button" style={consoleStyles.mutedAction}
+                  title="한 프레임 뒤로" onClick={() => stepPreviewFrame(-1)}>◀ 이전</button>
+                <button type="button" style={consoleStyles.action}
+                  onClick={togglePreviewPlay}>{previewPlaying ? "⏸ 정지" : "▶ 재생"}</button>
+                <button type="button" style={consoleStyles.mutedAction}
+                  title="한 프레임 앞으로" onClick={() => stepPreviewFrame(1)}>다음 ▶</button>
+                {(() => {
+                  const seg = preview.startMs != null && preview.endMs != null;
+                  // 구간이면 이 씬의 '첫 프레임 중앙~마지막 프레임 중앙'으로 범위를
+                  // 잡는다 — 원본 start_ms/end_ms는 경계 시각이라 그리로 시킹하면
+                  // <video>가 이웃 씬 프레임(이전 씬 마지막/다음 씬 첫)을 보여준다.
+                  // playStartMs/lastFrameMs(=frameSeekMs)는 이 씬 안 프레임에 떨어져,
+                  // 왼쪽 끝까지 끌어도 씬을 벗어나지 않는다("머리로/꼬리로"와 동일 값).
+                  const min = seg ? (preview.playStartMs ?? preview.startMs!) : 0;
+                  const max = seg ? (preview.lastFrameMs ?? preview.endMs!)
+                                  : (previewDur || previewMs + 1);
+                  return (
+                    <input type="range" min={min} max={max} step={1}
+                      value={Math.min(max, Math.max(min, previewMs))}
+                      onChange={(e) => seekPreview(Number(e.target.value))}
+                      style={{ flex: 1, minWidth: 140, accentColor: "#6db6ff" }} />
+                  );
+                })()}
+                <span style={{ fontSize: 12, opacity: 0.9, minWidth: 92,
+                               textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                  {preview.startMs != null && preview.endMs != null
+                    ? (() => {
+                        const { k, n } = segFrameNumber(previewMs, preview.startMs,
+                          preview.endMs, preview.fps);
+                        return `프레임 ${k} / ${n}`;
+                      })()
+                    : `프레임 ${frameNumberAt(previewMs, preview.fps)}`}
+                </span>
+              </div>
               <div style={{ display: "flex", justifyContent: "space-between",
                             alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 13, opacity: 0.85 }}>

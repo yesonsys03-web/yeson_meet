@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -335,5 +335,37 @@ describe("shiftBoundaryMs", () => {
   it("clamps at zero and defaults fps when unknown", () => {
     expect(shiftBoundaryMs(10, NTSC_FPS, -100)).toBe(0);
     expect(shiftBoundaryMs(28924, 0, 0)).toBe(shiftBoundaryMs(28924, NTSC_FPS, 0));
+  });
+});
+
+describe("frameNumberAt", () => {
+  it("counts from 1 — the first frame is frame 1, not 0", () => {
+    expect(frameNumberAt(0, 24)).toBe(1);
+    expect(frameNumberAt(41, 24)).toBe(1);        // 0:00.041 < 1프레임(41.67ms) → 아직 1
+    expect(frameNumberAt(1000 / 24, 24)).toBe(2); // 정확히 1프레임 경계 → 2프레임 시작
+  });
+  it("defaults to NTSC when fps unknown/zero", () => {
+    expect(frameNumberAt(5000, 0)).toBe(frameNumberAt(5000, NTSC_FPS));
+    expect(frameNumberAt(5000)).toBe(frameNumberAt(5000, NTSC_FPS));
+  });
+});
+
+describe("segFrameNumber", () => {
+  // 실기 _0070 클립(23.976fps): 익스포트 f0=694, N=190프레임.
+  const START = 28924, END = 36849;
+  it("head frame is 1, tail frame is N — matches exported clip frames", () => {
+    const frameMs = 1000 / NTSC_FPS;
+    const headMid = (694 + 0.5) * frameMs;   // frameSeekMs가 집는 첫 프레임 중앙
+    const tailMid = (883 + 0.5) * frameMs;   // 마지막(190번째) 프레임 중앙
+    expect(segFrameNumber(headMid, START, END, NTSC_FPS)).toEqual({ k: 1, n: 190 });
+    expect(segFrameNumber(tailMid, START, END, NTSC_FPS)).toEqual({ k: 190, n: 190 });
+  });
+  it("clamps out-of-range times into [1, n]", () => {
+    expect(segFrameNumber(0, START, END, NTSC_FPS).k).toBe(1);
+    expect(segFrameNumber(END + 5000, START, END, NTSC_FPS).k).toBe(190);
+  });
+  it("defaults to NTSC when fps unknown/zero", () => {
+    expect(segFrameNumber(30000, START, END, 0))
+      .toEqual(segFrameNumber(30000, START, END, NTSC_FPS));
   });
 });

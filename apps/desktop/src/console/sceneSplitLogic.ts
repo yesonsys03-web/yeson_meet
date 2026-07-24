@@ -329,6 +329,30 @@ export function shiftBoundaryMs(boundaryMs: number, fps: number, deltaFrames: nu
   return Math.max(0, Math.round((k + deltaFrames - 0.5) * frameMs));
 }
 
+// 특정 시각의 '프레임 번호'(1부터). HTML5 <video>는 currentTime t를 포함하는
+// 프레임(floor(t·fps))을 보여주므로 그 인덱스에 +1 한 값이 사람이 세는 프레임
+// 번호다(첫 프레임 = 1). 팝업 프레임 카운터·오류 프레임 입력 기준.
+export function frameNumberAt(ms: number, fps = NTSC_FPS): number {
+  const frameMs = 1000 / (fps > 0 ? fps : NTSC_FPS);
+  return Math.max(1, Math.floor(ms / frameMs + 1e-6) + 1);
+}
+
+// 익스포트 클립 안에서의 프레임 번호(1부터)와 총 프레임 수. k는 이 구간의 몇 번째
+// 프레임인지(머리=1 … 꼬리=n), n은 익스포트가 뽑는 프레임 수(segmentTailMs와 동일
+// 수식: f0=ceil(start/frameMs), n=round((end-start)·fps/1000)). 오류난 프레임을
+// '머리에서 k번째'로 읽으면 그대로 경계 교정 프레임 수가 된다. 범위를 벗어난 시각은
+// [1,n]으로 클램프.
+export function segFrameNumber(
+  ms: number, startMs: number, endMs: number, fps = NTSC_FPS,
+): { k: number; n: number } {
+  const frameMs = 1000 / (fps > 0 ? fps : NTSC_FPS);
+  const f0 = Math.ceil(startMs / frameMs - 1e-6);
+  const n = Math.max(1, Math.round((endMs - startMs) / frameMs));
+  const abs0 = Math.floor(ms / frameMs + 1e-6);
+  const k = Math.min(n, Math.max(1, abs0 - f0 + 1));
+  return { k, n };
+}
+
 // 구간 이름(=파일명) 수정.
 export function renameSegment(
   segs: SceneSegment[], i: number, label: string,

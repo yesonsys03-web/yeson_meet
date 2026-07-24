@@ -31,6 +31,11 @@ type Props = {
   visibleIndices?: number[] | null;
   // 인덱스 → 오독 교정 제안(있으면 라벨 옆에 원클릭 적용 버튼).
   suggestions?: Map<number, LabelAnomaly>;
+  // 병합 되돌리기 — undoIndex(방금 병합한 '생존 구간')와 같은 줄에만 되돌리기 버튼을
+  // 병합 버튼 오른쪽에 렌더한다(여러 단계 undo 스택의 top). null이면 되돌릴 병합이
+  // 없어 아무 줄에도 안 뜬다. 실수로 병합했을 때 그 자리에서 바로 물릴 수 있다.
+  undoIndex?: number | null;
+  onUndoMerge?: () => void;
 };
 
 // 다빈치 리졸브식 필름스트립: 썸네일을 시간축에 깔고 아래에 구간 목록을 얹는다.
@@ -40,7 +45,7 @@ type Props = {
 export function SceneFilmstrip(
   { jobId, segments, thumbCount, intervalMs, onMerge, onRename,
     selectedIndex, highlight, onSelectSegment, onClearSelection, videoFps,
-    onThumbClick, visibleIndices, suggestions }: Props,
+    onThumbClick, visibleIndices, suggestions, undoIndex, onUndoMerge }: Props,
 ) {
   const thumbs = Array.from({ length: thumbCount }, (_, i) => i);
   const editable = Boolean(onMerge || onRename);
@@ -256,6 +261,14 @@ export function SceneFilmstrip(
                   disabled={i === segments.length - 1}
                   style={miniBtn}
                   onClick={(e) => { e.stopPropagation(); onMerge(i, "next"); }}>병합▶</button>
+                {/* 되돌리기 — 방금 병합한 이 구간에만 뜬다. 여러 번 누르면 한
+                    단계씩 이전 병합까지 거슬러 올라간다(실수 복구용). */}
+                {onUndoMerge && undoIndex === i ? (
+                  <button type="button" title="방금 병합을 되돌립니다"
+                    style={{ ...miniBtn, color: "#6db6ff",
+                             borderColor: "rgba(109,182,255,0.5)" }}
+                    onClick={(e) => { e.stopPropagation(); onUndoMerge(); }}>↩되돌리기</button>
+                ) : null}
               </span>
             ) : null}
           </div>
