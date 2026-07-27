@@ -124,6 +124,29 @@ def test_pick_slate_line_ignores_bottom_watermark():
         "HH0307_090_0080_AC_v01"
 
 
+def test_pick_slate_line_accepts_space_read_separator():
+    """회귀(실기 FL102): OCR이 슬레이트의 '_'를 공백으로 읽는 쇼가 있다 —
+    12프레임 표본에서 '_'로 읽힌 적 0회, 공백 10회. 구분자로만 세면 1토큰이라
+    후보에서 탈락해 그 쇼 전체가 판독실패가 됐다(구역 미리읽기도 '판독 실패')."""
+    lines = [("FL102 I032", 0.89, 0.94)]
+    assert pick_slate_line(lines, ["_", "-", "/"], min_tokens=2, top_frac=1.0) \
+        == "FL102 I032"
+
+
+def test_pick_slate_line_space_leniency_requires_digit_fields():
+    """공백 관용은 '숫자를 품은 필드'로 갈라질 때만 — 공백이 필드 '안'에 있는
+    슬레이트("Seq 11B")나 타이틀카드("THE END")를 슬레이트로 오인하면 안 된다."""
+    assert pick_slate_line([("Seq 11B", 0.99, 0.05)], ["_", "-"], min_tokens=2) == ""
+    assert pick_slate_line([("THE END", 0.99, 0.05)], ["_", "-"], min_tokens=2) == ""
+
+
+def test_pick_slate_line_ranks_by_delimiter_tokens():
+    """공백 관용은 '후보 자격'에만 쓰고 순위는 구분자 토큰 수 그대로 —
+    공백으로 잘게 쪼개지는 텍스트가 진짜 슬레이트를 이기면 안 된다."""
+    lines = [("HH0307_020_0150", 0.90, 0.05), ("A1 B2 C3 D4", 0.99, 0.05)]
+    assert pick_slate_line(lines, ["_", "-"], min_tokens=2) == "HH0307_020_0150"
+
+
 def test_pick_slate_line_no_top_band_candidate_returns_empty():
     """상단 밴드에 읽힌 게 없으면 하단 텍스트로 폴백하지 않고 판독실패("") —
     "" 는 hold_keys가 직전 유효값으로 홀드하므로 안전하다."""
@@ -968,3 +991,45 @@ def test_read_slate_line_rescaled_recovers_native_fail(monkeypatch, tmp_path):
         == "HH0304_040_0210_AC_v01"
     # 축소 임시 파일은 남지 않는다.
     assert list(tmp_path.glob("*_rs*")) == []
+
+
+def test_read_slate_line_rescaled_tries_upscale(monkeypatch, tmp_path):
+    """확대 재판독 — 작은 크롭에서는 필드 구분자가 뭉개져 두 필드가 붙어 읽히고
+    (실기 FL102 720s 원본 'FL102J002'), 확대하면 갈라진다('FL102 J002').
+    축소(0.6×)로도 안 갈라지는 프레임을 확대가 받아낸다."""
+    from PIL import Image
+
+    from apps.server.domain.video_captions import slate_ocr
+    png = tmp_path / "s.png"
+    Image.new("RGB", (232, 62)).save(png)
+
+    def fake_engine(path):
+        with Image.open(path) as im:
+            text = "FL102 J002" if im.width >= 400 else "FL102J002"
+        return ([[[[5, 5], [200, 5], [200, 40], [5, 40]], text, 0.9]], 0.0)
+
+    monkeypatch.setattr(slate_ocr, "_get_engine", lambda: fake_engine)
+    assert slate_ocr.read_slate_line(png, ["_", "-"], top_frac=1.0) == ""
+    assert slate_ocr.read_slate_line_rescaled(png, ["_", "-"], top_frac=1.0) \
+        == "FL102 J002"
+    assert list(tmp_path.glob("*_rs*")) == []
+
+
+def test_read_slate_line_rescaled_skips_pointless_upscale(monkeypatch, tmp_path):
+    """검출 상한(960)을 넘겨 확대하면 검출기가 도로 줄여 결과는 같고 시간만 든다
+    — 큰 이미지는 확대 시도를 건너뛴다(수천 프레임 스캔의 낭비 방지)."""
+    from PIL import Image
+
+    from apps.server.domain.video_captions import slate_ocr
+    png = tmp_path / "big.png"
+    Image.new("RGB", (900, 200)).save(png)
+    widths = []
+
+    def fake_engine(path):
+        with Image.open(path) as im:
+            widths.append(im.width)
+        return None, 0.0
+
+    monkeypatch.setattr(slate_ocr, "_get_engine", lambda: fake_engine)
+    assert slate_ocr.read_slate_line_rescaled(png, ["_", "-"], top_frac=1.0) == ""
+    assert widths == [540]  # 0.6배만 — 1800px 확대는 시도하지 않는다

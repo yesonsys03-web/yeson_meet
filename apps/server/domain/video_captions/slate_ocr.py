@@ -59,6 +59,25 @@ def _get_engine():
 _TOP_BAND_FRAC = 0.35
 
 
+def _candidate_field_count(text: str, delimiters: list[str]) -> int:
+    """후보 자격 판정용 필드 수.
+
+    구분자로 센 토큰 수가 기본이지만, OCR이 필드 구분자를 아예 흘려 공백으로
+    읽는 쇼가 있다(실기 FL102: 12프레임 표본에서 '_'로 읽힌 적 0회, 공백 10회).
+    구분자로만 세면 1토큰이라 후보에서 탈락해 그 쇼 전체가 판독실패가 되므로
+    공백 분해도 인정한다 — 단 갈라진 필드가 '전부 숫자를 품을 때'만. 이 단서가
+    없으면 "Seq 11B"(공백이 필드 안에 있는 슬레이트)나 "THE END"(타이틀카드)
+    같은 텍스트가 슬레이트로 둔갑한다.
+    """
+    n = len(tokenize(text, delimiters))
+    if " " in delimiters:
+        return n
+    fields = tokenize(text, [*delimiters, " "])
+    if len(fields) > n and all(any(c.isdigit() for c in f) for f in fields):
+        return len(fields)
+    return n
+
+
 def pick_slate_line(
     lines: list[tuple[str, float, float]], delimiters: list[str],
     min_tokens: int, top_frac: float = _TOP_BAND_FRAC,
@@ -66,13 +85,18 @@ def pick_slate_line(
     """OCR 라인 후보 중 슬레이트 1줄 선택 — 상단 밴드(y_frac ≤ top_frac) 안에서
     토큰 수(내림차순)·신뢰도(내림차순) 우선. min_tokens 미만으로 쪼개지는 라인과
     밴드 밖 라인(하단 워터마크·자막)은 후보에서 제외한다. 밴드 안에 후보가 없으면
-    하단으로 폴백하지 않고 ""(판독실패) — hold_keys가 직전 유효값으로 홀드한다."""
+    하단으로 폴백하지 않고 ""(판독실패) — hold_keys가 직전 유효값으로 홀드한다.
+
+    후보 자격은 공백 관용(_candidate_field_count)으로 재지만 순위는 구분자
+    토큰 수 그대로다 — 공백으로 잘게 쪼개지는 텍스트가 토큰 수 싸움에서 진짜
+    슬레이트를 이기는 회귀(하단 워터마크 6>5로 경계 전멸)를 되풀이하지 않게.
+    """
     scored = []
     for text, score, y_frac in lines:
         if y_frac > top_frac:
             continue
         n = len(tokenize(text, delimiters))
-        if n >= min_tokens:
+        if _candidate_field_count(text, delimiters) >= min_tokens:
             scored.append((n, score, text))
     if not scored:
         return ""
@@ -80,34 +104,49 @@ def pick_slate_line(
     return scored[0][2]
 
 
-# 축소 재판독 배율 — 검출기(det max/960)가 원본 해상도의 흐릿한 경계 프레임에서
-# 획이 뭉개져 통째로 실패하는 경우가 있다(실기 040_0200 무컷 전환 17프레임:
-# 원본 판독 0/17, 0.6× 축소 판독 17/17 — LANCZOS 축소가 실효 획을 또렷하게).
-_RESCALE_FRAC = 0.6
+# 재판독 배율(시도 순서) — 검출기(det max/960)가 원본 해상도의 흐릿한 경계
+# 프레임에서 획이 뭉개져 통째로 실패하는 경우가 있다(실기 040_0200 무컷 전환
+# 17프레임: 원본 판독 0/17, 0.6× 축소 판독 17/17 — LANCZOS 축소가 실효 획을
+# 또렷하게). 반대로 작은 크롭에서는 필드 구분자가 뭉개져 두 필드가 붙어 읽히는데
+# (실기 FL102 720s 'FL102J002'), 확대하면 갈라진다('FL102 J002' 12/12). 축소가
+# 못 받은 프레임을 확대가 받으므로 둘 다, 싼 쪽(축소) 먼저 시도한다.
+_RESCALE_FRACS = (0.6, 2.0)
 
 
 def read_slate_line_rescaled(
     image_path: str | Path, delimiters: list[str], min_tokens: int = 2,
     top_frac: float = _TOP_BAND_FRAC,
 ) -> str:
-    """이미지를 _RESCALE_FRAC로 축소해 한 번 더 판독 — 원본 해상도 판독이
-    실패한 프레임의 3차 시도(1차 타이트 크롭, 2차 패딩 크롭 다음). 축소본은
-    원본 옆 임시 파일로 쓰고 지운다."""
+    """이미지 배율을 바꿔 다시 판독 — 원본 해상도 판독이 실패한 프레임의 3차
+    시도(1차 타이트 크롭, 2차 패딩 크롭 다음). _RESCALE_FRACS를 차례로 시도해
+    처음 읽힌 값을 쓴다. 리스케일본은 원본 옆 임시 파일로 쓰고 지운다.
+
+    검출 상한(_DET_LIMIT_SIDE_LEN)을 넘기는 확대는 건너뛴다 — 검출기가 도로
+    줄이므로 결과는 원본 판독과 같고 수천 프레임분 시간만 든다.
+    """
     try:
         from PIL import Image  # RapidOCR 전이의존(lock 고정) — 지연 import
         src = Path(image_path)
-        dst = src.with_name(src.stem + "_rs" + src.suffix)
         with Image.open(src) as im:
-            im.resize((max(1, int(im.width * _RESCALE_FRAC)),
-                       max(1, int(im.height * _RESCALE_FRAC))),
-                      Image.LANCZOS).save(dst)
-        try:
-            return read_slate_line(dst, delimiters, min_tokens, top_frac)
-        finally:
+            size = (im.width, im.height)
+        for i, frac in enumerate(_RESCALE_FRACS):
+            if frac > 1 and max(size) * frac > _DET_LIMIT_SIDE_LEN:
+                continue
+            dst = src.with_name(f"{src.stem}_rs{i}{src.suffix}")
+            with Image.open(src) as im:
+                im.resize((max(1, int(im.width * frac)),
+                           max(1, int(im.height * frac))),
+                          Image.LANCZOS).save(dst)
             try:
-                dst.unlink()
-            except OSError:
-                pass
+                text = read_slate_line(dst, delimiters, min_tokens, top_frac)
+            finally:
+                try:
+                    dst.unlink()
+                except OSError:
+                    pass
+            if text:
+                return text
+        return ""
     except Exception:  # noqa: BLE001 — 한 프레임 재판독 실패가 스캔을 막지 않게
         logger.exception("rescaled OCR failed for %s", image_path)
         return ""

@@ -966,6 +966,30 @@ async def test_ocr_test_read_returns_text(client, db_session, admin_user,
     assert r.json()["text"] == "HH0307_010_0010_AC_v01"
 
 
+async def test_ocr_test_falls_back_to_rescaled_read(client, db_session,
+                                                    admin_user, monkeypatch):
+    """미리읽기는 스캔과 같은 폴백(리스케일 재판독)을 쓴다 — 미리읽기만 1차
+    판독으로 끝내면 스캔은 읽어낼 프레임에 "판독 실패"가 떠 사용자가 멀쩡한
+    구역을 다시 잡게 된다."""
+    monkeypatch.setattr(api_vj, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(api_vj, "extract_frame",
+                        lambda *a, **k: Path(a[3]).write_bytes(b"x"))
+    monkeypatch.setattr(api_vj, "read_slate_line", lambda *a, **k: "")
+    monkeypatch.setattr(api_vj, "read_slate_line_rescaled",
+                        lambda *a, **k: "FL102 J002")
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/ocr-test",
+        json={"t_ms": 6000, "region": {"x": 0.7, "y": 0.9, "w": 0.2, "h": 0.09}})
+    assert r.status_code == 200
+    assert r.json()["text"] == "FL102 J002"
+
+
 async def test_get_scenes_empty_before_scan(client, db_session, admin_user):
     job = await _new_scene_job(db_session, admin_user, status="done")
     resp = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")

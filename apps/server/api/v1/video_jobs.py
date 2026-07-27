@@ -49,11 +49,16 @@ from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
                                                         start_task, video_jobs_root)
 from apps.server.domain.video_captions.pipeline import \
     _INFLIGHT_STATUSES as INFLIGHT_STATUSES
+from apps.server.domain.video_captions.pipeline import \
+    _DEFAULT_DELIMS as DEFAULT_DELIMS
+from apps.server.domain.video_captions.pipeline import \
+    _TOP_BAND_DEFAULT as TOP_BAND_DEFAULT
 from apps.server.domain.video_captions.ffmpeg import (extract_frame,
                                                       extract_thumbnail_at,
                                                       locate_ffmpeg)
 from apps.server.domain.video_captions.scene_split import FrameSample, tokenize
-from apps.server.domain.video_captions.slate_ocr import read_slate_line
+from apps.server.domain.video_captions.slate_ocr import (read_slate_line,
+                                                         read_slate_line_rescaled)
 from apps.server.domain.video_captions.slate_templates import (delete_template, list_templates, upsert_template)
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
 from apps.server.domain.video_captions.translate import (is_source_copy,
@@ -958,14 +963,19 @@ async def test_ocr_region(
     def _read() -> str:
         extract_frame(ffmpeg, burned, body.t_ms, tmp,
                       proc_key=str(external_id), region=region)
+        # 스캔과 같은 구분자·같은 폴백으로 읽는다 — 미리읽기가 스캔보다 빡빡하면
+        # 멀쩡한 구역에 "판독 실패"가 떠 사용자가 구역을 다시 잡게 된다.
+        band = 1.0 if region else TOP_BAND_DEFAULT
         try:
-            return read_slate_line(tmp, ["_", "-"],
-                                   top_frac=1.0 if region else 0.35)
+            return (read_slate_line(tmp, DEFAULT_DELIMS, top_frac=band)
+                    or read_slate_line_rescaled(tmp, DEFAULT_DELIMS,
+                                                top_frac=band))
         finally:
             tmp.unlink(missing_ok=True)
 
     text = await asyncio.to_thread(_read)
-    return {"text": text, "tokens": tokenize(text, ["_", "-"]) if text else []}
+    return {"text": text,
+            "tokens": tokenize(text, DEFAULT_DELIMS) if text else []}
 
 
 @router.get("/{external_id}/scenes/thumb-at")
