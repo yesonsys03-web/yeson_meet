@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -367,5 +367,106 @@ describe("segFrameNumber", () => {
   it("defaults to NTSC when fps unknown/zero", () => {
     expect(segFrameNumber(30000, START, END, 0))
       .toEqual(segFrameNumber(30000, START, END, NTSC_FPS));
+  });
+});
+
+describe("trimFrames", () => {
+  // 팝업 카운터 '프레임 k / n'을 경계 이동 프레임 수로 바꾼다 — 사용자가 눈으로
+  // 읽어 입력칸에 옮겨 적던 값을 In/Out 버튼이 그대로 계산한다.
+  it("maps the current frame to give-away counts on both sides", () => {
+    expect(trimFrames(31, 40)).toEqual({ inFrames: 30, outFrames: 9 });
+  });
+  it("gives away nothing at the matching end — 찍은 프레임은 이 씬에 남는다", () => {
+    expect(trimFrames(1, 40)).toEqual({ inFrames: 0, outFrames: 39 });
+    expect(trimFrames(40, 40)).toEqual({ inFrames: 39, outFrames: 0 });
+  });
+  it("can never empty the scene — 어느 쪽이든 최소 1프레임 남는다", () => {
+    for (const k of [1, 2, 20, 39, 40]) {
+      const { inFrames, outFrames } = trimFrames(k, 40);
+      expect(40 - inFrames).toBeGreaterThanOrEqual(1);
+      expect(40 - outFrames).toBeGreaterThanOrEqual(1);
+    }
+  });
+  it("clamps out-of-range k like segFrameNumber does", () => {
+    expect(trimFrames(0, 10)).toEqual({ inFrames: 0, outFrames: 9 });
+    expect(trimFrames(99, 10)).toEqual({ inFrames: 9, outFrames: 0 });
+    expect(trimFrames(1, 0)).toEqual({ inFrames: 0, outFrames: 0 });
+  });
+});
+
+describe("matchesLabelQuery", () => {
+  const L = "HH0304_010_0230";
+  it("matches a partial slate number", () => {
+    expect(matchesLabelQuery(L, "0230")).toBe(true);
+    expect(matchesLabelQuery(L, "0231")).toBe(false);
+  });
+  it("ignores case, surrounding space, and delimiters", () => {
+    expect(matchesLabelQuery(L, "hh0304")).toBe(true);
+    expect(matchesLabelQuery(L, "  0230 ")).toBe(true);
+    // 구분자를 빼고 비교해 "010_0230"·"010 0230"·"0100230"이 모두 같은 씬을 찾는다.
+    expect(matchesLabelQuery(L, "010_0230")).toBe(true);
+    expect(matchesLabelQuery(L, "0100230")).toBe(true);
+  });
+  it("treats an empty query as no filter", () => {
+    expect(matchesLabelQuery(L, "")).toBe(true);
+    expect(matchesLabelQuery(L, "   ")).toBe(true);
+  });
+});
+
+describe("filterIndices", () => {
+  const labels = ["HH_010_0010", "HH_010_0020", "HH_010_0230"];
+  it("returns null (= 전체) when there is no tab filter and no query", () => {
+    expect(filterIndices(labels, null, "")).toBeNull();
+  });
+  it("narrows to matching rows, keeping original indexes", () => {
+    expect(filterIndices(labels, null, "0230")).toEqual([2]);
+    expect(filterIndices(labels, null, "hh_010")).toEqual([0, 1, 2]);
+  });
+  it("intersects with the tab filter — 오독/경계 탭 안에서만 검색된다", () => {
+    expect(filterIndices(labels, [1, 2], "")).toEqual([1, 2]);
+    expect(filterIndices(labels, [1, 2], "0010")).toEqual([]);
+    expect(filterIndices(labels, [1, 2], "0020")).toEqual([1]);
+  });
+});
+
+describe("stepVisibleIndex", () => {
+  const visible = [2, 5, 9];
+  it("moves within the visible list", () => {
+    expect(stepVisibleIndex(visible, 5, 1)).toBe(9);
+    expect(stepVisibleIndex(visible, 5, -1)).toBe(2);
+  });
+  it("stops at the ends instead of wrapping", () => {
+    expect(stepVisibleIndex(visible, 9, 1)).toBeNull();
+    expect(stepVisibleIndex(visible, 2, -1)).toBeNull();
+  });
+  it("starts from the near end when nothing is selected", () => {
+    expect(stepVisibleIndex(visible, null, 1)).toBe(2);
+    expect(stepVisibleIndex(visible, null, -1)).toBe(9);
+  });
+  it("jumps to the nearest visible row when the selection was filtered out", () => {
+    expect(stepVisibleIndex(visible, 6, 1)).toBe(9);
+    expect(stepVisibleIndex(visible, 6, -1)).toBe(5);
+    expect(stepVisibleIndex(visible, 99, 1)).toBeNull();
+  });
+  it("returns null for an empty list", () => {
+    expect(stepVisibleIndex([], null, 1)).toBeNull();
+  });
+});
+
+describe("neighborIndices", () => {
+  // 개별 씬 익스포트는 맞닿은 이웃까지 다시 굽는다 — 경계를 옮기면 이웃의 프레임
+  // 수도 함께 바뀌어, 이 씬만 내보내면 이웃 파일이 옛 경계로 남는다.
+  it("includes both neighbors in ascending order", () => {
+    expect(neighborIndices(5, 10)).toEqual([4, 5, 6]);
+  });
+  it("clamps at the list ends", () => {
+    expect(neighborIndices(0, 10)).toEqual([0, 1]);
+    expect(neighborIndices(9, 10)).toEqual([8, 9]);
+    expect(neighborIndices(0, 1)).toEqual([0]);
+  });
+  it("returns nothing for an index outside the list", () => {
+    expect(neighborIndices(-1, 5)).toEqual([]);
+    expect(neighborIndices(5, 5)).toEqual([]);
+    expect(neighborIndices(0, 0)).toEqual([]);
   });
 });

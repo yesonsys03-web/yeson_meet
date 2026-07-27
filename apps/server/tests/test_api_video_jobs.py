@@ -993,7 +993,8 @@ async def test_set_rule_computes_boundaries(client, db_session, admin_user):
 async def test_export_starts_task(client, db_session, admin_user, monkeypatch):
     started = {}
     monkeypatch.setattr(api_vj, "_start_scene_export",
-                        lambda eid, mode, out: started.update(eid=eid, mode=mode))
+                        lambda eid, mode, out, idx=None: started.update(
+                            eid=eid, mode=mode, idx=idx))
     job = await _new_scene_job(db_session, admin_user, status="done")
     pl.save_scenes(job.external_id, {"segments_scene": [
         {"label": "HH0307_020_0150", "start_ms": 0, "end_ms": 3000}]})
@@ -1002,6 +1003,43 @@ async def test_export_starts_task(client, db_session, admin_user, monkeypatch):
         json={"mode": "scene"})
     assert resp.status_code == 202
     assert started["mode"] == "scene"
+    assert started["idx"] is None  # 인덱스 미지정 = 전체 익스포트(기존 동작)
+
+
+async def test_export_partial_passes_sorted_indices(client, db_session, admin_user,
+                                                    monkeypatch):
+    """개별 씬 익스포트 — 고른 씬(+이웃)만 다시 굽는다. count는 선택 개수여야
+    프론트 진행바가 전체 개수로 오해되지 않는다."""
+    started = {}
+    monkeypatch.setattr(api_vj, "_start_scene_export",
+                        lambda eid, mode, out, idx=None: started.update(idx=idx))
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {"segments_scene": [
+        {"label": "0010", "start_ms": 0, "end_ms": 1000},
+        {"label": "0020", "start_ms": 1000, "end_ms": 2000},
+        {"label": "0030", "start_ms": 2000, "end_ms": 3000},
+    ]})
+    resp = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export",
+        json={"mode": "scene", "indices": [2, 1, 1]})
+    assert resp.status_code == 202
+    assert resp.json()["count"] == 2
+    assert started["idx"] == [1, 2]  # 중복 제거 + 정렬
+
+
+async def test_export_rejects_indices_out_of_range(client, db_session, admin_user,
+                                                   monkeypatch):
+    """목록이 어긋난 채 엉뚱한 씬을 덮어쓰는 것이 최악의 결과 — 자르지 않고 거부한다."""
+    monkeypatch.setattr(api_vj, "_start_scene_export",
+                        lambda *a, **k: pytest.fail("범위 밖 인덱스로 익스포트가 시작됐다"))
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {"segments_scene": [
+        {"label": "0010", "start_ms": 0, "end_ms": 1000}]})
+    for bad in ([1], [-1], []):
+        resp = await client.post(
+            f"/api/v1/video-jobs/{job.external_id}/scenes/export",
+            json={"mode": "scene", "indices": bad})
+        assert resp.status_code == 409, bad
 
 
 async def test_export_rejects_without_segments(client, db_session, admin_user):

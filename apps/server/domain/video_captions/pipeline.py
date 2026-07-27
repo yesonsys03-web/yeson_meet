@@ -1401,9 +1401,16 @@ def load_export_status(external_id: UUID | str) -> dict | None:
 
 
 async def run_scene_export(external_id: UUID, mode: str,
-                           out_dir: str | None = None) -> list[str]:
+                           out_dir: str | None = None,
+                           indices: list[int] | None = None) -> list[str]:
     """확정된 scenes.json 경계로 세그먼트를 재인코딩해 out_dir(미지정 시 잡
     디렉토리 scene_out/)에 슬레이트 라벨 파일명으로 저장한다. 저장 경로 목록 반환.
+
+    indices를 주면 그 세그먼트만 다시 굽는다(부분 익스포트) — 경계를 고친 씬 하나와
+    맞닿은 이웃만 갱신하려고 수백 개를 다시 인코딩하지 않게 한다. 파일명 dedupe는
+    항상 '전체' 목록으로 계산하므로(아래) 부분 익스포트도 전체 익스포트와 같은
+    파일명을 쓴다 — 선택분만으로 dedupe하면 중복 라벨의 접미사가 달라져 원본을
+    갱신하지 못하고 유령 파일이 생긴다.
 
     진행률은 export_status.json에 증분 기록한다(exporting/done/total/error) —
     프론트가 폴링하며 진행바를 표시하고, 완료 시 exporting=False로 전환한다."""
@@ -1428,23 +1435,31 @@ async def run_scene_export(external_id: UUID, mode: str,
         # 컷 경계를 프레임 간 간격 중앙에 놓아 경계 프레임 중복/유실을 없앤다
         # (cut_segment 참조). 소스 전체가 동일 fps라 한 번만 프로브한다.
         fps = video_fps(ffmpeg, burned)
-        total = len(segments)
+        # 부분 익스포트 대상 — 없으면 전체. 범위 밖 인덱스는 API가 거부하지만, 직접
+        # 호출(테스트·스크립트)도 안전하게 무시한다.
+        picked = ([i for i in sorted(set(indices)) if 0 <= i < len(segments)]
+                  if indices is not None else list(range(len(segments))))
+        total = len(picked)
         save_export_status(external_id, {"exporting": True, "done": 0,
                                          "total": total, "out_dir": str(dest),
                                          "error": None})
         # 어디에 쓰는지 로그로 남긴다 — "파일이 안 생긴다" 신고 시 실제 대상 폴더를
         # 확인하는 결정적 단서(사용자가 다른 폴더를 보고 있는지, 서버가 못 쓰는지).
-        logger.info("scene export %s → %s (%d개 세그먼트, fps=%s)",
-                    external_id, dest, total, fps)
+        logger.info("scene export %s → %s (%d개 세그먼트%s, fps=%s)",
+                    external_id, dest, total,
+                    f" / 전체 {len(segments)} 중 부분" if indices is not None else "",
+                    fps)
 
         def _work() -> list[str]:
             written: list[str] = []
             # 비단조 슬레이트 순서(예: 020→021→020)에서 같은 라벨이 인접하지
             # 않은 채로 두 번 나올 수 있다 — 전체 세그먼트를 미리 dedupe해
-            # 파일명 충돌(덮어쓰기로 인한 데이터 손실)을 막는다.
+            # 파일명 충돌(덮어쓰기로 인한 데이터 손실)을 막는다. 부분 익스포트도
+            # 전체 기준 dedupe를 그대로 써야 파일명이 전체 익스포트와 일치한다.
             deduped = dedupe_labels(
                 [_sanitize_label(seg["label"]) for seg in segments])
-            for i, seg in enumerate(segments):
+            for done, i in enumerate(picked):
+                seg = segments[i]
                 if generation != _current_generation(external_id):
                     raise StaleRunCancelled(external_id)
                 out_path = dest / f"{deduped[i]}.mp4"
@@ -1459,7 +1474,7 @@ async def run_scene_export(external_id: UUID, mode: str,
                         f"익스포트 파일이 생성되지 않았습니다: {out_path} "
                         "— 저장 폴더의 쓰기 권한/경로를 확인하세요.")
                 written.append(str(out_path))
-                save_export_status(external_id, {"exporting": True, "done": i + 1,
+                save_export_status(external_id, {"exporting": True, "done": done + 1,
                                                  "total": total,
                                                  "out_dir": str(dest), "error": None})
             logger.info("scene export %s 완료: %d개 파일 → %s",

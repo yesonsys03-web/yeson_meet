@@ -353,6 +353,76 @@ export function segFrameNumber(
   return { k, n };
 }
 
+// 편집 프로그램식 In/Out 트림 — 팝업 카운터의 '프레임 k / n'을 경계 이동 프레임
+// 수로 바꾼다. In("여기부터")은 찍은 프레임을 이 씬의 첫 프레임으로 만들어 앞의
+// k-1장을 이전 씬에 넘기고, Out("여기까지")은 마지막 프레임으로 만들어 뒤의 n-k장을
+// 다음 씬에 넘긴다. 찍은 프레임은 항상 이 씬에 남으므로(양쪽 다 최소 1프레임 잔존)
+// 빈 씬이 원리적으로 생기지 않는다 — nudgeBoundary의 클램프에 의존하지 않는다.
+// 범위 밖 k는 segFrameNumber와 같이 [1,n]으로 클램프.
+export function trimFrames(
+  k: number, n: number,
+): { inFrames: number; outFrames: number } {
+  const total = Math.max(1, Math.floor(n));
+  const cur = Math.min(total, Math.max(1, Math.floor(k)));
+  return { inFrames: cur - 1, outFrames: total - cur };
+}
+
+// ── 목록 탐색(수백 줄) ────────────────────────────────────────────────────────
+// 씬 모드는 구간이 400개를 넘어 스크롤로 특정 씬을 찾는 게 고통스럽다. 라벨 검색과
+// 이전/다음 이동으로 스크롤을 대체한다.
+
+// 검색어 정규화 — 대소문자·공백·구분자를 무시한다. 슬레이트를 눈으로 읽고 옮겨 칠 때
+// "010_0230"·"010 0230"·"0100230"이 다 같은 씬을 가리켜야 한다(OCR 라벨의 구분자
+// 표기가 작품마다 달라 사용자가 무엇을 칠지 예측할 수 없다).
+const normalizeQuery = (s: string): string =>
+  s.toLowerCase().replace(/[\s_\-/]/g, "");
+
+export function matchesLabelQuery(label: string, query: string): boolean {
+  const q = normalizeQuery(query);
+  if (q.length === 0) return true;  // 빈 검색어 = 필터 없음
+  return normalizeQuery(label).includes(q);
+}
+
+// 탭 필터(base: 오독/경계 탭의 인덱스, 없으면 null=전체)에 라벨 검색을 교차한다.
+// 반환값은 원본 인덱스 기준 — 병합·이름수정 콜백이 인덱스를 쓰기 때문에 재번호를
+// 매기면 엉뚱한 구간을 건드린다. 필터도 검색도 없으면 null(=전체)을 그대로 돌려준다.
+export function filterIndices(
+  labels: string[], base: number[] | null, query: string,
+): number[] | null {
+  const q = normalizeQuery(query);
+  if (q.length === 0) return base;
+  const pool = base ?? labels.map((_, i) => i);
+  return pool.filter((i) => matchesLabelQuery(labels[i] ?? "", query));
+}
+
+// 보이는 목록에서 delta칸 이동한 원본 인덱스. 끝에서는 null(감싸지 않는다 —
+// 400줄에서 갑자기 처음으로 튀면 위치 감각을 잃는다). 선택이 없으면 진행 방향의
+// 첫 항목, 선택이 필터에서 빠진 상태면 그 방향의 가장 가까운 항목으로 간다.
+export function stepVisibleIndex(
+  visible: number[], current: number | null, delta: number,
+): number | null {
+  if (visible.length === 0) return null;
+  if (current == null) return (delta > 0 ? visible[0] : visible[visible.length - 1]) ?? null;
+  const pos = visible.indexOf(current);
+  if (pos >= 0) {
+    const next = pos + delta;
+    return next >= 0 && next < visible.length ? visible[next] ?? null : null;
+  }
+  return delta > 0
+    ? visible.find((i) => i > current) ?? null
+    : [...visible].reverse().find((i) => i < current) ?? null;
+}
+
+// 개별 씬 익스포트가 다시 구울 구간들 — 고른 씬과 맞닿은 이웃. 경계를 옮기면 그 씬만
+// 아니라 이웃의 프레임 수도 함께 바뀌므로(공유 경계), 고른 씬만 내보내면 이웃 mp4가 옛
+// 경계로 남아 폴더가 정합을 잃는다. 목록 양끝은 클램프, 범위 밖 인덱스는 빈 배열.
+export function neighborIndices(i: number, n: number): number[] {
+  if (!Number.isFinite(i) || i < 0 || i >= n) return [];
+  const out: number[] = [];
+  for (let k = i - 1; k <= i + 1; k += 1) if (k >= 0 && k < n) out.push(k);
+  return out;
+}
+
 // 구간 이름(=파일명) 수정.
 export function renameSegment(
   segs: SceneSegment[], i: number, label: string,

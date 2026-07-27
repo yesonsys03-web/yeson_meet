@@ -1436,3 +1436,30 @@ async def test_scene_export_writes_files_and_completes(monkeypatch):
     st = pl.load_export_status(ext)
     assert st and st.get("exporting") is False and not st.get("error")
     assert st.get("done") == 1
+
+
+async def test_scene_export_partial_keeps_full_list_dedupe_names(monkeypatch, tmp_path):
+    """부분 익스포트(indices)는 고른 세그먼트만 굽고, 파일명은 '전체' 목록 dedupe와
+    같아야 한다 — 선택분만으로 dedupe하면 중복 라벨의 접미사가 달라져(0010_02 → 0010)
+    전체 익스포트가 만든 파일을 갱신하지 못하고 유령 파일이 생긴다."""
+    ext = uuid4()
+    pl.save_scenes(ext, {"segments_scene": [
+        {"label": "0010", "start_ms": 0, "end_ms": 1000},
+        {"label": "0010", "start_ms": 1000, "end_ms": 2000},  # 비단조 — 같은 라벨 재등장
+        {"label": "0020", "start_ms": 2000, "end_ms": 3000},
+    ]})
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "video_fps", lambda *a, **k: 24.0)
+
+    def _fake_cut(_ffmpeg, _src, dst, *a, **k):
+        Path(dst).write_bytes(b"\x00\x01")
+
+    monkeypatch.setattr(pl, "cut_segment", _fake_cut)
+
+    written = await pl.run_scene_export(ext, "scene", str(tmp_path), [1, 2])
+
+    assert sorted(Path(p).name for p in written) == ["0010_02.mp4", "0020.mp4"]
+    # 고르지 않은 인덱스 0("0010.mp4")은 건드리지 않는다.
+    assert sorted(p.name for p in tmp_path.glob("*.mp4")) == ["0010_02.mp4", "0020.mp4"]
+    st = pl.load_export_status(ext)
+    assert st and st.get("total") == 2 and st.get("done") == 2 and not st.get("error")

@@ -85,8 +85,9 @@ def _start_scene_scan_fingerprint(external_id: UUID) -> None:  # test seam
     start_job_task(external_id, run_scene_scan_fingerprint(external_id))
 
 
-def _start_scene_export(external_id: UUID, mode: str, out_dir: str | None) -> None:  # test seam
-    start_job_task(external_id, run_scene_export(external_id, mode, out_dir))
+def _start_scene_export(external_id: UUID, mode: str, out_dir: str | None,
+                        indices: list[int] | None = None) -> None:  # test seam
+    start_job_task(external_id, run_scene_export(external_id, mode, out_dir, indices))
 
 
 def _start_scene_refine(external_id: UUID, mode: str) -> None:  # test seam
@@ -159,6 +160,9 @@ class SegmentsOverrideIn(BaseModel):
 class SceneExportIn(BaseModel):
     mode: str = Field(pattern="^(scene|sequence)$")
     out_dir: str | None = None
+    # 부분 익스포트 — 다시 구울 세그먼트 인덱스. None이면 전체(기존 동작). 경계를 고친
+    # 씬 하나(+맞닿은 이웃)만 재인코딩해 수백 개를 다시 굽지 않게 한다.
+    indices: list[int] | None = None
 
 
 def _iso_utc(value: datetime | None) -> str | None:
@@ -758,11 +762,21 @@ async def export_scenes(
     key = "segments_sequence" if body.mode == "sequence" else "segments_scene"
     if not data or not (data.get(key) or []):
         raise HTTPException(status.HTTP_409_CONFLICT, "자를 세그먼트가 없습니다 — 규칙을 확정하세요.")
-    count = len(data[key])
+    segments = data[key]
+    indices = body.indices
+    if indices is not None:
+        # 목록이 어긋난 채 엉뚱한 씬을 덮어쓰는 게 최악의 결과다 — 범위를 벗어나면
+        # 자르지 않고 거부하고, 클라가 목록을 다시 불러오게 한다.
+        if not indices or any(i < 0 or i >= len(segments) for i in indices):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "익스포트할 씬 번호가 목록과 맞지 않습니다 — 씬 목록을 다시 불러오세요.")
+        indices = sorted(set(indices))
+    count = len(indices) if indices is not None else len(segments)
     # 초기 상태를 동기로 기록 — 프론트 폴링이 202 직후부터 진행바를 표시하게.
     save_export_status(external_id, {"exporting": True, "done": 0, "total": count,
                                      "out_dir": body.out_dir, "error": None})
-    _start_scene_export(external_id, body.mode, body.out_dir)
+    _start_scene_export(external_id, body.mode, body.out_dir, indices)
     return {"status": "exporting", "count": count}
 
 
