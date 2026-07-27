@@ -274,6 +274,11 @@ export const styles: Record<string, CSSProperties> = {
     outline: "none",
     fontSize: 15,
     background: "white",
+    // 흰 배경엔 글자색을 반드시 못박는다. :root의 color-scheme:dark(스크롤바용)
+    // 때문에 폼 컨트롤의 기본 글자색이 흰색이 되는데, 이 패널은 라이트 카드라
+    // 흰 바탕에 흰 글씨가 됐다 — 입력한 글자가 통째로 안 보였다(실기 윈도우).
+    // 폼 컨트롤은 부모 color를 상속하지 않으므로 카드 색으로도 구제되지 않는다.
+    color: "#0f172a",
   },
   help: {
     display: "block",
