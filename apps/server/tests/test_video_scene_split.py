@@ -926,6 +926,69 @@ def test_canonicalize_fixes_single_inserted_char():
     assert out[5] == "HH0307_075_0040_AC_v01"
 
 
+def test_canonicalize_fixes_lookalike_digit_for_letter():
+    """실기 FL102: 시퀀스 글자가 'O001'인데 숫자 '0001'로, 'I016'인데 '1016'으로
+    읽힌다(299씬 중 60개). 코퍼스 다수 모양이 U1D3이면 그 자리는 '글자'라는
+    뜻이므로 닮은꼴 숫자를 글자로 되돌린다 — 작품 포맷 하드코딩 없이 데이터
+    자신의 템플릿이 근거다."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["FL102 A001", "FL102 B010", "FL102 C013", "FL102 D021"] * 3
+             + ["FL102 0001", "FL102 1016"])
+    out = canonicalize_texts(texts, ["_", " ", "-", "/"])
+    assert out[-2] == "FL102_O001"
+    assert out[-1] == "FL102_I016"
+
+
+def test_canonicalize_lookalike_merges_split_scene():
+    """같은 씬이 'I016'과 '1016' 두 갈래로 읽히면 지금은 세그먼트가 둘로
+    쪼개진다(실기 7건). 교정이 그룹핑 '전에' 돌아 같은 키로 합쳐져야 한다."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    delims = ["_", " ", "-", "/"]
+    texts = ["FL102 A001", "FL102 B010", "FL102 C013",
+             "FL102 I016", "FL102 1016"]
+    out = canonicalize_texts(texts, delims)
+    # 정상 판독은 원문 그대로, 오독은 교정 — 둘이 같은 토큰(=같은 키)이어야
+    # 그룹핑에서 한 씬으로 합쳐진다.
+    assert tokenize(out[3], delims) == tokenize(out[4], delims) \
+        == ["FL102", "I016"]
+
+
+def test_canonicalize_lookalike_never_invents_value_in_fixed_field():
+    """고정 필드(코퍼스 값이 하나뿐)에는 새 값을 지어내지 않는다 — 'HH030Z'를
+    닮은꼴로 밀면 'HH0302'가 되지만 이 코퍼스의 쇼 번호는 언제나 HH0307이다.
+    변하는 씬 ID 필드와 달리 여기선 닮은꼴 교체가 근거가 되지 못한다."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = ["HH0307_010_0010_AC_v01"] * 5 + ["HH030Z_140_0010_AC_v01"]
+    assert canonicalize_texts(texts, ["_", "-"])[5] == texts[5]
+
+
+def test_canonicalize_lookalike_restores_known_constant():
+    """반대로 닮은꼴 교정 결과가 그 고정 필드의 '아는 값'과 일치하면 교정한다
+    — 'FLI02'는 코퍼스에 실재하는 'FL102'로 되돌아가므로 지어내기가 아니다."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["FL102 A001", "FL102 B010", "FL102 C013"] * 2
+             + ["FLI02 D021"])
+    assert canonicalize_texts(texts, ["_", " ", "-", "/"])[-1] == "FL102_D021"
+
+
+def test_canonicalize_keeps_digits_when_corpus_says_digits():
+    """진짜 숫자 필드인 작품은 건드리지 않는다 — 다수 모양이 D4면 그 자리는
+    숫자다. 템플릿이 작품마다 데이터에서 나오므로 자동으로 안전하다."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = ["FL102 0001", "FL102 0002", "FL102 0003", "FL102 0004"]
+    assert canonicalize_texts(texts, ["_", " ", "-", "/"]) == texts
+
+
+def test_canonicalize_skips_non_lookalike_mismatch():
+    """닮은꼴 쌍이 아닌 문자는 억지로 바꾸지 않는다 — '4'는 어떤 글자로도
+    읽히지 않으므로 원문 그대로 둔다(억지 교정 금지 원칙)."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["FL102 A001", "FL102 B010", "FL102 C013"] * 2
+             + ["FL102 4001"])
+    out = canonicalize_texts(texts, ["_", " ", "-", "/"])
+    assert out[-1] == "FL102 4001"
+
+
 def test_canonicalize_rejects_ambiguous_deletion():
     # 삭제 위치에 따라 서로 다른 결과가 나오면(모호) 교정하지 않는다.
     from apps.server.domain.video_captions.scene_split import canonicalize_texts
