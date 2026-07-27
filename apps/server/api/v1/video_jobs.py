@@ -49,11 +49,16 @@ from apps.server.domain.video_captions.pipeline import (RETENTION_KEEP,
                                                         start_task, video_jobs_root)
 from apps.server.domain.video_captions.pipeline import \
     _INFLIGHT_STATUSES as INFLIGHT_STATUSES
+from apps.server.domain.video_captions.pipeline import \
+    _DEFAULT_DELIMS as DEFAULT_DELIMS
+from apps.server.domain.video_captions.pipeline import \
+    _TOP_BAND_DEFAULT as TOP_BAND_DEFAULT
 from apps.server.domain.video_captions.ffmpeg import (extract_frame,
                                                       extract_thumbnail_at,
                                                       locate_ffmpeg)
 from apps.server.domain.video_captions.scene_split import FrameSample, tokenize
-from apps.server.domain.video_captions.slate_ocr import read_slate_line
+from apps.server.domain.video_captions.slate_ocr import (read_slate_line,
+                                                         read_slate_line_rescaled)
 from apps.server.domain.video_captions.slate_templates import (delete_template, list_templates, upsert_template)
 from apps.server.domain.video_captions.srt import SubSegment, segments_to_srt
 from apps.server.domain.video_captions.translate import (is_source_copy,
@@ -664,6 +669,11 @@ async def get_scenes(
         "error": error,
         "ocr_done": data.get("ocr_done", 0),
         "total_frames": data.get("total_frames", 0),
+        # 판독 카운터가 아직 없는 앞 구간(크롭·추출·컷감지)의 단계 이름과
+        # 살아있음 신호. 프론트는 stage_tick 변화를 진척으로 보고 정체 판정을
+        # 리셋한다 — 없으면 멀쩡한 스캔이 200초 뒤 실패로 뜬다.
+        "stage": data.get("stage"),
+        "stage_tick": data.get("stage_tick", 0),
         "frames": data.get("frames", []),
         "segments_scene": data.get("segments_scene", []),
         "segments_sequence": data.get("segments_sequence", []),
@@ -793,6 +803,83 @@ async def scene_export_status(
     return {"exporting": bool(st.get("exporting")), "done": st.get("done", 0),
             "total": st.get("total", 0), "error": st.get("error"),
             "out_dir": st.get("out_dir"), "files": st.get("files", [])}
+
+
+@router.get("/{external_id}/scenes/export/file")
+async def scene_export_file(
+    external_id: UUID,
+    name: Annotated[str, Query(min_length=1, max_length=255)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> FileResponse:
+    """익스포트한 클립 하나를 내려준다 — 클라이언트가 사용자가 고른 로컬 폴더에
+    저장한다.
+
+    저장 폴더 선택창은 클라 PC에서 뜨는데 자르기·쓰기는 서버가 한다(원본과
+    ffmpeg가 서버에 있다). 두 PC가 다르면 서버 디스크에 그 경로가 새로 생기고
+    사용자가 고른 폴더는 영영 비어 있었다(실기 윈도우). 서버는 자기 폴더에 굽고
+    클라가 이 통로로 받아 쓴다.
+
+    이 잡이 실제로 익스포트한 파일 목록 안에서만 고른다 — 이름을 경로로 해석하지
+    않으므로 조작으로 서버의 다른 파일을 읽어갈 수 없다.
+    """
+    await _get_job_or_404(db, external_id)
+    st = load_export_status(external_id) or {}
+    for entry in st.get("files") or []:
+        path = Path(entry)
+        if path.name != name:
+            continue
+        if not path.exists():
+            raise HTTPException(status.HTTP_404_NOT_FOUND,
+                                "익스포트 파일이 서버에 없습니다 — 다시 익스포트하세요.")
+        return FileResponse(path, media_type="video/mp4", filename=name)
+    raise HTTPException(status.HTTP_404_NOT_FOUND,
+                        "이 작업이 익스포트한 파일이 아닙니다.")
+
+
+@router.post("/{external_id}/scenes/export/cleanup")
+async def scene_export_cleanup(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """클라이언트가 다 받아 간 뒤 서버 사본을 지운다.
+
+    서버는 클라에 넘겨줄 목적으로만 굽는다 — 안 지우면 잡마다 클립 수백 개가
+    서버 디스크에 그대로 쌓인다. 클라가 '전부 받았다'고 알릴 때만 부른다:
+    받는 중에 실패했는데 원본을 지우면 수십 분짜리 재인코딩을 다시 해야 한다.
+
+    **작업 폴더 안**만 지운다. 옛 기록에는 사용자가 지정한 임의 경로(out_dir)가
+    남아 있을 수 있는데, 그건 사용자 폴더이지 우리가 만든 사본이 아니다.
+    """
+    await _get_job_or_404(db, external_id)
+    st = load_export_status(external_id)
+    if not st:
+        return {"deleted": 0}
+    root = job_dir(external_id).resolve()
+    deleted = 0
+    for entry in st.get("files") or []:
+        path = Path(entry)
+        try:
+            inside = path.resolve().is_relative_to(root)
+        except OSError:      # 존재하지 않는 경로 등 — 건드리지 않는다
+            continue
+        if not inside:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+            deleted += 1
+        except OSError:
+            logger.exception("익스포트 사본 삭제 실패: %s", path)
+    # 비게 된 익스포트 폴더도 치운다(비어 있을 때만 — 남은 파일은 보존).
+    out_dir = st.get("out_dir")
+    if out_dir:
+        d = Path(out_dir)
+        try:
+            if d.resolve().is_relative_to(root) and not any(d.iterdir()):
+                d.rmdir()
+        except OSError:
+            pass
+    save_export_status(external_id, {**st, "files": []})
+    return {"deleted": deleted}
 
 
 class SceneRefineIn(BaseModel):
@@ -958,14 +1045,19 @@ async def test_ocr_region(
     def _read() -> str:
         extract_frame(ffmpeg, burned, body.t_ms, tmp,
                       proc_key=str(external_id), region=region)
+        # 스캔과 같은 구분자·같은 폴백으로 읽는다 — 미리읽기가 스캔보다 빡빡하면
+        # 멀쩡한 구역에 "판독 실패"가 떠 사용자가 구역을 다시 잡게 된다.
+        band = 1.0 if region else TOP_BAND_DEFAULT
         try:
-            return read_slate_line(tmp, ["_", "-"],
-                                   top_frac=1.0 if region else 0.35)
+            return (read_slate_line(tmp, DEFAULT_DELIMS, top_frac=band)
+                    or read_slate_line_rescaled(tmp, DEFAULT_DELIMS,
+                                                top_frac=band))
         finally:
             tmp.unlink(missing_ok=True)
 
     text = await asyncio.to_thread(_read)
-    return {"text": text, "tokens": tokenize(text, ["_", "-"]) if text else []}
+    return {"text": text,
+            "tokens": tokenize(text, DEFAULT_DELIMS) if text else []}
 
 
 @router.get("/{external_id}/scenes/thumb-at")

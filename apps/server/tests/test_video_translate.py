@@ -135,3 +135,28 @@ async def test_maybe_aclose_translator():
     assert closed == [True]
     # aclose가 없는 번역기(gemini/CLI/apple)는 조용히 무시된다
     await maybe_aclose_translator(WithoutAclose())
+
+
+async def test_resilient_translate_logs_the_reason(caplog):
+    """번역이 원문으로 남을 때 '왜'가 로그에 남아야 한다.
+
+    실기(윈도우): 306구간이 영문 그대로 나왔는데 서버 로그에 원인이 한 줄도
+    없었다 — except TranslationError: pass 가 메시지를 버리고, 마지막 폴백
+    로그도 원문만 찍었다. CLI가 설치돼 있어도(드롭다운 선택 가능) 로그인이
+    안 됐거나 시간 초과면 같은 오류가 수백 번 반복되는데 아무도 모른다.
+    """
+    import logging
+
+    from apps.server.domain.video_captions.translate import (
+        TranslationError, _translate_resilient)
+
+    class AlwaysFails:
+        async def translate_batch(self, texts):
+            raise TranslationError("'claude' CLI 로그인이 필요합니다")
+
+    with caplog.at_level(logging.WARNING, logger="yeson.video.translate"):
+        out = await _translate_resilient(AlwaysFails(), ["hello", "world"])
+
+    assert out == ["hello", "world"], "실패해도 원문은 유지한다"
+    joined = "\n".join(r.getMessage() for r in caplog.records)
+    assert "로그인이 필요합니다" in joined, f"실패 원인이 로그에 없다:\n{joined}"

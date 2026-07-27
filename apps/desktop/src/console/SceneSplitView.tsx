@@ -2,13 +2,14 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, neighborIndices, stepVisibleIndex,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, scanProgressKey, scenePopupAction, stepVisibleIndex,
   NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, tokenizeSlate, trimFrames,
   type LabelFix,
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
   cancelSceneOps, exportScenes, getBoundaryStatus, getExportStatus, getRefineStatus,
+  cleanupSceneExport, sceneExportFileUrl,
   getScenes, listSlateTemplates, overrideSceneSegments, refineScenes, scanScenes,
   setOcrRegion as setOcrRegionApi, setSceneRule, startBoundaryCheck, videoMediaUrl,
   type BoundaryStatus, type ExportStatus, type OcrRegion, type RefineStatus,
@@ -49,7 +50,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   // 진행하면 빈 스캔 데이터에 409가 떠 원인이 가려진다(실기).
   const pollScan = async (hadScan: boolean): Promise<boolean> => {
     let stalled = 0;
-    let lastDone = -1;
+    let lastKey = "";
     let sawScanning = false;
     let pollFails = 0;
     for (let i = 0; i < 1200; i++) {
@@ -71,9 +72,12 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
         const total = d.total_frames ?? 0;
         setNotice(total > 0
           ? `슬레이트 판독 중… ${done}/${total} 프레임`
-          : "프레임 추출 중…");
-        stalled = done === lastDone ? stalled + 1 : 0;
-        lastDone = done;
+          : `${d.stage ?? "프레임 추출"} 중…`);
+        // 판독 수만 보면 카운터가 없는 앞 구간과 판독 뒤 재시도 단계를 정체로
+        // 오인한다(scanProgressKey 주석 참조).
+        const key = scanProgressKey(d);
+        stalled = key === lastKey ? stalled + 1 : 0;
+        lastKey = key;
         // 진척이 200초(133회) 넘게 멈춰 있으면 포기(서버 이상).
         if (stalled > 133) { setError("스캔이 진행되지 않습니다. 서버 상태를 확인하세요."); return false; }
       } else if (d.scanned && (sawScanning || !hadScan)) {
@@ -321,8 +325,46 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   // 개별 씬 익스포트 진행 중인 구간(그 줄만 진행 표시, 다른 줄은 잠금).
   const [exportingOne, setExportingOne] = useState<number | null>(null);
 
+  // 저장 폴더는 '클라 PC'의 폴더다 — 서버가 아니라 여기에 파일이 놓인다. 잡마다
+  // 기억해 두 번째 익스포트부터는 다시 묻지 않는다(예전엔 서버 out_dir을 재사용
+  // 했지만, 이제 서버는 자기 폴더에 굽고 클라가 받아 쓰므로 서버 값은 답이 아니다).
+  const saveDirKey = `yeson.sceneExportDir.${jobId}`;
+  const pickSaveDir = async (reuse: boolean): Promise<string | null> => {
+    if (!hasTauriRuntime()) return null;   // 브라우저: 서버 폴더에 남는다
+    const last = reuse ? localStorage.getItem(saveDirKey) : null;
+    if (last) return last;
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const dir = await open({ directory: true, title: "저장 폴더 선택(이 PC)" });
+    if (typeof dir !== "string") return null;
+    localStorage.setItem(saveDirKey, dir);
+    return dir;
+  };
+
+  // 서버가 구운 클립을 사용자가 고른 로컬 폴더로 받아 쓴다.
+  //
+  // 자르기는 서버가 해야 한다(원본 burned.mp4와 ffmpeg가 서버에 있다). 예전엔
+  // 클라에서 고른 경로를 서버에 넘겨 서버가 '자기 디스크'의 그 경로에 썼는데,
+  // 두 PC가 다르면 서버에 폴더만 새로 생기고 사용자가 보는 폴더는 끝까지 비어
+  // 있었다(실기 윈도우 — 에러도 안 났다). 받기·쓰기는 Rust에 맡긴다(다른 드라이브
+  // 허용 + 대용량 IPC 회피, 배치 다운로드와 같은 경로).
+  const saveExportedFiles = async (files: string[], dir: string) => {
+    const { join } = await import("@tauri-apps/api/path");
+    const { invoke } = await import("@tauri-apps/api/core");
+    for (let i = 0; i < files.length; i += 1) {
+      const name = exportedFileName(files[i] as string);
+      setNotice(`저장 중 ${i + 1}/${files.length} — ${name}`);
+      await invoke("download_to_file",
+                   { url: sceneExportFileUrl(jobId, name),
+                     path: await join(dir, name) });
+    }
+    // 전부 받은 뒤에만 서버 사본을 지운다 — 위에서 하나라도 실패하면 예외가 나
+    // 여기 도달하지 않으므로, 원본이 남아 다시 받을 수 있다(재인코딩 불필요).
+    await cleanupSceneExport(jobId);
+  };
+
   // 익스포트 진행률 폴링 — 전체/개별 익스포트가 같은 상태 파일(export_status)을 쓰므로
-  // 폴링도 공유한다. 완료 문구만 호출자가 정한다.
+  // 폴링도 공유한다. 완료 문구만 호출자가 정한다. 완료 상태를 돌려줘 호출자가
+  // 그 파일 목록을 로컬로 받아 쓸 수 있게 한다(실패·중단이면 null).
   const pollExport = async (doneMsg: (st: ExportStatus) => string) => {
     // 재인코딩은 클립당 수 초 걸리므로 1초 폴링으로 진행바를 갱신한다.
     for (let i = 0; i < 3600; i++) {
@@ -335,10 +377,11 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
         // 열어둔 파일을 덮어쓰려는 경우가 특히 잦다 — 원인을 짐작할 수 있게 붙여준다.
         setError(`익스포트 실패: ${st.error} — 저장 폴더의 그 mp4를 플레이어에서 `
           + "열어두면 덮어쓸 수 없습니다(Windows). 폴더 경로·쓰기 권한도 확인하세요.");
-        return;
+        return null;
       }
-      if (!st.exporting) { setNotice(doneMsg(st)); return; }
+      if (!st.exporting) { setNotice(doneMsg(st)); return st; }
     }
+    return null;
   };
 
   // 개별 씬 익스포트 — 고른 씬과 '맞닿은 이웃'까지 다시 굽는다. 경계를 옮기면 이웃의
@@ -359,25 +402,29 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     }
     const indices = neighborIndices(i, segments.length);
     if (indices.length === 0) return;
-    let outDir: string | undefined;
-    const last = (await getExportStatus(jobId)).out_dir;
-    if (last) {
-      outDir = last;
-    } else if (hasTauriRuntime()) {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const dir = await open({ directory: true, title: "저장 폴더 선택" });
-      if (typeof dir !== "string") { setNotice("저장 폴더 선택이 취소되었습니다."); return; }
-      outDir = dir;
+    // 지난 폴더를 그대로 쓴다 — "아까 그 폴더의 그 파일만 갱신"이 이 기능의 목적.
+    const saveDir = await pickSaveDir(true);
+    if (hasTauriRuntime() && !saveDir) {
+      setNotice("저장 폴더 선택이 취소되었습니다."); return;
     }
     setBusy(true); setExportingOne(i);
     setExportProg({ exporting: true, done: 0, total: indices.length,
-                    error: null, out_dir: outDir ?? null, files: [] });
+                    error: null, out_dir: saveDir, files: [] });
     try {
-      const res = await exportScenes(jobId, mode, outDir, indices);
+      // out_dir을 넘기지 않는다 — 서버는 자기 폴더에 굽고, 받아 쓰는 건 아래에서.
+      const res = await exportScenes(jobId, mode, undefined, indices);
       const labels = indices.map((k) => segments[k]?.label ?? "?").join(", ");
-      await pollExport((st) =>
-        `${st.done}/${res.count}개 클립 익스포트 완료 — ${labels} `
-        + `(${st.out_dir ?? outDir ?? "서버 폴더"}). 경계를 공유한 이웃 씬까지 갱신했습니다.`);
+      const st = await pollExport(() =>
+        `${res.count}개 클립을 구웠습니다 — ${labels}. 저장 중…`);
+      if (!st) return;
+      if (saveDir) {
+        await saveExportedFiles(st.files ?? [], saveDir);
+        setNotice(`${st.files?.length ?? 0}개 클립 저장 완료 — ${labels} (${saveDir}). `
+          + "경계를 공유한 이웃 씬까지 갱신했습니다.");
+      } else {
+        setNotice(`${res.count}개 클립 익스포트 완료 — ${labels} `
+          + `(서버 폴더 ${st.out_dir ?? ""}).`);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -394,20 +441,25 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       setError('저장 안 된 수정이 있습니다 — 먼저 "수정사항 저장"을 누르세요.');
       return;
     }
-    let outDir: string | undefined;
-    if (hasTauriRuntime()) {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const dir = await open({ directory: true, title: "저장 폴더 선택" });
-      if (typeof dir !== "string") { setNotice("저장 폴더 선택이 취소되었습니다."); return; }
-      outDir = dir;
+    // 전체 익스포트는 매번 폴더를 묻는다(다른 곳에 내보낼 수 있다).
+    const saveDir = await pickSaveDir(false);
+    if (hasTauriRuntime() && !saveDir) {
+      setNotice("저장 폴더 선택이 취소되었습니다."); return;
     }
     setBusy(true);
     setExportProg({ exporting: true, done: 0, total: segments.length,
-                    error: null, out_dir: outDir ?? null, files: [] });
+                    error: null, out_dir: saveDir, files: [] });
     try {
-      const res = await exportScenes(jobId, mode, outDir);
-      await pollExport((st) =>
-        `${st.done}/${res.count}개 클립 익스포트 완료 (${st.out_dir ?? outDir ?? "서버 폴더"})`);
+      // out_dir을 넘기지 않는다 — 서버는 자기 폴더에 굽고, 받아 쓰는 건 아래에서.
+      const res = await exportScenes(jobId, mode);
+      const st = await pollExport(() => `${res.count}개 클립을 구웠습니다. 저장 중…`);
+      if (!st) return;
+      if (saveDir) {
+        await saveExportedFiles(st.files ?? [], saveDir);
+        setNotice(`${st.files?.length ?? 0}개 클립 저장 완료 (${saveDir})`);
+      } else {
+        setNotice(`${res.count}개 클립 익스포트 완료 (서버 폴더 ${st.out_dir ?? ""})`);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -682,30 +734,6 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     }
   };
 
-  // 팝업이 열려 있을 때 I/O 키로 In/Out 트림(편집 프로그램 관례). 입력칸에 포커스가
-  // 있으면 무시한다 — '프레임씩' 수나 라벨을 타이핑하다 경계가 바뀌면 안 된다.
-  // preview·segments가 바뀔 때마다 다시 등록해 핸들러가 최신 세그먼트를 본다.
-  useEffect(() => {
-    if (preview?.segIndex == null) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA"
-                || t.isContentEditable)) return;
-      // 한글 IME가 켜져 있으면 e.key가 자모("ㅑ")나 "Process"로 와서 단축키가 조용히
-      // 안 먹는다(Windows WebView2에서 특히, macOS도 동일) — 물리 키(e.code)를 함께
-      // 본다. 이 앱 사용자는 한글 입력 상태가 기본이다.
-      const key = e.key.toLowerCase();
-      const isIn = e.code === "KeyI" || key === "i";
-      const isOut = e.code === "KeyO" || key === "o";
-      if (!isIn && !isOut) return;
-      e.preventDefault();
-      trimAt(isIn ? "in" : "out");
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [preview, segments]);
-
   // 팝업 영상을 특정 프레임 시각으로 이동(머리/꼬리 확인용).
   const seekPreview = (ms?: number) => {
     const v = previewVideoRef.current;
@@ -825,6 +853,35 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const v = previewVideoRef.current;
     if (v) { v.pause(); v.currentTime = focusMs / 1000; }
   };
+
+  // 팝업이 열려 있을 때의 검수 단축키(매핑·한글 IME 처리는 scenePopupAction).
+  // I/O=In/Out 트림(편집 프로그램 관례), G/H=이전/다음 씬, [/]=머리로/꼬리로 —
+  // 화면의 해당 버튼에 같은 키를 적어 뒀다. 입력칸에 포커스가 있으면 무시한다
+  // — '프레임씩' 수나 라벨을 타이핑하다 경계가 바뀌면 안 된다. preview·목록이
+  // 바뀔 때마다 다시 등록해 핸들러가 최신 세그먼트·보이는 목록을 본다(검색으로
+  // 목록이 줄면 씬 이동 범위도 함께 줄어야 화면과 어긋나지 않는다).
+  useEffect(() => {
+    if (preview?.segIndex == null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA"
+                || t.isContentEditable)) return;
+      const action = scenePopupAction(e);
+      if (action == null) return;
+      e.preventDefault();
+      if (action === "trimIn" || action === "trimOut") {
+        trimAt(action === "trimIn" ? "in" : "out");
+      } else if (action === "prevScene" || action === "nextScene") {
+        stepPreviewSegment(action === "prevScene" ? -1 : 1);
+      } else {
+        seekPreview(action === "toHead"
+          ? preview.playStartMs : preview.lastFrameMs);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [preview, segments, visibleIndices, data]);
 
   // ←/→로 이전·다음 씬. 선택이 바뀌면 sticky 검수 뷰의 머리·꼬리 프레임이 갱신되고
   // 목록도 그 줄로 스크롤돼(SceneFilmstrip) 스크롤 조작이 아예 필요 없다. 입력칸
@@ -1441,11 +1498,13 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
           {preview.segIndex != null ? (() => {
             const nav = (delta: -1 | 1, idx: number | null) => {
               const label = delta < 0 ? "이전 씬" : "다음 씬";
+              const hotkey = delta < 0 ? "G" : "H";
               const target = idx != null ? segments[idx]?.label : null;
               return (
                 <button type="button" disabled={idx == null}
-                  title={target ? `${label} · ${target} — 보던 쪽 프레임으로`
-                                : `${label}이 없습니다`}
+                  title={target
+                    ? `${label} · ${target} — 보던 쪽 프레임으로 (단축키 ${hotkey})`
+                    : `${label}이 없습니다`}
                   onClick={(e) => { e.stopPropagation(); stepPreviewSegment(delta); }}
                   style={{ ...sideNavBtn, ...(delta < 0 ? { left: 6 } : { right: 6 }),
                            opacity: idx == null ? 0.3 : 1,
@@ -1454,6 +1513,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                     {delta < 0 ? "◀" : "▶"}
                   </span>
                   <span>{label}</span>
+                  {/* 키는 한 줄 아래 작게 — 버튼 폭(56)에 라벨과 나란히 두면 넘친다. */}
+                  <span style={{ fontSize: 10, opacity: 0.55 }}>{hotkey}</span>
                 </button>
               );
             };
@@ -1565,11 +1626,15 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                   ) : null}
                   {preview.playStartMs != null ? (
                     <button type="button" style={consoleStyles.mutedAction}
-                      onClick={() => seekPreview(preview.playStartMs)}>머리로</button>
+                      title="이 씬의 첫 프레임으로 (단축키 [)"
+                      onClick={() => seekPreview(preview.playStartMs)}>
+                      머리로 [</button>
                   ) : null}
                   {preview.lastFrameMs != null ? (
                     <button type="button" style={consoleStyles.mutedAction}
-                      onClick={() => seekPreview(preview.lastFrameMs)}>꼬리로</button>
+                      title="이 씬의 마지막 프레임으로 (단축키 ])"
+                      onClick={() => seekPreview(preview.lastFrameMs)}>
+                      꼬리로 ]</button>
                   ) : null}
                   {preview.startMs != null ? (
                     <button type="button" style={consoleStyles.mutedAction}

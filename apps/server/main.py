@@ -28,6 +28,7 @@ from apps.server.api.v1.video_jobs import router as video_jobs_router
 from apps.server.api.v1.reports import router as reports_router
 from apps.server.ai.gemini_live import gemini_config_health
 from apps.server.domain.video_captions.pipeline import (
+    clear_stale_scan_flags_at_startup,
     fail_inflight_video_jobs_at_startup,
     prune_old_video_jobs_at_startup,
 )
@@ -62,12 +63,21 @@ class ExtraFormatter(logging.Formatter):
         return f"{message} {fields}"
 
 
+# 앱 로그가 나가는 두 뿌리. "apps.server"만 설정하면 "yeson.*"(영상 파이프라인·
+# ffmpeg·OCR)은 핸들러도 레벨도 없는 상태라 INFO가 통째로 버려진다 — 실기: 윈도우
+# "익스포트 파일이 안 생긴다" 신고에서 서버 로그 1000줄이 전부 uvicorn 액세스
+# 로그였고, 익스포트가 '어디에 썼는지' 남기는 진단 로그가 한 줄도 없었다.
+# (ERROR만 파이썬 lastResort로 stderr에 새어 나와 더 헷갈렸다.)
+_LOG_ROOTS = ("apps.server", "yeson")
+
+for _name in _LOG_ROOTS:
+    _lg = logging.getLogger(_name)
+    _lg.setLevel(logging.INFO)
+    if not _lg.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(ExtraFormatter("%(levelname)s:%(name)s:%(message)s"))
+        _lg.addHandler(handler)
 server_logger = logging.getLogger("apps.server")
-server_logger.setLevel(logging.INFO)
-if not server_logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(ExtraFormatter("%(levelname)s:%(name)s:%(message)s"))
-    server_logger.addHandler(handler)
 logger = logging.getLogger(__name__)
 
 
@@ -127,6 +137,14 @@ async def lifespan(app: FastAPI):
         await fail_inflight_video_jobs_at_startup()
     except Exception:
         logger.exception("Startup video-job sweep failed")
+
+    # 위 스윕은 DB의 job 상태만 본다. 씬 분할의 진행 플래그는 작업 폴더 JSON에
+    # 있어 재시작 뒤에도 '실행중'으로 남는다(뒤에 도는 작업은 없는데도) — 같은
+    # 이유로 함께 내린다.
+    try:
+        await clear_stale_scan_flags_at_startup()
+    except Exception:
+        logger.exception("Startup scene-flag sweep failed")
 
     # 자막 메이커 작업 폴더(원본/preview/burned mp4)가 무한정 쌓이지 않도록, 스윕
     # 직후 최근 RETENTION_KEEP개만 남기고 오래된 작업을 회수한다. 스윕과 동일한

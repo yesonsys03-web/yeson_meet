@@ -159,12 +159,18 @@ class GeminiFlashTranslator:
 
 async def _translate_resilient(
     provider: TranslationProvider, texts: list[str],
+    cause: str | None = None,
 ) -> list[str]:
     """개수 불일치/오류에 견디는 배치 번역.
 
     LLM이 두 줄을 합치거나 한 줄을 누락하면 반환 개수가 어긋나 자막이 밀린다.
     그럴 땐 청크를 반으로 쪼개 재번역(입력이 달라져 정상 개수로 수렴)하고,
     1줄까지 쪼개도 실패하면 그 줄만 원문을 유지해 작업 전체 중단을 막는다.
+
+    실패 '이유'는 반드시 끝까지 들고 간다. 예전엔 여기서 예외를 통째로 삼켜
+    (except: pass) 마지막 폴백 로그에 원문만 찍었다 — CLI 로그인이 안 됐거나
+    시간 초과여서 같은 오류가 수백 번 반복되는데도 로그 어디에도 원인이 없었다
+    (실기 윈도우: 306구간이 영문 그대로 나왔고 단서가 0줄이었다).
     """
     if not texts:
         return []
@@ -172,14 +178,16 @@ async def _translate_resilient(
         result = await provider.translate_batch(texts)
         if len(result) == len(texts):
             return result
-    except TranslationError:
-        pass
+        cause = f"반환 개수 불일치({len(result)} != {len(texts)})"
+    except TranslationError as exc:
+        cause = str(exc)
     if len(texts) == 1:
-        logger.warning("translate: 1줄 번역 실패 — 원문 유지: %r", texts[0][:60])
+        logger.warning("translate: 1줄 번역 실패(%s) — 원문 유지: %r",
+                       cause or "원인 미상", texts[0][:60])
         return list(texts)
     mid = len(texts) // 2
-    left = await _translate_resilient(provider, texts[:mid])
-    right = await _translate_resilient(provider, texts[mid:])
+    left = await _translate_resilient(provider, texts[:mid], cause)
+    right = await _translate_resilient(provider, texts[mid:], cause)
     return left + right
 
 
@@ -196,7 +204,13 @@ async def translate_segments(
         translated = await _translate_resilient(provider, [s.text for s in chunk])
         for seg, ko in zip(chunk, translated):
             out.append(replace(seg, text=apply_ko_corrections(ko.strip())))
-        logger.info("translate: %d/%d segments", len(out), len(segments))
+        # 영문 그대로 남은 줄 수를 함께 남긴다 — 줄 단위 실패 로그가 수백 줄이면
+        # 눈에 안 들어온다. 이 숫자가 계속 붙으면 '가끔 실패'가 아니라 '엔진이
+        # 통째로 안 되는 중'이라는 뜻이다(실기 윈도우 306/306).
+        kept = sum(1 for s2, o in zip(segments[:len(out)], out)
+                   if is_source_copy(s2.text, o.text))
+        logger.info("translate: %d/%d segments (원문 유지 %d)",
+                    len(out), len(segments), kept)
         if progress_cb is not None:
             await progress_cb(len(out) / len(segments))
     return out

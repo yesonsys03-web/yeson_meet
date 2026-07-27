@@ -1359,6 +1359,221 @@ async def test_run_scene_scan_fingerprint_padded_batch_recovers_text(
     ]
 
 
+async def test_run_scene_scan_fingerprint_reports_progress_during_retry(
+        monkeypatch, tmp_path):
+    """재시도 단계(패딩 배치·개별 시킹)도 진행률을 갱신해야 한다.
+
+    실기: 타이트 판독이 전멸한 소스(슬레이트 '_'가 공백으로 읽히는 쇼)에서
+    카운터가 N/N에 닿은 채 재시도만 몇 분 돌았고, 프론트는 200초 무변화를
+    '정체'로 보고 "스캔이 진행되지 않습니다"를 띄웠다 — 서버는 멀쩡했다.
+    화면은 '슬레이트 판독 중… 2791/2791'에서 굳어 있었다.
+    """
+    from PIL import Image
+
+    from apps.server.domain.video_captions.fingerprint import frame_boundary_ms
+
+    eid = uuid4()
+    workdir = pl.job_dir(eid)
+    workdir.mkdir(parents=True)
+    (workdir / "burned.mp4").write_bytes(b"v")
+    pl.save_scenes(eid, {"ocr_region": {"x": 0.0073, "y": 0.0259,
+                                        "w": 0.3271, "h": 0.2056}})
+
+    def fake_extract_fp(ffmpeg, src, out_dir, region, scale_w=160,
+                        proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(20):
+            im = Image.new("L", (32, 8), 255)
+            for x in (range(0, 20) if i < 10 else range(12, 32)):
+                for y in range(8):
+                    im.putpixel((x, y), 0)
+            im.save(out_dir / f"f_{i + 1:06d}.png")
+
+    def fake_thumbs(ffmpeg, src, out_dir, interval_s, proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "thumb_00001.jpg").write_bytes(b"j")
+
+    def fake_extract_at(ffmpeg, src, frame_indices, out_dir, region,
+                        proc_key=None, workers=1):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = {}
+        for k, n in enumerate(sorted(set(frame_indices)), 1):
+            p = out_dir / f"at_{k:05d}.png"
+            p.write_text(f"{frame_boundary_ms(n, 24.0)}|{region[2]:.4f}")
+            out[n] = p
+        return out
+
+    def fake_extract_frame(ffmpeg, src, t_ms, dst, proc_key=None, region=None):
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(f"{t_ms}|{region[2]:.4f}" if region else str(t_ms))
+
+    region = (0.0073, 0.0259, 0.3271, 0.2056)
+    tight_w = pl._relative_region(region, pl._pad_region(region))[2]
+    cut_ms = frame_boundary_ms(10, 24.0)
+    # 패딩 재판독 시점에 '마지막으로 기록된 진행률'을 관찰한다.
+    seen_at_retry: list[int | None] = []
+
+    def fake_read(path, delimiters, min_tokens=2, top_frac=0.35):
+        raw = Path(path).read_text().split("|")
+        t_ms, w = int(raw[0]), float(raw[1]) if len(raw) > 1 else tight_w
+        if w > tight_w + 0.001:   # 패딩(중간본 전체) 판독 = 재시도 단계
+            seen_at_retry.append((pl.load_scenes(eid) or {}).get("ocr_done"))
+            return ("HH0307_010_0010_AC_v01" if t_ms < cut_ms
+                    else "HH0307_010_0020_AC_v01")
+        return ""                 # 타이트 판독은 전멸(실기 재현)
+
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(pl, "build_scan_source",
+                        lambda ffmpeg, src, dst, region, proc_key=None:
+                        dst.write_bytes(b"s"))
+    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
+    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+
+    await pl.run_scene_scan_fingerprint(eid)
+
+    data = pl.load_scenes(eid)
+    assert data["scanning"] is False and data.get("error") is None
+    # 재시도 단계에서 두 런을 읽는 동안 진행률이 멈춰 있으면 안 된다.
+    assert len(seen_at_retry) >= 2, seen_at_retry
+    assert len(set(seen_at_retry)) > 1, (
+        f"재시도 내내 진행률이 {seen_at_retry[0]}에 멈춰 있다 — "
+        "프론트가 200초 뒤 '스캔이 진행되지 않습니다'로 포기한다")
+
+
+async def test_run_scene_scan_fingerprint_reports_extraction_stages(
+        monkeypatch, tmp_path):
+    """추출·컷감지 구간(카운터가 없는 60초대 구간)도 살아있음을 알려야 한다.
+
+    이 구간은 ocr_done이 0에 머물러 프론트 정체 판정의 여유가 3배뿐이다 —
+    조금만 느린 환경이면 멀쩡한 스캔이 '진행되지 않습니다'가 된다. 단계 이름과
+    산출물 증가 신호(stage_tick)를 흘려 보낸다.
+    """
+    from PIL import Image
+
+    eid = uuid4()
+    workdir = pl.job_dir(eid)
+    workdir.mkdir(parents=True)
+    (workdir / "burned.mp4").write_bytes(b"v")
+
+    def fake_extract_fp(ffmpeg, src, out_dir, region, scale_w=160,
+                        proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(20):
+            im = Image.new("L", (32, 8), 255)
+            for x in (range(0, 20) if i < 10 else range(12, 32)):
+                for y in range(8):
+                    im.putpixel((x, y), 0)
+            im.save(out_dir / f"f_{i + 1:06d}.png")
+
+    def fake_thumbs(ffmpeg, src, out_dir, interval_s, proc_key=None):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "thumb_00001.jpg").write_bytes(b"j")
+
+    stages: list[str] = []
+    orig_save = pl.save_scenes
+
+    def spy_save(external_id, data):
+        st = data.get("stage")
+        if st and (not stages or stages[-1] != st):
+            stages.append(st)
+        orig_save(external_id, data)
+
+    monkeypatch.setattr(pl, "save_scenes", spy_save)
+    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(pl, "build_scan_source",
+                        lambda ffmpeg, src, dst, region, proc_key=None:
+                        dst.write_bytes(b"s"))
+    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(pl, "extract_frames_at",
+                        lambda *a, **k: {})   # 판독은 이 테스트의 관심 밖
+    monkeypatch.setattr(pl, "extract_frame",
+                        lambda ffmpeg, src, t_ms, dst, proc_key=None,
+                        region=None: dst.write_text("x"))
+    monkeypatch.setattr(pl, "read_slate_line", lambda *a, **k: "")
+
+    await pl.run_scene_scan_fingerprint(eid)
+
+    assert pl.load_scenes(eid).get("error") is None
+    # 카운터가 없는 구간의 단계들이 순서대로 보고돼야 한다.
+    assert stages[:4] == [pl.STAGE_CROP, pl.STAGE_FRAMES,
+                          pl.STAGE_THUMBS, pl.STAGE_CUTS], stages
+
+
+def test_extract_tick_grows_with_output(tmp_path):
+    """살아있음 신호는 '산출물이 실제로 늘었는가'로 만든다 — 단순 시계라면
+    진짜로 멎은 ffmpeg도 살아있는 것처럼 보여 정체 감지가 죽는다."""
+    src = tmp_path / "s.mp4"
+    frames = tmp_path / "frames"
+    thumbs = tmp_path / "thumbs"
+    assert pl._extract_tick(src, frames, thumbs) == 0
+    src.write_bytes(b"x" * 4096)
+    first = pl._extract_tick(src, frames, thumbs)
+    assert first > 0
+    frames.mkdir()
+    (frames / "f_000001.png").write_bytes(b"p")
+    assert pl._extract_tick(src, frames, thumbs) > first
+
+
+async def test_clear_stale_scan_flags_at_startup(monkeypatch):
+    """서버 재시작으로 죽은 진행 플래그를 시작 시 내린다.
+
+    DB 스윕(fail_inflight_video_jobs_at_startup)은 job 상태만 본다. 씬 분할의
+    'scanning'은 작업 폴더 JSON에 있고 그 플래그를 내리는 건 작업 자신뿐이라
+    (완료·취소·실패), 스캔 도중 서버가 재시작되면 뒤에 도는 작업이 없는데도
+    영원히 '실행중'으로 남았다 — 사용자는 취소를 눌러야만 빠져나올 수 있었다.
+    """
+    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: False)
+    eid = uuid4()
+    pl.job_dir(eid).mkdir(parents=True)
+    region = {"x": 0.749, "y": 0.9, "w": 0.1823, "h": 0.087}
+    pl.save_scenes(eid, {"scanning": True, "method": "fingerprint",
+                         "interval_ms": 2000, "ocr_region": region,
+                         "ocr_done": 2791, "total_frames": 2791, "frames": []})
+    pl.save_refine_status(eid, {"refining": True, "done": 3})
+    pl.save_boundary_status(eid, {"checking": True})
+    pl.save_export_status(eid, {"exporting": True})
+
+    await pl.clear_stale_scan_flags_at_startup()
+
+    d = pl.load_scenes(eid)
+    assert d["scanning"] is False
+    assert d["error"], "왜 멈췄는지 사용자에게 보여야 한다"
+    # 사용자 설정(구역·방식)은 작업 산출물이 아니므로 보존한다.
+    assert d["ocr_region"] == region and d["method"] == "fingerprint"
+    assert pl.load_refine_status(eid)["refining"] is False
+    assert pl.load_boundary_status(eid)["checking"] is False
+    assert pl.load_export_status(eid)["exporting"] is False
+
+
+async def test_clear_stale_scan_flags_skips_when_another_instance_serves(
+        monkeypatch):
+    """이중 기동된 비소유 프로세스가 살아있는 인스턴스의 스캔을 죽이면 안 된다
+    — DB 스윕과 같은 가드."""
+    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: True)
+    eid = uuid4()
+    pl.job_dir(eid).mkdir(parents=True)
+    pl.save_scenes(eid, {"scanning": True, "frames": []})
+    await pl.clear_stale_scan_flags_at_startup()
+    assert pl.load_scenes(eid)["scanning"] is True
+
+
+async def test_clear_stale_scan_flags_leaves_finished_scans(monkeypatch):
+    """끝난 스캔의 결과는 건드리지 않는다(에러를 새로 심지 않는다)."""
+    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: False)
+    eid = uuid4()
+    pl.job_dir(eid).mkdir(parents=True)
+    done = {"scanning": False, "frames": [{"t_ms": 0, "text": "A_001"}]}
+    pl.save_scenes(eid, done)
+    await pl.clear_stale_scan_flags_at_startup()
+    assert pl.load_scenes(eid) == done
+
+
 def test_relative_region_maps_tight_into_padded():
     tight = (0.0073, 0.0259, 0.3271, 0.2056)
     pad = pl._pad_region(tight)

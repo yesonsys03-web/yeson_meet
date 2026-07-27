@@ -375,6 +375,55 @@ async def fail_inflight_video_jobs_at_startup() -> None:
         logger.info("startup sweep: %d in-flight video job(s) marked error", result.rowcount)
 
 
+_RESTART_STOPPED = "서버가 재시작돼 작업이 중단되었습니다. 다시 실행하세요."
+
+
+async def clear_stale_scan_flags_at_startup() -> None:
+    """재시작으로 죽은 씬 분할 작업의 '진행 중' 플래그를 내린다.
+
+    fail_inflight_video_jobs_at_startup은 DB의 job 상태만 본다. 씬 분할의
+    진행 상태(scanning/refining/checking/exporting)는 작업 폴더의 JSON에 있고,
+    그 플래그를 내리는 건 작업 자신뿐이라(완료·취소·실패) 스캔 도중 서버가
+    재시작되면 뒤에 도는 작업이 없는데도 화면이 영원히 '실행중'으로 남았다 —
+    사용자가 취소를 눌러야만 빠져나올 수 있었다.
+
+    사용자 설정(ocr_region·method·interval)은 작업 산출물이 아니므로 보존하고,
+    끝난 스캔은 건드리지 않는다(없던 에러를 심지 않는다). '다른 인스턴스가
+    서빙 중' 가드는 DB 스윕과 같다 — 이중 기동된 비소유 프로세스가 살아있는
+    인스턴스의 스캔을 죽이면 안 된다.
+    """
+    if _another_instance_is_serving():
+        logger.warning(
+            "startup scene-flag sweep skipped: another instance is serving")
+        return
+    root = video_jobs_root()
+    if not root.exists():
+        return
+    cleared = 0
+    for job in root.iterdir():
+        if not job.is_dir():
+            continue
+        eid = job.name
+        try:
+            data = load_scenes(eid)
+            if data and data.get("scanning"):
+                save_scenes(eid, {**data, "scanning": False,
+                                  "error": _RESTART_STOPPED})
+                cleared += 1
+            for load, save, key in (
+                    (load_refine_status, save_refine_status, "refining"),
+                    (load_boundary_status, save_boundary_status, "checking"),
+                    (load_export_status, save_export_status, "exporting")):
+                st = load(eid)
+                if st and st.get(key):
+                    save(eid, {**st, key: False, "error": _RESTART_STOPPED})
+                    cleared += 1
+        except Exception:  # noqa: BLE001 — 한 작업의 손상 파일이 기동을 막지 않게
+            logger.exception("startup scene-flag sweep failed for %s", eid)
+    if cleared:
+        logger.info("startup sweep: cleared %d stale scene flag(s)", cleared)
+
+
 async def _prune_pre_delete_hook(candidate_ids: list[int]) -> None:
     """프루닝의 SELECT와 DELETE 사이 지점 (기본 no-op). 테스트가 여기서 상태
     전이(review→burning)를 주입해 DELETE 시점의 상태 재확인 가드를 검증한다."""
@@ -594,6 +643,39 @@ def load_ocr_region(external_id: UUID | str) -> tuple | None:
 # 크롭된 입력에서는 상단 밴드 가정을 쓰지 않는다 — 크롭 자체가 영역 필터다.
 def _band_for(region: tuple | None) -> float:
     return 1.0 if region else _TOP_BAND_DEFAULT
+
+
+# 판독 카운터(ocr_done)가 아직 없는 앞 구간의 단계 이름 — 프론트가 그대로
+# 표시한다("프레임 추출 중…"보다 어디쯤인지 알 수 있게).
+STAGE_CROP = "스캔용 크롭본 만드는 중"
+STAGE_FRAMES = "프레임 추출 중"
+STAGE_THUMBS = "썸네일 만드는 중"
+STAGE_CUTS = "컷 감지 중"
+
+# 살아있음 신호를 갱신하는 주기(초). 프론트 정체 판정이 200초라 넉넉히 짧게.
+_EXTRACT_TICK_S = 3.0
+
+
+def _extract_tick(scan_src: Path, frames_dir: Path, thumbs_dir: Path) -> int:
+    """추출 구간의 '살아있음' 신호 — 산출물이 실제로 늘어야 값이 오른다.
+
+    단순 시계였다면 진짜로 멎은 ffmpeg도 살아있는 것처럼 보여 정체 감지가
+    죽는다. 크롭본 크기(KB)와 추출된 파일 수를 더해, 일이 진행될 때만 값이
+    바뀌게 한다(수가 아니라 '변했는가'만 쓴다).
+    """
+    tick = 0
+    try:
+        if scan_src.exists():
+            tick += scan_src.stat().st_size // 1024
+    except OSError:
+        pass
+    for d, pat in ((frames_dir, "f_*.png"), (thumbs_dir, "thumb_*.jpg")):
+        try:
+            if d.exists():
+                tick += sum(1 for _ in d.glob(pat))
+        except OSError:
+            pass
+    return tick
 
 
 _TOP_BAND_DEFAULT = 0.35
@@ -1077,25 +1159,66 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
         _FULL_REL = (0.0, 0.0, 1.0, 1.0)
 
         def _work() -> tuple[list[SceneRun], int, int]:
-            build_scan_source(ffmpeg, burned, scan_src, pad_abs,
-                              proc_key=str(external_id))
-            extract_fingerprint_frames(ffmpeg, scan_src, frames_dir, tight_rel,
-                                       proc_key=str(external_id))
-            # 썸네일은 전체 화면이 필요하다(필름스트립) — 원본 유지.
-            extract_thumbnails(ffmpeg, burned, thumbs_dir, _FP_THUMB_INTERVAL_S,
-                               proc_key=str(external_id))
+            # 여기부터 diff_series까지는 판독 카운터가 없는 구간이다(실측 60초).
+            # 아무것도 안 흘리면 프론트가 200초 무변화를 정체로 보고 멀쩡한
+            # 스캔을 포기하므로, 단계 이름과 산출물 증가(_extract_tick)를
+            # 감시 스레드가 알린다 — 이 구간에는 다른 기록자가 없어 경합 없음.
+            stage = [STAGE_CROP]
+            stop = threading.Event()
+            lock = threading.Lock()
+
+            def _mark(tick: int) -> None:
+                with lock:
+                    save_scenes(external_id, _prog(
+                        {"total_frames": 0, "ocr_done": 0, "frames": [],
+                         "stage": stage[0], "stage_tick": tick}))
+
+            def _enter(name: str) -> None:
+                """단계 진입 — 본 스레드가 쓰므로 순서가 보장된다."""
+                stage[0] = name
+                _mark(_extract_tick(scan_src, frames_dir, thumbs_dir))
+
+            def _watch() -> None:
+                """단계 '안'의 살아있음 — 산출물이 늘 때만 값을 올린다."""
+                last = None
+                while not stop.wait(_EXTRACT_TICK_S):
+                    tick = _extract_tick(scan_src, frames_dir, thumbs_dir)
+                    if tick != last:
+                        last = tick
+                        _mark(tick)
+
+            _enter(STAGE_CROP)
+            watcher = threading.Thread(target=_watch, daemon=True)
+            watcher.start()
+            try:
+                build_scan_source(ffmpeg, burned, scan_src, pad_abs,
+                                  proc_key=str(external_id))
+                _enter(STAGE_FRAMES)
+                extract_fingerprint_frames(ffmpeg, scan_src, frames_dir,
+                                           tight_rel, proc_key=str(external_id))
+                _enter(STAGE_THUMBS)
+                # 썸네일은 전체 화면이 필요하다(필름스트립) — 원본 유지.
+                extract_thumbnails(ffmpeg, burned, thumbs_dir,
+                                   _FP_THUMB_INTERVAL_S,
+                                   proc_key=str(external_id))
+            finally:
+                stop.set()
+                watcher.join(timeout=_EXTRACT_TICK_S * 2)
             thumb_count = len(list(thumbs_dir.glob("thumb_*.jpg")))
             pngs = sorted(frames_dir.glob("f_*.png"))
             n_frames = len(pngs)
             if n_frames == 0:
                 raise RuntimeError("프레임을 추출하지 못했습니다.")
-            save_scenes(external_id, _prog(
-                {"total_frames": 0, "ocr_done": 0, "frames": [],
-                 "thumb_count": thumb_count}))
+            stage[0] = STAGE_CUTS
             # 인접+윈도우 diff 한 패스 — 윈도우가 느린 페이드(인접 diff가 임계를
-            # 못 넘는 디졸브)의 컷 누락을 막는다(실기: 씬 통째 흡수).
-            diffs, wdiffs = diff_series(pngs, FADE_WINDOW,
-                                        check_cancel=_check_cancel)
+            # 못 넘는 디졸브)의 컷 누락을 막는다(실기: 씬 통째 흡수). 3만 장을
+            # 도는 통짜 루프라 여기서도 진행률을 흘린다(취소 확인과 같은 주기).
+            diffs, wdiffs = diff_series(
+                pngs, FADE_WINDOW, check_cancel=_check_cancel,
+                on_progress=lambda i: save_scenes(external_id, _prog(
+                    {"total_frames": 0, "ocr_done": 0, "frames": [],
+                     "thumb_count": thumb_count,
+                     "stage": STAGE_CUTS, "stage_tick": i})))
             runs_f = frame_runs(
                 detect_cuts_with_fades(diffs, wdiffs, FADE_WINDOW), n_frames)
             total = len(runs_f)
@@ -1144,13 +1267,24 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                 # '' 1011런의 상당수가 패딩에서 정상 판독(110_0330~0350은 씬
                 # 통째가 이 경로로만 복구). 추가 비용은 미판독 런 수만큼의
                 # select 배치 1회.
+                # 재시도 단계도 진행률을 쓴다 — 카운터가 total에 닿은 채 몇 분이
+                # 흐르면 프론트의 정체 판정(200초 무변화)이 멀쩡한 스캔을 실패로
+                # 만든다("스캔이 진행되지 않습니다"). 실기: 타이트 판독이 전멸한
+                # 소스에서 미판독 런이 곧 전체 런이라 두 재시도 단계가 스캔의
+                # 대부분을 차지했고, 화면은 '판독 중… 2791/2791'에서 굳었다.
+                # 정렬 단계와 같은 방식으로 total 뒤에 이어 센다.
+                def _stage_prog(n: int, done_k: int) -> None:
+                    save_scenes(external_id, _prog(
+                        {"total_frames": total + n, "ocr_done": total + done_k,
+                         "frames": [], "thumb_count": thumb_count}))
+
                 miss = [i for i, t in enumerate(texts) if not t.strip()]
                 if miss:
                     pad_batch = extract_frames_at(
                         ffmpeg, scan_src, [picks[i] for i in miss],
                         tmpdir / "pad", _FULL_REL,
                         proc_key=str(external_id), workers=_refine_workers())
-                    for i in miss:
+                    for k, i in enumerate(miss):
                         _check_cancel()
                         png = pad_batch.get(picks[i])
                         if png is not None:
@@ -1160,6 +1294,8 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                                      png, _DEFAULT_DELIMS, top_frac=1.0))
                             if t:
                                 texts[i] = t
+                        if k % 10 == 0 or k == len(miss) - 1:
+                            _stage_prog(len(miss), k + 1)
 
                 # 패딩 배치도 못 살린 잔여 런만 개별 시킹 재시도(실기 1011→55).
                 # 자리를 바꿔(0.25/0.75) 타이트→패딩 순으로 읽는다 — 런 내부는
@@ -1193,9 +1329,14 @@ async def run_scene_scan_fingerprint(external_id: UUID) -> None:
                 if still:
                     with ThreadPoolExecutor(
                             max_workers=_refine_workers()) as retry_pool:
-                        for i, text in retry_pool.map(_retry_run, still):
+                        for k, (i, text) in enumerate(
+                                retry_pool.map(_retry_run, still)):
                             if text:
                                 texts[i] = text
+                            # 런마다 시킹 4회까지 도는 가장 느린 단계 — 여기서
+                            # 진행률이 멈추면 프론트가 스캔을 포기한다.
+                            if k % 10 == 0 or k == len(still) - 1:
+                                _stage_prog(len(still), k + 1)
 
                 # ── 판독불가 블록 프레임 단위 귀속 — 서로 다른 라벨 사이 ''
                 # 블록이 통째 앞 씬에 붙는 혼입(실기 HH0304 씬 48클립)의 근본

@@ -67,3 +67,18 @@ button:not(:disabled):active {
   background: #9acdff;
   background-clip: content-box;
 }
+
+/* select 팝업 — 윈도우 WebView2는 옵션 목록을 OS가 그린다. 페이지가 색을 안 정하거나
+ * color:inherit(다크 테마의 흰색)만 주면 흰 팝업에 흰 글씨가 되어 목록이 통째로 안
+ * 보인다(실기 윈도우: "방식" 드롭다운). macOS WebKit은 select 자체 색으로 팝업을
+ * 그려서 드러나지 않았다 — 그래서 맥에서만 검증하면 놓친다.
+ * 인라인 스타일 9곳을 각각 고치는 대신 한 곳에서 못박는다(다음에 추가되는 select도
+ * 자동으로 안전). 라이트 카드(설정 패널)에는 select가 없어 다크 팝업으로 통일해도
+ * 어긋나지 않는다. */
+option {
+  background-color: #1a1d24;
+  color: #e6e8ee;
+}
+option:disabled {
+  color: #7b8290;               /* 비활성 옵션도 '읽히되 눌리지 않는' 정도로 */
+}

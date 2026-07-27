@@ -124,6 +124,29 @@ def test_pick_slate_line_ignores_bottom_watermark():
         "HH0307_090_0080_AC_v01"
 
 
+def test_pick_slate_line_accepts_space_read_separator():
+    """회귀(실기 FL102): OCR이 슬레이트의 '_'를 공백으로 읽는 쇼가 있다 —
+    12프레임 표본에서 '_'로 읽힌 적 0회, 공백 10회. 구분자로만 세면 1토큰이라
+    후보에서 탈락해 그 쇼 전체가 판독실패가 됐다(구역 미리읽기도 '판독 실패')."""
+    lines = [("FL102 I032", 0.89, 0.94)]
+    assert pick_slate_line(lines, ["_", "-", "/"], min_tokens=2, top_frac=1.0) \
+        == "FL102 I032"
+
+
+def test_pick_slate_line_space_leniency_requires_digit_fields():
+    """공백 관용은 '숫자를 품은 필드'로 갈라질 때만 — 공백이 필드 '안'에 있는
+    슬레이트("Seq 11B")나 타이틀카드("THE END")를 슬레이트로 오인하면 안 된다."""
+    assert pick_slate_line([("Seq 11B", 0.99, 0.05)], ["_", "-"], min_tokens=2) == ""
+    assert pick_slate_line([("THE END", 0.99, 0.05)], ["_", "-"], min_tokens=2) == ""
+
+
+def test_pick_slate_line_ranks_by_delimiter_tokens():
+    """공백 관용은 '후보 자격'에만 쓰고 순위는 구분자 토큰 수 그대로 —
+    공백으로 잘게 쪼개지는 텍스트가 진짜 슬레이트를 이기면 안 된다."""
+    lines = [("HH0307_020_0150", 0.90, 0.05), ("A1 B2 C3 D4", 0.99, 0.05)]
+    assert pick_slate_line(lines, ["_", "-"], min_tokens=2) == "HH0307_020_0150"
+
+
 def test_pick_slate_line_no_top_band_candidate_returns_empty():
     """상단 밴드에 읽힌 게 없으면 하단 텍스트로 폴백하지 않고 판독실패("") —
     "" 는 hold_keys가 직전 유효값으로 홀드하므로 안전하다."""
@@ -903,6 +926,69 @@ def test_canonicalize_fixes_single_inserted_char():
     assert out[5] == "HH0307_075_0040_AC_v01"
 
 
+def test_canonicalize_fixes_lookalike_digit_for_letter():
+    """실기 FL102: 시퀀스 글자가 'O001'인데 숫자 '0001'로, 'I016'인데 '1016'으로
+    읽힌다(299씬 중 60개). 코퍼스 다수 모양이 U1D3이면 그 자리는 '글자'라는
+    뜻이므로 닮은꼴 숫자를 글자로 되돌린다 — 작품 포맷 하드코딩 없이 데이터
+    자신의 템플릿이 근거다."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["FL102 A001", "FL102 B010", "FL102 C013", "FL102 D021"] * 3
+             + ["FL102 0001", "FL102 1016"])
+    out = canonicalize_texts(texts, ["_", " ", "-", "/"])
+    assert out[-2] == "FL102_O001"
+    assert out[-1] == "FL102_I016"
+
+
+def test_canonicalize_lookalike_merges_split_scene():
+    """같은 씬이 'I016'과 '1016' 두 갈래로 읽히면 지금은 세그먼트가 둘로
+    쪼개진다(실기 7건). 교정이 그룹핑 '전에' 돌아 같은 키로 합쳐져야 한다."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    delims = ["_", " ", "-", "/"]
+    texts = ["FL102 A001", "FL102 B010", "FL102 C013",
+             "FL102 I016", "FL102 1016"]
+    out = canonicalize_texts(texts, delims)
+    # 정상 판독은 원문 그대로, 오독은 교정 — 둘이 같은 토큰(=같은 키)이어야
+    # 그룹핑에서 한 씬으로 합쳐진다.
+    assert tokenize(out[3], delims) == tokenize(out[4], delims) \
+        == ["FL102", "I016"]
+
+
+def test_canonicalize_lookalike_never_invents_value_in_fixed_field():
+    """고정 필드(코퍼스 값이 하나뿐)에는 새 값을 지어내지 않는다 — 'HH030Z'를
+    닮은꼴로 밀면 'HH0302'가 되지만 이 코퍼스의 쇼 번호는 언제나 HH0307이다.
+    변하는 씬 ID 필드와 달리 여기선 닮은꼴 교체가 근거가 되지 못한다."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = ["HH0307_010_0010_AC_v01"] * 5 + ["HH030Z_140_0010_AC_v01"]
+    assert canonicalize_texts(texts, ["_", "-"])[5] == texts[5]
+
+
+def test_canonicalize_lookalike_restores_known_constant():
+    """반대로 닮은꼴 교정 결과가 그 고정 필드의 '아는 값'과 일치하면 교정한다
+    — 'FLI02'는 코퍼스에 실재하는 'FL102'로 되돌아가므로 지어내기가 아니다."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["FL102 A001", "FL102 B010", "FL102 C013"] * 2
+             + ["FLI02 D021"])
+    assert canonicalize_texts(texts, ["_", " ", "-", "/"])[-1] == "FL102_D021"
+
+
+def test_canonicalize_keeps_digits_when_corpus_says_digits():
+    """진짜 숫자 필드인 작품은 건드리지 않는다 — 다수 모양이 D4면 그 자리는
+    숫자다. 템플릿이 작품마다 데이터에서 나오므로 자동으로 안전하다."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = ["FL102 0001", "FL102 0002", "FL102 0003", "FL102 0004"]
+    assert canonicalize_texts(texts, ["_", " ", "-", "/"]) == texts
+
+
+def test_canonicalize_skips_non_lookalike_mismatch():
+    """닮은꼴 쌍이 아닌 문자는 억지로 바꾸지 않는다 — '4'는 어떤 글자로도
+    읽히지 않으므로 원문 그대로 둔다(억지 교정 금지 원칙)."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["FL102 A001", "FL102 B010", "FL102 C013"] * 2
+             + ["FL102 4001"])
+    out = canonicalize_texts(texts, ["_", " ", "-", "/"])
+    assert out[-1] == "FL102 4001"
+
+
 def test_canonicalize_rejects_ambiguous_deletion():
     # 삭제 위치에 따라 서로 다른 결과가 나오면(모호) 교정하지 않는다.
     from apps.server.domain.video_captions.scene_split import canonicalize_texts
@@ -968,3 +1054,45 @@ def test_read_slate_line_rescaled_recovers_native_fail(monkeypatch, tmp_path):
         == "HH0304_040_0210_AC_v01"
     # 축소 임시 파일은 남지 않는다.
     assert list(tmp_path.glob("*_rs*")) == []
+
+
+def test_read_slate_line_rescaled_tries_upscale(monkeypatch, tmp_path):
+    """확대 재판독 — 작은 크롭에서는 필드 구분자가 뭉개져 두 필드가 붙어 읽히고
+    (실기 FL102 720s 원본 'FL102J002'), 확대하면 갈라진다('FL102 J002').
+    축소(0.6×)로도 안 갈라지는 프레임을 확대가 받아낸다."""
+    from PIL import Image
+
+    from apps.server.domain.video_captions import slate_ocr
+    png = tmp_path / "s.png"
+    Image.new("RGB", (232, 62)).save(png)
+
+    def fake_engine(path):
+        with Image.open(path) as im:
+            text = "FL102 J002" if im.width >= 400 else "FL102J002"
+        return ([[[[5, 5], [200, 5], [200, 40], [5, 40]], text, 0.9]], 0.0)
+
+    monkeypatch.setattr(slate_ocr, "_get_engine", lambda: fake_engine)
+    assert slate_ocr.read_slate_line(png, ["_", "-"], top_frac=1.0) == ""
+    assert slate_ocr.read_slate_line_rescaled(png, ["_", "-"], top_frac=1.0) \
+        == "FL102 J002"
+    assert list(tmp_path.glob("*_rs*")) == []
+
+
+def test_read_slate_line_rescaled_skips_pointless_upscale(monkeypatch, tmp_path):
+    """검출 상한(960)을 넘겨 확대하면 검출기가 도로 줄여 결과는 같고 시간만 든다
+    — 큰 이미지는 확대 시도를 건너뛴다(수천 프레임 스캔의 낭비 방지)."""
+    from PIL import Image
+
+    from apps.server.domain.video_captions import slate_ocr
+    png = tmp_path / "big.png"
+    Image.new("RGB", (900, 200)).save(png)
+    widths = []
+
+    def fake_engine(path):
+        with Image.open(path) as im:
+            widths.append(im.width)
+        return None, 0.0
+
+    monkeypatch.setattr(slate_ocr, "_get_engine", lambda: fake_engine)
+    assert slate_ocr.read_slate_line_rescaled(png, ["_", "-"], top_frac=1.0) == ""
+    assert widths == [540]  # 0.6배만 — 1800px 확대는 시도하지 않는다

@@ -73,19 +73,26 @@ FADE_WINDOW = 6
 
 def diff_series(paths: list[Path], window: int,
                 check_cancel: Callable[[], None] | None = None,
+                on_progress: Callable[[int], None] | None = None,
                 ) -> tuple[list[int], list[int]]:
     """인접 해밍거리와 윈도우 해밍거리(frame k+window vs frame k)를 한 패스로.
 
     adjacent_diffs와 같은 스트리밍(최근 window개 링버퍼, O(window) 메모리).
-    반환: (adj, win) — adj[i]=frame i+1 vs i, win[k]=frame k+window vs k."""
+    반환: (adj, win) — adj[i]=frame i+1 vs i, win[k]=frame k+window vs k.
+
+    on_progress(i)는 취소 확인과 같은 주기(256프레임)로 호출한다 — 3만 장을
+    도는 통짜 루프라 밖에서 진행률을 못 보면 스캔이 멎은 것처럼 보인다."""
     import numpy as np
     adj: list[int] = []
     win: list[int] = []
     ring: list = []
     prev = None
     for i, path in enumerate(paths):
-        if check_cancel is not None and i % 256 == 0:
-            check_cancel()
+        if i % 256 == 0:
+            if check_cancel is not None:
+                check_cancel()
+            if on_progress is not None:
+                on_progress(i)
         cur = load_fingerprint(path)
         if prev is not None:
             adj.append(int(np.sum(cur != prev)) if cur.shape == prev.shape

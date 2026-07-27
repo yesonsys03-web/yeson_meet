@@ -253,13 +253,69 @@ def label_template(texts: list[str], delimiters: list[str]) -> list[str] | None:
 _SHAPE_RE = re.compile(r"([ULDX])(\d+)")
 
 
+# 닮은꼴 문자쌍 — OCR이 글자와 숫자를 서로 바꿔 읽는 상수적 오독. 슬레이트
+# 서체(산세리프 대문자+숫자)에서 실제로 뒤집히는 쌍만 담는다: 실기 FL102는
+# 시퀀스 글자 O를 '0', I를 '1'로 읽어 299씬 중 60개가 어긋났다(그중 7개는
+# 같은 씬이 두 갈래로 읽혀 세그먼트가 쪼개졌다).
+_TO_DIGIT = {"O": "0", "o": "0", "I": "1", "l": "1", "Z": "2",
+             "S": "5", "G": "6", "B": "8"}
+_TO_UPPER = {"0": "O", "1": "I", "2": "Z", "5": "S", "6": "G", "8": "B"}
+
+
+def _cls(c: str) -> str:
+    return ("D" if c.isdigit() else "U" if c.isupper()
+            else "L" if c.islower() else "X")
+
+
+def _coerce_lookalikes(flat: str, template: list[str],
+                       pos_values: tuple[frozenset[str], ...]) -> str | None:
+    """자릿수는 맞는데 문자종류가 어긋난 자리를 '닮은꼴 상대'로 바꿔 템플릿에
+    맞춘다 — 코퍼스 다수 모양이 그 자리를 글자라고 말하면 거기 온 '0'은 O다.
+
+    작품 포맷을 하드코딩하지 않는다: 템플릿이 그 잡의 데이터에서 나오므로,
+    진짜 숫자 필드인 작품은 템플릿 자체가 D라 아무것도 바뀌지 않는다. 닮은꼴
+    쌍이 없는 문자('4' 등)나 길이가 안 맞는 텍스트는 None(억지 교정 금지).
+
+    pos_values(토큰 위치별 코퍼스 값 집합)로 한 겹 더 막는다: **값이 하나뿐인
+    고정 필드**(쇼 번호·'AC'·'v01' 같은 접미)에서는 코퍼스에 없는 새 값을
+    만들지 않는다. 'HH030Z'를 닮은꼴로 밀면 'HH0302'가 되는데 그 코퍼스의
+    쇼 번호는 언제나 HH0307이다 — 이건 닮은꼴 교체가 아니라 그냥 깨진 판독이다.
+    변하는 필드(씬 ID처럼 값이 여럿)는 코퍼스가 정답을 열거해 줄 수 없으므로
+    문자종류 템플릿을 근거로 삼는다.
+    """
+    pieces: list[str] = []
+    changed: set[int] = set()
+    pos = 0
+    for i, shape in enumerate(template):
+        piece = ""
+        for kind, length in _SHAPE_RE.findall(shape):
+            for _ in range(int(length)):
+                if pos >= len(flat):
+                    return None
+                c = flat[pos]
+                if _cls(c) != kind:
+                    sub = (_TO_DIGIT.get(c) if kind == "D"
+                           else _TO_UPPER.get(c) if kind == "U" else None)
+                    if sub is None:
+                        return None
+                    c = sub
+                    changed.add(i)
+                piece += c
+                pos += 1
+        pieces.append(piece)
+    if pos != len(flat) or not changed:
+        return None
+    for i in changed:
+        vals = pos_values[i] if i < len(pos_values) else frozenset()
+        if len(vals) <= 1 and pieces[i] not in vals:
+            return None
+    return "_".join(pieces)
+
+
 def _fill_template(flat: str, template: list[str]) -> str | None:
     """squash된 문자열을 템플릿 모양대로 채운다 — 못 채우거나 숫자가 남으면
     None(어디서 끊을지 모호한 자릿수 잔여는 억지 교정 금지)."""
-    def cls(c: str) -> str:
-        return ("D" if c.isdigit() else "U" if c.isupper()
-                else "L" if c.islower() else "X")
-
+    cls = _cls
     pos = 0
     out: list[str] = []
     for shape in template:
@@ -278,7 +334,8 @@ def _fill_template(flat: str, template: list[str]) -> str | None:
 
 def _reparse(text: str, template: list[str], delimiters: list[str],
              known: frozenset[str] = frozenset(),
-             context: frozenset[str] = frozenset()) -> str | None:
+             context: frozenset[str] = frozenset(),
+             pos_values: tuple[frozenset[str], ...] = ()) -> str | None:
     """구분자를 잃고 붙은 텍스트를 템플릿 모양대로 다시 쪼갠다. 직접 채우기가
     실패하면 '한 글자 삭제' 관용을 시도한다 — OCR이 구분자를 숫자로 환각하는
     삽입 오독(실기 '_'→'1': HH0307_07510040) 대응. 숫자열은 어느 숫자를 지워도
@@ -294,6 +351,11 @@ def _reparse(text: str, template: list[str], delimiters: list[str],
     fixed = _fill_template(flat, template)
     if fixed is not None:
         return fixed
+    # 닮은꼴 오독(글자↔숫자) — 길이는 맞고 문자종류만 어긋난 경우. 삭제 관용은
+    # 길이가 안 맞을 때의 수단이라 서로 겹치지 않는다.
+    coerced = _coerce_lookalikes(flat, template, pos_values)
+    if coerced is not None:
+        return coerced
     if known:
         matched = {c for i in range(len(flat))
                    if (c := _fill_template(flat[:i] + flat[i + 1:],
@@ -335,6 +397,10 @@ def canonicalize_texts(texts: list[str], delimiters: list[str]) -> list[str]:
         for toks in [tokenize(text, delimiters)]
         if len(toks) == len(template)
         and all(token_shape(t) == s for t, s in zip(toks, template)))
+    # 토큰 위치별 코퍼스 값 집합 — 닮은꼴 교정이 '고정 필드'에 없는 값을
+    # 지어내지 못하게 막는 근거(_coerce_lookalikes 참조).
+    pos_values = tuple(frozenset(k.split("_")[i] for k in known)
+                       for i in range(len(template)))
     # 이웃 창의 깨끗한 판독 — 삽입 오독 삭제 후보가 코퍼스에서 둘 이상과
     # 일치할 때의 판별 근거(_reparse context). 창은 ±_CTX_WINDOW 런.
     clean: list[str | None] = []
@@ -349,7 +415,7 @@ def canonicalize_texts(texts: list[str], delimiters: list[str]) -> list[str]:
             c for j in range(max(0, i - _CTX_WINDOW),
                              min(len(texts), i + _CTX_WINDOW + 1))
             if j != i and (c := clean[j]) is not None)
-        fixed = (_reparse(text, template, delimiters, known, ctx)
+        fixed = (_reparse(text, template, delimiters, known, ctx, pos_values)
                  if text else None)
         out.append(fixed if fixed is not None else text)
     return out

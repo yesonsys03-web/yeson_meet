@@ -966,6 +966,30 @@ async def test_ocr_test_read_returns_text(client, db_session, admin_user,
     assert r.json()["text"] == "HH0307_010_0010_AC_v01"
 
 
+async def test_ocr_test_falls_back_to_rescaled_read(client, db_session,
+                                                    admin_user, monkeypatch):
+    """미리읽기는 스캔과 같은 폴백(리스케일 재판독)을 쓴다 — 미리읽기만 1차
+    판독으로 끝내면 스캔은 읽어낼 프레임에 "판독 실패"가 떠 사용자가 멀쩡한
+    구역을 다시 잡게 된다."""
+    monkeypatch.setattr(api_vj, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(api_vj, "extract_frame",
+                        lambda *a, **k: Path(a[3]).write_bytes(b"x"))
+    monkeypatch.setattr(api_vj, "read_slate_line", lambda *a, **k: "")
+    monkeypatch.setattr(api_vj, "read_slate_line_rescaled",
+                        lambda *a, **k: "FL102 J002")
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    d = pl.job_dir(job.external_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "burned.mp4").write_bytes(b"x")
+    job.burned_path = str(d / "burned.mp4")
+    await db_session.commit()
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/ocr-test",
+        json={"t_ms": 6000, "region": {"x": 0.7, "y": 0.9, "w": 0.2, "h": 0.09}})
+    assert r.status_code == 200
+    assert r.json()["text"] == "FL102 J002"
+
+
 async def test_get_scenes_empty_before_scan(client, db_session, admin_user):
     job = await _new_scene_job(db_session, admin_user, status="done")
     resp = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")
@@ -1229,3 +1253,113 @@ async def test_slate_template_accepts_method(client, monkeypatch, tmp_path):
     assert r.status_code == 200
     got = (await client.get("/api/v1/video-jobs/slate-templates")).json()
     assert got["templates"][0]["method"] == "fingerprint"
+
+
+async def test_scene_export_file_serves_exported_clip(client, db_session, admin_user):
+    """익스포트한 클립을 클라이언트가 내려받을 수 있어야 한다.
+
+    폴더 선택창은 클라 PC에서 뜨는데 파일은 서버가 자기 디스크에 쓴다 — 두 PC가
+    다르면 사용자가 고른 폴더는 영영 빈 채로 남았다(실기 윈도우). 서버가 굽고
+    클라가 받아 저장하도록, 익스포트 결과를 내려받는 통로를 연다.
+    """
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    out = pl.job_dir(job.external_id) / "scene_out"
+    out.mkdir(parents=True, exist_ok=True)
+    clip = out / "Scene678.mp4"
+    clip.write_bytes(b"mp4-bytes")
+    pl.save_export_status(job.external_id, {
+        "exporting": False, "done": 1, "total": 1, "error": None,
+        "out_dir": str(out), "files": [str(clip)]})
+
+    r = await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/file",
+        params={"name": "Scene678.mp4"})
+    assert r.status_code == 200
+    assert r.content == b"mp4-bytes"
+
+
+async def test_scene_export_file_rejects_paths_outside_the_export(
+        client, db_session, admin_user):
+    """익스포트 목록에 없는 이름은 거부한다 — 경로 조작으로 서버 파일을 읽어갈
+    통로가 되면 안 된다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    out = pl.job_dir(job.external_id) / "scene_out"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "Scene1.mp4").write_bytes(b"x")
+    pl.save_export_status(job.external_id, {
+        "exporting": False, "done": 1, "total": 1, "error": None,
+        "out_dir": str(out), "files": [str(out / "Scene1.mp4")]})
+
+    for name in ("../../../etc/passwd", "burned.mp4", "Scene2.mp4"):
+        r = await client.get(
+            f"/api/v1/video-jobs/{job.external_id}/scenes/export/file",
+            params={"name": name})
+        assert r.status_code == 404, name
+
+
+async def test_scene_export_file_404_when_gone_from_disk(
+        client, db_session, admin_user):
+    """목록엔 있는데 디스크에서 사라진 경우 — 조용한 0바이트 저장 대신 404."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    out = pl.job_dir(job.external_id) / "scene_out"
+    out.mkdir(parents=True, exist_ok=True)
+    pl.save_export_status(job.external_id, {
+        "exporting": False, "done": 1, "total": 1, "error": None,
+        "out_dir": str(out), "files": [str(out / "Gone.mp4")]})
+    r = await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/file",
+        params={"name": "Gone.mp4"})
+    assert r.status_code == 404
+
+
+async def test_scene_export_cleanup_removes_server_copies(
+        client, db_session, admin_user):
+    """클라가 받아 간 뒤 서버 사본을 지운다 — 안 지우면 잡마다 클립 수백 개가
+    서버 디스크에 쌓인다. 클라가 '다 받았다'고 알릴 때만 지운다(중간에 실패한
+    채로 지우면 수십 분짜리 재인코딩을 다시 해야 한다)."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    out = pl.job_dir(job.external_id) / "scene_out"
+    out.mkdir(parents=True, exist_ok=True)
+    clips = [out / "Scene1.mp4", out / "Scene2.mp4"]
+    for c in clips:
+        c.write_bytes(b"x")
+    pl.save_export_status(job.external_id, {
+        "exporting": False, "done": 2, "total": 2, "error": None,
+        "out_dir": str(out), "files": [str(c) for c in clips]})
+
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/cleanup")
+    assert r.status_code == 200
+    assert r.json()["deleted"] == 2
+    assert not any(c.exists() for c in clips)
+    assert not out.exists()          # 빈 폴더도 남기지 않는다
+    # 목록도 비워야 '받기' 통로가 없는 파일을 가리키지 않는다.
+    assert pl.load_export_status(job.external_id)["files"] == []
+
+
+async def test_scene_export_cleanup_never_touches_outside_the_job(
+        client, db_session, admin_user, tmp_path):
+    """작업 폴더 밖은 절대 지우지 않는다 — out_dir로 임의 경로를 받은 옛 익스포트
+    기록이 남아 있어도 사용자 폴더를 비우면 안 된다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    outside = tmp_path / "내폴더"
+    outside.mkdir()
+    keep = outside / "Scene1.mp4"
+    keep.write_bytes(b"precious")  # 사용자 파일
+    pl.save_export_status(job.external_id, {
+        "exporting": False, "done": 1, "total": 1, "error": None,
+        "out_dir": str(outside), "files": [str(keep)]})
+
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/cleanup")
+    assert r.status_code == 200
+    assert r.json()["deleted"] == 0
+    assert keep.exists(), "작업 폴더 밖 파일을 지웠다"
+
+
+async def test_scene_export_cleanup_is_idempotent(client, db_session, admin_user):
+    """지울 게 없어도 오류가 아니다(재시도·중복 호출 안전)."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/cleanup")
+    assert r.status_code == 200 and r.json()["deleted"] == 0

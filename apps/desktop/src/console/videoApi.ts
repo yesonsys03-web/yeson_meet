@@ -336,6 +336,11 @@ export type ScenesData = {
   scanning?: boolean;
   ocr_done?: number;
   total_frames?: number;
+  // 판독 카운터가 아직 없는 앞 구간(크롭·프레임 추출·컷 감지)의 단계 이름과
+  // 살아있음 신호. stage_tick은 산출물이 실제로 늘 때만 오른다 — 정체 판정이
+  // 이 값도 진척으로 봐야 멀쩡한 스캔을 실패로 오인하지 않는다.
+  stage?: string | null;
+  stage_tick?: number;
   error?: string | null;
   frames: Array<{ t_ms: number; text: string }>;
   segments_scene: SceneSegment[];
@@ -410,6 +415,21 @@ export async function exportScenes(
     body: JSON.stringify({ mode, out_dir: outDir ?? null,
                            indices: indices ?? null }),
   });
+}
+
+// 익스포트한 클립 한 개를 내려받는 주소. 자르기는 서버가 하고(원본·ffmpeg가
+// 서버에 있다) 저장은 클라가 한다 — 두 PC가 다를 때 사용자가 고른 폴더가 비어
+// 있던 문제의 수정. name은 서버가 만든 파일명 그대로.
+export function sceneExportFileUrl(jobId: string, name: string): string {
+  return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/export/file`
+    + `?name=${encodeURIComponent(name)}`;
+}
+
+// 클라가 다 받은 뒤 서버 사본을 지운다 — 서버는 넘겨줄 목적으로만 굽는다.
+// 받는 중 실패하면 부르지 않는다(원본이 사라지면 재인코딩을 다시 해야 한다).
+export async function cleanupSceneExport(jobId: string): Promise<{ deleted: number }> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/export/cleanup`,
+    { method: "POST" });
 }
 
 export function sceneThumbUrl(jobId: string, index: number): string {
