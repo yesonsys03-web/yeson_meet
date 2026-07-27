@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { formatMs, frameSeekMs, NTSC_FPS, segmentTailMs, segmentThumbRange, type LabelAnomaly } from "./sceneSplitLogic";
+import { formatMs, frameSeekMs, mergeNeighborHint, NTSC_FPS, segmentTailMs, segmentThumbRange, type LabelAnomaly } from "./sceneSplitLogic";
 import { sceneThumbAtUrl, sceneThumbUrl, type SceneSegment } from "./videoApi";
 
 type Props = {
@@ -312,17 +312,43 @@ export function SceneFilmstrip(
             <span style={{ opacity: 0.7, flexShrink: 0 }}>
               {formatMs(s.start_ms)}–{formatMs(s.end_ms)}
             </span>
-            {onMerge ? (
+            {onMerge ? (() => {
+              // 병합 버튼에 '진짜 이웃'의 이름을 적는다 — 필터를 걸면 그 이웃이
+              // 목록에서 사라져, 이름 없이는 어느 쪽을 눌러야 할지 알 수 없다
+              // (실기: 경계 오류 탭). 라벨이 더 가까운 쪽엔 힌트 테두리만 준다
+              // (자동 적용 없음 — 판단은 사용자 몫).
+              const prevLabel = i > 0 ? segments[i - 1]?.label ?? null : null;
+              const nextLabel = i < segments.length - 1
+                ? segments[i + 1]?.label ?? null : null;
+              const hint = mergeNeighborHint(
+                s.label, prevLabel, nextLabel, suggestions?.get(i)?.suggestion);
+              const same = hint === "both";
+              const tip = (side: "prev" | "next", label: string | null) =>
+                label == null ? (side === "prev" ? "이전 구간이 없습니다"
+                                                 : "다음 구간이 없습니다")
+                  : same ? `양쪽 이웃이 같은 씬(${label})입니다 — 어느 쪽이든 결과가 같습니다`
+                  : hint === side ? `${label}에 병합 (이 구간 이름과 거의 같습니다)`
+                  : `${label}에 병합`;
+              const btn = (side: "prev" | "next") => ({
+                ...miniBtn, fontFamily: "monospace",
+                ...(hint === side || same
+                  ? { borderColor: "#3f9a5f", color: "#8fe0a8" } : null),
+              });
+              // 긴 라벨이 행을 밀지 않게 자른다(끝자리가 판단 근거라 앞을 자른다).
+              const short = (l: string) => (l.length > 14 ? `…${l.slice(-13)}` : l);
+              return (
               <span style={{ flexShrink: 0, display: "flex", gap: 3 }}>
                 {/* 이 구간을 이웃에 흡수(잘못 인식된 짧은 구간 제거용) */}
-                <button type="button" title="이전 구간에 병합"
+                <button type="button" title={tip("prev", prevLabel)}
                   disabled={i === 0}
-                  style={miniBtn}
-                  onClick={(e) => { e.stopPropagation(); onMerge(i, "prev"); }}>◀병합</button>
-                <button type="button" title="다음 구간에 병합"
+                  style={btn("prev")}
+                  onClick={(e) => { e.stopPropagation(); onMerge(i, "prev"); }}>
+                  ◀{prevLabel ? ` ${short(prevLabel)}` : "병합"}</button>
+                <button type="button" title={tip("next", nextLabel)}
                   disabled={i === segments.length - 1}
-                  style={miniBtn}
-                  onClick={(e) => { e.stopPropagation(); onMerge(i, "next"); }}>병합▶</button>
+                  style={btn("next")}
+                  onClick={(e) => { e.stopPropagation(); onMerge(i, "next"); }}>
+                  {nextLabel ? `${short(nextLabel)} ` : "병합"}▶</button>
                 {/* 되돌리기 — 방금 병합한 이 구간에만 뜬다. 여러 번 누르면 한
                     단계씩 이전 병합까지 거슬러 올라간다(실수 복구용). */}
                 {onUndoMerge && undoIndex === i ? (
@@ -332,7 +358,8 @@ export function SceneFilmstrip(
                     onClick={(e) => { e.stopPropagation(); onUndoMerge(); }}>↩되돌리기</button>
                 ) : null}
               </span>
-            ) : null}
+              );
+            })() : null}
             {/* 이 씬만(+맞닿은 이웃) 다시 익스포트 — 경계를 하나 고친 뒤 전체를 다시
                 굽지 않아도 되게 한다. 이웃까지 굽는 이유는 경계가 공유돼 이웃의
                 프레임 수도 함께 바뀌기 때문(이 씬만 내보내면 이웃이 옛 경계로 남는다). */}

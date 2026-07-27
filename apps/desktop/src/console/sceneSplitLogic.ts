@@ -395,6 +395,52 @@ export function filterIndices(
   return pool.filter((i) => matchesLabelQuery(labels[i] ?? "", query));
 }
 
+function editDistance(a: string, b: string): number {
+  // 라벨은 짧다(수십 자) — 단순 DP로 충분하다.
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i += 1) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      cur[j] = Math.min(
+        (prev[j] as number) + 1,
+        (cur[j - 1] as number) + 1,
+        (prev[j - 1] as number) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    prev = cur;
+  }
+  return prev[b.length] as number;
+}
+
+// 오독 구간을 어느 쪽 이웃에 병합해야 하는지 힌트.
+//
+// 필터(경계 오류·오독 탭)를 걸면 병합 대상인 '진짜 이웃'이 목록에서 사라져,
+// 화면만 보고는 ◀/▶ 중 무엇을 눌러야 할지 알 수 없다(실기). 이웃 이름을 버튼에
+// 적어 주는 것이 본체이고, 이 함수는 그 위에 얹는 힌트다 — 자동 적용하지 않는다.
+//
+// 판정 순서: ① 양쪽 이웃이 같은 씬이면 어느 쪽이든 결과가 같다("both")
+// ② 교정 제안이 한쪽 이름과 정확히 일치하면 그쪽(코퍼스 근거라 글자수보다 세다)
+// ③ 편집거리가 더 가까운 쪽. 단 그 거리가 라벨 길이에 비해 크면 침묵한다 —
+// 진짜로 다른 씬을 "덜 틀린 쪽"으로 떠미는 추천은 오히려 해롭다.
+export function mergeNeighborHint(
+  label: string, prev: string | null, next: string | null,
+  suggestion?: string | null,
+): "prev" | "next" | "both" | null {
+  if (prev == null && next == null) return null;
+  if (prev != null && next != null && prev === next) return "both";
+  if (prev == null) return "next";
+  if (next == null) return "prev";
+  const want = suggestion?.trim() ? suggestion : label;
+  if (prev === want) return "prev";
+  if (next === want) return "next";
+  const dp = editDistance(want, prev);
+  const dn = editDistance(want, next);
+  if (dp === dn) return null;
+  const best = Math.min(dp, dn);
+  if (best > Math.max(2, Math.floor(want.length / 3))) return null;
+  return dp < dn ? "prev" : "next";
+}
+
 // 스캔 진척 판정 키 — 이 값이 바뀌지 않으면 '정체'로 센다.
 //
 // 판독 수(ocr_done)만 보면 안 된다: 스캔의 앞 구간(크롭·프레임 추출·컷 감지)은

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -528,5 +528,38 @@ describe("scanProgressKey", () => {
 
   it("treats missing fields as zero", () => {
     expect(scanProgressKey({})).toBe(scanProgressKey({ ocr_done: 0, stage_tick: 0 }));
+  });
+});
+
+describe("mergeNeighborHint", () => {
+  // 필터를 걸면 병합 대상인 '진짜 이웃'이 화면에서 사라져, 어느 쪽으로 병합할지
+  // 판단할 근거가 없었다(실기: 경계 오류 탭의 Seene656).
+  it("says either side when both neighbours are the same scene", () => {
+    expect(mergeNeighborHint("Sgene663", "Scene663", "Scene663")).toBe("both");
+  });
+
+  it("prefers the neighbour the misread label almost matches", () => {
+    expect(mergeNeighborHint("Seene656", "Scene656", "Scene659")).toBe("prev");
+    expect(mergeNeighborHint("Scene67g", "Scene655", "Scene679")).toBe("next");
+  });
+
+  it("trusts an exact suggestion match over raw distance", () => {
+    // 제안이 다음 씬과 정확히 일치 — 앞 씬이 글자수로 더 가까워도 제안이 이긴다.
+    expect(mergeNeighborHint("678", "Scene677", "Scene678", "Scene678"))
+      .toBe("next");
+  });
+
+  it("stays silent when neither neighbour is close (no forced hint)", () => {
+    expect(mergeNeighborHint("Scene500", "Scene120", "Scene901")).toBeNull();
+  });
+
+  it("stays silent on a tie", () => {
+    expect(mergeNeighborHint("Scene65X", "Scene651", "Scene659")).toBeNull();
+  });
+
+  it("points at the only possible side at the list ends", () => {
+    expect(mergeNeighborHint("678", null, "Scene678")).toBe("next");
+    expect(mergeNeighborHint("678", "Scene678", null)).toBe("prev");
+    expect(mergeNeighborHint("678", null, null)).toBeNull();
   });
 });
