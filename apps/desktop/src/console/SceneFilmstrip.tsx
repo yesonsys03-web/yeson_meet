@@ -43,6 +43,9 @@ type Props = {
   onExportOne?: (i: number) => void;
   exportingIndex?: number | null;
   exportDisabled?: boolean;
+  // 이전/다음 씬 이동(선택) — 수백 줄을 스크롤로 훑지 않고 선택만 옮겨 검수한다.
+  // 보이는 목록(필터·검색 적용) 기준으로 부모가 계산한다.
+  onStepSegment?: (delta: number) => void;
 };
 
 // 다빈치 리졸브식 필름스트립: 썸네일을 시간축에 깔고 아래에 구간 목록을 얹는다.
@@ -53,7 +56,7 @@ export function SceneFilmstrip(
   { jobId, segments, thumbCount, intervalMs, onMerge, onRename,
     selectedIndex, highlight, onSelectSegment, onClearSelection, videoFps,
     onThumbClick, visibleIndices, suggestions, undoIndex, onUndoMerge,
-    onExportOne, exportingIndex, exportDisabled }: Props,
+    onExportOne, exportingIndex, exportDisabled, onStepSegment }: Props,
 ) {
   const thumbs = Array.from({ length: thumbCount }, (_, i) => i);
   const editable = Boolean(onMerge || onRename);
@@ -78,6 +81,21 @@ export function SceneFilmstrip(
     list.push({ seg, idx });
     boundaryBefore.set(from, list);
   });
+
+  // 보이는 목록(필터·검색 적용)에서 선택 씬의 위치 — 이전/다음 버튼의 카운터·비활성
+  // 판정에 쓴다. 0은 "선택이 보이는 목록에 없음"(필터가 바뀐 직후).
+  const visibleRows = visibleIndices ?? segments.map((_, i) => i);
+  const selPos = selectedIndex != null ? visibleRows.indexOf(selectedIndex) + 1 : 0;
+
+  // 선택이 바뀌면 그 줄을 보이게 스크롤 — 이전/다음 버튼이나 ←/→로 이동할 때 수백 줄
+  // 목록에서 그 줄을 눈으로 찾지 않아도 되게 한다. block:"nearest"라 이미 보이는 줄을
+  // 클릭했을 때는 화면이 움직이지 않는다.
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (selectedIndex == null) return;
+    listRef.current?.querySelector<HTMLElement>(`[data-row="${selectedIndex}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [selectedIndex]);
 
   // 선택 구간이 바뀌면 하이라이트 범위의 중앙 썸네일을 필름스트립 중앙으로 스크롤.
   useEffect(() => {
@@ -131,7 +149,11 @@ export function SceneFilmstrip(
                           cursor: onThumbClick ? "zoom-in" : "default",
                           outline: `2px solid ${accent}`, outlineOffset: "-2px" }} />
           )}
-          <small style={{ fontSize: 11, opacity: 0.7 }}>
+          {/* 두 줄 높이를 미리 잡아둔다 — 이웃 라벨 길이에 따라 한 줄/두 줄이 오가면
+              카드 높이가 바뀌어, 이전/다음 씬으로 넘길 때마다 위 썸네일이 위아래로
+              움직인다(검수 중 눈이 따라가야 하는 최악의 UX). */}
+          <small style={{ fontSize: 11, opacity: 0.7, display: "block",
+                          minHeight: 28 }}>
             {kind === "head"
               ? `이전 씬(${prevLabel}) 슬레이트가 보이면 머리 혼입`
               : `다음 씬(${nextLabel}) 슬레이트가 보이면 꼬리 혼입`}
@@ -142,14 +164,40 @@ export function SceneFilmstrip(
     return (
       <div style={{ background: "#000", borderRadius: 6, padding: 10,
                     display: "flex", flexDirection: "column", gap: 8 }}>
+        {/* 한 줄로 고정한다(nowrap) — 줄바꿈이 생기면 카드가 커져 아래 썸네일이
+            내려간다. 라벨은 길면 말줄임, 카운터는 폭을 못박아 자릿수가 바뀌어도
+            (9/421 → 15/421) 다른 요소가 밀리지 않게 한다. */}
         <div style={{ display: "flex", alignItems: "center", gap: 10,
-                      flexWrap: "wrap" }}>
-          <strong style={{ fontFamily: "monospace", fontSize: 14 }}>{seg.label}</strong>
-          <span style={{ fontSize: 12, opacity: 0.7 }}>
+                      flexWrap: "nowrap", overflow: "hidden" }}>
+          <strong style={{ fontFamily: "monospace", fontSize: 14, minWidth: 0,
+                           whiteSpace: "nowrap", overflow: "hidden",
+                           textOverflow: "ellipsis" }}>{seg.label}</strong>
+          <span style={{ fontSize: 12, opacity: 0.7, whiteSpace: "nowrap",
+                         flexShrink: 0 }}>
             {formatMs(seg.start_ms)}–{formatMs(seg.end_ms)}
           </span>
+          {/* 이전/다음 씬 — 목록을 스크롤하지 않고 검수 대상을 옮긴다. 카운터는 지금
+              보이는 목록(필터·검색 적용) 기준이라, 좁혀 놓으면 그 안에서만 오간다. */}
+          {onStepSegment ? (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
+                           flexShrink: 0 }}>
+              <button type="button" style={miniBtn} disabled={selPos === 1}
+                title="이전 씬 (키보드 ←)"
+                onClick={() => onStepSegment(-1)}>◀ 이전 씬</button>
+              <span style={{ fontSize: 12, opacity: 0.7, whiteSpace: "nowrap",
+                             fontVariantNumeric: "tabular-nums",
+                             minWidth: 78, textAlign: "center" }}>
+                {selPos > 0 ? selPos : "–"} / {visibleRows.length}
+              </span>
+              <button type="button" style={miniBtn}
+                disabled={selPos === visibleRows.length}
+                title="다음 씬 (키보드 →)"
+                onClick={() => onStepSegment(1)}>다음 씬 ▶</button>
+            </span>
+          ) : null}
           {onClearSelection ? (
-            <button type="button" style={{ ...miniBtn, marginLeft: "auto" }}
+            <button type="button" style={{ ...miniBtn, marginLeft: "auto",
+                                           flexShrink: 0 }}
               onClick={onClearSelection}>◀ 전체 필름스트립</button>
           ) : null}
         </div>
@@ -214,11 +262,17 @@ export function SceneFilmstrip(
       </div>
       )}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      {/* 목록에 자체 스크롤 영역을 준다 — 목록이 바깥 패널과 같은 스크롤을 쓰면,
+          이전/다음 씬으로 넘길 때 선택 줄을 보이게 하려고 바깥이 스크롤되면서 위쪽
+          검수 카드(sticky가 아직 안 붙은 구간)까지 함께 움직인다. 목록만 스크롤하면
+          카드는 제자리에 고정되고 줄만 흐른다. */}
+      <div ref={listRef}
+           style={{ display: "flex", flexDirection: "column", gap: 3,
+                    maxHeight: "45vh", overflowY: "auto" }}>
         {segments.map((s, i) => ({ s, i }))
           .filter(({ i }) => !visibleIndices || visibleIndices.includes(i))
           .map(({ s, i }) => (
-          <div key={i}
+          <div key={i} data-row={i}
                onClick={() => onSelectSegment?.(i)}
                style={{ display: "flex", gap: 8, fontSize: 13, alignItems: "center",
                         padding: "8px 8px", borderRadius: 4,
