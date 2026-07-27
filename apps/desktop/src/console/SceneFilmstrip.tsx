@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { formatMs, frameSeekMs, mergeNeighborHint, NTSC_FPS, segmentTailMs, segmentThumbRange, type LabelAnomaly } from "./sceneSplitLogic";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { formatMs, frameSeekMs, mergeNeighborHint, modalLabelClass, modalLabelPrefix, NTSC_FPS, segmentTailMs, segmentThumbRange, type LabelAnomaly } from "./sceneSplitLogic";
 import { sceneThumbAtUrl, sceneThumbUrl, type SceneSegment } from "./videoApi";
 
 type Props = {
@@ -59,6 +59,13 @@ export function SceneFilmstrip(
     onExportOne, exportingIndex, exportDisabled, onStepSegment }: Props,
 ) {
   const thumbs = Array.from({ length: thumbCount }, (_, i) => i);
+  // 이 쇼의 '정상 라벨 모양' — 병합 추천이 깨진 이웃 쪽을 가리키지 않게 하는
+  // 자격 심사에 쓴다(mergeNeighborHint 참조). 목록이 길어 한 번만 계산한다.
+  const { validClass, validPrefix } = useMemo(() => {
+    const labels = segments.map((s) => s.label);
+    const cls = modalLabelClass(labels);
+    return { validClass: cls, validPrefix: modalLabelPrefix(labels, cls) };
+  }, [segments]);
   const editable = Boolean(onMerge || onRename);
   const stripRef = useRef<HTMLDivElement>(null);
   // 경계 썸네일을 못 가져오면(구버전 서버 등) 그 칸을 숨긴다 — 깨진 이미지
@@ -320,8 +327,10 @@ export function SceneFilmstrip(
               const prevLabel = i > 0 ? segments[i - 1]?.label ?? null : null;
               const nextLabel = i < segments.length - 1
                 ? segments[i + 1]?.label ?? null : null;
-              const hint = mergeNeighborHint(
-                s.label, prevLabel, nextLabel, suggestions?.get(i)?.suggestion);
+              const hint = mergeNeighborHint({
+                label: s.label, prev: prevLabel, next: nextLabel,
+                suggestion: suggestions?.get(i)?.suggestion,
+                validClass, validPrefix });
               const same = hint === "both";
               const tip = (side: "prev" | "next", label: string | null) =>
                 label == null ? (side === "prev" ? "이전 구간이 없습니다"

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -532,34 +532,237 @@ describe("scanProgressKey", () => {
 });
 
 describe("mergeNeighborHint", () => {
-  // 필터를 걸면 병합 대상인 '진짜 이웃'이 화면에서 사라져, 어느 쪽으로 병합할지
-  // 판단할 근거가 없었다(실기: 경계 오류 탭의 Seene656).
+  // 필터(경계 오류·오독 탭)를 걸면 병합 대상인 '진짜 이웃'이 목록에서 사라져,
+  // 어느 쪽으로 병합할지 판단할 근거가 없었다(실기 Seene656).
+  const ULD = "U1L4D";     // 이 쇼의 정상 라벨 모양: Scene + 숫자(자릿수 무관)
+  const P = "Scene";       // 이 쇼의 공통 접두 — 정상/깨짐 판정에 함께 쓴다
+
   it("says either side when both neighbours are the same scene", () => {
-    expect(mergeNeighborHint("Sgene663", "Scene663", "Scene663")).toBe("both");
+    expect(mergeNeighborHint({ label: "Sgene663", prev: "Scene663",
+      next: "Scene663", validClass: ULD, validPrefix: P })).toBe("both");
   });
 
   it("prefers the neighbour the misread label almost matches", () => {
-    expect(mergeNeighborHint("Seene656", "Scene656", "Scene659")).toBe("prev");
-    expect(mergeNeighborHint("Scene67g", "Scene655", "Scene679")).toBe("next");
+    expect(mergeNeighborHint({ label: "Seene656", prev: "Scene655",
+      next: "Scene656", validClass: ULD, validPrefix: P })).toBe("next");
+    expect(mergeNeighborHint({ label: "Scene~665", prev: "Scene665",
+      next: "Scene666", validClass: ULD, validPrefix: P })).toBe("prev");
   });
 
   it("trusts an exact suggestion match over raw distance", () => {
-    // 제안이 다음 씬과 정확히 일치 — 앞 씬이 글자수로 더 가까워도 제안이 이긴다.
-    expect(mergeNeighborHint("678", "Scene677", "Scene678", "Scene678"))
-      .toBe("next");
+    // 실기 '678': 접두가 통째로 안 읽혔다. 제안(Scene678)이 뒤 이웃과 정확히
+    // 일치하므로 글자수(앞뒤 모두 5)가 동점이어도 뒤쪽으로 확정한다.
+    expect(mergeNeighborHint({ label: "678", prev: "Scene677", next: "Scene678",
+      suggestion: "Scene678", validClass: ULD, validPrefix: P })).toBe("next");
+  });
+
+  // ── 회귀: 멀쩡한 씬을 깨진 조각에 병합하라고 추천하던 문제 ──────────────
+  // 병합은 언제나 '이웃의 이름'이 살아남는다. 깨진 이웃 쪽으로 추천하면 멀쩡한
+  // 이름이 사라진다(실기: Scene678에 '◀ 678'이 추천으로 떴다).
+  it("never points at a malformed neighbour", () => {
+    expect(mergeNeighborHint({ label: "Scene678", prev: "678", next: null,
+      validClass: ULD, validPrefix: P })).toBeNull();
+  });
+
+  it("stays silent when only one side is comparable", () => {
+    // 실기 'Scene'(45 앞): 뒤 이웃이 깨져 비교가 안 된다 — 남은 한쪽으로
+    // 떠밀면 틀린다(정답은 뒤쪽 '45'가 Scene45로 고쳐진 뒤다).
+    expect(mergeNeighborHint({ label: "Scene", prev: "Scene44", next: "45",
+      validClass: ULD, validPrefix: P })).toBeNull();
+  });
+
+  it("still resolves one-sided cases when the repair matches exactly", () => {
+    expect(mergeNeighborHint({ label: "678", prev: "678x", next: "Scene678",
+      suggestion: "Scene678", validClass: ULD, validPrefix: P })).toBe("next");
   });
 
   it("stays silent when neither neighbour is close (no forced hint)", () => {
-    expect(mergeNeighborHint("Scene500", "Scene120", "Scene901")).toBeNull();
+    expect(mergeNeighborHint({ label: "Scene34NPanel2ZN", prev: "Scene34",
+      next: "Scene35", validClass: ULD, validPrefix: P })).toBeNull();
   });
 
   it("stays silent on a tie", () => {
-    expect(mergeNeighborHint("Scene65X", "Scene651", "Scene659")).toBeNull();
+    expect(mergeNeighborHint({ label: "20206", prev: "Scene658",
+      next: "Scene659", validClass: ULD, validPrefix: P })).toBeNull();
   });
 
-  it("points at the only possible side at the list ends", () => {
-    expect(mergeNeighborHint("678", null, "Scene678")).toBe("next");
-    expect(mergeNeighborHint("678", "Scene678", null)).toBe("prev");
-    expect(mergeNeighborHint("678", null, null)).toBeNull();
+  it("has nothing to say at the list ends without evidence", () => {
+    expect(mergeNeighborHint({ label: "678", prev: null, next: "Scene678",
+      validClass: ULD, validPrefix: P })).toBeNull();
+    expect(mergeNeighborHint({ label: "678", prev: null, next: null,
+      validClass: ULD, validPrefix: P })).toBeNull();
+  });
+
+  // ── 회귀: 정상 씬마다 추천이 뜨던 문제 ─────────────────────────────────
+  // 씬 번호는 이웃과 한두 글자 차이라(Scene19 vs Scene18) 거리만 보면 목록이
+  // 온통 초록이 된다. 실기 321씬에서 멀쩡한 씬 수십 개에 추천이 떴다.
+  it("says nothing about a well-formed scene", () => {
+    expect(mergeNeighborHint({ label: "Scene19", prev: "Scene18",
+      next: "Scene20", validClass: ULD, validPrefix: P })).toBeNull();
+    expect(mergeNeighborHint({ label: "Scene7", prev: "Scene6",
+      next: "Scene8", validClass: ULD, validPrefix: P })).toBeNull();
+  });
+
+  it("still catches a typo that keeps the normal shape", () => {
+    // 'Seene9'는 글자+숫자라 모양만으로는 정상과 구분되지 않는다 — 접두가 근거.
+    expect(mergeNeighborHint({ label: "Seene9", prev: "Scene9", next: "Scene10",
+      validClass: ULD, validPrefix: P })).toBe("prev");
+  });
+});
+
+describe("labelClassKey / modalLabelClass / modalLabelPrefix", () => {
+  it("collapses digit-run lengths so Scene7 and Scene678 are the same shape", () => {
+    expect(labelClassKey("Scene7")).toBe(labelClassKey("Scene678"));
+    expect(labelClassKey("678")).not.toBe(labelClassKey("Scene678"));
+    expect(labelClassKey("Scene~665")).not.toBe(labelClassKey("Scene665"));
+  });
+
+  it("finds the shape most labels share", () => {
+    expect(modalLabelClass(["Scene1", "Scene22", "Scene678", "678", "SeRe"]))
+      .toBe("U1L4D");
+    expect(modalLabelClass([])).toBeNull();
+  });
+
+  it("finds the prefix most labels start with", () => {
+    expect(modalLabelPrefix(["Scene1", "Scene22", "Scene678", "678"], "U1L4D"))
+      .toBe("Scene");
+  });
+
+  it("is not destroyed by a stray misread (최장 공통 접두였다면 빈 문자열)", () => {
+    // 실기 321씬: 'Bene603' 한 건 때문에 최장 공통 접두가 통째로 날아갔다.
+    const corpus = ["Scene1", "Scene2", "Scene3", "Scene4", "Scene5", "Scene6",
+                    "Scene7", "Scene8", "Scene9", "Sdene10", "Bene603"];
+    expect(modalLabelPrefix(corpus, "U1L4D")).toBe("Scene");
+  });
+
+  it("refuses to call a prefix a rule when the show uses several", () => {
+    // AA/BB가 섞인 작품에서 다수 접두를 규칙으로 삼으면 소수 쪽이 통째로
+    // 오독 취급된다 — 지배적이지 않으면 접두 판정을 쓰지 않는다.
+    expect(modalLabelPrefix(
+      ["AAscene1", "AAscene2", "AAscene3", "BBscene4", "BBscene5"], "U2L5D"))
+      .toBe("");
+  });
+
+  it("judges well-formedness by shape AND prefix", () => {
+    const wf = (l: string) => isWellFormedLabel(l, "U1L4D", "Scene");
+    expect(wf("Scene19")).toBe(true);
+    expect(wf("Scene7")).toBe(true);
+    expect(wf("Seene9")).toBe(false);    // 모양은 같지만 접두가 다르다
+    expect(wf("Sdene94")).toBe(false);
+    expect(wf("678")).toBe(false);
+    expect(wf("Scene,63")).toBe(false);  // 접두는 맞지만 모양이 다르다
+  });
+});
+
+describe("anomalousLabels — 접두 복원 제안", () => {
+  // 이 쇼의 슬레이트는 전부 "Scene"으로 시작한다. OCR이 접두를 통째로/부분으로
+  // 흘린 조각은 접두를 되살리면 정상 라벨이 된다(실기 '678' → 'Scene678').
+  const corpus = [
+    "Scene676", "Scene677", "678", "Scene678", "Scene8", "ene8", "Scene9",
+    "Scene14", "15", "Scene15", "Scene352", "58", "Scene353",
+  ];
+  const find = (label: string) =>
+    anomalousLabels(corpus).find((a) => a.label === label);
+
+  it("restores a fully dropped prefix", () => {
+    expect(find("678")?.suggestion).toBe("Scene678");
+  });
+
+  it("splices a partially dropped prefix instead of doubling it", () => {
+    // 'ene8'에 접두를 그냥 붙이면 'Sceneene8'이 된다 — 겹치는 만큼 물려 붙인다.
+    expect(find("ene8")?.suggestion).toBe("Scene8");
+  });
+
+  it("is confident only when a neighbour confirms the number", () => {
+    expect(find("678")?.confident).toBe(true);     // 뒤 이웃이 Scene678
+    expect(find("15")?.confident).toBe(true);      // 뒤 이웃이 Scene15
+    // '58'은 Scene352와 Scene353 사이 — Scene58은 문맥상 근거가 없다.
+    expect(find("58")?.confident).toBe(false);
+  });
+
+  it("leaves labels the prefix cannot repair alone", () => {
+    expect(anomalousLabels([...corpus, "A"]).find((a) => a.label === "A")
+      ?.suggestion).toBeNull();   // SceneA는 정상 모양이 아니다
+  });
+});
+
+describe("접두 복원 — 깨진 글자 머리를 접두로 되돌린다", () => {
+  // 이 쇼의 슬레이트는 전부 "Scene"으로 시작한다. 머리가 접두와 한두 글자
+  // 차이면 접두 오독으로 보고 되돌린다. 예전엔 접두를 '덧칠'해 'Scenecane60'
+  // 같은 제안이 나왔다(실기).
+  const corpus = ["Scene59", "cane60", "Scene60", "Scene93", "scene94",
+                  "Scene94", "Scene95", "677", "Scene677", "Scéne639",
+                  "BOBBYp9", "20206", "Scene638", "Scene640"];
+  const find = (label: string) =>
+    anomalousLabels(corpus).find((a) => a.label === label);
+
+  it("repairs a broken prefix instead of stacking on top of it", () => {
+    expect(find("cane60")?.suggestion).toBe("Scene60");
+    expect(find("scene94")?.suggestion).toBe("Scene94");
+    expect(find("Scéne639")?.suggestion).toBe("Scene639");
+  });
+
+  it("restores a cleanly dropped prefix", () => {
+    expect(find("677")?.suggestion).toBe("Scene677");
+    expect(find("677")?.confident).toBe(true);   // 뒤 이웃이 Scene677
+  });
+
+  it("leaves text that is not a broken prefix alone", () => {
+    // 'BOBBYp'는 접두 오독이 아니라 딴 텍스트다 — 손대지 않는다.
+    expect(find("BOBBYp9")?.suggestion).toBeNull();
+  });
+
+  it("refuses a number the show never uses", () => {
+    // 관측된 번호는 세 자리까지 — 'Scene20206'은 헛제안이다(실기).
+    expect(find("20206")?.suggestion).toBeNull();
+  });
+
+  it("stays quiet about merging when the repair is its own scene", () => {
+    // 'Scéne639'의 이웃은 638·640 — 639는 이 줄에만 있다. 병합을 권하면 씬이
+    // 사라진다. 이름만 고치면 되는 경우다.
+    expect(mergeNeighborHint({ label: "Scéne639", prev: "Scene638",
+      next: "Scene640", suggestion: "Scene639",
+      validClass: "U1L4D", validPrefix: "Scene" })).toBeNull();
+  });
+});
+
+
+describe("labelClassKey — 글자 런 길이는 남긴다", () => {
+  it("keeps Scene7 and Scene678 the same but flags an extra letter", () => {
+    expect(labelClassKey("Scene7")).toBe(labelClassKey("Scene678"));
+    // 'Scenel311'은 글자가 하나 더 낀 오독 — 정상과 구분돼야 이웃 자격에서 빠진다.
+    expect(labelClassKey("Scenel311")).not.toBe(labelClassKey("Scene311"));
+  });
+
+  it("keeps a malformed neighbour out of the hint", () => {
+    expect(mergeNeighborHint({ label: "Scene31p", prev: "Scenel309",
+      next: "Scenel311", validClass: "U1L4D", validPrefix: "Scene" })).toBeNull();
+  });
+});
+
+describe("anomalousLabels — 번호 자릿수가 늘어나는 쇼", () => {
+  // 실기 321씬: Scene1 … Scene678로 번호가 1~3자리라, 자릿수를 고정으로 보는
+  // 템플릿이 멀쩡한 씬 123개를 오독으로 몰았다(오독 목록 180행).
+  const varied = ["Scene1", "Scene2", "Scene9", "Scene10", "Scene11",
+                  "Scene100", "Scene101", "Scene678", "678", "Seene9"];
+
+  it("does not flag a shorter number as a misread", () => {
+    const flagged = anomalousLabels(varied).map((a) => a.label);
+    expect(flagged).not.toContain("Scene1");
+    expect(flagged).not.toContain("Scene678");
+  });
+
+  it("still flags a dropped prefix and a broken one", () => {
+    const flagged = anomalousLabels(varied).map((a) => a.label);
+    expect(flagged).toContain("678");
+    expect(flagged).toContain("Seene9");   // 모양은 같지만 접두가 다르다
+  });
+
+  it("keeps the strict check when the show pads its numbers", () => {
+    // 자릿수가 고정된 쇼에서는 한 자리 빠진 것이 진짜 오독이다 — 관용 금지.
+    const padded = ["HH_010_0010", "HH_010_0020", "HH_010_0030",
+                    "HH_010_0040", "HH_010_050"];
+    expect(anomalousLabels(padded).map((a) => a.label))
+      .toContain("HH_010_050");
   });
 });

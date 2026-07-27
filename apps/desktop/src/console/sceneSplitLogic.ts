@@ -154,20 +154,75 @@ export type LabelAnomaly = {
 
 // 템플릿과 어긋나는 라벨만 골라 교정안과 함께 돌려준다. 교정안을 못 만들어도
 // (VAL 같은 완전 오독) 이탈 사실은 보고한다 — 사용자가 직접 고칠 수 있게.
+// 라벨을 "<접두><번호>"로 되살린다 — 이 쇼의 모든 슬레이트가 같은 접두로
+// 시작한다는 사실(modalLabelPrefix)을 근거로 삼는다. 두 종류의 오독을 받는다:
+//   ① 접두가 통째로/일부 잘림: '678'·'ene8' → 앞 글자가 접두의 꼬리와 겹친다
+//   ② 접두 글자가 깨짐: 'Scéne639'·'Sgene663'·'Scenel625' → 접두와 한두 글자 차이
+// 둘 다 아닌 머리('BOBBYp'·'cane')는 접두 복원이 아니라 딴 텍스트다 — 손대지 않는다.
+// maxDigits는 코퍼스에서 관측된 번호 자릿수 상한 — '20206'을 'Scene20206'으로
+// 만드는 헛제안을 막는다(실기).
+function repairWithPrefix(
+  prefix: string, label: string, maxDigits: number,
+): string | null {
+  const m = /^([^0-9]*)([0-9]+)$/.exec(label);
+  if (!m) return null;
+  const [, head = "", digits = ""] = m;
+  if (head === prefix || digits.length > maxDigits) return null;
+  const isTail = prefix.endsWith(head);   // ① 잘린 접두(빈 머리 포함)
+  const close = editDistance(head.toLowerCase(), prefix.toLowerCase()) <= 2;
+  if (!isTail && !close) return null;
+  return prefix + digits;
+}
+
 export function anomalousLabels(
   labels: string[], delimiters: string[] = DEFAULT_DELIMITERS,
 ): LabelAnomaly[] {
   const tpl = labelTemplate(labels, delimiters);
   if (!tpl) return [];
+  // 이 쇼의 정상 라벨 모양과 공통 접두 — 템플릿(자릿수까지 고정)이 못 고치는
+  // '접두 유실' 조각을 되살리는 근거다.
+  const cls = modalLabelClass(labels);
+  const prefix = modalLabelPrefix(labels, cls);
+  const nums = labels
+    .filter((l) => isWellFormedLabel(l, cls, prefix))
+    .map((l) => /[0-9]+$/.exec(l)?.[0] ?? "")
+    .filter((n) => n);
+  // 관측된 번호 자릿수 상한 — 접두 복원이 만들어 낼 수 있는 번호의 한계.
+  const maxDigits = nums.reduce((a, n) => Math.max(a, n.length), 0);
+  // 번호 폭이 자연히 늘어나는 쇼인가(Scene1 … Scene678)? 그렇다면 자릿수 차이를
+  // 오독으로 보면 안 된다 — 멀쩡한 씬 수백 개가 오독 목록에 쌓인다(실기 321씬
+  // 중 180행이 그랬다). 판정은 비율이 아니라 **자리 채움 0**으로 한다: 폭을
+  // 고정한 쇼는 번호를 0으로 채우고(0010·050), 자연수로 세는 쇼는 절대 그러지
+  // 않는다. 임계값이 없어 코퍼스가 작아도 흔들리지 않는다. 폭 고정 쇼에서는
+  // 한 자리 빠진 것이 진짜 오독이므로 엄격한 템플릿을 그대로 쓴다.
+  const padded = nums.some((n) => n.length > 1 && n.startsWith("0"));
+  const widthVaries = !padded && new Set(nums.map((n) => n.length)).size > 1;
   const out: LabelAnomaly[] = [];
   labels.forEach((label, index) => {
     const toks = tokenizeSlate(label, delimiters);
-    const ok = toks.length === tpl.length
-      && toks.every((t, i) => matchesShape(t, tpl[i] as string));
+    // 모양 템플릿만으로는 접두 오독을 못 잡는다 — 'Scehe651'·'Seene656'은
+    // 자리 배치가 정상과 똑같아 그대로 통과했다(실기: 이런 행이 제안도 못 받고
+    // 목록에 남았다). 이 쇼의 지배적 접두가 있으면 그것도 조건에 넣는다.
+    const ok = widthVaries
+      ? isWellFormedLabel(label, cls, prefix)
+      : (toks.length === tpl.length
+         && toks.every((t, i) => matchesShape(t, tpl[i] as string))
+         && (!prefix || label.startsWith(prefix)));
     if (ok) return;
     const fix = reparse(label, tpl, delimiters);
-    out.push({ index, label, suggestion: fix?.label ?? null,
-               confident: fix?.confident ?? false });
+    let suggestion = fix?.label ?? null;
+    let confident = fix?.confident ?? false;
+    if (suggestion == null && prefix && !isWellFormedLabel(label, cls, prefix)) {
+      const repaired = repairWithPrefix(prefix, label, maxDigits);
+      if (repaired && repaired !== label && isWellFormedLabel(repaired, cls, prefix)) {
+        suggestion = repaired;
+        // 번호가 맞는지는 접두만으로 알 수 없다 — 바로 옆 이웃이 같은 이름일
+        // 때만 확신한다(그 씬의 정상 판독이 옆에 있다는 뜻). 아니면 노란
+        // 제안으로 두어 사용자가 프레임을 보고 판단하게 한다.
+        confident = repaired === labels[index - 1] || repaired === labels[index + 1];
+      }
+    }
+    out.push({ index, label, suggestion, confident });
   });
   return out;
 }
@@ -412,32 +467,102 @@ function editDistance(a: string, b: string): number {
   return prev[b.length] as number;
 }
 
+// 라벨 모양에서 '숫자 자릿수'만 지운다 — 씬 번호는 1~3자리로 늘어나므로
+// tokenShape 그대로면 정상 라벨이 서로 다른 모양이 된다(실기 321씬: U1L4D3 156,
+// D2 85, D1 9). 글자 런 길이는 남긴다: 'Scenel311'(L5)처럼 글자가 하나 더 낀
+// 오독을 정상(L4)과 구분해야 한다.
+export function labelClassKey(label: string): string {
+  return tokenShape(label).replace(/D\d+/g, "D");
+}
+
+// 코퍼스에서 가장 흔한 라벨 모양 = '정상'의 기준.
+export function modalLabelClass(labels: string[]): string | null {
+  return modeOf(labels.filter((l) => l).map(labelClassKey));
+}
+
+// 정상 모양 라벨들이 공유하는 접두("Scene") — 번호 앞의 글자 부분 중 최빈값.
+//
+// '최장 공통 접두'로 구하면 안 된다: 오독 한 건('Bene603')만 섞여도 공통 부분이
+// 통째로 날아가 빈 문자열이 된다(실기 321씬에서 실제로 그랬다). 라벨마다 앞쪽
+// 글자 런을 뽑아 최빈값을 고르면 소수의 오독이 다수를 못 이긴다.
+export function modalLabelPrefix(labels: string[], cls: string | null): string {
+  const heads = labels
+    .filter((l) => l && (cls == null || labelClassKey(l) === cls))
+    .map((l) => (/^[^0-9]+/.exec(l)?.[0] ?? ""))
+    .filter((h) => h);
+  const top = modeOf(heads);
+  if (!top) return "";
+  // 접두는 '이 쇼의 규칙'이라고 말할 수 있을 만큼 지배적일 때만 인정한다.
+  // 접두가 여럿인 작품(AA001/BB002가 섞인 경우)에서 다수 접두를 규칙으로 삼으면
+  // 소수 접두 라벨이 통째로 오독 취급된다.
+  const share = heads.filter((h) => h === top).length / heads.length;
+  return share >= 0.8 ? top : "";
+}
+
+// 이 쇼의 정상 라벨인가 — 모양(자릿수 무시)과 접두가 둘 다 맞아야 한다.
+//
+// 모양만으로는 부족하다: 'Seene9'·'Sdene94'는 자리 배치가 정상 라벨과 똑같아
+// (글자+숫자) 통과해 버린다. 반대로 접두만 보면 'Scene,63'·'Scene7s'가 샌다.
+export function isWellFormedLabel(
+  label: string, cls: string | null, prefix: string,
+): boolean {
+  if (!label) return false;
+  if (cls != null && labelClassKey(label) !== cls) return false;
+  return !prefix || label.startsWith(prefix);
+}
+
 // 오독 구간을 어느 쪽 이웃에 병합해야 하는지 힌트.
 //
 // 필터(경계 오류·오독 탭)를 걸면 병합 대상인 '진짜 이웃'이 목록에서 사라져,
 // 화면만 보고는 ◀/▶ 중 무엇을 눌러야 할지 알 수 없다(실기). 이웃 이름을 버튼에
 // 적어 주는 것이 본체이고, 이 함수는 그 위에 얹는 힌트다 — 자동 적용하지 않는다.
 //
+// **병합은 언제나 '이웃의 이름'이 살아남는다**(이 구간은 흡수돼 사라진다).
+// 그래서 깨진 이웃 쪽은 후보에서 뺀다 — 그쪽으로 추천하면 멀쩡한 이름이 지워진다
+// (실기: 정상 'Scene678'에 '◀ 678'이 추천으로 떴다).
+//
 // 판정 순서: ① 양쪽 이웃이 같은 씬이면 어느 쪽이든 결과가 같다("both")
-// ② 교정 제안이 한쪽 이름과 정확히 일치하면 그쪽(코퍼스 근거라 글자수보다 세다)
-// ③ 편집거리가 더 가까운 쪽. 단 그 거리가 라벨 길이에 비해 크면 침묵한다 —
-// 진짜로 다른 씬을 "덜 틀린 쪽"으로 떠미는 추천은 오히려 해롭다.
-export function mergeNeighborHint(
-  label: string, prev: string | null, next: string | null,
-  suggestion?: string | null,
-): "prev" | "next" | "both" | null {
+// ② 교정 제안(접두 복원 등)이 한쪽 이름과 정확히 일치하면 그쪽 — 코퍼스 근거라
+// 글자수보다 세다 ③ 양쪽을 견줄 수 있을 때만 편집거리가 가까운 쪽. 한쪽만 후보면
+// ②가 아닌 한 침묵한다 — 비교 대상이 없으면 "남은 쪽"이 정답이라는 근거가 없다
+// (실기 'Scene': 앞 Scene44가 유일 후보였지만 정답은 뒤쪽 '45'였다). 거리가 라벨
+// 길이에 비해 크면 역시 침묵한다 — 다른 씬을 "덜 틀린 쪽"으로 떠밀면 해롭다.
+export function mergeNeighborHint(opts: {
+  label: string;
+  prev?: string | null;
+  next?: string | null;
+  suggestion?: string | null;
+  // 정상 라벨의 기준(modalLabelClass·modalLabelPrefix). 이웃 자격과 '이 행이
+  // 애초에 병합 대상인가'를 함께 심사한다.
+  validClass?: string | null;
+  validPrefix?: string;
+}): "prev" | "next" | "both" | null {
+  const { label, suggestion } = opts;
+  const validClass = opts.validClass ?? null;
+  const validPrefix = opts.validPrefix ?? "";
+  // 멀쩡한 라벨에는 추천하지 않는다. 씬 번호는 이웃과 한두 글자 차이라(Scene19 vs
+  // Scene18) 거리만 보면 정상 씬마다 추천이 떠 목록이 온통 초록이 된다(실기).
+  // 병합은 이 구간을 지우는 조작이므로, 지워도 되는 조각에만 권한다.
+  if (isWellFormedLabel(label, validClass, validPrefix)) return null;
+  const ok = (l: string | null | undefined): string | null =>
+    (l != null && isWellFormedLabel(l, validClass, validPrefix)) ? l : null;
+  const prev = ok(opts.prev);
+  const next = ok(opts.next);
   if (prev == null && next == null) return null;
   if (prev != null && next != null && prev === next) return "both";
-  if (prev == null) return "next";
-  if (next == null) return "prev";
   const want = suggestion?.trim() ? suggestion : label;
-  if (prev === want) return "prev";
-  if (next === want) return "next";
+  if (prev === want && next !== want) return "prev";
+  if (next === want && prev !== want) return "next";
+  // 교정하면 멀쩡한데 양쪽 어느 이웃과도 다르면, 이건 흡수할 조각이 아니라
+  // '이름만 고치면 되는 독립 씬'이다 — 병합을 권하면 씬 하나가 사라진다
+  // (실기 'Scéne639': 이웃은 638·640이고 639는 이 줄에만 있다).
+  if (suggestion?.trim()
+      && isWellFormedLabel(suggestion, validClass, validPrefix)) return null;
+  if (prev == null || next == null) return null;
   const dp = editDistance(want, prev);
   const dn = editDistance(want, next);
   if (dp === dn) return null;
-  const best = Math.min(dp, dn);
-  if (best > Math.max(2, Math.floor(want.length / 3))) return null;
+  if (Math.min(dp, dn) > Math.max(2, Math.floor(want.length / 3))) return null;
   return dp < dn ? "prev" : "next";
 }
 
