@@ -1520,6 +1520,60 @@ def test_extract_tick_grows_with_output(tmp_path):
     assert pl._extract_tick(src, frames, thumbs) > first
 
 
+async def test_clear_stale_scan_flags_at_startup(monkeypatch):
+    """서버 재시작으로 죽은 진행 플래그를 시작 시 내린다.
+
+    DB 스윕(fail_inflight_video_jobs_at_startup)은 job 상태만 본다. 씬 분할의
+    'scanning'은 작업 폴더 JSON에 있고 그 플래그를 내리는 건 작업 자신뿐이라
+    (완료·취소·실패), 스캔 도중 서버가 재시작되면 뒤에 도는 작업이 없는데도
+    영원히 '실행중'으로 남았다 — 사용자는 취소를 눌러야만 빠져나올 수 있었다.
+    """
+    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: False)
+    eid = uuid4()
+    pl.job_dir(eid).mkdir(parents=True)
+    region = {"x": 0.749, "y": 0.9, "w": 0.1823, "h": 0.087}
+    pl.save_scenes(eid, {"scanning": True, "method": "fingerprint",
+                         "interval_ms": 2000, "ocr_region": region,
+                         "ocr_done": 2791, "total_frames": 2791, "frames": []})
+    pl.save_refine_status(eid, {"refining": True, "done": 3})
+    pl.save_boundary_status(eid, {"checking": True})
+    pl.save_export_status(eid, {"exporting": True})
+
+    await pl.clear_stale_scan_flags_at_startup()
+
+    d = pl.load_scenes(eid)
+    assert d["scanning"] is False
+    assert d["error"], "왜 멈췄는지 사용자에게 보여야 한다"
+    # 사용자 설정(구역·방식)은 작업 산출물이 아니므로 보존한다.
+    assert d["ocr_region"] == region and d["method"] == "fingerprint"
+    assert pl.load_refine_status(eid)["refining"] is False
+    assert pl.load_boundary_status(eid)["checking"] is False
+    assert pl.load_export_status(eid)["exporting"] is False
+
+
+async def test_clear_stale_scan_flags_skips_when_another_instance_serves(
+        monkeypatch):
+    """이중 기동된 비소유 프로세스가 살아있는 인스턴스의 스캔을 죽이면 안 된다
+    — DB 스윕과 같은 가드."""
+    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: True)
+    eid = uuid4()
+    pl.job_dir(eid).mkdir(parents=True)
+    pl.save_scenes(eid, {"scanning": True, "frames": []})
+    await pl.clear_stale_scan_flags_at_startup()
+    assert pl.load_scenes(eid)["scanning"] is True
+
+
+async def test_clear_stale_scan_flags_leaves_finished_scans(monkeypatch):
+    """끝난 스캔의 결과는 건드리지 않는다(에러를 새로 심지 않는다)."""
+    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: False)
+    eid = uuid4()
+    pl.job_dir(eid).mkdir(parents=True)
+    done = {"scanning": False, "frames": [{"t_ms": 0, "text": "A_001"}]}
+    pl.save_scenes(eid, done)
+    await pl.clear_stale_scan_flags_at_startup()
+    assert pl.load_scenes(eid) == done
+
+
 def test_relative_region_maps_tight_into_padded():
     tight = (0.0073, 0.0259, 0.3271, 0.2056)
     pad = pl._pad_region(tight)

@@ -28,6 +28,7 @@ from apps.server.api.v1.video_jobs import router as video_jobs_router
 from apps.server.api.v1.reports import router as reports_router
 from apps.server.ai.gemini_live import gemini_config_health
 from apps.server.domain.video_captions.pipeline import (
+    clear_stale_scan_flags_at_startup,
     fail_inflight_video_jobs_at_startup,
     prune_old_video_jobs_at_startup,
 )
@@ -127,6 +128,14 @@ async def lifespan(app: FastAPI):
         await fail_inflight_video_jobs_at_startup()
     except Exception:
         logger.exception("Startup video-job sweep failed")
+
+    # 위 스윕은 DB의 job 상태만 본다. 씬 분할의 진행 플래그는 작업 폴더 JSON에
+    # 있어 재시작 뒤에도 '실행중'으로 남는다(뒤에 도는 작업은 없는데도) — 같은
+    # 이유로 함께 내린다.
+    try:
+        await clear_stale_scan_flags_at_startup()
+    except Exception:
+        logger.exception("Startup scene-flag sweep failed")
 
     # 자막 메이커 작업 폴더(원본/preview/burned mp4)가 무한정 쌓이지 않도록, 스윕
     # 직후 최근 RETENTION_KEEP개만 남기고 오래된 작업을 회수한다. 스윕과 동일한

@@ -375,6 +375,55 @@ async def fail_inflight_video_jobs_at_startup() -> None:
         logger.info("startup sweep: %d in-flight video job(s) marked error", result.rowcount)
 
 
+_RESTART_STOPPED = "서버가 재시작돼 작업이 중단되었습니다. 다시 실행하세요."
+
+
+async def clear_stale_scan_flags_at_startup() -> None:
+    """재시작으로 죽은 씬 분할 작업의 '진행 중' 플래그를 내린다.
+
+    fail_inflight_video_jobs_at_startup은 DB의 job 상태만 본다. 씬 분할의
+    진행 상태(scanning/refining/checking/exporting)는 작업 폴더의 JSON에 있고,
+    그 플래그를 내리는 건 작업 자신뿐이라(완료·취소·실패) 스캔 도중 서버가
+    재시작되면 뒤에 도는 작업이 없는데도 화면이 영원히 '실행중'으로 남았다 —
+    사용자가 취소를 눌러야만 빠져나올 수 있었다.
+
+    사용자 설정(ocr_region·method·interval)은 작업 산출물이 아니므로 보존하고,
+    끝난 스캔은 건드리지 않는다(없던 에러를 심지 않는다). '다른 인스턴스가
+    서빙 중' 가드는 DB 스윕과 같다 — 이중 기동된 비소유 프로세스가 살아있는
+    인스턴스의 스캔을 죽이면 안 된다.
+    """
+    if _another_instance_is_serving():
+        logger.warning(
+            "startup scene-flag sweep skipped: another instance is serving")
+        return
+    root = video_jobs_root()
+    if not root.exists():
+        return
+    cleared = 0
+    for job in root.iterdir():
+        if not job.is_dir():
+            continue
+        eid = job.name
+        try:
+            data = load_scenes(eid)
+            if data and data.get("scanning"):
+                save_scenes(eid, {**data, "scanning": False,
+                                  "error": _RESTART_STOPPED})
+                cleared += 1
+            for load, save, key in (
+                    (load_refine_status, save_refine_status, "refining"),
+                    (load_boundary_status, save_boundary_status, "checking"),
+                    (load_export_status, save_export_status, "exporting")):
+                st = load(eid)
+                if st and st.get(key):
+                    save(eid, {**st, key: False, "error": _RESTART_STOPPED})
+                    cleared += 1
+        except Exception:  # noqa: BLE001 — 한 작업의 손상 파일이 기동을 막지 않게
+            logger.exception("startup scene-flag sweep failed for %s", eid)
+    if cleared:
+        logger.info("startup sweep: cleared %d stale scene flag(s)", cleared)
+
+
 async def _prune_pre_delete_hook(candidate_ids: list[int]) -> None:
     """프루닝의 SELECT와 DELETE 사이 지점 (기본 no-op). 테스트가 여기서 상태
     전이(review→burning)를 주입해 DELETE 시점의 상태 재확인 가드를 검증한다."""
