@@ -16,6 +16,37 @@ button:not(:disabled):active {
   transform: translateY(1px);
 }
 
+/* 스크롤바 — 앱은 다크 테마인데 color-scheme 선언이 없어 웹뷰가 스크롤바를 라이트
+ * 모드로 그렸다: 밝은 트랙 위 검은 핸들이라 사실상 안 보인다(실기 확인). dark로
+ * 선언하면 macOS WebKit·Windows WebView2 둘 다 다크 스크롤바를 쓰고, 핸들 색까지
+ * 밝게 못박아 어느 웹뷰에서든 또렷하게 만든다. 부수 효과로 스크롤바가 항상 보이게
+ * 되는데(::-webkit-scrollbar 지정 시 오버레이가 아닌 상시 표시로 바뀜), 수백 줄짜리
+ * 씬 목록에서는 위치 표시와 드래그 손잡이가 생겨 오히려 이득이다. */
+:root {
+  color-scheme: dark;
+}
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.55);
+  border-radius: 6px;
+  /* 투명 테두리 + content-box로 핸들 양옆에 여백을 줘 트랙과 붙지 않게 한다. */
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.85);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* 필름스트립 가로 스크롤바 — macOS 웹뷰는 오버레이 스크롤바라 스크롤 중에만
  * 잠깐 보여, 753칸 썸네일을 어디까지 봤는지/드래그 핸들이 없다(윈도는 항상 보임).
  * ::-webkit-scrollbar를 지정하면 그 요소만 항상 보이는 스크롤바로 바뀐다. */
