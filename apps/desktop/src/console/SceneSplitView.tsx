@@ -9,7 +9,7 @@ import {
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
   cancelSceneOps, exportScenes, getBoundaryStatus, getExportStatus, getRefineStatus,
-  sceneExportFileUrl,
+  cleanupSceneExport, sceneExportFileUrl,
   getScenes, listSlateTemplates, overrideSceneSegments, refineScenes, scanScenes,
   setOcrRegion as setOcrRegionApi, setSceneRule, startBoundaryCheck, videoMediaUrl,
   type BoundaryStatus, type ExportStatus, type OcrRegion, type RefineStatus,
@@ -357,6 +357,9 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                    { url: sceneExportFileUrl(jobId, name),
                      path: await join(dir, name) });
     }
+    // 전부 받은 뒤에만 서버 사본을 지운다 — 위에서 하나라도 실패하면 예외가 나
+    // 여기 도달하지 않으므로, 원본이 남아 다시 받을 수 있다(재인코딩 불필요).
+    await cleanupSceneExport(jobId);
   };
 
   // 익스포트 진행률 폴링 — 전체/개별 익스포트가 같은 상태 파일(export_status)을 쓰므로

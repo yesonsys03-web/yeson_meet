@@ -1310,3 +1310,56 @@ async def test_scene_export_file_404_when_gone_from_disk(
         f"/api/v1/video-jobs/{job.external_id}/scenes/export/file",
         params={"name": "Gone.mp4"})
     assert r.status_code == 404
+
+
+async def test_scene_export_cleanup_removes_server_copies(
+        client, db_session, admin_user):
+    """클라가 받아 간 뒤 서버 사본을 지운다 — 안 지우면 잡마다 클립 수백 개가
+    서버 디스크에 쌓인다. 클라가 '다 받았다'고 알릴 때만 지운다(중간에 실패한
+    채로 지우면 수십 분짜리 재인코딩을 다시 해야 한다)."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    out = pl.job_dir(job.external_id) / "scene_out"
+    out.mkdir(parents=True, exist_ok=True)
+    clips = [out / "Scene1.mp4", out / "Scene2.mp4"]
+    for c in clips:
+        c.write_bytes(b"x")
+    pl.save_export_status(job.external_id, {
+        "exporting": False, "done": 2, "total": 2, "error": None,
+        "out_dir": str(out), "files": [str(c) for c in clips]})
+
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/cleanup")
+    assert r.status_code == 200
+    assert r.json()["deleted"] == 2
+    assert not any(c.exists() for c in clips)
+    assert not out.exists()          # 빈 폴더도 남기지 않는다
+    # 목록도 비워야 '받기' 통로가 없는 파일을 가리키지 않는다.
+    assert pl.load_export_status(job.external_id)["files"] == []
+
+
+async def test_scene_export_cleanup_never_touches_outside_the_job(
+        client, db_session, admin_user, tmp_path):
+    """작업 폴더 밖은 절대 지우지 않는다 — out_dir로 임의 경로를 받은 옛 익스포트
+    기록이 남아 있어도 사용자 폴더를 비우면 안 된다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    outside = tmp_path / "내폴더"
+    outside.mkdir()
+    keep = outside / "Scene1.mp4"
+    keep.write_bytes(b"precious")  # 사용자 파일
+    pl.save_export_status(job.external_id, {
+        "exporting": False, "done": 1, "total": 1, "error": None,
+        "out_dir": str(outside), "files": [str(keep)]})
+
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/cleanup")
+    assert r.status_code == 200
+    assert r.json()["deleted"] == 0
+    assert keep.exists(), "작업 폴더 밖 파일을 지웠다"
+
+
+async def test_scene_export_cleanup_is_idempotent(client, db_session, admin_user):
+    """지울 게 없어도 오류가 아니다(재시도·중복 호출 안전)."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/cleanup")
+    assert r.status_code == 200 and r.json()["deleted"] == 0

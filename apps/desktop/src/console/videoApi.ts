@@ -425,6 +425,13 @@ export function sceneExportFileUrl(jobId: string, name: string): string {
     + `?name=${encodeURIComponent(name)}`;
 }
 
+// 클라가 다 받은 뒤 서버 사본을 지운다 — 서버는 넘겨줄 목적으로만 굽는다.
+// 받는 중 실패하면 부르지 않는다(원본이 사라지면 재인코딩을 다시 해야 한다).
+export async function cleanupSceneExport(jobId: string): Promise<{ deleted: number }> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/export/cleanup`,
+    { method: "POST" });
+}
+
 export function sceneThumbUrl(jobId: string, index: number): string {
   return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/thumb/${index}`;
 }

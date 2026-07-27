@@ -836,6 +836,52 @@ async def scene_export_file(
                         "이 작업이 익스포트한 파일이 아닙니다.")
 
 
+@router.post("/{external_id}/scenes/export/cleanup")
+async def scene_export_cleanup(
+    external_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """클라이언트가 다 받아 간 뒤 서버 사본을 지운다.
+
+    서버는 클라에 넘겨줄 목적으로만 굽는다 — 안 지우면 잡마다 클립 수백 개가
+    서버 디스크에 그대로 쌓인다. 클라가 '전부 받았다'고 알릴 때만 부른다:
+    받는 중에 실패했는데 원본을 지우면 수십 분짜리 재인코딩을 다시 해야 한다.
+
+    **작업 폴더 안**만 지운다. 옛 기록에는 사용자가 지정한 임의 경로(out_dir)가
+    남아 있을 수 있는데, 그건 사용자 폴더이지 우리가 만든 사본이 아니다.
+    """
+    await _get_job_or_404(db, external_id)
+    st = load_export_status(external_id)
+    if not st:
+        return {"deleted": 0}
+    root = job_dir(external_id).resolve()
+    deleted = 0
+    for entry in st.get("files") or []:
+        path = Path(entry)
+        try:
+            inside = path.resolve().is_relative_to(root)
+        except OSError:      # 존재하지 않는 경로 등 — 건드리지 않는다
+            continue
+        if not inside:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+            deleted += 1
+        except OSError:
+            logger.exception("익스포트 사본 삭제 실패: %s", path)
+    # 비게 된 익스포트 폴더도 치운다(비어 있을 때만 — 남은 파일은 보존).
+    out_dir = st.get("out_dir")
+    if out_dir:
+        d = Path(out_dir)
+        try:
+            if d.resolve().is_relative_to(root) and not any(d.iterdir()):
+                d.rmdir()
+        except OSError:
+            pass
+    save_export_status(external_id, {**st, "files": []})
+    return {"deleted": deleted}
+
+
 class SceneRefineIn(BaseModel):
     mode: str = Field(pattern="^(scene|sequence)$")
 
