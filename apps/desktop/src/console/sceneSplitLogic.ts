@@ -566,6 +566,13 @@ export function mergeNeighborHint(opts: {
   return dp < dn ? "prev" : "next";
 }
 
+// 서버가 돌려준 익스포트 경로에서 파일명만 뽑는다. 서버가 윈도우면 역슬래시,
+// 맥/리눅스면 슬래시로 온다 — 클라 OS와 다를 수 있으므로 둘 다 자른다.
+export function exportedFileName(serverPath: string): string {
+  const parts = serverPath.split(/[\\/]/);
+  return parts[parts.length - 1] ?? serverPath;
+}
+
 // 스캔 진척 판정 키 — 이 값이 바뀌지 않으면 '정체'로 센다.
 //
 // 판독 수(ocr_done)만 보면 안 된다: 스캔의 앞 구간(크롭·프레임 추출·컷 감지)은

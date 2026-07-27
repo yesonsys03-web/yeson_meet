@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -764,5 +764,14 @@ describe("anomalousLabels — 번호 자릿수가 늘어나는 쇼", () => {
                     "HH_010_0040", "HH_010_050"];
     expect(anomalousLabels(padded).map((a) => a.label))
       .toContain("HH_010_050");
+  });
+});
+
+describe("exportedFileName", () => {
+  // 서버가 윈도우면 역슬래시 경로가 온다 — 클라가 맥이어도 파일명을 뽑아야 한다.
+  it("takes the name from either separator", () => {
+    expect(exportedFileName("D:\\out\\Scene678.mp4")).toBe("Scene678.mp4");
+    expect(exportedFileName("/srv/out/Scene678.mp4")).toBe("Scene678.mp4");
+    expect(exportedFileName("Scene678.mp4")).toBe("Scene678.mp4");
   });
 });

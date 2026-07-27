@@ -1253,3 +1253,60 @@ async def test_slate_template_accepts_method(client, monkeypatch, tmp_path):
     assert r.status_code == 200
     got = (await client.get("/api/v1/video-jobs/slate-templates")).json()
     assert got["templates"][0]["method"] == "fingerprint"
+
+
+async def test_scene_export_file_serves_exported_clip(client, db_session, admin_user):
+    """익스포트한 클립을 클라이언트가 내려받을 수 있어야 한다.
+
+    폴더 선택창은 클라 PC에서 뜨는데 파일은 서버가 자기 디스크에 쓴다 — 두 PC가
+    다르면 사용자가 고른 폴더는 영영 빈 채로 남았다(실기 윈도우). 서버가 굽고
+    클라가 받아 저장하도록, 익스포트 결과를 내려받는 통로를 연다.
+    """
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    out = pl.job_dir(job.external_id) / "scene_out"
+    out.mkdir(parents=True, exist_ok=True)
+    clip = out / "Scene678.mp4"
+    clip.write_bytes(b"mp4-bytes")
+    pl.save_export_status(job.external_id, {
+        "exporting": False, "done": 1, "total": 1, "error": None,
+        "out_dir": str(out), "files": [str(clip)]})
+
+    r = await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/file",
+        params={"name": "Scene678.mp4"})
+    assert r.status_code == 200
+    assert r.content == b"mp4-bytes"
+
+
+async def test_scene_export_file_rejects_paths_outside_the_export(
+        client, db_session, admin_user):
+    """익스포트 목록에 없는 이름은 거부한다 — 경로 조작으로 서버 파일을 읽어갈
+    통로가 되면 안 된다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    out = pl.job_dir(job.external_id) / "scene_out"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "Scene1.mp4").write_bytes(b"x")
+    pl.save_export_status(job.external_id, {
+        "exporting": False, "done": 1, "total": 1, "error": None,
+        "out_dir": str(out), "files": [str(out / "Scene1.mp4")]})
+
+    for name in ("../../../etc/passwd", "burned.mp4", "Scene2.mp4"):
+        r = await client.get(
+            f"/api/v1/video-jobs/{job.external_id}/scenes/export/file",
+            params={"name": name})
+        assert r.status_code == 404, name
+
+
+async def test_scene_export_file_404_when_gone_from_disk(
+        client, db_session, admin_user):
+    """목록엔 있는데 디스크에서 사라진 경우 — 조용한 0바이트 저장 대신 404."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    out = pl.job_dir(job.external_id) / "scene_out"
+    out.mkdir(parents=True, exist_ok=True)
+    pl.save_export_status(job.external_id, {
+        "exporting": False, "done": 1, "total": 1, "error": None,
+        "out_dir": str(out), "files": [str(out / "Gone.mp4")]})
+    r = await client.get(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/file",
+        params={"name": "Gone.mp4"})
+    assert r.status_code == 404

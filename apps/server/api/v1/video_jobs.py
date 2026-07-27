@@ -805,6 +805,37 @@ async def scene_export_status(
             "out_dir": st.get("out_dir"), "files": st.get("files", [])}
 
 
+@router.get("/{external_id}/scenes/export/file")
+async def scene_export_file(
+    external_id: UUID,
+    name: Annotated[str, Query(min_length=1, max_length=255)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> FileResponse:
+    """익스포트한 클립 하나를 내려준다 — 클라이언트가 사용자가 고른 로컬 폴더에
+    저장한다.
+
+    저장 폴더 선택창은 클라 PC에서 뜨는데 자르기·쓰기는 서버가 한다(원본과
+    ffmpeg가 서버에 있다). 두 PC가 다르면 서버 디스크에 그 경로가 새로 생기고
+    사용자가 고른 폴더는 영영 비어 있었다(실기 윈도우). 서버는 자기 폴더에 굽고
+    클라가 이 통로로 받아 쓴다.
+
+    이 잡이 실제로 익스포트한 파일 목록 안에서만 고른다 — 이름을 경로로 해석하지
+    않으므로 조작으로 서버의 다른 파일을 읽어갈 수 없다.
+    """
+    await _get_job_or_404(db, external_id)
+    st = load_export_status(external_id) or {}
+    for entry in st.get("files") or []:
+        path = Path(entry)
+        if path.name != name:
+            continue
+        if not path.exists():
+            raise HTTPException(status.HTTP_404_NOT_FOUND,
+                                "익스포트 파일이 서버에 없습니다 — 다시 익스포트하세요.")
+        return FileResponse(path, media_type="video/mp4", filename=name)
+    raise HTTPException(status.HTTP_404_NOT_FOUND,
+                        "이 작업이 익스포트한 파일이 아닙니다.")
+
+
 class SceneRefineIn(BaseModel):
     mode: str = Field(pattern="^(scene|sequence)$")
 

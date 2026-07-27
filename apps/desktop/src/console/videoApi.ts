@@ -417,6 +417,14 @@ export async function exportScenes(
   });
 }
 
+// 익스포트한 클립 한 개를 내려받는 주소. 자르기는 서버가 하고(원본·ffmpeg가
+// 서버에 있다) 저장은 클라가 한다 — 두 PC가 다를 때 사용자가 고른 폴더가 비어
+// 있던 문제의 수정. name은 서버가 만든 파일명 그대로.
+export function sceneExportFileUrl(jobId: string, name: string): string {
+  return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/export/file`
+    + `?name=${encodeURIComponent(name)}`;
+}
+
 export function sceneThumbUrl(jobId: string, index: number): string {
   return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/thumb/${index}`;
 }

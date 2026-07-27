@@ -2,13 +2,14 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, neighborIndices, scanProgressKey, scenePopupAction, stepVisibleIndex,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, scanProgressKey, scenePopupAction, stepVisibleIndex,
   NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, tokenizeSlate, trimFrames,
   type LabelFix,
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
   cancelSceneOps, exportScenes, getBoundaryStatus, getExportStatus, getRefineStatus,
+  sceneExportFileUrl,
   getScenes, listSlateTemplates, overrideSceneSegments, refineScenes, scanScenes,
   setOcrRegion as setOcrRegionApi, setSceneRule, startBoundaryCheck, videoMediaUrl,
   type BoundaryStatus, type ExportStatus, type OcrRegion, type RefineStatus,
@@ -324,8 +325,43 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   // 개별 씬 익스포트 진행 중인 구간(그 줄만 진행 표시, 다른 줄은 잠금).
   const [exportingOne, setExportingOne] = useState<number | null>(null);
 
+  // 저장 폴더는 '클라 PC'의 폴더다 — 서버가 아니라 여기에 파일이 놓인다. 잡마다
+  // 기억해 두 번째 익스포트부터는 다시 묻지 않는다(예전엔 서버 out_dir을 재사용
+  // 했지만, 이제 서버는 자기 폴더에 굽고 클라가 받아 쓰므로 서버 값은 답이 아니다).
+  const saveDirKey = `yeson.sceneExportDir.${jobId}`;
+  const pickSaveDir = async (reuse: boolean): Promise<string | null> => {
+    if (!hasTauriRuntime()) return null;   // 브라우저: 서버 폴더에 남는다
+    const last = reuse ? localStorage.getItem(saveDirKey) : null;
+    if (last) return last;
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const dir = await open({ directory: true, title: "저장 폴더 선택(이 PC)" });
+    if (typeof dir !== "string") return null;
+    localStorage.setItem(saveDirKey, dir);
+    return dir;
+  };
+
+  // 서버가 구운 클립을 사용자가 고른 로컬 폴더로 받아 쓴다.
+  //
+  // 자르기는 서버가 해야 한다(원본 burned.mp4와 ffmpeg가 서버에 있다). 예전엔
+  // 클라에서 고른 경로를 서버에 넘겨 서버가 '자기 디스크'의 그 경로에 썼는데,
+  // 두 PC가 다르면 서버에 폴더만 새로 생기고 사용자가 보는 폴더는 끝까지 비어
+  // 있었다(실기 윈도우 — 에러도 안 났다). 받기·쓰기는 Rust에 맡긴다(다른 드라이브
+  // 허용 + 대용량 IPC 회피, 배치 다운로드와 같은 경로).
+  const saveExportedFiles = async (files: string[], dir: string) => {
+    const { join } = await import("@tauri-apps/api/path");
+    const { invoke } = await import("@tauri-apps/api/core");
+    for (let i = 0; i < files.length; i += 1) {
+      const name = exportedFileName(files[i] as string);
+      setNotice(`저장 중 ${i + 1}/${files.length} — ${name}`);
+      await invoke("download_to_file",
+                   { url: sceneExportFileUrl(jobId, name),
+                     path: await join(dir, name) });
+    }
+  };
+
   // 익스포트 진행률 폴링 — 전체/개별 익스포트가 같은 상태 파일(export_status)을 쓰므로
-  // 폴링도 공유한다. 완료 문구만 호출자가 정한다.
+  // 폴링도 공유한다. 완료 문구만 호출자가 정한다. 완료 상태를 돌려줘 호출자가
+  // 그 파일 목록을 로컬로 받아 쓸 수 있게 한다(실패·중단이면 null).
   const pollExport = async (doneMsg: (st: ExportStatus) => string) => {
     // 재인코딩은 클립당 수 초 걸리므로 1초 폴링으로 진행바를 갱신한다.
     for (let i = 0; i < 3600; i++) {
@@ -338,10 +374,11 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
         // 열어둔 파일을 덮어쓰려는 경우가 특히 잦다 — 원인을 짐작할 수 있게 붙여준다.
         setError(`익스포트 실패: ${st.error} — 저장 폴더의 그 mp4를 플레이어에서 `
           + "열어두면 덮어쓸 수 없습니다(Windows). 폴더 경로·쓰기 권한도 확인하세요.");
-        return;
+        return null;
       }
-      if (!st.exporting) { setNotice(doneMsg(st)); return; }
+      if (!st.exporting) { setNotice(doneMsg(st)); return st; }
     }
+    return null;
   };
 
   // 개별 씬 익스포트 — 고른 씬과 '맞닿은 이웃'까지 다시 굽는다. 경계를 옮기면 이웃의
@@ -362,25 +399,29 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     }
     const indices = neighborIndices(i, segments.length);
     if (indices.length === 0) return;
-    let outDir: string | undefined;
-    const last = (await getExportStatus(jobId)).out_dir;
-    if (last) {
-      outDir = last;
-    } else if (hasTauriRuntime()) {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const dir = await open({ directory: true, title: "저장 폴더 선택" });
-      if (typeof dir !== "string") { setNotice("저장 폴더 선택이 취소되었습니다."); return; }
-      outDir = dir;
+    // 지난 폴더를 그대로 쓴다 — "아까 그 폴더의 그 파일만 갱신"이 이 기능의 목적.
+    const saveDir = await pickSaveDir(true);
+    if (hasTauriRuntime() && !saveDir) {
+      setNotice("저장 폴더 선택이 취소되었습니다."); return;
     }
     setBusy(true); setExportingOne(i);
     setExportProg({ exporting: true, done: 0, total: indices.length,
-                    error: null, out_dir: outDir ?? null, files: [] });
+                    error: null, out_dir: saveDir, files: [] });
     try {
-      const res = await exportScenes(jobId, mode, outDir, indices);
+      // out_dir을 넘기지 않는다 — 서버는 자기 폴더에 굽고, 받아 쓰는 건 아래에서.
+      const res = await exportScenes(jobId, mode, undefined, indices);
       const labels = indices.map((k) => segments[k]?.label ?? "?").join(", ");
-      await pollExport((st) =>
-        `${st.done}/${res.count}개 클립 익스포트 완료 — ${labels} `
-        + `(${st.out_dir ?? outDir ?? "서버 폴더"}). 경계를 공유한 이웃 씬까지 갱신했습니다.`);
+      const st = await pollExport(() =>
+        `${res.count}개 클립을 구웠습니다 — ${labels}. 저장 중…`);
+      if (!st) return;
+      if (saveDir) {
+        await saveExportedFiles(st.files ?? [], saveDir);
+        setNotice(`${st.files?.length ?? 0}개 클립 저장 완료 — ${labels} (${saveDir}). `
+          + "경계를 공유한 이웃 씬까지 갱신했습니다.");
+      } else {
+        setNotice(`${res.count}개 클립 익스포트 완료 — ${labels} `
+          + `(서버 폴더 ${st.out_dir ?? ""}).`);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -397,20 +438,25 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       setError('저장 안 된 수정이 있습니다 — 먼저 "수정사항 저장"을 누르세요.');
       return;
     }
-    let outDir: string | undefined;
-    if (hasTauriRuntime()) {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const dir = await open({ directory: true, title: "저장 폴더 선택" });
-      if (typeof dir !== "string") { setNotice("저장 폴더 선택이 취소되었습니다."); return; }
-      outDir = dir;
+    // 전체 익스포트는 매번 폴더를 묻는다(다른 곳에 내보낼 수 있다).
+    const saveDir = await pickSaveDir(false);
+    if (hasTauriRuntime() && !saveDir) {
+      setNotice("저장 폴더 선택이 취소되었습니다."); return;
     }
     setBusy(true);
     setExportProg({ exporting: true, done: 0, total: segments.length,
-                    error: null, out_dir: outDir ?? null, files: [] });
+                    error: null, out_dir: saveDir, files: [] });
     try {
-      const res = await exportScenes(jobId, mode, outDir);
-      await pollExport((st) =>
-        `${st.done}/${res.count}개 클립 익스포트 완료 (${st.out_dir ?? outDir ?? "서버 폴더"})`);
+      // out_dir을 넘기지 않는다 — 서버는 자기 폴더에 굽고, 받아 쓰는 건 아래에서.
+      const res = await exportScenes(jobId, mode);
+      const st = await pollExport(() => `${res.count}개 클립을 구웠습니다. 저장 중…`);
+      if (!st) return;
+      if (saveDir) {
+        await saveExportedFiles(st.files ?? [], saveDir);
+        setNotice(`${st.files?.length ?? 0}개 클립 저장 완료 (${saveDir})`);
+      } else {
+        setNotice(`${res.count}개 클립 익스포트 완료 (서버 폴더 ${st.out_dir ?? ""})`);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

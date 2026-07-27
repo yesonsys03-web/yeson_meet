@@ -63,12 +63,21 @@ class ExtraFormatter(logging.Formatter):
         return f"{message} {fields}"
 
 
+# 앱 로그가 나가는 두 뿌리. "apps.server"만 설정하면 "yeson.*"(영상 파이프라인·
+# ffmpeg·OCR)은 핸들러도 레벨도 없는 상태라 INFO가 통째로 버려진다 — 실기: 윈도우
+# "익스포트 파일이 안 생긴다" 신고에서 서버 로그 1000줄이 전부 uvicorn 액세스
+# 로그였고, 익스포트가 '어디에 썼는지' 남기는 진단 로그가 한 줄도 없었다.
+# (ERROR만 파이썬 lastResort로 stderr에 새어 나와 더 헷갈렸다.)
+_LOG_ROOTS = ("apps.server", "yeson")
+
+for _name in _LOG_ROOTS:
+    _lg = logging.getLogger(_name)
+    _lg.setLevel(logging.INFO)
+    if not _lg.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(ExtraFormatter("%(levelname)s:%(name)s:%(message)s"))
+        _lg.addHandler(handler)
 server_logger = logging.getLogger("apps.server")
-server_logger.setLevel(logging.INFO)
-if not server_logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(ExtraFormatter("%(levelname)s:%(name)s:%(message)s"))
-    server_logger.addHandler(handler)
 logger = logging.getLogger(__name__)
 
 
