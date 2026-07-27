@@ -329,7 +329,14 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       await new Promise((r) => setTimeout(r, 1000));
       const st = await getExportStatus(jobId);
       setExportProg(st);
-      if (st.error) { setError(`익스포트 실패: ${st.error}`); return; }
+      if (st.error) {
+        // Windows는 다른 프로그램이 열고 있는 mp4를 덮어쓸 수 없다(mac/Linux는 가능).
+        // 개별 익스포트는 "그 클립을 보다가 문제를 발견 → 다시 굽기" 흐름이라 플레이어에
+        // 열어둔 파일을 덮어쓰려는 경우가 특히 잦다 — 원인을 짐작할 수 있게 붙여준다.
+        setError(`익스포트 실패: ${st.error} — 저장 폴더의 그 mp4를 플레이어에서 `
+          + "열어두면 덮어쓸 수 없습니다(Windows). 폴더 경로·쓰기 권한도 확인하세요.");
+        return;
+      }
       if (!st.exporting) { setNotice(doneMsg(st)); return; }
     }
   };
@@ -685,10 +692,15 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA"
                 || t.isContentEditable)) return;
+      // 한글 IME가 켜져 있으면 e.key가 자모("ㅑ")나 "Process"로 와서 단축키가 조용히
+      // 안 먹는다(Windows WebView2에서 특히, macOS도 동일) — 물리 키(e.code)를 함께
+      // 본다. 이 앱 사용자는 한글 입력 상태가 기본이다.
       const key = e.key.toLowerCase();
-      if (key !== "i" && key !== "o") return;
+      const isIn = e.code === "KeyI" || key === "i";
+      const isOut = e.code === "KeyO" || key === "o";
+      if (!isIn && !isOut) return;
       e.preventDefault();
-      trimAt(key === "i" ? "in" : "out");
+      trimAt(isIn ? "in" : "out");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

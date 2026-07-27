@@ -287,7 +287,9 @@ export function SceneFilmstrip(
                 disabled={exportDisabled || exportingIndex != null}
                 title="이 씬과 맞닿은 이웃 씬을 지난 익스포트 폴더에 다시 내보냅니다"
                 onClick={(e) => { e.stopPropagation(); onExportOne(i); }}>
-                {exportingIndex === i ? "내보내는 중…" : "⬇익스포트"}</button>
+                {/* 화살표는 ↩되돌리기와 같은 화살표 블록(U+2193)을 쓴다 — ⬇(U+2B07)는
+                    Windows에서 Segoe UI Emoji로 잡혀 컬러 이모지처럼 튄다. */}
+                {exportingIndex === i ? "내보내는 중…" : "↓익스포트"}</button>
             ) : null}
           </div>
         ))}
@@ -297,7 +299,7 @@ export function SceneFilmstrip(
           구간을 클릭하면 그 씬의 머리·꼬리 프레임만 크게 보여줍니다 — 머리에 이전 씬,
           꼬리에 다음 씬 슬레이트가 보이면 경계 혼입입니다. 프레임을 클릭하면 더 크게 볼 수 있어요.
           잘못 인식된 구간은 ◀/▶ 병합으로 이웃에 흡수하고 이름은 직접 고친 뒤 "수정사항 저장"을 누르세요.
-          {onExportOne ? " 저장 후 ⬇익스포트를 누르면 그 씬과 맞닿은 이웃만 지난 폴더에 다시 내보냅니다(전체를 다시 굽지 않아도 됩니다)." : ""}
+          {onExportOne ? " 저장 후 ↓익스포트를 누르면 그 씬과 맞닿은 이웃만 지난 폴더에 다시 내보냅니다(전체를 다시 굽지 않아도 됩니다)." : ""}
         </p>
       ) : null}
     </div>
