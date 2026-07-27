@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, neighborIndices, stepVisibleIndex,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, neighborIndices, scenePopupAction, stepVisibleIndex,
   NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, tokenizeSlate, trimFrames,
   type LabelFix,
 } from "./sceneSplitLogic";
@@ -682,30 +682,6 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     }
   };
 
-  // 팝업이 열려 있을 때 I/O 키로 In/Out 트림(편집 프로그램 관례). 입력칸에 포커스가
-  // 있으면 무시한다 — '프레임씩' 수나 라벨을 타이핑하다 경계가 바뀌면 안 된다.
-  // preview·segments가 바뀔 때마다 다시 등록해 핸들러가 최신 세그먼트를 본다.
-  useEffect(() => {
-    if (preview?.segIndex == null) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA"
-                || t.isContentEditable)) return;
-      // 한글 IME가 켜져 있으면 e.key가 자모("ㅑ")나 "Process"로 와서 단축키가 조용히
-      // 안 먹는다(Windows WebView2에서 특히, macOS도 동일) — 물리 키(e.code)를 함께
-      // 본다. 이 앱 사용자는 한글 입력 상태가 기본이다.
-      const key = e.key.toLowerCase();
-      const isIn = e.code === "KeyI" || key === "i";
-      const isOut = e.code === "KeyO" || key === "o";
-      if (!isIn && !isOut) return;
-      e.preventDefault();
-      trimAt(isIn ? "in" : "out");
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [preview, segments]);
-
   // 팝업 영상을 특정 프레임 시각으로 이동(머리/꼬리 확인용).
   const seekPreview = (ms?: number) => {
     const v = previewVideoRef.current;
@@ -825,6 +801,35 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const v = previewVideoRef.current;
     if (v) { v.pause(); v.currentTime = focusMs / 1000; }
   };
+
+  // 팝업이 열려 있을 때의 검수 단축키(매핑·한글 IME 처리는 scenePopupAction).
+  // I/O=In/Out 트림(편집 프로그램 관례), G/H=이전/다음 씬, [/]=머리로/꼬리로 —
+  // 화면의 해당 버튼에 같은 키를 적어 뒀다. 입력칸에 포커스가 있으면 무시한다
+  // — '프레임씩' 수나 라벨을 타이핑하다 경계가 바뀌면 안 된다. preview·목록이
+  // 바뀔 때마다 다시 등록해 핸들러가 최신 세그먼트·보이는 목록을 본다(검색으로
+  // 목록이 줄면 씬 이동 범위도 함께 줄어야 화면과 어긋나지 않는다).
+  useEffect(() => {
+    if (preview?.segIndex == null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA"
+                || t.isContentEditable)) return;
+      const action = scenePopupAction(e);
+      if (action == null) return;
+      e.preventDefault();
+      if (action === "trimIn" || action === "trimOut") {
+        trimAt(action === "trimIn" ? "in" : "out");
+      } else if (action === "prevScene" || action === "nextScene") {
+        stepPreviewSegment(action === "prevScene" ? -1 : 1);
+      } else {
+        seekPreview(action === "toHead"
+          ? preview.playStartMs : preview.lastFrameMs);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [preview, segments, visibleIndices, data]);
 
   // ←/→로 이전·다음 씬. 선택이 바뀌면 sticky 검수 뷰의 머리·꼬리 프레임이 갱신되고
   // 목록도 그 줄로 스크롤돼(SceneFilmstrip) 스크롤 조작이 아예 필요 없다. 입력칸
@@ -1441,11 +1446,13 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
           {preview.segIndex != null ? (() => {
             const nav = (delta: -1 | 1, idx: number | null) => {
               const label = delta < 0 ? "이전 씬" : "다음 씬";
+              const hotkey = delta < 0 ? "G" : "H";
               const target = idx != null ? segments[idx]?.label : null;
               return (
                 <button type="button" disabled={idx == null}
-                  title={target ? `${label} · ${target} — 보던 쪽 프레임으로`
-                                : `${label}이 없습니다`}
+                  title={target
+                    ? `${label} · ${target} — 보던 쪽 프레임으로 (단축키 ${hotkey})`
+                    : `${label}이 없습니다`}
                   onClick={(e) => { e.stopPropagation(); stepPreviewSegment(delta); }}
                   style={{ ...sideNavBtn, ...(delta < 0 ? { left: 6 } : { right: 6 }),
                            opacity: idx == null ? 0.3 : 1,
@@ -1454,6 +1461,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                     {delta < 0 ? "◀" : "▶"}
                   </span>
                   <span>{label}</span>
+                  {/* 키는 한 줄 아래 작게 — 버튼 폭(56)에 라벨과 나란히 두면 넘친다. */}
+                  <span style={{ fontSize: 10, opacity: 0.55 }}>{hotkey}</span>
                 </button>
               );
             };
@@ -1565,11 +1574,15 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                   ) : null}
                   {preview.playStartMs != null ? (
                     <button type="button" style={consoleStyles.mutedAction}
-                      onClick={() => seekPreview(preview.playStartMs)}>머리로</button>
+                      title="이 씬의 첫 프레임으로 (단축키 [)"
+                      onClick={() => seekPreview(preview.playStartMs)}>
+                      머리로 [</button>
                   ) : null}
                   {preview.lastFrameMs != null ? (
                     <button type="button" style={consoleStyles.mutedAction}
-                      onClick={() => seekPreview(preview.lastFrameMs)}>꼬리로</button>
+                      title="이 씬의 마지막 프레임으로 (단축키 ])"
+                      onClick={() => seekPreview(preview.lastFrameMs)}>
+                      꼬리로 ]</button>
                   ) : null}
                   {preview.startMs != null ? (
                     <button type="button" style={consoleStyles.mutedAction}

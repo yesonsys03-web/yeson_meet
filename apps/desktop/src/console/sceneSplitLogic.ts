@@ -395,6 +395,29 @@ export function filterIndices(
   return pool.filter((i) => matchesLabelQuery(labels[i] ?? "", query));
 }
 
+// 팝업 검수 단축키 매핑(한 곳에서). 손을 옮기지 않고 한 씬을 훑도록 왼손 자리에
+// 모았다: I/O=In/Out 트림, G/H=이전/다음 씬, [/]=머리로/꼬리로.
+//
+// 한글 IME가 켜져 있으면 e.key가 자모("ㅎ"/"ㅗ")나 "Process"로 와서 문자 비교만
+// 으로는 단축키가 조용히 안 먹는다(Windows WebView2에서 특히, macOS도 동일) —
+// 물리 키(e.code)를 함께 본다. 이 앱 사용자는 한글 입력 상태가 기본이다.
+// 대괄호는 Shift 조합({ })도 같은 물리 키라 함께 받는다.
+export type ScenePopupAction =
+  | "trimIn" | "trimOut" | "prevScene" | "nextScene" | "toHead" | "toTail";
+
+export function scenePopupAction(
+  ev: { code?: string; key?: string },
+): ScenePopupAction | null {
+  const key = (ev.key ?? "").toLowerCase();
+  if (ev.code === "KeyI" || key === "i") return "trimIn";
+  if (ev.code === "KeyO" || key === "o") return "trimOut";
+  if (ev.code === "KeyG" || key === "g") return "prevScene";
+  if (ev.code === "KeyH" || key === "h") return "nextScene";
+  if (ev.code === "BracketLeft" || key === "[" || key === "{") return "toHead";
+  if (ev.code === "BracketRight" || key === "]" || key === "}") return "toTail";
+  return null;
+}
+
 // 보이는 목록에서 delta칸 이동한 원본 인덱스. 끝에서는 null(감싸지 않는다 —
 // 400줄에서 갑자기 처음으로 튀면 위치 감각을 잃는다). 선택이 없으면 진행 방향의
 // 첫 항목, 선택이 필터에서 빠진 상태면 그 방향의 가장 가까운 항목으로 간다.

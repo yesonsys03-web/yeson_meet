@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -468,5 +468,41 @@ describe("neighborIndices", () => {
     expect(neighborIndices(-1, 5)).toEqual([]);
     expect(neighborIndices(5, 5)).toEqual([]);
     expect(neighborIndices(0, 0)).toEqual([]);
+  });
+});
+
+describe("scenePopupAction", () => {
+  it("maps the popup review keys", () => {
+    expect(scenePopupAction({ code: "KeyI", key: "i" })).toBe("trimIn");
+    expect(scenePopupAction({ code: "KeyO", key: "o" })).toBe("trimOut");
+    expect(scenePopupAction({ code: "KeyG", key: "g" })).toBe("prevScene");
+    expect(scenePopupAction({ code: "KeyH", key: "h" })).toBe("nextScene");
+    expect(scenePopupAction({ code: "BracketLeft", key: "[" })).toBe("toHead");
+    expect(scenePopupAction({ code: "BracketRight", key: "]" })).toBe("toTail");
+  });
+
+  // 한글 입력 상태에서 G/H는 e.key가 "ㅎ"/"ㅗ"(또는 "Process")로 온다 —
+  // 물리 키로 받지 않으면 단축키가 조용히 안 먹는다(이 앱의 기본 입력 상태).
+  it("works while the Korean IME is on", () => {
+    expect(scenePopupAction({ code: "KeyG", key: "ㅎ" })).toBe("prevScene");
+    expect(scenePopupAction({ code: "KeyH", key: "ㅗ" })).toBe("nextScene");
+    expect(scenePopupAction({ code: "KeyI", key: "Process" })).toBe("trimIn");
+  });
+
+  it("accepts the shifted brackets on the same physical keys", () => {
+    expect(scenePopupAction({ code: "BracketLeft", key: "{" })).toBe("toHead");
+    expect(scenePopupAction({ code: "BracketRight", key: "}" })).toBe("toTail");
+    expect(scenePopupAction({ key: "{" })).toBe("toHead");
+  });
+
+  it("falls back to the character when code is missing", () => {
+    expect(scenePopupAction({ key: "G" })).toBe("prevScene");
+    expect(scenePopupAction({ key: "h" })).toBe("nextScene");
+  });
+
+  it("ignores keys with no mapping", () => {
+    expect(scenePopupAction({ code: "KeyJ", key: "j" })).toBeNull();
+    expect(scenePopupAction({ code: "ArrowLeft", key: "ArrowLeft" })).toBeNull();
+    expect(scenePopupAction({})).toBeNull();
   });
 });
