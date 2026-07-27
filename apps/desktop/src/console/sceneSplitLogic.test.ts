@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -504,5 +504,29 @@ describe("scenePopupAction", () => {
     expect(scenePopupAction({ code: "KeyJ", key: "j" })).toBeNull();
     expect(scenePopupAction({ code: "ArrowLeft", key: "ArrowLeft" })).toBeNull();
     expect(scenePopupAction({})).toBeNull();
+  });
+});
+
+describe("scanProgressKey", () => {
+  // 실기: 판독 카운터가 N/N에 닿은 뒤 재시도 단계가 몇 분 돌자, 프론트가
+  // 200초 무변화를 정체로 보고 멀쩡한 스캔에 "진행되지 않습니다"를 띄웠다.
+  // 진척 판정은 판독 수 '와' 앞 구간의 살아있음 신호를 함께 봐야 한다.
+  it("changes when the OCR counter advances", () => {
+    expect(scanProgressKey({ ocr_done: 10 }))
+      .not.toBe(scanProgressKey({ ocr_done: 11 }));
+  });
+
+  it("changes when only the extraction tick advances", () => {
+    expect(scanProgressKey({ ocr_done: 0, stage_tick: 120 }))
+      .not.toBe(scanProgressKey({ ocr_done: 0, stage_tick: 340 }));
+  });
+
+  it("stays put when nothing moved (real stall)", () => {
+    expect(scanProgressKey({ ocr_done: 2791, stage_tick: 5 }))
+      .toBe(scanProgressKey({ ocr_done: 2791, stage_tick: 5 }));
+  });
+
+  it("treats missing fields as zero", () => {
+    expect(scanProgressKey({})).toBe(scanProgressKey({ ocr_done: 0, stage_tick: 0 }));
   });
 });

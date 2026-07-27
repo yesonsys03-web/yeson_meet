@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, neighborIndices, scenePopupAction, stepVisibleIndex,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, neighborIndices, scanProgressKey, scenePopupAction, stepVisibleIndex,
   NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, tokenizeSlate, trimFrames,
   type LabelFix,
 } from "./sceneSplitLogic";
@@ -49,7 +49,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   // 진행하면 빈 스캔 데이터에 409가 떠 원인이 가려진다(실기).
   const pollScan = async (hadScan: boolean): Promise<boolean> => {
     let stalled = 0;
-    let lastDone = -1;
+    let lastKey = "";
     let sawScanning = false;
     let pollFails = 0;
     for (let i = 0; i < 1200; i++) {
@@ -71,9 +71,12 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
         const total = d.total_frames ?? 0;
         setNotice(total > 0
           ? `슬레이트 판독 중… ${done}/${total} 프레임`
-          : "프레임 추출 중…");
-        stalled = done === lastDone ? stalled + 1 : 0;
-        lastDone = done;
+          : `${d.stage ?? "프레임 추출"} 중…`);
+        // 판독 수만 보면 카운터가 없는 앞 구간과 판독 뒤 재시도 단계를 정체로
+        // 오인한다(scanProgressKey 주석 참조).
+        const key = scanProgressKey(d);
+        stalled = key === lastKey ? stalled + 1 : 0;
+        lastKey = key;
         // 진척이 200초(133회) 넘게 멈춰 있으면 포기(서버 이상).
         if (stalled > 133) { setError("스캔이 진행되지 않습니다. 서버 상태를 확인하세요."); return false; }
       } else if (d.scanned && (sawScanning || !hadScan)) {

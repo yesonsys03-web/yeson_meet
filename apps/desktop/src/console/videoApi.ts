@@ -336,6 +336,11 @@ export type ScenesData = {
   scanning?: boolean;
   ocr_done?: number;
   total_frames?: number;
+  // 판독 카운터가 아직 없는 앞 구간(크롭·프레임 추출·컷 감지)의 단계 이름과
+  // 살아있음 신호. stage_tick은 산출물이 실제로 늘 때만 오른다 — 정체 판정이
+  // 이 값도 진척으로 봐야 멀쩡한 스캔을 실패로 오인하지 않는다.
+  stage?: string | null;
+  stage_tick?: number;
   error?: string | null;
   frames: Array<{ t_ms: number; text: string }>;
   segments_scene: SceneSegment[];

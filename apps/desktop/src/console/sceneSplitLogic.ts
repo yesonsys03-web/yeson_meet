@@ -395,6 +395,20 @@ export function filterIndices(
   return pool.filter((i) => matchesLabelQuery(labels[i] ?? "", query));
 }
 
+// 스캔 진척 판정 키 — 이 값이 바뀌지 않으면 '정체'로 센다.
+//
+// 판독 수(ocr_done)만 보면 안 된다: 스캔의 앞 구간(크롭·프레임 추출·컷 감지)은
+// 카운터가 0에 머물고, 판독이 N/N에 닿은 뒤에도 재시도 단계(패딩 재판독·개별
+// 시킹)가 한참 돈다. 실기에서 화면이 '판독 중… 2791/2791'에 굳은 채 서버는
+// 멀쩡히 일하는데 200초 뒤 "스캔이 진행되지 않습니다"가 떴다. 서버가 함께
+// 내려주는 stage_tick(산출물이 실제로 늘 때만 오르는 값)을 같이 본다 —
+// 진짜로 멎으면 둘 다 안 변하므로 정체 감지는 그대로 살아 있다.
+export function scanProgressKey(
+  d: { ocr_done?: number; stage_tick?: number },
+): string {
+  return `${d.ocr_done ?? 0}:${d.stage_tick ?? 0}`;
+}
+
 // 팝업 검수 단축키 매핑(한 곳에서). 손을 옮기지 않고 한 씬을 훑도록 왼손 자리에
 // 모았다: I/O=In/Out 트림, G/H=이전/다음 씬, [/]=머리로/꼬리로.
 //

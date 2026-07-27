@@ -669,6 +669,11 @@ async def get_scenes(
         "error": error,
         "ocr_done": data.get("ocr_done", 0),
         "total_frames": data.get("total_frames", 0),
+        # 판독 카운터가 아직 없는 앞 구간(크롭·추출·컷감지)의 단계 이름과
+        # 살아있음 신호. 프론트는 stage_tick 변화를 진척으로 보고 정체 판정을
+        # 리셋한다 — 없으면 멀쩡한 스캔이 200초 뒤 실패로 뜬다.
+        "stage": data.get("stage"),
+        "stage_tick": data.get("stage_tick", 0),
         "frames": data.get("frames", []),
         "segments_scene": data.get("segments_scene", []),
         "segments_sequence": data.get("segments_sequence", []),

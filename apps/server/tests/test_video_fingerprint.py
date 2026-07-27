@@ -264,3 +264,18 @@ def test_fade_cut_between_hard_cuts_not_suppressed():
         win[k] = 48
     cuts = detect_cuts_with_fades(adj, win, window=5)
     assert cuts == [10, 49, 100]
+
+
+def test_diff_series_reports_progress(tmp_path):
+    """지문 비교는 3만 장을 도는 통짜 루프라 진행률을 밖으로 흘려야 한다 —
+    이 구간이 조용하면 프론트가 '스캔이 진행되지 않습니다'로 포기한다."""
+    from apps.server.domain.video_captions.fingerprint import diff_series
+    paths = []
+    for i in range(300):
+        p = tmp_path / f"f_{i:06d}.png"
+        _write_png(p, {(1, 1)})
+        paths.append(p)
+    seen: list[int] = []
+    diff_series(paths, window=2, on_progress=seen.append)
+    # 256프레임마다(취소 확인과 같은 주기) — 최소 시작과 중간 한 번.
+    assert seen == [0, 256]
