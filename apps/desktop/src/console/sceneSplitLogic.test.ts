@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -367,5 +367,47 @@ describe("segFrameNumber", () => {
   it("defaults to NTSC when fps unknown/zero", () => {
     expect(segFrameNumber(30000, START, END, 0))
       .toEqual(segFrameNumber(30000, START, END, NTSC_FPS));
+  });
+});
+
+describe("trimFrames", () => {
+  // 팝업 카운터 '프레임 k / n'을 경계 이동 프레임 수로 바꾼다 — 사용자가 눈으로
+  // 읽어 입력칸에 옮겨 적던 값을 In/Out 버튼이 그대로 계산한다.
+  it("maps the current frame to give-away counts on both sides", () => {
+    expect(trimFrames(31, 40)).toEqual({ inFrames: 30, outFrames: 9 });
+  });
+  it("gives away nothing at the matching end — 찍은 프레임은 이 씬에 남는다", () => {
+    expect(trimFrames(1, 40)).toEqual({ inFrames: 0, outFrames: 39 });
+    expect(trimFrames(40, 40)).toEqual({ inFrames: 39, outFrames: 0 });
+  });
+  it("can never empty the scene — 어느 쪽이든 최소 1프레임 남는다", () => {
+    for (const k of [1, 2, 20, 39, 40]) {
+      const { inFrames, outFrames } = trimFrames(k, 40);
+      expect(40 - inFrames).toBeGreaterThanOrEqual(1);
+      expect(40 - outFrames).toBeGreaterThanOrEqual(1);
+    }
+  });
+  it("clamps out-of-range k like segFrameNumber does", () => {
+    expect(trimFrames(0, 10)).toEqual({ inFrames: 0, outFrames: 9 });
+    expect(trimFrames(99, 10)).toEqual({ inFrames: 9, outFrames: 0 });
+    expect(trimFrames(1, 0)).toEqual({ inFrames: 0, outFrames: 0 });
+  });
+});
+
+describe("neighborIndices", () => {
+  // 개별 씬 익스포트는 맞닿은 이웃까지 다시 굽는다 — 경계를 옮기면 이웃의 프레임
+  // 수도 함께 바뀌어, 이 씬만 내보내면 이웃 파일이 옛 경계로 남는다.
+  it("includes both neighbors in ascending order", () => {
+    expect(neighborIndices(5, 10)).toEqual([4, 5, 6]);
+  });
+  it("clamps at the list ends", () => {
+    expect(neighborIndices(0, 10)).toEqual([0, 1]);
+    expect(neighborIndices(9, 10)).toEqual([8, 9]);
+    expect(neighborIndices(0, 1)).toEqual([0]);
+  });
+  it("returns nothing for an index outside the list", () => {
+    expect(neighborIndices(-1, 5)).toEqual([]);
+    expect(neighborIndices(5, 5)).toEqual([]);
+    expect(neighborIndices(0, 0)).toEqual([]);
   });
 });

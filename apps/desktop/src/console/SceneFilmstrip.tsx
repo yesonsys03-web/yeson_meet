@@ -36,6 +36,13 @@ type Props = {
   // 없어 아무 줄에도 안 뜬다. 실수로 병합했을 때 그 자리에서 바로 물릴 수 있다.
   undoIndex?: number | null;
   onUndoMerge?: () => void;
+  // 개별 씬 익스포트(선택) — 이 씬과 맞닿은 이웃만 지난 익스포트 폴더에 다시 굽는다.
+  // 경계를 하나 고쳤을 때 수백 개를 전부 다시 굽지 않게 한다. exportingIndex가 있으면
+  // 그 줄은 진행 표시, 나머지 줄은 잠근다(서버가 새 익스포트를 시작하면 진행 중인
+  // 익스포트를 취소하므로 동시 실행을 막는다).
+  onExportOne?: (i: number) => void;
+  exportingIndex?: number | null;
+  exportDisabled?: boolean;
 };
 
 // 다빈치 리졸브식 필름스트립: 썸네일을 시간축에 깔고 아래에 구간 목록을 얹는다.
@@ -45,7 +52,8 @@ type Props = {
 export function SceneFilmstrip(
   { jobId, segments, thumbCount, intervalMs, onMerge, onRename,
     selectedIndex, highlight, onSelectSegment, onClearSelection, videoFps,
-    onThumbClick, visibleIndices, suggestions, undoIndex, onUndoMerge }: Props,
+    onThumbClick, visibleIndices, suggestions, undoIndex, onUndoMerge,
+    onExportOne, exportingIndex, exportDisabled }: Props,
 ) {
   const thumbs = Array.from({ length: thumbCount }, (_, i) => i);
   const editable = Boolean(onMerge || onRename);
@@ -271,6 +279,16 @@ export function SceneFilmstrip(
                 ) : null}
               </span>
             ) : null}
+            {/* 이 씬만(+맞닿은 이웃) 다시 익스포트 — 경계를 하나 고친 뒤 전체를 다시
+                굽지 않아도 되게 한다. 이웃까지 굽는 이유는 경계가 공유돼 이웃의
+                프레임 수도 함께 바뀌기 때문(이 씬만 내보내면 이웃이 옛 경계로 남는다). */}
+            {onExportOne ? (
+              <button type="button" style={{ ...miniBtn, flexShrink: 0 }}
+                disabled={exportDisabled || exportingIndex != null}
+                title="이 씬과 맞닿은 이웃 씬을 지난 익스포트 폴더에 다시 내보냅니다"
+                onClick={(e) => { e.stopPropagation(); onExportOne(i); }}>
+                {exportingIndex === i ? "내보내는 중…" : "⬇익스포트"}</button>
+            ) : null}
           </div>
         ))}
       </div>
@@ -279,6 +297,7 @@ export function SceneFilmstrip(
           구간을 클릭하면 그 씬의 머리·꼬리 프레임만 크게 보여줍니다 — 머리에 이전 씬,
           꼬리에 다음 씬 슬레이트가 보이면 경계 혼입입니다. 프레임을 클릭하면 더 크게 볼 수 있어요.
           잘못 인식된 구간은 ◀/▶ 병합으로 이웃에 흡수하고 이름은 직접 고친 뒤 "수정사항 저장"을 누르세요.
+          {onExportOne ? " 저장 후 ⬇익스포트를 누르면 그 씬과 맞닿은 이웃만 지난 폴더에 다시 내보냅니다(전체를 다시 굽지 않아도 됩니다)." : ""}
         </p>
       ) : null}
     </div>

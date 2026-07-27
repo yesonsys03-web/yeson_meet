@@ -353,6 +353,30 @@ export function segFrameNumber(
   return { k, n };
 }
 
+// 편집 프로그램식 In/Out 트림 — 팝업 카운터의 '프레임 k / n'을 경계 이동 프레임
+// 수로 바꾼다. In("여기부터")은 찍은 프레임을 이 씬의 첫 프레임으로 만들어 앞의
+// k-1장을 이전 씬에 넘기고, Out("여기까지")은 마지막 프레임으로 만들어 뒤의 n-k장을
+// 다음 씬에 넘긴다. 찍은 프레임은 항상 이 씬에 남으므로(양쪽 다 최소 1프레임 잔존)
+// 빈 씬이 원리적으로 생기지 않는다 — nudgeBoundary의 클램프에 의존하지 않는다.
+// 범위 밖 k는 segFrameNumber와 같이 [1,n]으로 클램프.
+export function trimFrames(
+  k: number, n: number,
+): { inFrames: number; outFrames: number } {
+  const total = Math.max(1, Math.floor(n));
+  const cur = Math.min(total, Math.max(1, Math.floor(k)));
+  return { inFrames: cur - 1, outFrames: total - cur };
+}
+
+// 개별 씬 익스포트가 다시 구울 구간들 — 고른 씬과 맞닿은 이웃. 경계를 옮기면 그 씬만
+// 아니라 이웃의 프레임 수도 함께 바뀌므로(공유 경계), 고른 씬만 내보내면 이웃 mp4가 옛
+// 경계로 남아 폴더가 정합을 잃는다. 목록 양끝은 클램프, 범위 밖 인덱스는 빈 배열.
+export function neighborIndices(i: number, n: number): number[] {
+  if (!Number.isFinite(i) || i < 0 || i >= n) return [];
+  const out: number[] = [];
+  for (let k = i - 1; k <= i + 1; k += 1) if (k >= 0 && k < n) out.push(k);
+  return out;
+}
+
 // 구간 이름(=파일명) 수정.
 export function renameSegment(
   segs: SceneSegment[], i: number, label: string,

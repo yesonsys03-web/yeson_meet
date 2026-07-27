@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment,
-  NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, tokenizeSlate,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, neighborIndices,
+  NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, tokenizeSlate, trimFrames,
   type LabelFix,
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
@@ -318,6 +318,65 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   };
 
   const [exportProg, setExportProg] = useState<ExportStatus | null>(null);
+  // 개별 씬 익스포트 진행 중인 구간(그 줄만 진행 표시, 다른 줄은 잠금).
+  const [exportingOne, setExportingOne] = useState<number | null>(null);
+
+  // 익스포트 진행률 폴링 — 전체/개별 익스포트가 같은 상태 파일(export_status)을 쓰므로
+  // 폴링도 공유한다. 완료 문구만 호출자가 정한다.
+  const pollExport = async (doneMsg: (st: ExportStatus) => string) => {
+    // 재인코딩은 클립당 수 초 걸리므로 1초 폴링으로 진행바를 갱신한다.
+    for (let i = 0; i < 3600; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const st = await getExportStatus(jobId);
+      setExportProg(st);
+      if (st.error) { setError(`익스포트 실패: ${st.error}`); return; }
+      if (!st.exporting) { setNotice(doneMsg(st)); return; }
+    }
+  };
+
+  // 개별 씬 익스포트 — 고른 씬과 '맞닿은 이웃'까지 다시 굽는다. 경계를 옮기면 이웃의
+  // 프레임 수도 함께 바뀌므로 고른 씬만 내보내면 이웃 mp4가 옛 경계로 남는다.
+  // 저장 폴더는 지난 익스포트 폴더를 재사용한다 — 서버 export_status에 남아 있어 앱을
+  // 다시 켜도 복구되고, "아까 그 폴더의 그 파일만 갱신"이 이 기능의 목적이다.
+  const exportOne = async (i: number) => {
+    setError(null); setNotice(null);
+    if (dirty) {
+      setError('저장 안 된 수정이 있습니다 — 먼저 "수정사항 저장"을 누르세요.');
+      return;
+    }
+    // 서버는 새 익스포트를 시작할 때 generation을 올려 진행 중인 익스포트를
+    // 취소시킨다 — 동시 실행을 막아 전체 익스포트가 중간에 끊기는 일이 없게 한다.
+    if (busy || exportProg?.exporting || exportingOne != null) {
+      setNotice("다른 작업이 진행 중입니다 — 끝난 뒤에 다시 시도하세요.");
+      return;
+    }
+    const indices = neighborIndices(i, segments.length);
+    if (indices.length === 0) return;
+    let outDir: string | undefined;
+    const last = (await getExportStatus(jobId)).out_dir;
+    if (last) {
+      outDir = last;
+    } else if (hasTauriRuntime()) {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const dir = await open({ directory: true, title: "저장 폴더 선택" });
+      if (typeof dir !== "string") { setNotice("저장 폴더 선택이 취소되었습니다."); return; }
+      outDir = dir;
+    }
+    setBusy(true); setExportingOne(i);
+    setExportProg({ exporting: true, done: 0, total: indices.length,
+                    error: null, out_dir: outDir ?? null, files: [] });
+    try {
+      const res = await exportScenes(jobId, mode, outDir, indices);
+      const labels = indices.map((k) => segments[k]?.label ?? "?").join(", ");
+      await pollExport((st) =>
+        `${st.done}/${res.count}개 클립 익스포트 완료 — ${labels} `
+        + `(${st.out_dir ?? outDir ?? "서버 폴더"}). 경계를 공유한 이웃 씬까지 갱신했습니다.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false); setExportingOne(null); setExportProg(null);
+    }
+  };
 
   const doExport = async () => {
     setError(null); setNotice(null);
@@ -340,17 +399,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                     error: null, out_dir: outDir ?? null, files: [] });
     try {
       const res = await exportScenes(jobId, mode, outDir);
-      // 진행률 폴링 — 재인코딩은 클립당 수 초 걸리므로 진행바로 표시한다.
-      for (let i = 0; i < 3600; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        const st = await getExportStatus(jobId);
-        setExportProg(st);
-        if (st.error) { setError(`익스포트 실패: ${st.error}`); return; }
-        if (!st.exporting) {
-          setNotice(`${st.done}/${res.count}개 클립 익스포트 완료 (${st.out_dir ?? outDir ?? "서버 폴더"})`);
-          return;
-        }
-      }
+      await pollExport((st) =>
+        `${st.done}/${res.count}개 클립 익스포트 완료 (${st.out_dir ?? outDir ?? "서버 폴더"})`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -385,12 +435,16 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       ? { ...prev, boundary_issues: prev.boundary_issues.filter((b) => !drop.has(b.label)) }
       : prev));
   };
-  // 병합 되돌리기 스택 — 개별 병합(mergeSeg)마다 직전 상태를 쌓아 여러 단계 물릴 수
-  // 있게 한다. 각 항목=병합 전 세그먼트·경계플래그 스냅샷 + 병합 결과 '생존 구간'
-  // 인덱스(되돌리기 버튼을 그 줄에만 렌더). 모드 전환·저장·일괄교정 시 비운다(구간
-  // 목록이 재편돼 인덱스가 무의미). undoSnapshot(일괄교정 한 단계)과는 별개.
-  const [mergeUndo, setMergeUndo] = useState<
-    { segs: SceneSegment[]; issues: ScenesData["boundary_issues"]; survivor: number }[]
+  // 편집 되돌리기 스택 — 개별 병합(mergeSeg)과 경계 교정(nudgeBoundary)마다 직전
+  // 상태를 쌓아 여러 단계 물릴 수 있게 한다. 각 항목=편집 전 세그먼트·경계플래그
+  // 스냅샷 + 편집 결과 구간 인덱스(병합=생존 구간, 경계 교정=교정한 구간). 두 종류를
+  // 한 스택에 담아 엄격 LIFO로 물린다 — 스택을 따로 두면 병합·경계 교정을 섞었을 때
+  // 되돌리는 순서가 뒤엉킨다. kind로 버튼 위치를 가른다(merge=리스트 줄,
+  // boundary=팝업). 모드 전환·저장·일괄교정 시 비운다(구간 목록이 재편돼 인덱스가
+  // 무의미). undoSnapshot(일괄교정 한 단계)과는 별개.
+  const [editUndo, setEditUndo] = useState<
+    { kind: "merge" | "boundary"; segs: SceneSegment[];
+      issues: ScenesData["boundary_issues"]; survivor: number }[]
   >([]);
   const mergeSeg = (i: number, into: "prev" | "next") => {
     // 병합한 두 씬의 경계 오류 플래그를 뺀다(사라진 라벨 + 살아남은 라벨 둘 다).
@@ -401,24 +455,39 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     // 시각)를 곧바로 보여주게 한다.
     const survivor = into === "prev" ? Math.max(0, i - 1) : i;
     // 되돌리기용: 병합 전 세그먼트·경계플래그와 생존 구간을 스택에 쌓는다(여러 단계).
-    setMergeUndo((prev) => [
-      ...prev, { segs: segments, issues: data?.boundary_issues, survivor }]);
+    setEditUndo((prev) => [
+      ...prev, { kind: "merge", segs: segments, issues: data?.boundary_issues, survivor }]);
     setSegments(mergeSegment(segments, i, into));
     clearBoundaryFlags([gone, survivorLabel]);
     setSelectedSeg(survivor);
   };
-  // 개별 병합 되돌리기 — 스택 top의 병합 전 상태(세그먼트·경계플래그)로 복원하고 그
-  // 병합의 생존 구간을 다시 선택한다. 여러 번 누르면 한 단계씩 거슬러 올라간다. 아직
-  // 저장 전이므로 dirty는 유지(복원본도 서버 저장본과는 다르다).
-  const undoMerge = () => {
-    if (mergeUndo.length === 0 || !data) return;
-    const top = mergeUndo[mergeUndo.length - 1]!;
+  // 편집 되돌리기 — 스택 top의 편집 전 상태(세그먼트·경계플래그)로 복원하고 그 구간을
+  // 다시 선택한다. 여러 번 누르면 한 단계씩 거슬러 올라간다. 아직 저장 전이므로 dirty는
+  // 유지(복원본도 서버 저장본과는 다르다). 경계 교정을 물릴 때 팝업이 열려 있으면
+  // 프리뷰가 옛 경계(startMs/endMs·프레임 카운터)를 그대로 들고 있으므로 복원된
+  // 세그먼트로 다시 만들고 그 경계 프레임으로 시킹한다 — 화면과 데이터가 어긋나면
+  // 사용자가 이미 물린 편집을 다시 물린다.
+  const undoEdit = () => {
+    if (editUndo.length === 0 || !data) return;
+    const top = editUndo[editUndo.length - 1]!;
     setData(mode === "sequence"
       ? { ...data, segments_sequence: top.segs, boundary_issues: top.issues }
       : { ...data, segments_scene: top.segs, boundary_issues: top.issues });
     setDirtyModes((prev) => new Set(prev).add(mode));
     setSelectedSeg(top.survivor);
-    setMergeUndo((prev) => prev.slice(0, -1));
+    setEditUndo((prev) => prev.slice(0, -1));
+    const p = previewRef.current;
+    const restored = top.segs[top.survivor];
+    if (top.kind === "boundary" && p?.segIndex === top.survivor && restored) {
+      const fps = data.video_fps && data.video_fps > 0 ? data.video_fps : NTSC_FPS;
+      const side = p.side ?? "head";
+      const focusMs = side === "tail"
+        ? frameSeekMs(segmentTailMs(restored.start_ms, restored.end_ms, fps), fps)
+        : frameSeekMs(restored.start_ms, fps);
+      setPreview(buildSegPreview(restored, top.survivor, focusMs, side));
+      const v = previewVideoRef.current;
+      if (v) { v.pause(); v.currentTime = focusMs / 1000; }
+    }
   };
   const renameSeg = (i: number, label: string) => {
     clearBoundaryFlags([segments[i]?.label]);  // 이름 바꾼 씬은 플래그 해제(라벨도 바뀜)
@@ -573,6 +642,11 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       segs[i] = { ...segs[i]!, start_ms: nh };
       focusMs = frameSeekMs(segs[i]!.start_ms, fps);
     }
+    // 되돌리기용: 교정 전 세그먼트·경계플래그를 병합과 같은 스택에 쌓는다. In/Out
+    // 트림은 한 클릭이라 오조작이 쉬운 만큼 되돌릴 수 있어야 한다.
+    setEditUndo((prev) => [
+      ...prev,
+      { kind: "boundary", segs: segments, issues: data.boundary_issues, survivor: i }]);
     setSegments(segs);  // dirty — "수정사항 저장" 후 익스포트에 반영
     // 교정한 씬(+맞닿은 이웃)의 경계 오류 플래그를 뺀다 — 고쳤으면 필터에서 빠져야.
     clearBoundaryFlags([segs[i]!.label,
@@ -581,6 +655,45 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const v = previewVideoRef.current;
     if (v) { v.pause(); v.currentTime = focusMs / 1000; }
   };
+  // 편집 프로그램식 In/Out 트림 — 지금 보고 있는 프레임을 이 씬의 첫(In)/마지막(Out)
+  // 프레임으로 확정한다. 사용자가 프레임 카운터를 읽어 '프레임씩' 칸에 옮겨 적던
+  // 계산을 여기서 대신 한다(오입력 제거). 경계 이동은 nudgeBoundary가 그대로 담당.
+  // ms를 안 주면 영상의 현재 시각을 쓴다(키보드 단축키 경로).
+  const trimAt = (side: "in" | "out", ms?: number) => {
+    const p = previewRef.current;
+    if (!p || p.segIndex == null || p.startMs == null || p.endMs == null) return;
+    const at = ms ?? (previewVideoRef.current
+      ? previewVideoRef.current.currentTime * 1000 : p.seekMs);
+    const { k, n } = segFrameNumber(at, p.startMs, p.endMs, p.fps);
+    const { inFrames, outFrames } = trimFrames(k, n);
+    if (side === "in") {
+      if (p.segIndex <= 0 || inFrames === 0) return;   // 첫 씬이거나 넘길 게 없음
+      nudgeBoundary("head", inFrames);
+    } else {
+      if (p.segIndex >= segments.length - 1 || outFrames === 0) return;
+      nudgeBoundary("tail", -outFrames);
+    }
+  };
+
+  // 팝업이 열려 있을 때 I/O 키로 In/Out 트림(편집 프로그램 관례). 입력칸에 포커스가
+  // 있으면 무시한다 — '프레임씩' 수나 라벨을 타이핑하다 경계가 바뀌면 안 된다.
+  // preview·segments가 바뀔 때마다 다시 등록해 핸들러가 최신 세그먼트를 본다.
+  useEffect(() => {
+    if (preview?.segIndex == null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA"
+                || t.isContentEditable)) return;
+      const key = e.key.toLowerCase();
+      if (key !== "i" && key !== "o") return;
+      e.preventDefault();
+      trimAt(key === "i" ? "in" : "out");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [preview, segments]);
+
   // 팝업 영상을 특정 프레임 시각으로 이동(머리/꼬리 확인용).
   const seekPreview = (ms?: number) => {
     const v = previewVideoRef.current;
@@ -673,7 +786,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setPendingFixes(null);
     setFixChecked(new Set());
     setUndoSnapshot(null);
-    setMergeUndo([]);  // 모드가 바뀌면 병합 되돌리기 스택의 인덱스가 무의미
+    setEditUndo([]);  // 모드가 바뀌면 편집 되돌리기 스택의 인덱스가 무의미
     setOnlyAnomalies(false);
     setOnlyBoundaryErrors(false);
     setSelectedSeg(null);
@@ -726,7 +839,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const applied = pendingFixes.filter((f) => fixChecked.has(f.index));
     if (applied.length === 0) { setPendingFixes(null); return; }
     setUndoSnapshot(segments);  // 되돌리기용 스냅샷
-    setMergeUndo([]);           // 일괄교정은 배열을 재편 — 개별 병합 스택 무효화
+    setEditUndo([]);            // 일괄교정은 배열을 재편 — 개별 편집 스택 무효화
     // 교정으로 같아진 인접 라벨을 바로 병합한다 — 안 그러면 한 씬이 여러 조각으로
     // 남는다(오독이 씬 한가운데를 쪼갠 케이스).
     const fixed = applyFixes(segments, pendingFixes, fixChecked);
@@ -746,7 +859,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const n = segments.length - mergedSegs.length;
     if (n === 0) { setNotice("인접 중복이 없습니다."); return; }
     setUndoSnapshot(segments);
-    setMergeUndo([]);
+    setEditUndo([]);
     setSegments(mergedSegs);
     setNotice(`인접 중복 ${n}건을 병합했습니다 — 저장 전입니다.`);
   };
@@ -762,7 +875,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const n = segments.length - out.length;
     if (n === 0) { setNotice("정리할 오독 갈라짐이 없습니다."); return; }
     setUndoSnapshot(segments);
-    setMergeUndo([]);
+    setEditUndo([]);
     setSegments(out);
     setNotice(`오독으로 갈라진 ${n}건을 흡수했습니다 — 저장 전입니다. 되돌리기 가능.`);
   };
@@ -771,7 +884,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     if (!undoSnapshot) return;
     setSegments(undoSnapshot);
     setUndoSnapshot(null);
-    setMergeUndo([]);
+    setEditUndo([]);
     setNotice("되돌렸습니다.");
   };
 
@@ -783,7 +896,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       setDirtyModes((prev) => {
         const next = new Set(prev); next.delete(mode); return next;
       });
-      setMergeUndo([]);  // 저장하면 병합 되돌리기 히스토리 초기화(스냅샷은 저장 전 상태)
+      setEditUndo([]);  // 저장하면 편집 되돌리기 히스토리 초기화(스냅샷은 저장 전 상태)
       const otherDirty = dirtyModes.has(mode === "scene" ? "sequence" : "scene");
       setNotice(otherDirty
         ? `${mode === "scene" ? "씬" : "시퀀스"} 저장 완료 — `
@@ -1141,8 +1254,13 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
             totalMs={data.total_ms
               ?? ((data.frames.at(-1)?.t_ms ?? 0) + intervalMs)}
             onMerge={mergeSeg} onRename={renameSeg}
-            undoIndex={mergeUndo.length ? mergeUndo[mergeUndo.length - 1]!.survivor : null}
-            onUndoMerge={undoMerge}
+            // 리스트 줄의 되돌리기는 스택 top이 '병합'일 때만 뜬다 — 경계 교정은
+            // 팝업에서 물린다(같은 스택, 엄격 LIFO).
+            undoIndex={editUndo.at(-1)?.kind === "merge"
+              ? editUndo.at(-1)!.survivor : null}
+            onUndoMerge={undoEdit}
+            onExportOne={exportOne} exportingIndex={exportingOne}
+            exportDisabled={busy || Boolean(exportProg?.exporting)}
             selectedIndex={selectedSeg} highlight={highlight}
             visibleIndices={visibleIndices}
             suggestions={suggestionOf}
@@ -1312,6 +1430,45 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                     onClick={() => setPreview(null)}>닫기</button>
                 </div>
               </div>
+              {/* In/Out 트림 — 편집 프로그램의 인점·아웃점처럼, 찾은 프레임을 이 씬의
+                  첫/마지막 프레임으로 확정하면 그 밖의 프레임이 이웃 씬으로 넘어간다.
+                  버튼 라벨의 프레임 수는 재생 위치에 따라 실시간으로 바뀌므로 카운터를
+                  읽어 옮겨 적을 필요가 없다(아래 '경계 교정'의 수동 입력도 그대로 유지). */}
+              {preview.segIndex != null && preview.startMs != null
+                && preview.endMs != null ? (() => {
+                const i = preview.segIndex;
+                // 라벨의 프레임 수와 실제 동작이 반드시 같아야 하므로 둘 다 previewMs
+                // (카운터가 쓰는 값)로 계산한다 — 영상 currentTime을 따로 읽으면
+                // 표시와 한 프레임 어긋날 수 있다.
+                const { k, n } = segFrameNumber(previewMs, preview.startMs,
+                  preview.endMs, preview.fps);
+                const { inFrames, outFrames } = trimFrames(k, n);
+                const top = editUndo.at(-1);
+                const canUndo = top?.kind === "boundary" && top.survivor === i;
+                return (
+                  <div style={{ display: "flex", gap: 6, alignItems: "center",
+                                flexWrap: "wrap", fontSize: 12 }}>
+                    <span style={{ opacity: 0.7 }}>현재 프레임 기준</span>
+                    <button type="button" style={editBtn}
+                      disabled={i === 0 || inFrames === 0}
+                      title="지금 보는 프레임을 이 씬의 첫 프레임으로 — 앞 프레임은 이전 씬으로 넘어갑니다 (단축키 I)"
+                      onClick={() => trimAt("in", previewMs)}>
+                      ◀ 여기부터(I) · 앞 {inFrames}f → 이전 씬</button>
+                    <button type="button" style={editBtn}
+                      disabled={i >= segments.length - 1 || outFrames === 0}
+                      title="지금 보는 프레임을 이 씬의 마지막 프레임으로 — 뒤 프레임은 다음 씬으로 넘어갑니다 (단축키 O)"
+                      onClick={() => trimAt("out", previewMs)}>
+                      여기까지(O) · 뒤 {outFrames}f → 다음 씬 ▶</button>
+                    {canUndo ? (
+                      <button type="button"
+                        style={{ ...editBtn, color: "#6db6ff",
+                                 borderColor: "rgba(109,182,255,0.5)" }}
+                        title="방금 경계 교정을 되돌립니다"
+                        onClick={undoEdit}>↩되돌리기</button>
+                    ) : null}
+                  </div>
+                );
+              })() : null}
               {/* 경계 프레임 편집 — 머리/꼬리에 붙은 프레임을 이웃 씬으로 넘기거나
                   이웃에서 가져온다(스캔이 못 잡는 디졸브/와이프 수동 교정). 누를 때마다
                   영상이 그 경계 프레임으로 이동하니 눈으로 확인하며 맞춘다. 편집 후

@@ -398,13 +398,17 @@ export async function overrideSceneSegments(
   });
 }
 
+// indices를 주면 그 구간만 다시 굽는다(개별 씬 익스포트) — 생략하면 전체.
+// 파일명은 서버가 항상 전체 목록 기준으로 dedupe하므로 부분 익스포트도 전체
+// 익스포트와 같은 파일을 갱신한다.
 export async function exportScenes(
-  jobId: string, mode: "scene" | "sequence", outDir?: string,
+  jobId: string, mode: "scene" | "sequence", outDir?: string, indices?: number[],
 ): Promise<{ status: string; count: number }> {
   return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/export`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode, out_dir: outDir ?? null }),
+    body: JSON.stringify({ mode, out_dir: outDir ?? null,
+                           indices: indices ?? null }),
   });
 }
 
