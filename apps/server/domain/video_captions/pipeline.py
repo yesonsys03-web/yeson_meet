@@ -822,7 +822,8 @@ def build_fingerprint_segments(runs_raw: list[dict], rule_dict: dict) -> dict:
         scene_tokens=rule_dict.get("scene_tokens", []),
     )
     texts = canonicalize_texts([r.get("text", "") for r in runs_raw],
-                               rule.delimiters)
+                               rule.delimiters,
+                               example=rule_dict.get("example"))
     runs = [SceneRun(start_ms=r["start_ms"], end_ms=r["end_ms"], text=t,
                      cut_diff=r.get("cut_diff", 0))
             for r, t in zip(runs_raw, texts)]

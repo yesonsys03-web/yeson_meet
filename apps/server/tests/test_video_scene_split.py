@@ -736,6 +736,34 @@ def test_canonicalize_unifies_lookalike_letter_heads():
     assert out[7].startswith("Seq12B_S03")
 
 
+def test_canonicalize_declared_example_beats_corrupt_majority():
+    """예시 슬레이트를 선언하면 머리글자 통일이 다수결이 아니라 선언을 따른다.
+    오독(Seg)이 다수인 코퍼스에서 다수결은 정답(Seq)을 오독으로 뒤집는데,
+    선언된 구조가 있으면 그 방향으로만 교정한다 — 사용자 제안 기능의 핵심."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = ["Seg01A_S01-Panel1"] * 5 + ["Seq01A_S01-Panel2"] * 2  # 오독이 다수
+    out = canonicalize_texts(texts, ["_", "-"],
+                             example="Seq 01A_S01 - Panel 1")
+    assert all(t.startswith("Seq01A") for t in out)
+    # 선언이 없으면 기존 다수결 그대로(호환) — Seq 소수가 Seg로 통일된다.
+    plain = canonicalize_texts(texts, ["_", "-"])
+    assert all(t.startswith("Seg01A") for t in plain)
+
+
+def test_fingerprint_segments_honor_declared_example():
+    """rule_dict.example이 지문 세그먼트 빌드까지 배선되는지 — 경계 계산에서
+    예시를 넘기면 Seg 다수 코퍼스도 Seq 라벨로 병합된다."""
+    from apps.server.domain.video_captions import pipeline as pl
+    runs = ([{"start_ms": i * 1000, "end_ms": (i + 1) * 1000,
+              "text": "Seg01A_S01-Panel1"} for i in range(5)]
+            + [{"start_ms": 5000, "end_ms": 6000, "text": "Seq01A_S01-Panel2"}])
+    out = pl.build_fingerprint_segments(
+        runs, {"delimiters": ["_", "-"], "seq_tokens": [0], "scene_tokens": [1],
+               "example": "Seq 01A_S01 - Panel 1"})
+    labels = [s["label"] for s in out["segments_scene"]]
+    assert labels == ["Seq01A_S01"]  # 한 씬으로 병합 + 선언된 머리
+
+
 def test_canonicalize_head_unify_noop_for_stable_shows():
     """머리글자가 안 갈리는 쇼는 한 글자도 안 바뀐다(타 쇼 무회귀 보증).
     다수결 동수(어느 쪽이 진짜인지 근거 없음)도 손대지 않는다."""
