@@ -287,14 +287,21 @@ export function applySplitName(
   segs: SceneSegment[], i: number, placeholder: string, label: string,
 ): SceneSegment[] {
   if (segs[i]?.label !== placeholder) return segs;
+  // 얹으면 같은 이름 두 줄이 되는 제안도 거부한다 — _cut 줄을 이어 나눈 앞 조각에는
+  // OCR이 대개 '이미 목록에 있는 진짜 이름'을 읽어온다(뒤쪽 원래 줄과 중복). 중복
+  // 이름 방지가 _cut의 존재 이유라 여기서도 지킨다(실기 2026-07-28: _cut이 사라지고
+  // 같은 이름 두 줄).
+  if (segs.some((s, j) => j !== i && s.label === label)) return segs;
   return renameSegment(segs, i, label);
 }
 
 // 나눈 앞 구간의 임시 이름. 이미 쓰이고 있으면 숫자를 늘린다 — 같은 씬을 여러 번
 // 나누거나 이름을 안 고친 채 옆 씬을 또 나눠도 이름이 겹치지 않아야 한다.
+// base가 이미 자리표시자면(_cut 줄을 이어 나누는 경우) 접미사를 벗기고 번호만
+// 올린다 — 그대로 붙이면 "…_cut_cut"이 된다(실기 2026-07-28).
 function cutLabel(segs: SceneSegment[], base: string): string {
   const taken = new Set(segs.map((s) => s.label));
-  const first = `${base}_cut`;
+  const first = `${base.replace(/_cut\d*$/, "")}_cut`;
   if (!taken.has(first)) return first;
   for (let n = 2; n < 1000; n += 1) {
     const cand = `${first}${n}`;

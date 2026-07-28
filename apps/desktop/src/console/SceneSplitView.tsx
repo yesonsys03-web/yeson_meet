@@ -863,10 +863,13 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
         ? Math.max(-1, ...seqIdx)
         : Math.max(-1, ...seqIdx, ...sceneIdx);
       const proposed = previewLabel(res.tokens, upto);
-      if (proposed && proposed === cur.label) {
-        // 앞뒤가 같은 번호로 읽혔다 = 나눌 자리가 아니었을 가능성이 크다. 이름을
-        // 얹으면 중복 이름이 되살아나므로(_cut을 붙인 이유) 자리표시자를 남긴다.
-        setNotice(`앞뒤가 같은 번호(${proposed})로 읽혔습니다 — 나눌 자리가 맞는지 `
+      if (proposed && next.some((s, j) => j !== i && s.label === proposed)) {
+        // 읽은 이름이 이미 목록에 있다 = 첫 나누기면 앞뒤가 같은 번호(나눌 자리가
+        // 아니었을 가능성), _cut 줄을 이어 나눴으면 뒤쪽 원래 줄과의 중복이다.
+        // 어느 쪽이든 얹으면 중복 이름이 되살아나므로(_cut을 붙인 이유) 자리표시자를
+        // 남긴다. cur.label만 비교하면 이어 나누기가 빠져나간다(실기 2026-07-28:
+        // _cut이 사라지고 같은 이름 두 줄). applySplitName이 최신 상태로 2차 방어.
+        setNotice(`읽은 번호(${proposed})가 이미 목록에 있습니다 — 나눌 자리가 맞는지 `
           + `확인하세요. 맞다면 '${head.label}' 줄의 이름을 직접 고치면 됩니다.`);
       } else if (proposed && proposed !== head.label) {
         // 이름은 반드시 '지금 상태' 위에서 바꾼다. setSegments·renameSeg는 렌더 시점의

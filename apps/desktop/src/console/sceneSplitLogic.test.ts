@@ -815,6 +815,17 @@ describe("splitSegment", () => {
     expect(labels).toContain("B_cut2");
   });
 
+  it("does not stack _cut when the leading _cut part is split again", () => {
+    // 자리표시자 줄을 이어서 나누면 base가 "B_cut"이라 그대로 붙이면 "B_cut_cut"이
+    // 된다(실기 2026-07-28) — 접미사를 벗기고 번호를 올려 "B_cut2"가 돼야 한다.
+    const once = splitSegment(segs, 1, 5, fps);   // [A, B_cut, B]
+    const twice = splitSegment(once, 1, 3, fps);  // 앞 조각(B_cut)을 또 나눈다
+    const labels = twice.map((s) => s.label);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels).toContain("B_cut2");
+    expect(labels.some((l) => l.includes("_cut_cut"))).toBe(false);
+  });
+
   it("leaves the timeline continuous — no gap, no overlap, same total span", () => {
     const out = splitSegment(segs, 1, 5, fps);
     expect(out[0]!.end_ms).toBe(out[1]!.start_ms);
@@ -850,6 +861,19 @@ describe("applySplitName", () => {
     // 이름을 얹으면 엉뚱한 줄을 덮어쓴다.
     expect(applySplitName(segs, 2, "B_cut", "B_0280")).toBe(segs);
     expect(applySplitName(segs, 9, "B_cut", "B_0280")).toBe(segs);
+  });
+
+  it("refuses a name that would duplicate another row", () => {
+    // _cut 줄을 이어 나눈 앞 조각에는 OCR이 대개 '이미 목록에 있는 진짜 이름'을
+    // 제안한다(뒤쪽 원래 줄과 중복). 얹으면 같은 이름 두 줄 — _cut을 만든 이유가
+    // 통째로 무효가 되므로 자리표시자를 남긴다(실기 2026-07-28: _cut이 사라지고
+    // Seg01A_S11 두 줄이 남았다).
+    const stacked = [
+      { label: "B_cut2", start_ms: 1000, end_ms: 1200 },
+      { label: "B_cut", start_ms: 1200, end_ms: 1500 },
+      { label: "B", start_ms: 1500, end_ms: 2000 },
+    ];
+    expect(applySplitName(stacked, 0, "B_cut2", "B")).toBe(stacked);
   });
 });
 
