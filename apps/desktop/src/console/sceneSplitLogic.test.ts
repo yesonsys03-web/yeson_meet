@@ -795,14 +795,24 @@ describe("splitSegment", () => {
     const out = splitSegment(segs, 1, 5, fps);
     const cut = shiftBoundaryMs(10000, fps, 4);
     expect(out).toHaveLength(3);
-    expect(out[1]).toEqual({ label: "B", start_ms: 10000, end_ms: cut });
+    expect(out[1]).toEqual({ label: "B_cut", start_ms: 10000, end_ms: cut });
     expect(out[2]).toEqual({ label: "B", start_ms: cut, end_ms: 20000 });
   });
 
-  it("keeps both parts under the original label — naming is a separate step", () => {
+  it("marks the leading part with _cut so the two rows never share a name", () => {
+    // 같은 이름 두 줄이면 어느 쪽을 고쳐야 할지 알 수 없고, 익스포트 파일명에도
+    // dedupe 접미사가 붙어 헷갈린다. 뒤 구간이 원래(읽어낸) 이름을 유지한다.
     const out = splitSegment(segs, 1, 5, fps);
-    expect(out[1]!.label).toBe("B");
+    expect(out[1]!.label).toBe("B_cut");
     expect(out[2]!.label).toBe("B");
+  });
+
+  it("keeps the placeholder unique when the same scene is split again", () => {
+    const once = splitSegment(segs, 1, 5, fps);
+    const twice = splitSegment(once, 2, 5, fps);
+    const labels = twice.map((s) => s.label);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels).toContain("B_cut2");
   });
 
   it("leaves the timeline continuous — no gap, no overlap, same total span", () => {

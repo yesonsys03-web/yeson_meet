@@ -255,9 +255,11 @@ export function mergeSegment(
 // 같은 shiftBoundaryMs를 쓰므로 나눈 경계는 그 프레임에 In 트림을 건 것과 정확히
 // 같다 — 다른 수식을 쓰면 익스포트 -ss snap-up과 어긋나 프레임이 하나 밀린다.
 //
-// 두 구간 모두 원래 라벨을 유지한다. 앞 구간 이름은 슬레이트를 읽어 붙이는 별도
-// 단계(renameSegment)의 몫이다 — OCR은 비동기라 시점이 다르고, 한 함수에 경계
-// 산술과 이름 짓기를 같이 넣지 않는다.
+// 뒤 구간이 원래(읽어낸) 이름을 유지하고, 앞 구간에는 `_cut` 임시 이름이 붙는다.
+// 두 줄이 같은 이름이면 목록에서 어느 쪽을 고쳐야 할지 알 수 없고, 익스포트 파일명도
+// dedupe 접미사가 붙어 헷갈린다. 진짜 이름은 슬레이트를 읽어 붙이는 별도 단계
+// (renameSegment)의 몫이다 — OCR은 비동기라 시점이 다르고, 못 읽으면 `_cut`이 남아
+// 고쳐야 할 줄이 한눈에 보인다.
 //
 // k<=1이면 앞 구간이 0프레임이라 아무것도 하지 않는다(빈 구간은 익스포트가 0바이트
 // 클립을 만든다).
@@ -269,8 +271,23 @@ export function splitSegment(
   const cutMs = shiftBoundaryMs(cur.start_ms, fps, Math.floor(k) - 1);
   if (cutMs <= cur.start_ms || cutMs >= cur.end_ms) return segs;
   const out = segs.slice();
-  out.splice(i, 1, { ...cur, end_ms: cutMs }, { ...cur, start_ms: cutMs });
+  out.splice(i, 1,
+    { ...cur, end_ms: cutMs, label: cutLabel(segs, cur.label) },
+    { ...cur, start_ms: cutMs });
   return out;
+}
+
+// 나눈 앞 구간의 임시 이름. 이미 쓰이고 있으면 숫자를 늘린다 — 같은 씬을 여러 번
+// 나누거나 이름을 안 고친 채 옆 씬을 또 나눠도 이름이 겹치지 않아야 한다.
+function cutLabel(segs: SceneSegment[], base: string): string {
+  const taken = new Set(segs.map((s) => s.label));
+  const first = `${base}_cut`;
+  if (!taken.has(first)) return first;
+  for (let n = 2; n < 1000; n += 1) {
+    const cand = `${first}${n}`;
+    if (!taken.has(cand)) return cand;
+  }
+  return first;
 }
 
 // 앞뒤가 같은 라벨로 둘러싸인 짧은 구간을 흡수한다 — 씬/시퀀스는 번호가 바뀌었다

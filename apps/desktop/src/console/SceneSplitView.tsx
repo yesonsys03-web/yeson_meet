@@ -859,7 +859,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
         renameSeg(i, proposed);
         setNotice(`앞 구간 이름을 ${proposed}으로 읽었습니다 — 다르면 이름칸에서 고치세요.`);
       } else {
-        setNotice("앞 구간 슬레이트를 읽지 못했습니다 — 이름을 직접 입력하세요.");
+        setNotice(`앞 구간 슬레이트를 읽지 못했습니다 — '${head.label}' 줄의 이름을 `
+          + "직접 입력하세요.");
       }
     } catch {
       setNotice("앞 구간 슬레이트를 읽지 못했습니다 — 이름을 직접 입력하세요.");
