@@ -647,7 +647,7 @@ export function scanProgressKey(
 // 물리 키(e.code)를 함께 본다. 이 앱 사용자는 한글 입력 상태가 기본이다.
 // 대괄호는 Shift 조합({ })도 같은 물리 키라 함께 받는다.
 export type ScenePopupAction =
-  | "trimIn" | "trimOut" | "prevScene" | "nextScene" | "toHead" | "toTail";
+  | "trimIn" | "trimOut" | "split" | "prevScene" | "nextScene" | "toHead" | "toTail";
 
 export function scenePopupAction(
   ev: { code?: string; key?: string },
@@ -655,6 +655,7 @@ export function scenePopupAction(
   const key = (ev.key ?? "").toLowerCase();
   if (ev.code === "KeyI" || key === "i") return "trimIn";
   if (ev.code === "KeyO" || key === "o") return "trimOut";
+  if (ev.code === "KeyS" || key === "s") return "split";
   if (ev.code === "KeyG" || key === "g") return "prevScene";
   if (ev.code === "KeyH" || key === "h") return "nextScene";
   if (ev.code === "BracketLeft" || key === "[" || key === "{") return "toHead";

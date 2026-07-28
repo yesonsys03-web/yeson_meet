@@ -3,7 +3,7 @@ import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
   absorbFlankedMisreads, anomalousLabels, applyFixes, boundaryIssueIndices, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, probeFileName, scanProgressKey, scenePopupAction, stepVisibleIndex,
-  NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, tokenizeSlate, trimFrames,
+  NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, splitSegment, tokenizeSlate, trimFrames,
   type LabelFix,
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
@@ -11,7 +11,8 @@ import {
   cancelSceneOps, exportScenes, getBoundaryStatus, getExportStatus, getRefineStatus,
   cleanupSceneExport, sceneExportFileUrl, probeExportDir, saveBoundaryOk,
   getScenes, listSlateTemplates, overrideSceneSegments, refineScenes, scanScenes,
-  setOcrRegion as setOcrRegionApi, setSceneRule, startBoundaryCheck, videoMediaUrl,
+  setOcrRegion as setOcrRegionApi, setSceneRule, startBoundaryCheck, testOcrRegion,
+  videoMediaUrl,
   type BoundaryOk, type BoundaryStatus, type ExportStatus, type OcrRegion, type RefineStatus,
   type SceneMethod, type ScenesData, type SceneSegment, type SlateTemplate,
 } from "./videoApi";
@@ -570,7 +571,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   // boundary=팝업). 모드 전환·저장·일괄교정 시 비운다(구간 목록이 재편돼 인덱스가
   // 무의미). undoSnapshot(일괄교정 한 단계)과는 별개.
   const [editUndo, setEditUndo] = useState<
-    { kind: "merge" | "boundary"; segs: SceneSegment[];
+    { kind: "merge" | "boundary" | "split"; segs: SceneSegment[];
       issues: ScenesData["boundary_issues"]; survivor: number }[]
   >([]);
   const mergeSeg = (i: number, into: "prev" | "next") => {
@@ -605,7 +606,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setEditUndo((prev) => prev.slice(0, -1));
     const p = previewRef.current;
     const restored = top.segs[top.survivor];
-    if (top.kind === "boundary" && p?.segIndex === top.survivor && restored) {
+    if ((top.kind === "boundary" || top.kind === "split")
+        && p?.segIndex === top.survivor && restored) {
       const fps = data.video_fps && data.video_fps > 0 ? data.video_fps : NTSC_FPS;
       const side = p.side ?? "head";
       const focusMs = side === "tail"
@@ -623,6 +625,11 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
 
   // 리스트에서 클릭한 구간 → 필름스트립 하이라이트 범위. 썸네일 클릭 → 팝업 시각.
   const [selectedSeg, setSelectedSeg] = useState<number | null>(null);
+  // 슬레이트 구역 — 쇼마다 위치가 달라 사용자가 드래그로 지정한다. 스캔 전에도
+  // 스캔 후에도 다시 잡을 수 있다(다시 잡으면 재스캔해야 반영된다).
+  // 팝업 단축키 effect의 의존성이 이 값을 읽으므로 그 위에 선언해 둔다(아래에
+  // 두면 의존성 배열이 렌더 중 TDZ에 걸린다 — 분할 시 슬레이트 읽기가 쓴다).
+  const [ocrRegion, setOcrRegion] = useState<OcrRegion | null>(null);
   // 팝업 프리뷰 — seekMs(첫 표시 프레임)와, 구간이면 그 [start,end)·라벨·프레임정확
   // 재생/정지 시각. playStartMs=첫 프레임 중앙, lastFrameMs=마지막(꼬리) 프레임 중앙
   // (둘 다 소스 fps로 계산). 구간이면 재생을 그 범위로 묶어 분할을 확인하게 한다.
@@ -802,6 +809,63 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     }
   };
 
+  // 한 씬 안에 두 씬이 붙어 있을 때(스캔이 그 컷을 못 잡은 경우) 지금 보는 프레임에서
+  // 나눈다. 지금까지 할 수 있는 편집은 병합·이름수정·트림뿐이라 나눌 수단이 재스캔밖에
+  // 없었다(25분 + 수동 정렬 초기화).
+  //
+  // 지금 보는 프레임이 뒤 구간의 첫 프레임이 된다 — In 트림과 같은 약속이고 자르는
+  // 계산도 같다. 뒤 구간이 원래 이름을 유지하고, 앞 구간 이름은 슬레이트를 읽어 채운다.
+  const splitAt = async (ms?: number) => {
+    const p = previewRef.current;
+    if (!p || p.segIndex == null || p.startMs == null || p.endMs == null) return;
+    const i = p.segIndex;
+    const cur = segments[i];
+    if (!cur) return;
+    const fps = p.fps || NTSC_FPS;
+    const at = ms ?? (previewVideoRef.current
+      ? previewVideoRef.current.currentTime * 1000 : p.seekMs);
+    const { k } = segFrameNumber(at, p.startMs, p.endMs, fps);
+    const next = splitSegment(segments, i, k, fps);
+    if (next === segments) {
+      setNotice("첫 프레임에서는 나눌 수 없습니다 — 뒤 씬이 시작되는 프레임으로 옮기세요.");
+      return;
+    }
+    setEditUndo((prev) => [...prev,
+      { kind: "split", segs: segments, issues: data?.boundary_issues, survivor: i }]);
+    setSegments(next);
+    // 혼입을 방금 해결했으므로 그 씬의 경계오류 표시를 뺀다(병합과 동일한 처리).
+    clearBoundaryFlags([cur.label]);
+    // 팝업이 옛 경계를 들고 있으면 화면과 데이터가 어긋나 사용자가 방금 한 편집을
+    // 또 한다 — 앞 구간 기준으로 다시 만들고 그 머리 프레임으로 시킹한다.
+    const head = next[i] as SceneSegment;
+    const focusMs = frameSeekMs(head.start_ms, fps);
+    setSelectedSeg(i);
+    setPreview(buildSegPreview(head, i, focusMs, "head"));
+    const v = previewVideoRef.current;
+    if (v) { v.pause(); v.currentTime = focusMs / 1000; }
+    setNotice("씬을 나눴습니다 — 앞 구간 이름을 읽는 중…");
+    // 앞 구간 한가운데 프레임의 슬레이트를 읽어 이름을 제안한다. 머리·꼬리는 디졸브에
+    // 걸릴 확률이 높아 한가운데를 읽는다. 저장된 구역을 그대로 넘겨야 스캔과 같은
+    // 상자를 읽어 같은 라벨이 나온다. 실패해도 분할은 유지한다 — 경계는 이미 맞았고
+    // 남은 건 이름뿐이다.
+    try {
+      const midMs = frameSeekMs((head.start_ms + head.end_ms) / 2, fps);
+      const res = await testOcrRegion(jobId, Math.round(midMs), ocrRegion);
+      const upto = mode === "sequence"
+        ? Math.max(-1, ...seqIdx)
+        : Math.max(-1, ...seqIdx, ...sceneIdx);
+      const proposed = previewLabel(res.tokens, upto);
+      if (proposed && proposed !== head.label) {
+        renameSeg(i, proposed);
+        setNotice(`앞 구간 이름을 ${proposed}으로 읽었습니다 — 다르면 이름칸에서 고치세요.`);
+      } else {
+        setNotice("앞 구간 슬레이트를 읽지 못했습니다 — 이름을 직접 입력하세요.");
+      }
+    } catch {
+      setNotice("앞 구간 슬레이트를 읽지 못했습니다 — 이름을 직접 입력하세요.");
+    }
+  };
+
   // 팝업 영상을 특정 프레임 시각으로 이동(머리/꼬리 확인용).
   const seekPreview = (ms?: number) => {
     const v = previewVideoRef.current;
@@ -940,6 +1004,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       e.preventDefault();
       if (action === "trimIn" || action === "trimOut") {
         trimAt(action === "trimIn" ? "in" : "out");
+      } else if (action === "split") {
+        void splitAt();
       } else if (action === "prevScene" || action === "nextScene") {
         stepPreviewSegment(action === "prevScene" ? -1 : 1);
       } else {
@@ -949,7 +1015,9 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [preview, segments, visibleIndices, data]);
+    // splitAt은 이름 제안에 mode·토큰 규칙·저장된 구역을 쓴다 — 여기 빠뜨리면
+    // 단축키 경로만 옛 값으로 OCR을 부른다(버튼은 매 렌더 새로 만들어져 멀쩡하다).
+  }, [preview, segments, visibleIndices, data, mode, seqIdx, sceneIdx, ocrRegion]);
 
   // ←/→로 이전·다음 씬. 선택이 바뀌면 sticky 검수 뷰의 머리·꼬리 프레임이 갱신되고
   // 목록도 그 줄로 스크롤돼(SceneFilmstrip) 스크롤 조작이 아예 필요 없다. 입력칸
@@ -993,9 +1061,6 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setSelectedSeg(null);
   }, [mode]);
 
-  // 슬레이트 구역 — 쇼마다 위치가 달라 사용자가 드래그로 지정한다. 스캔 전에도
-  // 스캔 후에도 다시 잡을 수 있다(다시 잡으면 재스캔해야 반영된다).
-  const [ocrRegion, setOcrRegion] = useState<OcrRegion | null>(null);
   const [templates, setTemplates] = useState<SlateTemplate[]>([]);
   const [showPicker, setShowPicker] = useState(false);
   useEffect(() => {
@@ -1739,7 +1804,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                   preview.endMs, preview.fps);
                 const { inFrames, outFrames } = trimFrames(k, n);
                 const top = editUndo.at(-1);
-                const canUndo = top?.kind === "boundary" && top.survivor === i;
+                const canUndo = (top?.kind === "boundary" || top?.kind === "split")
+                  && top.survivor === i;
                 return (
                   <div style={{ display: "flex", gap: 6, alignItems: "center",
                                 flexWrap: "wrap", fontSize: 12 }}>
@@ -1754,6 +1820,14 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                       title="지금 보는 프레임을 이 씬의 마지막 프레임으로 — 뒤 프레임은 다음 씬으로 넘어갑니다 (단축키 O)"
                       onClick={() => trimAt("out", previewMs)}>
                       여기까지(O) · 뒤 {outFrames}f → 다음 씬 ▶</button>
+                    {/* 한 줄에 두 씬이 붙어 있을 때 여기서 가른다 — 지금 보는 프레임이
+                        뒤 씬의 첫 프레임이 된다(In 트림과 같은 약속). 첫 프레임에서는
+                        앞 구간이 0프레임이라 잠근다. */}
+                    <button type="button" style={editBtn}
+                      disabled={k <= 1}
+                      title="지금 보는 프레임부터 새 씬으로 나눕니다 — 앞쪽이 새 씬이 되고 이름은 슬레이트를 읽어 채웁니다 (단축키 S)"
+                      onClick={() => void splitAt(previewMs)}>
+                      ✂ 여기서 나누기(S) · 앞 {k - 1}f | 뒤 {n - k + 1}f</button>
                     {canUndo ? (
                       <button type="button"
                         style={{ ...editBtn, color: "#6db6ff",

@@ -489,6 +489,13 @@ describe("scenePopupAction", () => {
     expect(scenePopupAction({ code: "KeyI", key: "Process" })).toBe("trimIn");
   });
 
+  it("maps S to split, by code and by key (한글 입력 상태 포함)", () => {
+    // 한글 IME에서는 key가 'ㄴ'으로 오므로 code를 함께 본다(기존 키들과 동일 정책).
+    expect(scenePopupAction({ code: "KeyS", key: "ㄴ" })).toBe("split");
+    expect(scenePopupAction({ key: "s" })).toBe("split");
+    expect(scenePopupAction({ key: "S" })).toBe("split");
+  });
+
   it("accepts the shifted brackets on the same physical keys", () => {
     expect(scenePopupAction({ code: "BracketLeft", key: "{" })).toBe("toHead");
     expect(scenePopupAction({ code: "BracketRight", key: "}" })).toBe("toTail");
