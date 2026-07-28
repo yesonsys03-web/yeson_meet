@@ -748,6 +748,12 @@ async def set_scene_rule(
         segs = build_fingerprint_segments(data.get("runs") or [], rule_dict)
         data.update(segs)
         data["rule"] = rule_dict
+        # 옛 경계오류 검사 결과는 재계산 전 레이아웃(다른 경계) 기준이라 버린다 —
+        # 남기면 라벨이 우연히 같은 구간에 유령 플래그로 되살아난다(실기 07-29).
+        # 간격 경로는 build_scene_data가 새 dict를 만들어 자연히 버려진다.
+        # boundary_ok(문제없음)는 확인 당시 경계를 저장해 경계가 바뀌면 스스로
+        # 무효화되므로 유지한다 — 경계가 안 바뀐 씬의 확인은 살아남아야 한다.
+        data.pop("boundary_issues", None)
         save_scenes(external_id, data)
         return {"segments_scene": data["segments_scene"],
                 "segments_sequence": data["segments_sequence"],
