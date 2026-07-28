@@ -140,7 +140,7 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("deliverable", "산출물"),
     ("milestone", "마일스톤"),
     ("dailies", "데일리"),
-    ("push out", "순연"),
+    ("push out", "밀림"),
     ("footage", "풋티지"),
     ("frame rate", "프레임레이트"),
     ("resolution", "해상도"),
@@ -298,8 +298,9 @@ DEFAULT_KO_CORRECTIONS: list[tuple[str, str]] = [
     ("딜리버리해", "전달해"),
     # 일정 "push out"의 음차. "범프"는 넣지 않는다 — 3D 논의에서 범프 맵(텍스처)이
     # 정당하게 나올 수 있어 문자열 치환 자격("오역일 수밖에 없는 표현")이 안 된다.
-    ("푸시 아웃", "순연"),
-    ("푸시아웃", "순연"),
+    # "순연"은 격식체라 어렵다는 사용자 피드백 → 현장 회화체 "밀림"으로.
+    ("푸시 아웃", "밀림"),
+    ("푸시아웃", "밀림"),
 ]
 
 _ko_cache: dict[str, object] = {"key": None, "terms": None}
