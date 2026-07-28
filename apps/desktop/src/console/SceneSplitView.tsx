@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  absorbFlankedMisreads, anomalousLabels, applyFixes, boundaryIssueIndices, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, probeFileName, scanProgressKey, scenePopupAction, stepVisibleIndex,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, applySplitName, boundaryIssueIndices, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, probeFileName, scanProgressKey, scenePopupAction, stepVisibleIndex,
   NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, splitSegment, tokenizeSlate, trimFrames,
   type LabelFix,
 } from "./sceneSplitLogic";
@@ -855,8 +855,27 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
         ? Math.max(-1, ...seqIdx)
         : Math.max(-1, ...seqIdx, ...sceneIdx);
       const proposed = previewLabel(res.tokens, upto);
-      if (proposed && proposed !== head.label) {
-        renameSeg(i, proposed);
+      if (proposed && proposed === cur.label) {
+        // 앞뒤가 같은 번호로 읽혔다 = 나눌 자리가 아니었을 가능성이 크다. 이름을
+        // 얹으면 중복 이름이 되살아나므로(_cut을 붙인 이유) 자리표시자를 남긴다.
+        setNotice(`앞뒤가 같은 번호(${proposed})로 읽혔습니다 — 나눌 자리가 맞는지 `
+          + `확인하세요. 맞다면 '${head.label}' 줄의 이름을 직접 고치면 됩니다.`);
+      } else if (proposed && proposed !== head.label) {
+        // 이름은 반드시 '지금 상태' 위에서 바꾼다. setSegments·renameSeg는 렌더 시점의
+        // segments/data를 닫아두므로, OCR을 기다린 뒤 그대로 부르면 분할 전 배열이
+        // 되살아나 방금 나눈 줄이 목록에서 통째로 사라진다(실기 재현 2026-07-28).
+        setData((prev) => {
+          if (!prev) return prev;
+          const cur = mode === "sequence"
+            ? prev.segments_sequence : prev.segments_scene;
+          const named = applySplitName(cur, i, head.label, proposed);
+          if (named === cur) return prev;   // 그 사이 다른 편집 — 건드리지 않는다
+          return mode === "sequence"
+            ? { ...prev, segments_sequence: named }
+            : { ...prev, segments_scene: named };
+        });
+        // 팝업 머리글도 새 이름으로 — 화면과 목록이 어긋나면 사용자가 또 고친다.
+        setPreview(buildSegPreview({ ...head, label: proposed }, i, focusMs, "head"));
         setNotice(`앞 구간 이름을 ${proposed}으로 읽었습니다 — 다르면 이름칸에서 고치세요.`);
       } else {
         setNotice(`앞 구간 슬레이트를 읽지 못했습니다 — '${head.label}' 줄의 이름을 `

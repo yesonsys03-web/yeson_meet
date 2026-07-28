@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName, probeFileName, splitSegment, boundaryIssueIndices } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName, probeFileName, splitSegment, applySplitName, boundaryIssueIndices } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -830,6 +830,26 @@ describe("splitSegment", () => {
   it("refuses an out-of-range index or a frame past the end", () => {
     expect(splitSegment(segs, 5, 3, fps)).toBe(segs);
     expect(splitSegment(segs, 1, 100000, fps)).toBe(segs);
+  });
+});
+
+describe("applySplitName", () => {
+  const segs = [
+    { label: "A", start_ms: 0, end_ms: 1000 },
+    { label: "B_cut", start_ms: 1000, end_ms: 1500 },
+    { label: "B", start_ms: 1500, end_ms: 2000 },
+  ];
+
+  it("names the placeholder row that is still sitting there", () => {
+    const out = applySplitName(segs, 1, "B_cut", "B_0280");
+    expect(out.map((s) => s.label)).toEqual(["A", "B_0280", "B"]);
+  });
+
+  it("does nothing when that row is no longer the placeholder", () => {
+    // 슬레이트를 읽는 동안 사용자가 되돌리거나 다른 편집을 했을 수 있다 — 그때
+    // 이름을 얹으면 엉뚱한 줄을 덮어쓴다.
+    expect(applySplitName(segs, 2, "B_cut", "B_0280")).toBe(segs);
+    expect(applySplitName(segs, 9, "B_cut", "B_0280")).toBe(segs);
   });
 });
 

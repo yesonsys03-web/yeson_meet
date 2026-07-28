@@ -277,6 +277,19 @@ export function splitSegment(
   return out;
 }
 
+// 나눈 앞 구간에 읽어낸 이름을 얹는다 — 단 그 자리가 아직 자리표시자일 때만.
+//
+// 슬레이트 읽기는 비동기라 그 사이 사용자가 되돌리거나 다른 편집을 했을 수 있다.
+// 확인 없이 덮으면 엉뚱한 줄의 이름을 바꾼다. 또 이 함수는 '지금 상태'를 받아
+// 계산해야 한다 — 분할 시점에 닫아둔 배열 위에서 이름을 바꾸면 그 배열이 그대로
+// 되살아나 방금 나눈 줄이 통째로 사라진다(2026-07-28 실기 재현).
+export function applySplitName(
+  segs: SceneSegment[], i: number, placeholder: string, label: string,
+): SceneSegment[] {
+  if (segs[i]?.label !== placeholder) return segs;
+  return renameSegment(segs, i, label);
+}
+
 // 나눈 앞 구간의 임시 이름. 이미 쓰이고 있으면 숫자를 늘린다 — 같은 씬을 여러 번
 // 나누거나 이름을 안 고친 채 옆 씬을 또 나눠도 이름이 겹치지 않아야 한다.
 function cutLabel(segs: SceneSegment[], base: string): string {
