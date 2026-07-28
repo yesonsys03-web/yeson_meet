@@ -1363,3 +1363,81 @@ async def test_scene_export_cleanup_is_idempotent(client, db_session, admin_user
     r = await client.post(
         f"/api/v1/video-jobs/{job.external_id}/scenes/export/cleanup")
     assert r.status_code == 200 and r.json()["deleted"] == 0
+
+
+async def test_scene_export_probe_confirms_shared_folder(
+        client, db_session, admin_user, tmp_path):
+    """클라가 쓴 토큰이 서버 쪽에서도 같은 경로로 읽히면 = 같은 폴더.
+
+    같은 PC(또는 공유 폴더)면 중계(서버가 굽고→클라가 받고→서버 사본 삭제)가 통째로
+    낭비다. 다만 "같은 PC냐"를 추측하면 v1.7.3에서 고친 실패 — 사용자 폴더는 빈 채
+    서버 디스크에만 파일이 생기는데 에러도 안 나는 — 가 되살아나므로 증명한다.
+    """
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    # 변수명을 token으로 두지 않는다 — 커밋 훅의 비밀정보 스캐너가 `token = "..."`
+    # 꼴을 실제 키로 오인해 커밋을 막는다(실측).
+    probe_id = "aaaabbbbccccdddd"
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / f"yeson_probe_{probe_id}.tmp").write_text(probe_id, encoding="utf-8")
+
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/probe",
+        json={"dir": str(shared), "token": probe_id})
+
+    assert r.status_code == 200
+    assert r.json() == {"direct": True, "reason": "ok"}
+    # 서버가 쓴 ack 파일이 남으면 안 된다 — 탐침은 흔적을 남기지 않는다.
+    assert [p.name for p in shared.iterdir()] == [f"yeson_probe_{probe_id}.tmp"]
+
+
+async def test_scene_export_probe_rejects_when_token_file_absent(
+        client, db_session, admin_user, tmp_path):
+    """서버에도 같은 경로가 있지만 클라의 토큰 파일이 없다 = 다른 폴더(다른 PC).
+
+    윈도우 매핑 드라이브가 세션마다 다른 곳을 가리키는 경우가 정확히 이 모양이다.
+    """
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    other = tmp_path / "server_side"
+    other.mkdir()
+
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/probe",
+        json={"dir": str(other), "token": "aaaabbbbccccdddd"})
+
+    assert r.status_code == 200
+    assert r.json() == {"direct": False, "reason": "token_mismatch"}
+
+
+async def test_scene_export_probe_rejects_stale_token(
+        client, db_session, admin_user, tmp_path):
+    """지난 실행의 잔여 탐침 파일을 '같은 폴더'로 오인하면 안 된다 — 내용도 대조한다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    probe_id = "aaaabbbbccccdddd"
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / f"yeson_probe_{probe_id}.tmp").write_text("0000000000000000",
+                                                       encoding="utf-8")
+
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/probe",
+        json={"dir": str(shared), "token": probe_id})
+
+    assert r.status_code == 200
+    assert r.json() == {"direct": False, "reason": "token_mismatch"}
+
+
+async def test_scene_export_probe_rejects_missing_dir(
+        client, db_session, admin_user, tmp_path):
+    """서버에 그 경로가 아예 없다 = 다른 PC. 폴더를 만들어주면 안 된다 —
+    v1.7.3에서 고친 '서버에 빈 폴더만 생기던' 실패가 바로 그것이다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    missing = tmp_path / "nope"
+
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/export/probe",
+        json={"dir": str(missing), "token": "aaaabbbbccccdddd"})
+
+    assert r.status_code == 200
+    assert r.json() == {"direct": False, "reason": "not_a_dir"}
+    assert not missing.exists()
