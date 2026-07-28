@@ -153,6 +153,21 @@ describe("anomalousLabels", () => {
   it("returns nothing when every label matches the template", () => {
     expect(anomalousLabels(["HH0307_040_0060", "HH0307_040_0090"])).toEqual([]);
   });
+
+  it("accepts a second well-supported token shape (suffix-less sequences)", () => {
+    // EASA05 실기: 시퀀스 토큰이 'Seq01A'(접미 글자)와 'Seq02'(무접미) 두 형태로
+    // 정당하게 갈린다 — 다수 모양 하나만 정상으로 보면 무접미 시퀀스 61건이
+    // 제안도 없이 확인필요에 통째로 쌓인다(실기 86건 중 61건). 코퍼스에서
+    // 충분히 받쳐주는 모양은 정상으로 보고, 드문 모양(접두 유실)은 여전히 잡는다.
+    const labels = [
+      "Seq01A_S01", "Seq01A_S02", "Seq01A_S03", "Seq01A_S04",
+      "Seq01A_S05", "Seq01A_S06",
+      "Seq02_S01", "Seq02_S02", "Seq02_S03", "Seq02_S04",
+      "S03_Panel1",   // 접두 유실 — 여전히 이상
+    ];
+    const an = anomalousLabels(labels, ["_", "-"]);
+    expect(an.map((a) => a.label)).toEqual(["S03_Panel1"]);
+  });
 });
 
 describe("absorbFlankedMisreads", () => {

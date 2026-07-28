@@ -102,6 +102,29 @@ export function labelTemplate(
   return tpl;
 }
 
+// 위치별 '충분히 받쳐주는' 모양 집합 — 한 자리가 정당하게 두 형태를 갖는 쇼
+// (실기 EASA05: 시퀀스 토큰이 Seq01A/Seq02 혼재)를 다수 모양 하나로 재단하면
+// 소수형 시퀀스 전체가 확인필요에 쌓인다(실기 86건 중 61건, 제안도 없이).
+// 임계 = 모달 토큰 수 행의 20%(최소 3행): 오독 모양(접두 유실·토큰 붙음)은
+// 코퍼스의 소수라 걸러지고, 진짜 이형은 그보다 훨씬 흔하다.
+function labelShapeSets(
+  labels: string[], template: string[], delimiters: string[],
+): Set<string>[] {
+  const rows = labels.map((l) => tokenizeSlate(l, delimiters))
+    .filter((t) => t.length === template.length);
+  const min = Math.max(3, Math.ceil(rows.length * 0.2));
+  return template.map((shape, i) => {
+    const counts = new Map<string, number>();
+    for (const r of rows) {
+      const s = tokenShape(r[i] as string);
+      counts.set(s, (counts.get(s) ?? 0) + 1);
+    }
+    const set = new Set([shape]);
+    for (const [s, n] of counts) if (n >= min) set.add(s);
+    return set;
+  });
+}
+
 // 모양 문자열("U2D4")을 (문자종류, 길이) 목록으로.
 const parseShape = (shape: string): [string, number][] =>
   [...shape.matchAll(/([ULDX])(\d+)/g)].map((m) => [m[1] as string, Number(m[2])]);
@@ -179,6 +202,7 @@ export function anomalousLabels(
 ): LabelAnomaly[] {
   const tpl = labelTemplate(labels, delimiters);
   if (!tpl) return [];
+  const shapeSets = labelShapeSets(labels, tpl, delimiters);
   // 이 쇼의 정상 라벨 모양과 공통 접두 — 템플릿(자릿수까지 고정)이 못 고치는
   // '접두 유실' 조각을 되살리는 근거다.
   const cls = modalLabelClass(labels);
@@ -206,7 +230,11 @@ export function anomalousLabels(
     const ok = widthVaries
       ? isWellFormedLabel(label, cls, prefix)
       : (toks.length === tpl.length
-         && toks.every((t, i) => matchesShape(t, tpl[i] as string))
+         // 모달 모양 하나가 아니라 '충분히 받쳐주는 모양 집합'과 비교한다 —
+         // 접미 글자 유무처럼 정당하게 갈리는 자리를 오독 취급하지 않기 위해
+         // (labelShapeSets 주석 참조).
+         && toks.every((t, i) =>
+           (shapeSets[i] as Set<string>).has(tokenShape(t)))
          && (!prefix || label.startsWith(prefix)));
     if (ok) return;
     const fix = reparse(label, tpl, delimiters);
