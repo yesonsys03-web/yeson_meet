@@ -2,14 +2,14 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, scanProgressKey, scenePopupAction, stepVisibleIndex,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, probeFileName, scanProgressKey, scenePopupAction, stepVisibleIndex,
   NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, tokenizeSlate, trimFrames,
   type LabelFix,
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
   cancelSceneOps, exportScenes, getBoundaryStatus, getExportStatus, getRefineStatus,
-  cleanupSceneExport, sceneExportFileUrl,
+  cleanupSceneExport, sceneExportFileUrl, probeExportDir,
   getScenes, listSlateTemplates, overrideSceneSegments, refineScenes, scanScenes,
   setOcrRegion as setOcrRegionApi, setSceneRule, startBoundaryCheck, videoMediaUrl,
   type BoundaryStatus, type ExportStatus, type OcrRegion, type RefineStatus,
@@ -362,6 +362,35 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     await cleanupSceneExport(jobId);
   };
 
+  // 서버가 사용자가 고른 그 폴더에 직접 구워도 되는지 한 번 확인한다(수십 ms).
+  //
+  // 같은 PC면 위의 중계가 통째로 낭비다: 같은 바이트를 디스크에 두 번 쓰고, 굽기가
+  // 전부 끝난 뒤에야 복사가 시작된다. 그렇다고 '같은 PC냐'를 호스트명으로 추측하면
+  // 위(saveExportedFiles)에 적힌 그 실패가 되살아난다 — 사용자 폴더는 빈 채 서버에만
+  // 파일이 생기는데 에러도 안 나던. 그래서 추측하지 않고 증명한다: 여기서 쓴 토큰
+  // 파일을 서버가 같은 경로에서 읽고, 서버도 거기 쓸 수 있을 때만 직접 모드.
+  //
+  // 어떤 실패든(구버전 서버의 404 포함) false를 돌려 기존 중계 경로로 간다 — 이 확인이
+  // 익스포트를 막는 일은 없어야 한다.
+  const probeDirect = async (dir: string): Promise<boolean> => {
+    if (!hasTauriRuntime()) return false;
+    const bytes = crypto.getRandomValues(new Uint8Array(8));
+    const token = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    const { join } = await import("@tauri-apps/api/path");
+    const { invoke } = await import("@tauri-apps/api/core");
+    const path = await join(dir, probeFileName(token));
+    try {
+      await invoke("probe_file_write", { path, token });
+      const res = await probeExportDir(jobId, dir, token);
+      return res.direct === true;
+    } catch {
+      return false;
+    } finally {
+      // 실패 경로에서도 우리가 만든 파일은 치운다(없으면 Rust가 성공으로 처리).
+      try { await invoke("probe_file_remove", { path }); } catch { /* 잔여물뿐 */ }
+    }
+  };
+
   // 익스포트 진행률 폴링 — 전체/개별 익스포트가 같은 상태 파일(export_status)을 쓰므로
   // 폴링도 공유한다. 완료 문구만 호출자가 정한다. 완료 상태를 돌려줘 호출자가
   // 그 파일 목록을 로컬로 받아 쓸 수 있게 한다(실패·중단이면 null).
@@ -407,16 +436,24 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     if (hasTauriRuntime() && !saveDir) {
       setNotice("저장 폴더 선택이 취소되었습니다."); return;
     }
+    const direct = saveDir ? await probeDirect(saveDir) : false;
     setBusy(true); setExportingOne(i);
     setExportProg({ exporting: true, done: 0, total: indices.length,
                     error: null, out_dir: saveDir, files: [] });
     try {
-      // out_dir을 넘기지 않는다 — 서버는 자기 폴더에 굽고, 받아 쓰는 건 아래에서.
-      const res = await exportScenes(jobId, mode, undefined, indices);
+      // 직접 모드면 out_dir을 넘겨 서버가 그 폴더에 바로 굽는다. 아니면 넘기지
+      // 않는다 — 서버는 자기 폴더에 굽고, 받아 쓰는 건 아래에서.
+      const res = await exportScenes(jobId, mode,
+                                     direct && saveDir ? saveDir : undefined,
+                                     indices);
       const labels = indices.map((k) => segments[k]?.label ?? "?").join(", ");
-      const st = await pollExport(() =>
-        `${res.count}개 클립을 구웠습니다 — ${labels}. 저장 중…`);
+      const st = await pollExport((s) => direct
+        ? `${s.files?.length ?? res.count}개 클립 저장 완료 — ${labels} (${saveDir}). `
+          + "경계를 공유한 이웃 씬까지 갱신했습니다."
+        : `${res.count}개 클립을 구웠습니다 — ${labels}. 저장 중…`);
       if (!st) return;
+      // 직접 모드는 서버가 이미 사용자 폴더에 썼다 — 받을 것도, 지울 사본도 없다.
+      if (direct) return;
       if (saveDir) {
         await saveExportedFiles(st.files ?? [], saveDir);
         setNotice(`${st.files?.length ?? 0}개 클립 저장 완료 — ${labels} (${saveDir}). `
@@ -446,14 +483,21 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     if (hasTauriRuntime() && !saveDir) {
       setNotice("저장 폴더 선택이 취소되었습니다."); return;
     }
+    const direct = saveDir ? await probeDirect(saveDir) : false;
     setBusy(true);
     setExportProg({ exporting: true, done: 0, total: segments.length,
                     error: null, out_dir: saveDir, files: [] });
     try {
-      // out_dir을 넘기지 않는다 — 서버는 자기 폴더에 굽고, 받아 쓰는 건 아래에서.
-      const res = await exportScenes(jobId, mode);
-      const st = await pollExport(() => `${res.count}개 클립을 구웠습니다. 저장 중…`);
+      // 직접 모드면 out_dir을 넘겨 서버가 그 폴더에 바로 굽는다. 아니면 넘기지
+      // 않는다 — 서버는 자기 폴더에 굽고, 받아 쓰는 건 아래에서.
+      const res = await exportScenes(jobId, mode,
+                                     direct && saveDir ? saveDir : undefined);
+      const st = await pollExport((s) => direct
+        ? `${s.files?.length ?? res.count}개 클립 저장 완료 (${saveDir})`
+        : `${res.count}개 클립을 구웠습니다. 저장 중…`);
       if (!st) return;
+      // 직접 모드는 서버가 이미 사용자 폴더에 썼다 — 받을 것도, 지울 사본도 없다.
+      if (direct) return;
       if (saveDir) {
         await saveExportedFiles(st.files ?? [], saveDir);
         setNotice(`${st.files?.length ?? 0}개 클립 저장 완료 (${saveDir})`);

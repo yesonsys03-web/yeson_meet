@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName, probeFileName } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -773,5 +773,16 @@ describe("exportedFileName", () => {
     expect(exportedFileName("D:\\out\\Scene678.mp4")).toBe("Scene678.mp4");
     expect(exportedFileName("/srv/out/Scene678.mp4")).toBe("Scene678.mp4");
     expect(exportedFileName("Scene678.mp4")).toBe("Scene678.mp4");
+  });
+});
+
+describe("probeFileName", () => {
+  it("keeps the yeson_probe_ prefix shared with Rust and the server", () => {
+    // 이 접두사는 3개 언어가 함께 지키는 계약이다: Rust probe_file_write/remove가
+    // 이걸로 시작하지 않는 경로를 거부하고, 서버도 같은 이름으로 파일을 찾는다.
+    // 한쪽만 바뀌면 탐침이 조용히 실패해 같은 PC에서도 느린 중계 경로로 떨어진다.
+    expect(probeFileName("aaaabbbbccccdddd"))
+      .toBe("yeson_probe_aaaabbbbccccdddd.tmp");
+    expect(probeFileName("ddddccccbbbbaaaa").startsWith("yeson_probe_")).toBe(true);
   });
 });

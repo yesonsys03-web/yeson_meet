@@ -432,6 +432,20 @@ export async function cleanupSceneExport(jobId: string): Promise<{ deleted: numb
     { method: "POST" });
 }
 
+// 서버가 이 폴더에 직접 구워도 되는지 확인한다. 클라가 방금 쓴 탐침 파일이 서버
+// 쪽에서도 같은 경로로 읽히고 서버도 거기에 쓸 수 있으면 direct=true — 같은 PC이거나
+// 같은 공유 폴더라는 증거다. 그때는 굽기→받기 중계를 통째로 건너뛴다.
+// 구버전 서버에는 이 라우트가 없어 404가 나는데, 호출자가 잡아 중계로 폴백한다.
+export async function probeExportDir(
+  jobId: string, dir: string, token: string,
+): Promise<{ direct: boolean; reason: string }> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/export/probe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dir, token }),
+  });
+}
+
 export function sceneThumbUrl(jobId: string, index: number): string {
   return `${apiBase()}/api/v1/video-jobs/${jobId}/scenes/thumb/${index}`;
 }

@@ -10,6 +10,7 @@ endpoints extend that same trust decision rather than being a special case.
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,6 +71,10 @@ from apps.server.domain.video_captions.translate_cli import (create_translator,
 from apps.server.domain.video_captions.whisper_models import get_catalog, is_downloaded
 
 router = APIRouter(tags=["video-jobs"], prefix="/video-jobs")
+
+# 익스포트 정리(scene_export_cleanup)가 이미 logger를 쓰고 있었는데 모듈에 정의가
+# 없어, 삭제 실패라는 드문 경로에서 NameError로 500이 됐다.
+logger = logging.getLogger(__name__)
 
 
 def _start_pipeline(external_id: UUID) -> None:  # test seam
@@ -168,6 +173,13 @@ class SceneExportIn(BaseModel):
     # 부분 익스포트 — 다시 구울 세그먼트 인덱스. None이면 전체(기존 동작). 경계를 고친
     # 씬 하나(+맞닿은 이웃)만 재인코딩해 수백 개를 다시 굽지 않게 한다.
     indices: list[int] | None = None
+
+
+class SceneExportProbeIn(BaseModel):
+    # dir는 서버 로컬 경로 문자열이다 — 기존 SceneExportIn.out_dir과 신뢰 경계가 같다
+    # (LAN을 신뢰 경계로 두는 이 API의 전제, 파일 상단 주석 참조).
+    dir: str = Field(min_length=1)
+    token: str = Field(min_length=8, max_length=64, pattern="^[0-9a-f]+$")
 
 
 def _iso_utc(value: datetime | None) -> str | None:
@@ -803,6 +815,69 @@ async def scene_export_status(
     return {"exporting": bool(st.get("exporting")), "done": st.get("done", 0),
             "total": st.get("total", 0), "error": st.get("error"),
             "out_dir": st.get("out_dir"), "files": st.get("files", [])}
+
+
+# 탐침 파일 이름 접두사 — 클라 sceneSplitLogic.ts probeFileName, Rust PROBE_PREFIX와
+# 같은 계약. 한쪽만 바꾸면 탐침이 조용히 실패해 같은 PC에서도 중계로 떨어진다.
+_PROBE_PREFIX = "yeson_probe_"
+
+
+@router.post("/{external_id}/scenes/export/probe")
+async def scene_export_probe(
+    external_id: UUID,
+    body: SceneExportProbeIn,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """서버가 이 폴더에 직접 구워도 되는지 확인한다.
+
+    서버·클라가 같은 PC면 중계(서버가 굽고 → 클라가 HTTP로 받아 쓰고 → 서버 사본
+    삭제)가 통째로 낭비다: 같은 바이트를 디스크에 두 번 쓰고, 굽기가 다 끝난 뒤에야
+    복사가 시작된다.
+
+    그렇다고 호스트명 따위로 '같은 PC냐'를 추측하면 v1.7.3에서 고친 실패가 되살아난다
+    — 서버 디스크에만 파일이 생기고 사용자가 고른 폴더는 끝까지 빈 채로 남는데 에러도
+    안 나던 그 버그(실기 윈도우). 그래서 추측하지 않고 증명한다.
+
+    두 가지를 함께 본다. ①클라가 방금 쓴 토큰 파일이 이 경로에서 읽히는가(같은 폴더인가)
+    ②서버가 거기에 쓸 수 있는가. 같은 PC여도 ②가 거짓일 수 있다(macOS TCC — 서버 앱은
+    클라와 다른 번들이다; 윈도우 제어된 폴더 액세스). 반대로 다른 PC라도 공유 폴더를
+    고르면 둘 다 참이고, 그때는 전송 한 번을 통째로 아낀다.
+
+    서버가 쓴 파일은 서버가 지운다 — 어느 경로로 끝나도 잔여물이 없다.
+    """
+    await _get_job_or_404(db, external_id)
+    dest = Path(body.dir)
+    # 폴더를 만들지 않는다 — 서버에 빈 폴더만 생기던 그 실패를 재현하지 않기 위해서다.
+    if not dest.is_dir():
+        return {"direct": False, "reason": "not_a_dir"}
+
+    mine = dest / f"{_PROBE_PREFIX}{body.token}.tmp"
+    # 방금 만들어진 파일이 백신 검사나 SMB 음성 캐싱으로 잠깐 안 보일 수 있다.
+    for attempt in range(3):
+        if attempt:
+            await asyncio.sleep(0.3)
+        try:
+            if mine.read_text(encoding="utf-8").strip() == body.token:
+                break
+        except OSError:
+            continue
+    else:
+        return {"direct": False, "reason": "token_mismatch"}
+
+    ack = dest / f"{_PROBE_PREFIX}ack_{body.token}.tmp"
+    try:
+        ack.write_text(body.token, encoding="utf-8")
+        if ack.read_text(encoding="utf-8") != body.token:
+            return {"direct": False, "reason": "write_denied"}
+    except OSError:
+        logger.info("scene export probe: 서버가 %s 에 쓸 수 없다 — 중계로 간다", dest)
+        return {"direct": False, "reason": "write_denied"}
+    finally:
+        try:
+            ack.unlink(missing_ok=True)
+        except OSError:
+            logger.exception("탐침 ack 파일 삭제 실패: %s", ack)
+    return {"direct": True, "reason": "ok"}
 
 
 @router.get("/{external_id}/scenes/export/file")
