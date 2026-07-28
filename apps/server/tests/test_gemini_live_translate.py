@@ -334,6 +334,21 @@ class TestTranslateFinalText:
         assert "Celsius" in calls[0]["contents"]
         assert "약 32도" in calls[0]["contents"]
 
+    async def test_prompt_renders_idioms_by_meaning(self) -> None:
+        """관용구를 직역하지 않도록 프롬프트가 고정한다 — 사전은 등록 항목만
+        고치지만 이 규칙은 모든 관용구에 일반화된다(실기 2026-07-28:
+        'plant the seed'가 '씨앗을 심어두고'로 직역)."""
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        calls: list = []
+        await _translate_final_text(
+            text_client(reply="일단 미리 주제로 던져 두고 싶었어요.", calls=calls),
+            "Just wanted to plant the seed.",
+        )
+        assert "idioms" in calls[0]["contents"]
+        assert "never" in calls[0]["contents"]
+        assert "word-for-word" in calls[0]["contents"]
+
 
 def _final_utt(en="Hello.", ko="라이브 번역."):
     from datetime import datetime, timezone

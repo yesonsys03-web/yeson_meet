@@ -277,6 +277,11 @@ async def _translate_final_text(text_client: Any, en: str) -> str | None:
                 "speaker is Fahrenheit — convert to Celsius, rounded, rendered "
                 "as '약 M도' (e.g. '90, 93 degree weather' → '약 32도, 34도 "
                 "날씨'); never leave a Fahrenheit number as a bare N도. "
+                # 관용구 직역 방지 — 사전 등록 항목(plant the seed)만이 아니라
+                # 모든 관용구에 일반화한다(실기 2026-07-28: "씨앗을 심어두고").
+                "Render idioms and figures of speech by meaning, never "
+                "word-for-word (e.g. 'plant the seed' → '미리 주제로 던져 "
+                "두다', not '씨앗을 심다'). "
                 "Return only Korean.\n\n"
                 f"English: {stripped}"
             ),
