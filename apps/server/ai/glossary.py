@@ -78,6 +78,7 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("paint", "페인트"),
     ("line", "라인"),
     ("line art", "라인아트"),
+    ("line work", "라인워크"),
     ("palette", "팔레트"),
     ("color model", "컬러 모델"),
     ("color key", "컬러키"),
@@ -120,6 +121,7 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("dissolve", "디졸브"),
     ("fade", "페이드"),
     ("effects", "이펙트"),
+    ("element", "엘리먼트"),
     ("render", "렌더"),
     # --- Production / management ---
     ("shot", "샷"),
@@ -138,6 +140,9 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("deliverable", "산출물"),
     ("milestone", "마일스톤"),
     ("dailies", "데일리"),
+    ("push out", "밀림"),
+    # 회의 관용구 — "씨앗을 심어두고" 직역 관측(2026-07-28 보고서). 뜻으로 옮긴다.
+    ("plant the seed", "미리 주제로 던져 두다"),
     ("footage", "풋티지"),
     ("frame rate", "프레임레이트"),
     ("resolution", "해상도"),
@@ -166,6 +171,9 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("Harmony", "하모니"),
     ("Photoshop", "포토샵"),
     ("Adobe", "어도비"),
+    # --- Proper nouns (steers transcription too — "Yeson" was heard as
+    # "yes on" and dropped from the Korean caption in a real meeting) ---
+    ("Yeson", "예손"),
 ]
 
 _SEPARATORS = ("=>", "\t", "=")
@@ -281,6 +289,24 @@ DEFAULT_KO_CORRECTIONS: list[tuple[str, str]] = [
     ("청소 작업", "클린업 작업"),
     ("중간 프레임", "인비트윈"),
     ("선 테스트", "라인 테스트"),
+    # "deliver"가 동사까지 음차되면 어색하다("애니매틱을 딜리버리할 수 있어요",
+    # 실제 보고서). 한글 음절은 완성형이라 어간 "딜리버리하"로는 "딜리버리할/했"을
+    # 못 잡는다(할≠하+ㄹ) — 활용형을 열거한다. 명사 "딜리버리"(딜리버리 일정 등)는
+    # 뒤에 '하' 계열 음절이 붙지 않으므로 안 다친다.
+    ("딜리버리하", "전달하"),
+    ("딜리버리할", "전달할"),
+    ("딜리버리했", "전달했"),
+    ("딜리버리한", "전달한"),
+    ("딜리버리해", "전달해"),
+    # 일정 "push out"의 음차. "범프"는 넣지 않는다 — 3D 논의에서 범프 맵(텍스처)이
+    # 정당하게 나올 수 있어 문자열 치환 자격("오역일 수밖에 없는 표현")이 안 된다.
+    # "순연"은 격식체라 어렵다는 사용자 피드백 → 현장 회화체 "밀림"으로.
+    ("푸시 아웃", "밀림"),
+    ("푸시아웃", "밀림"),
+    # "plant the seed" 직역("일단 씨앗을 심어두고") — 관용구를 뜻으로. ⚠자막메이커
+    # (작품 대사)에도 적용된다: 정원 가꾸기 대사가 있는 작품에선 오버라이드 파일에서
+    # 이 항목을 무해한 값(씨앗을 심어 => 씨앗을 심어)으로 덮어 끌 것.
+    ("씨앗을 심어", "주제로 던져"),
 ]
 
 _ko_cache: dict[str, object] = {"key": None, "terms": None}
