@@ -378,6 +378,9 @@ export type SlateRuleInput = {
   seq_tokens: number[];
   scene_tokens?: number[];
   min_ms?: number;
+  // 예시 슬레이트 한 줄(예: "Seq 01A_S01 - Panel 1") — 선언하면 서버 canonical화가
+  // 토큰별 머리글자를 다수결 대신 이 구조로 스냅한다(Seq↔Seg류 오독). 옵트인.
+  example?: string | null;
 };
 
 export async function scanScenes(
@@ -478,6 +481,8 @@ export type SlateTemplate = {
   scan_interval_s?: number;
   // 스캔 방식(간격/지문)도 쇼 단위로 정해지는 값이라 템플릿에 함께 저장한다.
   method?: SceneMethod;
+  // 예시 슬레이트도 쇼 단위 포맷이라 템플릿에 함께 저장한다.
+  example?: string | null;
 };
 
 export async function setOcrRegion(

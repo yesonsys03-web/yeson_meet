@@ -30,6 +30,9 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const [sceneIdx, setSceneIdx] = useState<number[]>([]);
   // 공백을 필드 구분자로 쓰는 슬레이트 대응(기본은 공백 비분해 — 백엔드와 동일).
   const [spaceDelim, setSpaceDelim] = useState(false);
+  // 예시 슬레이트 한 줄 — 선언하면 서버가 머리글자(Seq↔Seg류 닮은꼴 오독)를
+  // 다수결 대신 이 구조로 스냅한다. 빈값=기존 동작(옵트인).
+  const [slateExample, setSlateExample] = useState("");
   // 샘플 간격(초). 짧은 씬이 많으면 촘촘하게(0.25s) — 놓치면 그 씬 클립이 없어진다.
   const [scanIntervalS, setScanIntervalS] = useState(2.0);
   // 스캔 방식 — 간격(기존)/지문(전 프레임 컷 감지, 프레임 정확·정밀화 불필요).
@@ -100,6 +103,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       setSeqIdx(d.rule.seq_tokens ?? []);
       setSceneIdx(d.rule.scene_tokens ?? []);
       setSpaceDelim((d.rule.delimiters ?? []).includes(" "));
+      setSlateExample(d.rule.example ?? "");
     }
     // 서버에 저장된 스캔 방식 복원 — 재진입 시 선택이 초기화되지 않게.
     if (d.method) setScanMethod(d.method);
@@ -137,6 +141,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     try {
       const res = await setSceneRule(jobId, {
         delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx, min_ms: minMs,
+        example: slateExample.trim() || null,
       });
       setData({ ...(data as ScenesData), scanned: true,
                 segments_scene: res.segments_scene,
@@ -294,6 +299,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       setStage(fp ? "2/2 경계 계산" : "2/4 경계 계산");
       const res = await setSceneRule(jobId, {
         delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx, min_ms: minMs,
+        example: slateExample.trim() || null,
       });
       if (cancelledRef.current) return;
       if (!fp) {
@@ -1114,6 +1120,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setSeqIdx(t.seq_tokens ?? []);
     setSceneIdx(t.scene_tokens ?? []);
     setSpaceDelim((t.delimiters ?? []).includes(" "));
+    setSlateExample(t.example ?? "");
     if (t.scan_interval_s) setScanIntervalS(t.scan_interval_s);
     if (t.method) setScanMethod(t.method);
     void setOcrRegionApi(jobId, t.region).catch(() => undefined);
@@ -1291,7 +1298,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
           onChange={setOcrRegion} templates={templates}
           onTemplatesChange={setTemplates}
           rule={{ delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx,
-                  scan_interval_s: scanIntervalS, method: scanMethod }}
+                  scan_interval_s: scanIntervalS, method: scanMethod,
+                  example: slateExample.trim() || undefined }}
           onApplyTemplate={applyTemplate} />
       ) : null}
 
@@ -1341,6 +1349,22 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                   setSeqIdx([]); setSceneIdx([]);
                 }} />
               공백도 구분자로 나누기 (기본: 공백은 필드 안에 유지)
+            </label>
+            {/* 예시 슬레이트 — 선언하면 Seq↔Seg류 머리글자 오독을 다수결 추측이
+                아니라 이 구조로 교정한다(경계 계산 시 적용, 빈값=기존 동작). */}
+            <label style={{ fontSize: 12, opacity: 0.8, display: "flex",
+                            alignItems: "center", gap: 5, marginBottom: 8 }}>
+              예시 슬레이트
+              <input value={slateExample}
+                onChange={(e) => setSlateExample(e.target.value)}
+                placeholder="예: Seq 01A_S01 - Panel 1" maxLength={200}
+                style={{ flex: "0 1 260px", fontSize: 12, padding: "3px 6px",
+                         borderRadius: 4, background: "transparent",
+                         color: "inherit",
+                         border: "1px solid rgba(255,255,255,0.15)" }} />
+              <span style={{ opacity: 0.6 }}>
+                실제 슬레이트 한 줄을 그대로 적으면 오독 교정이 정확해집니다
+              </span>
             </label>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {tokens.map((tok, i) => (
