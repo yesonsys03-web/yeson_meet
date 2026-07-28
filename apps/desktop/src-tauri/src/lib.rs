@@ -39,6 +39,8 @@ pub fn run() {
             discovery::device_label,
             discovery::scan_subnet,
             video_download::download_to_file,
+            video_download::probe_file_write,
+            video_download::probe_file_remove,
             video_upload::list_video_files,
             video_upload::upload_video_file,
         ])
