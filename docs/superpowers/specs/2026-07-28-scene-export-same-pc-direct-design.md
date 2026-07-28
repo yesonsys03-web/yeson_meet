@@ -54,7 +54,7 @@ v1.7.3에서 익스포트를 **서버가 자기 폴더에 굽고 → 클라가 H
 
 ```jsonc
 // 요청
-{ "dir": "C:\\Users\\me\\clips", "token": "9f2c1a4b7e0d3856" }
+{ "dir": "C:\\Users\\me\\clips", "token": "aaaabbbbccccdddd" }
 // 응답 (항상 200; 잡이 없으면 404)
 { "direct": true,  "reason": "ok" }
 { "direct": false, "reason": "token_mismatch" }   // 다른 폴더 = 다른 PC
@@ -143,7 +143,7 @@ else               setNotice(`... (서버 폴더 ${st.out_dir})`);          // �
 - 토큰 내용 불일치(다른 실행의 잔여 파일) → `false / token_mismatch`
 - 폴더 없음 → `false / not_a_dir`
 
-> **주의**: `apps/server` 테스트는 `conftest.py`가 Postgres DSN을 하드코딩해 수집 시점에 접속한다. Postgres 없는 환경에서는 엔드포인트 함수를 SQLite 세션으로 직접 호출해 같은 코드 경로를 검증한다(2026-07-27 부분 익스포트에서 쓴 방식).
+> **테스트 DB**: `apps/server` 테스트의 기본 DB는 로컬 Postgres지만, `conftest.py`가 `TEST_DATABASE_URL`을 지원한다(`conftest.py:6-13`). Docker 없이 돌릴 때는 `TEST_DATABASE_URL="sqlite+aiosqlite:///$(mktemp -d)/t.db"`를 앞에 붙인다 — 탐침 라우트는 잡 조회 외에 DB를 쓰지 않아 SQLite로 충분하다.
 
 **단위(Rust)** — tempdir로: 접두사가 맞으면 쓰기·삭제 성공, `yeson_probe_`로 시작하지 않는 이름은 두 커맨드 모두 거부(`video_upload.rs`에 테스트 선례 있음).
 
