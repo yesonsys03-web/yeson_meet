@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName, probeFileName } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName, probeFileName, splitSegment, boundaryIssueIndices } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -773,6 +773,70 @@ describe("exportedFileName", () => {
     expect(exportedFileName("D:\\out\\Scene678.mp4")).toBe("Scene678.mp4");
     expect(exportedFileName("/srv/out/Scene678.mp4")).toBe("Scene678.mp4");
     expect(exportedFileName("Scene678.mp4")).toBe("Scene678.mp4");
+  });
+});
+
+describe("splitSegment", () => {
+  const fps = 24;
+  const segs = [
+    { label: "A", start_ms: 0, end_ms: 10000 },
+    { label: "B", start_ms: 10000, end_ms: 20000 },
+  ];
+
+  it("cuts where the In trim would put the boundary", () => {
+    // 분할과 트림이 다른 수식을 쓰면 익스포트 -ss snap-up과 어긋나 프레임이 밀린다.
+    const out = splitSegment(segs, 1, 5, fps);
+    const cut = shiftBoundaryMs(10000, fps, 4);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toEqual({ label: "B", start_ms: 10000, end_ms: cut });
+    expect(out[2]).toEqual({ label: "B", start_ms: cut, end_ms: 20000 });
+  });
+
+  it("keeps both parts under the original label — naming is a separate step", () => {
+    const out = splitSegment(segs, 1, 5, fps);
+    expect(out[1]!.label).toBe("B");
+    expect(out[2]!.label).toBe("B");
+  });
+
+  it("leaves the timeline continuous — no gap, no overlap, same total span", () => {
+    const out = splitSegment(segs, 1, 5, fps);
+    expect(out[0]!.end_ms).toBe(out[1]!.start_ms);
+    expect(out[1]!.end_ms).toBe(out[2]!.start_ms);
+    expect(out[0]!.start_ms).toBe(0);
+    expect(out.at(-1)!.end_ms).toBe(20000);
+  });
+
+  it("refuses the first frame — a 0-frame part exports a 0-byte clip", () => {
+    expect(splitSegment(segs, 1, 1, fps)).toBe(segs);
+  });
+
+  it("refuses an out-of-range index or a frame past the end", () => {
+    expect(splitSegment(segs, 5, 3, fps)).toBe(segs);
+    expect(splitSegment(segs, 1, 100000, fps)).toBe(segs);
+  });
+});
+
+describe("boundaryIssueIndices", () => {
+  const segs = [
+    { label: "A", start_ms: 0, end_ms: 1000 },
+    { label: "B", start_ms: 1000, end_ms: 2000 },
+  ];
+
+  it("resolves each issue by current label, not a stored index", () => {
+    // 병합·분할로 목록 길이가 바뀌어도 엉뚱한 줄을 가리키면 안 된다.
+    expect(boundaryIssueIndices([{ label: "B" }], segs, [])).toEqual([1]);
+    expect(boundaryIssueIndices([{ label: "gone" }], segs, [])).toEqual([]);
+  });
+
+  it("hides a scene the user confirmed is fine", () => {
+    const ok = [{ label: "B", start_ms: 1000, end_ms: 2000 }];
+    expect(boundaryIssueIndices([{ label: "B" }], segs, ok)).toEqual([]);
+  });
+
+  it("brings it back once that boundary moves — the new cut was never reviewed", () => {
+    const ok = [{ label: "B", start_ms: 1000, end_ms: 2000 }];
+    const moved = [segs[0]!, { label: "B", start_ms: 1200, end_ms: 2000 }];
+    expect(boundaryIssueIndices([{ label: "B" }], moved, ok)).toEqual([1]);
   });
 });
 

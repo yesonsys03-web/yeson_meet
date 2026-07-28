@@ -227,7 +227,7 @@ export function anomalousLabels(
   return out;
 }
 
-import type { SceneSegment } from "./videoApi";
+import type { BoundaryOk, SceneSegment } from "./videoApi";
 
 // 잘못 인식된 구간(예: OCR 노이즈로 생긴 짧은 'VAL')을 이웃 구간에 흡수한다.
 // 시간축에 빈틈이 생기지 않도록 이웃이 그 구간의 시간을 넘겨받는다.
@@ -246,6 +246,30 @@ export function mergeSegment(
     const nxt = out[i + 1];
     if (nxt) { out[i + 1] = { ...nxt, start_ms: cur.start_ms }; out.splice(i, 1); }
   }
+  return out;
+}
+
+// 한 씬 안에 두 씬이 붙어 있을 때(스캔이 그 컷을 못 잡은 경우) 나눈다. k는 팝업
+// 카운터의 '프레임 k / n' — 지금 보는 프레임이 **뒤 구간의 첫 프레임**이 된다
+// (In 트림 "여기부터"와 같은 약속이라 새로 배울 게 없다). 자를 시각도 In 트림과
+// 같은 shiftBoundaryMs를 쓰므로 나눈 경계는 그 프레임에 In 트림을 건 것과 정확히
+// 같다 — 다른 수식을 쓰면 익스포트 -ss snap-up과 어긋나 프레임이 하나 밀린다.
+//
+// 두 구간 모두 원래 라벨을 유지한다. 앞 구간 이름은 슬레이트를 읽어 붙이는 별도
+// 단계(renameSegment)의 몫이다 — OCR은 비동기라 시점이 다르고, 한 함수에 경계
+// 산술과 이름 짓기를 같이 넣지 않는다.
+//
+// k<=1이면 앞 구간이 0프레임이라 아무것도 하지 않는다(빈 구간은 익스포트가 0바이트
+// 클립을 만든다).
+export function splitSegment(
+  segs: SceneSegment[], i: number, k: number, fps: number,
+): SceneSegment[] {
+  const cur = segs[i];
+  if (!cur || k <= 1) return segs;
+  const cutMs = shiftBoundaryMs(cur.start_ms, fps, Math.floor(k) - 1);
+  if (cutMs <= cur.start_ms || cutMs >= cur.end_ms) return segs;
+  const out = segs.slice();
+  out.splice(i, 1, { ...cur, end_ms: cutMs }, { ...cur, start_ms: cutMs });
   return out;
 }
 
@@ -448,6 +472,34 @@ export function filterIndices(
   if (q.length === 0) return base;
   const pool = base ?? labels.map((_, i) => i);
   return pool.filter((i) => matchesLabelQuery(labels[i] ?? "", query));
+}
+
+// 경계오류 탭에 보일 구간 인덱스.
+//
+// 저장된 인덱스가 아니라 '현재 세그먼트의 라벨'로 다시 찾는다 — 병합·분할·이름수정
+// 으로 목록이 바뀌어도 어긋나지 않고, 라벨이 사라진 구간은 자동으로 빠진다.
+//
+// 사용자가 '문제없음'으로 확인한 구간은 뺀다. 검사는 디졸브처럼 두 슬레이트가 겹쳐
+// 보이는 구간을 혼입으로 잡는데 실제로는 경계가 맞는 경우가 있고, 400씬 검수는 여러
+// 세션에 걸치므로 확인 결과가 남아야 한다. 단 확인 당시의 시작·끝과 지금이 다르면
+// 확인표시를 무시한다 — 그 뒤에 경계를 고쳤다는 뜻이고, 바뀐 경계를 안 본 채로
+// 숨기면 안 된다.
+export function boundaryIssueIndices(
+  issues: Array<{ label: string }>, segs: SceneSegment[], ok: BoundaryOk[],
+): number[] {
+  const idxOf = new Map(segs.map((s, i) => [s.label, i] as const));
+  const okOf = new Map(ok.map((o) => [o.label, o] as const));
+  const out: number[] = [];
+  for (const issue of issues) {
+    const i = idxOf.get(issue.label);
+    if (i == null) continue;
+    const seg = segs[i] as SceneSegment;
+    const cleared = okOf.get(issue.label);
+    if (cleared && cleared.start_ms === seg.start_ms
+        && cleared.end_ms === seg.end_ms) continue;
+    out.push(i);
+  }
+  return out;
 }
 
 function editDistance(a: string, b: string): number {
