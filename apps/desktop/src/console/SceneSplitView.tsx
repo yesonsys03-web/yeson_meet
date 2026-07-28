@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  absorbFlankedMisreads, anomalousLabels, applyFixes, applySplitName, boundaryIssueIndices, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, probeFileName, scanProgressKey, scenePopupAction, stepVisibleIndex,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, applySplitName, boundaryIssueIndices, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, probeFileName, probeToken, scanProgressKey, scenePopupAction, stepVisibleIndex, upsertBoundaryOk,
   NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, splitSegment, tokenizeSlate, trimFrames,
   type LabelFix,
 } from "./sceneSplitLogic";
@@ -375,8 +375,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   // 익스포트를 막는 일은 없어야 한다.
   const probeDirect = async (dir: string): Promise<boolean> => {
     if (!hasTauriRuntime()) return false;
-    const bytes = crypto.getRandomValues(new Uint8Array(8));
-    const token = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    const token = probeToken(crypto.getRandomValues(new Uint8Array(8)));
     const { join } = await import("@tauri-apps/api/path");
     const { invoke } = await import("@tauri-apps/api/core");
     const path = await join(dir, probeFileName(token));
@@ -448,17 +447,20 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                                      direct && saveDir ? saveDir : undefined,
                                      indices);
       const labels = indices.map((k) => segments[k]?.label ?? "?").join(", ");
+      // 직접 모드든 중계든 끝나면 같은 말을 한다 — 문구를 한 번만 적어 두 경로가
+      // 갈라지지 않게 한다(사용자에겐 저장된 결과가 같다).
+      const savedMsg = (n: number) =>
+        `${n}개 클립 저장 완료 — ${labels} (${saveDir}). `
+        + "경계를 공유한 이웃 씬까지 갱신했습니다.";
       const st = await pollExport((s) => direct
-        ? `${s.files?.length ?? res.count}개 클립 저장 완료 — ${labels} (${saveDir}). `
-          + "경계를 공유한 이웃 씬까지 갱신했습니다."
+        ? savedMsg(s.files?.length ?? res.count)
         : `${res.count}개 클립을 구웠습니다 — ${labels}. 저장 중…`);
       if (!st) return;
       // 직접 모드는 서버가 이미 사용자 폴더에 썼다 — 받을 것도, 지울 사본도 없다.
       if (direct) return;
       if (saveDir) {
         await saveExportedFiles(st.files ?? [], saveDir);
-        setNotice(`${st.files?.length ?? 0}개 클립 저장 완료 — ${labels} (${saveDir}). `
-          + "경계를 공유한 이웃 씬까지 갱신했습니다.");
+        setNotice(savedMsg(st.files?.length ?? 0));
       } else {
         setNotice(`${res.count}개 클립 익스포트 완료 — ${labels} `
           + `(서버 폴더 ${st.out_dir ?? ""}).`);
@@ -493,15 +495,18 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       // 않는다 — 서버는 자기 폴더에 굽고, 받아 쓰는 건 아래에서.
       const res = await exportScenes(jobId, mode,
                                      direct && saveDir ? saveDir : undefined);
+      // 직접 모드든 중계든 끝나면 같은 말을 한다 — 문구를 한 번만 적어 두 경로가
+      // 갈라지지 않게 한다(사용자에겐 저장된 결과가 같다).
+      const savedMsg = (n: number) => `${n}개 클립 저장 완료 (${saveDir})`;
       const st = await pollExport((s) => direct
-        ? `${s.files?.length ?? res.count}개 클립 저장 완료 (${saveDir})`
+        ? savedMsg(s.files?.length ?? res.count)
         : `${res.count}개 클립을 구웠습니다. 저장 중…`);
       if (!st) return;
       // 직접 모드는 서버가 이미 사용자 폴더에 썼다 — 받을 것도, 지울 사본도 없다.
       if (direct) return;
       if (saveDir) {
         await saveExportedFiles(st.files ?? [], saveDir);
-        setNotice(`${st.files?.length ?? 0}개 클립 저장 완료 (${saveDir})`);
+        setNotice(savedMsg(st.files?.length ?? 0));
       } else {
         setNotice(`${res.count}개 클립 익스포트 완료 (서버 폴더 ${st.out_dir ?? ""})`);
       }
@@ -559,9 +564,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const markBoundaryOk = (i: number) => {
     const seg = segments[i];
     if (!seg) return;
-    const rest = (data?.boundary_ok ?? []).filter((o) => o.label !== seg.label);
-    void putBoundaryOk([...rest,
-      { label: seg.label, start_ms: seg.start_ms, end_ms: seg.end_ms }]);
+    void putBoundaryOk(upsertBoundaryOk(data?.boundary_ok ?? [],
+      { label: seg.label, start_ms: seg.start_ms, end_ms: seg.end_ms }));
   };
   // 편집 되돌리기 스택 — 개별 병합(mergeSeg)과 경계 교정(nudgeBoundary)마다 직전
   // 상태를 쌓아 여러 단계 물릴 수 있게 한다. 각 항목=편집 전 세그먼트·경계플래그
@@ -844,6 +848,10 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const v = previewVideoRef.current;
     if (v) { v.pause(); v.currentTime = focusMs / 1000; }
     setNotice("씬을 나눴습니다 — 앞 구간 이름을 읽는 중…");
+    // 읽기 실패는 두 갈래로 온다(빈 결과 · 예외). 사용자에겐 같은 상황이므로 같은
+    // 문구를 쓰고, 어느 줄을 고쳐야 하는지 이름을 짚어 준다.
+    const unreadMsg = `앞 구간 슬레이트를 읽지 못했습니다 — '${head.label}' 줄의 `
+      + "이름을 직접 입력하세요.";
     // 앞 구간 한가운데 프레임의 슬레이트를 읽어 이름을 제안한다. 머리·꼬리는 디졸브에
     // 걸릴 확률이 높아 한가운데를 읽는다. 저장된 구역을 그대로 넘겨야 스캔과 같은
     // 상자를 읽어 같은 라벨이 나온다. 실패해도 분할은 유지한다 — 경계는 이미 맞았고
@@ -878,11 +886,10 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
         setPreview(buildSegPreview({ ...head, label: proposed }, i, focusMs, "head"));
         setNotice(`앞 구간 이름을 ${proposed}으로 읽었습니다 — 다르면 이름칸에서 고치세요.`);
       } else {
-        setNotice(`앞 구간 슬레이트를 읽지 못했습니다 — '${head.label}' 줄의 이름을 `
-          + "직접 입력하세요.");
+        setNotice(unreadMsg);
       }
     } catch {
-      setNotice("앞 구간 슬레이트를 읽지 못했습니다 — 이름을 직접 입력하세요.");
+      setNotice(unreadMsg);
     }
   };
 

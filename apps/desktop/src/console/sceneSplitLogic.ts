@@ -729,6 +729,21 @@ export function probeFileName(token: string): string {
   return `yeson_probe_${token}.tmp`;
 }
 
+// 탐침 토큰 — 서버가 `^[0-9a-f]+$` · 8~64자로 검증한다. 모양이 어긋나면 422가 나고
+// 탐침이 조용히 실패해 느린 중계 경로로 떨어진다(에러가 안 뜨므로 눈치채기 어렵다).
+// 난수 생성은 호출자가 하고(crypto), 여기서는 인코딩만 해 테스트로 모양을 잠근다.
+export function probeToken(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// 경계오류 '문제없음' 목록에 한 건을 얹는다 — 같은 라벨은 교체한다. 쌓이게 두면
+// 같은 씬에 확인 시점이 여럿 남아 어느 경계가 기준인지 알 수 없게 된다.
+export function upsertBoundaryOk(
+  list: BoundaryOk[], entry: BoundaryOk,
+): BoundaryOk[] {
+  return [...list.filter((o) => o.label !== entry.label), entry];
+}
+
 // 구간 이름(=파일명) 수정.
 export function renameSegment(
   segs: SceneSegment[], i: number, label: string,
