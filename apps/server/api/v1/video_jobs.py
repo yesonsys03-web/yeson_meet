@@ -154,6 +154,10 @@ class SlateRuleIn(BaseModel):
     # None이면 샘플 간격에 비례한 값을 자동 적용한다(고정 2000ms는 촘촘한 스캔에서
     # 진짜 짧은 씬을 삼켰다). 사용자가 명시하면 그 값을 쓴다.
     min_ms: int | None = Field(default=None, ge=0, le=60000)
+    # 예시 슬레이트 한 줄(예: "Seq 01A_S01 - Panel 1") — 선언하면 canonical화가
+    # 토큰별 머리글자를 다수결 대신 이 구조로 스냅한다(오독 다수 코퍼스 안전).
+    # 비우면 기존 동작 그대로(옵트인).
+    example: str | None = Field(default=None, max_length=200)
 
 
 class SegmentOverride(BaseModel):
@@ -369,6 +373,8 @@ class SlateTemplateIn(BaseModel):
     scan_interval_s: float = Field(default=2.0, ge=0.1, le=5.0)
     # 스캔 방식(간격/지문)도 쇼 단위로 정해지는 값이라 같이 저장한다.
     method: str = Field(default="interval", pattern="^(interval|fingerprint)$")
+    # 예시 슬레이트도 쇼 단위 포맷이라 템플릿에 함께 저장한다(SlateRuleIn.example).
+    example: str | None = Field(default=None, max_length=200)
 
 
 @router.get("/slate-templates")

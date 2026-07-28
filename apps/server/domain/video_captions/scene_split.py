@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 
 # grouping_key 내부 결합자 — 슬레이트 토큰에 등장하지 않는 제어문자(US)라
@@ -261,6 +262,71 @@ _TO_DIGIT = {"O": "0", "o": "0", "I": "1", "l": "1", "Z": "2",
              "S": "5", "G": "6", "B": "8"}
 _TO_UPPER = {"0": "O", "1": "I", "2": "Z", "5": "S", "6": "G", "8": "B"}
 
+# 글자↔글자 닮은꼴 쌍 — 산세리프 소문자에서 실제로 뒤집히는 쌍만(EASA05 실기:
+# 'Seq'의 q가 g로, 같은 씬 안에서도 널뜀 121/200씬). 글자↔숫자(_TO_DIGIT)와
+# 달리 모양 템플릿(U1L2D2U1)이 그대로라 템플릿 교정으로는 잡히지 않는다.
+_LOOKALIKE_LETTER_PAIRS = (frozenset("gq"),)
+
+_HEAD_RE = re.compile(r"[A-Za-z]+")
+
+
+def _alpha_head(token: str) -> str:
+    m = _HEAD_RE.match(token)
+    return m.group(0) if m else ""
+
+
+def _is_lookalike_head(a: str, b: str) -> bool:
+    """두 머리글자가 닮은꼴 글자쌍 정확히 한 글자 차이인가(길이 동일)."""
+    if len(a) != len(b) or a == b:
+        return False
+    diff = [(x, y) for x, y in zip(a, b) if x != y]
+    return len(diff) == 1 and frozenset(diff[0]) in _LOOKALIKE_LETTER_PAIRS
+
+
+def _unify_lookalike_heads(texts: list[str], delimiters: list[str],
+                           declared: dict[int, str] | None = None) -> list[str]:
+    """같은 토큰 자리의 '선두 글자 런'(Seq/Seg)이 닮은꼴 글자쌍 한 글자
+    차이로 갈리면 통일한다. 예시 슬레이트가 선언된 자리(declared)는 그 머리가
+    정답이고(오독이 다수인 코퍼스에서도 안전), 선언이 없는 자리는 전역
+    다수결이다(엄격 과반 — 동수면 손대지 않는다).
+
+    씬 단위가 아니라 전역 다수결인 이유: 특정 씬은 오독 쪽이 다수일 수 있어
+    (실기 121/200씬 혼재) 쇼 전체에서만 안전한 다수결이 성립한다. 머리글자가
+    안 갈리는 쇼(대문자 머리·숫자 필드)는 후보 쌍 자체가 없어 no-op이다.
+    통일된 텍스트는 _reparse와 같은 관례(공백 squash + '_' 재결합)로 돌려준다."""
+    toks_list = [tokenize(t, delimiters) if t else [] for t in texts]
+    heads: dict[int, Counter[str]] = {}
+    for toks in toks_list:
+        for i, tok in enumerate(toks):
+            head = _alpha_head(_squash_ws(tok))
+            if head:
+                heads.setdefault(i, Counter())[head] += 1
+    remap: dict[tuple[int, str], str] = {}
+    for pos, counter in heads.items():
+        truth = (declared or {}).get(pos)
+        if truth:
+            for head in counter:
+                if _is_lookalike_head(head, truth):
+                    remap[(pos, head)] = truth
+            continue  # 선언된 자리에 다수결을 겹치지 않는다
+        for head, n in counter.items():
+            for other, m in counter.items():
+                if m > n and _is_lookalike_head(head, other):
+                    remap[(pos, head)] = other
+    if not remap:
+        return list(texts)
+    out: list[str] = []
+    for text, toks in zip(texts, toks_list):
+        squashed = [_squash_ws(t) for t in toks]
+        hit = False
+        for i, tok in enumerate(squashed):
+            target = remap.get((i, _alpha_head(tok)))
+            if target is not None:
+                squashed[i] = target + tok[len(target):]
+                hit = True
+        out.append("_".join(squashed) if hit else text)
+    return out
+
 
 def _cls(c: str) -> str:
     return ("D" if c.isdigit() else "U" if c.isupper()
@@ -379,7 +445,8 @@ def _reparse(text: str, template: list[str], delimiters: list[str],
 _CTX_WINDOW = 4
 
 
-def canonicalize_texts(texts: list[str], delimiters: list[str]) -> list[str]:
+def canonicalize_texts(texts: list[str], delimiters: list[str],
+                       example: str | None = None) -> list[str]:
     """런 텍스트들을 데이터 자신의 최빈 템플릿으로 정규화한다(확신 교정만).
 
     지문 방식은 런 중간 — 가짜 컷을 만든 흐릿한 프레임 근처 — 을 읽어 구분자
@@ -387,6 +454,17 @@ def canonicalize_texts(texts: list[str], delimiters: list[str]) -> list[str]:
     오독 하나가 세그먼트 하나로 굳는 것을 원천 차단한다(실기: 시퀀스 322→147).
     교정 못 하는 텍스트(문자 오독·잔여 숫자·판독 실패)는 원문 그대로 둔다 —
     이후 클러스터 흡수(runs_to_segments absorb_flanked_ms)가 받는다."""
+    # 글자↔글자 닮은꼴(Seq↔Seg)은 템플릿·known 계산 '전에' 통일한다 — 뒤에 두면
+    # 오독형이 깨끗한 판독으로 집계돼 교정 근거 코퍼스 자체가 오염된다.
+    # 예시 슬레이트(example)가 선언돼 있으면 그 토큰별 머리글자가 정답이다 —
+    # 오독이 다수인 코퍼스에서 다수결이 정답을 뒤집는 것을 막는다(옵트인).
+    declared: dict[int, str] = {}
+    if example:
+        for i, tok in enumerate(tokenize(example, delimiters)):
+            head = _alpha_head(_squash_ws(tok))
+            if head:
+                declared[i] = head
+    texts = _unify_lookalike_heads(texts, delimiters, declared or None)
     template = label_template([t for t in texts if t], delimiters)
     if not template:
         return list(texts)
