@@ -227,7 +227,7 @@ export function anomalousLabels(
   return out;
 }
 
-import type { SceneSegment } from "./videoApi";
+import type { BoundaryOk, SceneSegment } from "./videoApi";
 
 // 잘못 인식된 구간(예: OCR 노이즈로 생긴 짧은 'VAL')을 이웃 구간에 흡수한다.
 // 시간축에 빈틈이 생기지 않도록 이웃이 그 구간의 시간을 넘겨받는다.
@@ -247,6 +247,60 @@ export function mergeSegment(
     if (nxt) { out[i + 1] = { ...nxt, start_ms: cur.start_ms }; out.splice(i, 1); }
   }
   return out;
+}
+
+// 한 씬 안에 두 씬이 붙어 있을 때(스캔이 그 컷을 못 잡은 경우) 나눈다. k는 팝업
+// 카운터의 '프레임 k / n' — 지금 보는 프레임이 **뒤 구간의 첫 프레임**이 된다
+// (In 트림 "여기부터"와 같은 약속이라 새로 배울 게 없다). 자를 시각도 In 트림과
+// 같은 shiftBoundaryMs를 쓰므로 나눈 경계는 그 프레임에 In 트림을 건 것과 정확히
+// 같다 — 다른 수식을 쓰면 익스포트 -ss snap-up과 어긋나 프레임이 하나 밀린다.
+//
+// 뒤 구간이 원래(읽어낸) 이름을 유지하고, 앞 구간에는 `_cut` 임시 이름이 붙는다.
+// 두 줄이 같은 이름이면 목록에서 어느 쪽을 고쳐야 할지 알 수 없고, 익스포트 파일명도
+// dedupe 접미사가 붙어 헷갈린다. 진짜 이름은 슬레이트를 읽어 붙이는 별도 단계
+// (renameSegment)의 몫이다 — OCR은 비동기라 시점이 다르고, 못 읽으면 `_cut`이 남아
+// 고쳐야 할 줄이 한눈에 보인다.
+//
+// k<=1이면 앞 구간이 0프레임이라 아무것도 하지 않는다(빈 구간은 익스포트가 0바이트
+// 클립을 만든다).
+export function splitSegment(
+  segs: SceneSegment[], i: number, k: number, fps: number,
+): SceneSegment[] {
+  const cur = segs[i];
+  if (!cur || k <= 1) return segs;
+  const cutMs = shiftBoundaryMs(cur.start_ms, fps, Math.floor(k) - 1);
+  if (cutMs <= cur.start_ms || cutMs >= cur.end_ms) return segs;
+  const out = segs.slice();
+  out.splice(i, 1,
+    { ...cur, end_ms: cutMs, label: cutLabel(segs, cur.label) },
+    { ...cur, start_ms: cutMs });
+  return out;
+}
+
+// 나눈 앞 구간에 읽어낸 이름을 얹는다 — 단 그 자리가 아직 자리표시자일 때만.
+//
+// 슬레이트 읽기는 비동기라 그 사이 사용자가 되돌리거나 다른 편집을 했을 수 있다.
+// 확인 없이 덮으면 엉뚱한 줄의 이름을 바꾼다. 또 이 함수는 '지금 상태'를 받아
+// 계산해야 한다 — 분할 시점에 닫아둔 배열 위에서 이름을 바꾸면 그 배열이 그대로
+// 되살아나 방금 나눈 줄이 통째로 사라진다(2026-07-28 실기 재현).
+export function applySplitName(
+  segs: SceneSegment[], i: number, placeholder: string, label: string,
+): SceneSegment[] {
+  if (segs[i]?.label !== placeholder) return segs;
+  return renameSegment(segs, i, label);
+}
+
+// 나눈 앞 구간의 임시 이름. 이미 쓰이고 있으면 숫자를 늘린다 — 같은 씬을 여러 번
+// 나누거나 이름을 안 고친 채 옆 씬을 또 나눠도 이름이 겹치지 않아야 한다.
+function cutLabel(segs: SceneSegment[], base: string): string {
+  const taken = new Set(segs.map((s) => s.label));
+  const first = `${base}_cut`;
+  if (!taken.has(first)) return first;
+  for (let n = 2; n < 1000; n += 1) {
+    const cand = `${first}${n}`;
+    if (!taken.has(cand)) return cand;
+  }
+  return first;
 }
 
 // 앞뒤가 같은 라벨로 둘러싸인 짧은 구간을 흡수한다 — 씬/시퀀스는 번호가 바뀌었다
@@ -450,6 +504,34 @@ export function filterIndices(
   return pool.filter((i) => matchesLabelQuery(labels[i] ?? "", query));
 }
 
+// 경계오류 탭에 보일 구간 인덱스.
+//
+// 저장된 인덱스가 아니라 '현재 세그먼트의 라벨'로 다시 찾는다 — 병합·분할·이름수정
+// 으로 목록이 바뀌어도 어긋나지 않고, 라벨이 사라진 구간은 자동으로 빠진다.
+//
+// 사용자가 '문제없음'으로 확인한 구간은 뺀다. 검사는 디졸브처럼 두 슬레이트가 겹쳐
+// 보이는 구간을 혼입으로 잡는데 실제로는 경계가 맞는 경우가 있고, 400씬 검수는 여러
+// 세션에 걸치므로 확인 결과가 남아야 한다. 단 확인 당시의 시작·끝과 지금이 다르면
+// 확인표시를 무시한다 — 그 뒤에 경계를 고쳤다는 뜻이고, 바뀐 경계를 안 본 채로
+// 숨기면 안 된다.
+export function boundaryIssueIndices(
+  issues: Array<{ label: string }>, segs: SceneSegment[], ok: BoundaryOk[],
+): number[] {
+  const idxOf = new Map(segs.map((s, i) => [s.label, i] as const));
+  const okOf = new Map(ok.map((o) => [o.label, o] as const));
+  const out: number[] = [];
+  for (const issue of issues) {
+    const i = idxOf.get(issue.label);
+    if (i == null) continue;
+    const seg = segs[i] as SceneSegment;
+    const cleared = okOf.get(issue.label);
+    if (cleared && cleared.start_ms === seg.start_ms
+        && cleared.end_ms === seg.end_ms) continue;
+    out.push(i);
+  }
+  return out;
+}
+
 function editDistance(a: string, b: string): number {
   // 라벨은 짧다(수십 자) — 단순 DP로 충분하다.
   let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
@@ -595,7 +677,7 @@ export function scanProgressKey(
 // 물리 키(e.code)를 함께 본다. 이 앱 사용자는 한글 입력 상태가 기본이다.
 // 대괄호는 Shift 조합({ })도 같은 물리 키라 함께 받는다.
 export type ScenePopupAction =
-  | "trimIn" | "trimOut" | "prevScene" | "nextScene" | "toHead" | "toTail";
+  | "trimIn" | "trimOut" | "split" | "prevScene" | "nextScene" | "toHead" | "toTail";
 
 export function scenePopupAction(
   ev: { code?: string; key?: string },
@@ -603,6 +685,7 @@ export function scenePopupAction(
   const key = (ev.key ?? "").toLowerCase();
   if (ev.code === "KeyI" || key === "i") return "trimIn";
   if (ev.code === "KeyO" || key === "o") return "trimOut";
+  if (ev.code === "KeyS" || key === "s") return "split";
   if (ev.code === "KeyG" || key === "g") return "prevScene";
   if (ev.code === "KeyH" || key === "h") return "nextScene";
   if (ev.code === "BracketLeft" || key === "[" || key === "{") return "toHead";

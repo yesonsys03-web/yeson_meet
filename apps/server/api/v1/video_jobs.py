@@ -182,6 +182,16 @@ class SceneExportProbeIn(BaseModel):
     token: str = Field(min_length=8, max_length=64, pattern="^[0-9a-f]+$")
 
 
+class BoundaryOkItem(BaseModel):
+    label: str = Field(min_length=1, max_length=200)
+    start_ms: int = Field(ge=0)
+    end_ms: int = Field(ge=0)
+
+
+class BoundaryOkIn(BaseModel):
+    items: list[BoundaryOkItem]
+
+
 def _iso_utc(value: datetime | None) -> str | None:
     """NAIVE UTC 저장 관례 → tz 붙여 직렬화 (sessions.py _serialize_utc와 동일 이유 —
     tz 없이 내보내면 클라 new Date가 로컬로 오해해 UTC 오프셋만큼 어긋난다)."""
@@ -670,7 +680,8 @@ async def get_scenes(
     if not data:
         return {"scanned": False, "scanning": False, "error": None,
                 "ocr_done": 0, "total_frames": 0, "frames": [],
-                "segments_scene": [], "segments_sequence": [], "rule": None}
+                "segments_scene": [], "segments_sequence": [], "rule": None,
+                "boundary_ok": []}
     # scanned = 스캔 진행중 아님 + 에러 없음(+frames 확정). 진행중이면 프론트가
     # ocr_done/total_frames로 진척을 표시하고, error면 폴링을 멈춘다.
     scanning = bool(data.get("scanning"))
@@ -707,6 +718,9 @@ async def get_scenes(
         # 경계 오류(혼입) 검사 결과 — 씬 모드 세그먼트 중 머리/꼬리 프레임에 이웃
         # 슬레이트가 잡힌 구간. 프론트 '⚠ 경계 오류' 필터 탭이 이 인덱스를 쓴다.
         "boundary_issues": data.get("boundary_issues", []),
+        # 사용자가 '문제없음'으로 확인한 구간(라벨 + 확인 당시 경계). 프론트가
+        # 경계오류 탭에서 제외하되, 경계가 그 뒤에 바뀌었으면 무시한다.
+        "boundary_ok": data.get("boundary_ok", []),
     }
 
 
@@ -1025,6 +1039,32 @@ async def scene_boundary_status(
         return {"checking": False, "done": 0, "total": 0, "error": None}
     return {"checking": bool(st.get("checking")), "done": st.get("done", 0),
             "total": st.get("total", 0), "error": st.get("error")}
+
+
+@router.post("/{external_id}/scenes/boundary-ok")
+async def save_boundary_ok(
+    external_id: UUID,
+    body: BoundaryOkIn,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """사용자가 눈으로 확인해 '문제없음'으로 표시한 경계오류 구간 목록을 저장한다.
+
+    경계 검사는 디졸브처럼 두 슬레이트가 겹쳐 보이는 구간을 혼입으로 플래그하는데
+    실제로는 경계가 맞는 경우가 있다. 400씬 검수는 여러 세션에 걸치므로 확인 결과가
+    남지 않으면 같은 줄을 매번 다시 본다.
+
+    목록 '전체'를 교체한다 — 추가·삭제를 나누면 부분 상태가 어긋난다. 빈 배열이
+    '모두 해제'다.
+
+    확인 당시의 start_ms/end_ms를 함께 저장한다. 나중에 그 씬의 경계가 바뀌면
+    클라가 이 확인표시를 무시하고 목록에 다시 띄운다 — 바뀐 경계를 안 본 채로
+    숨기지 않기 위해서다.
+    """
+    await _get_job_or_404(db, external_id)
+    data = load_scenes(external_id) or {}
+    data["boundary_ok"] = [item.model_dump() for item in body.items]
+    save_scenes(external_id, data)
+    return {"count": len(body.items)}
 
 
 @router.get("/{external_id}/scenes/thumb/{index}")

@@ -325,6 +325,11 @@ export function videoDownloadUrl(jobId: string, kind: "video" | "srt"): string {
 
 export type SceneSegment = { label: string; start_ms: number; end_ms: number };
 
+// 사용자가 눈으로 확인해 "문제없음"으로 표시한 경계오류 구간. 확인 당시의 경계를
+// 함께 들고 다닌다 — 나중에 그 씬 경계가 바뀌면 확인표시를 무시해야 하기 때문이다
+// (바뀐 경계를 안 본 채로 숨기지 않는다).
+export type BoundaryOk = { label: string; start_ms: number; end_ms: number };
+
 // 스캔 방식 — interval(간격 OCR 샘플링+정밀화, 기존)과 fingerprint(전 프레임
 // 지문 컷 감지, 프레임 정확·정밀화 불필요)를 나란히 두고 UI에서 고른다.
 export type SceneMethod = "interval" | "fingerprint";
@@ -363,6 +368,9 @@ export type ScenesData = {
   // 경계 오류(혼입) 검사 결과 — 씬 모드 세그먼트 중 머리/꼬리 프레임에 이웃
   // 슬레이트가 잡힌 구간(플래그된 것만). '⚠ 경계 오류' 필터 탭이 index를 쓴다.
   boundary_issues?: Array<{ index: number; label: string; head: boolean; tail: boolean }>;
+  // 사용자가 '문제없음'으로 확인한 구간. 경계가 그대로면 경계오류 탭에서 빠지고,
+  // 그 씬 경계를 고치면 다시 나타난다(boundaryIssueIndices).
+  boundary_ok?: BoundaryOk[];
 };
 
 export type SlateRuleInput = {
@@ -558,6 +566,18 @@ export type BoundaryStatus = {
 export async function startBoundaryCheck(jobId: string): Promise<void> {
   await request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/boundary-check`, {
     method: "POST",
+  });
+}
+
+// 확인 목록 '전체'를 교체한다(빈 배열 = 모두 해제) — 추가·삭제를 나누면 부분 상태가
+// 어긋난다. 클라가 목록의 주인이다.
+export async function saveBoundaryOk(
+  jobId: string, items: BoundaryOk[],
+): Promise<{ count: number }> {
+  return request(`${apiBase()}/api/v1/video-jobs/${jobId}/scenes/boundary-ok`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
   });
 }
 

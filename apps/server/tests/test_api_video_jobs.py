@@ -1441,3 +1441,62 @@ async def test_scene_export_probe_rejects_missing_dir(
     assert r.status_code == 200
     assert r.json() == {"direct": False, "reason": "not_a_dir"}
     assert not missing.exists()
+
+
+async def test_boundary_ok_saved_and_returned(client, db_session, admin_user):
+    """사용자가 '문제없음'으로 확인한 목록이 저장되고 다시 읽힌다.
+
+    검사는 디졸브처럼 두 슬레이트가 겹쳐 보이는 구간을 혼입으로 잡는데 실제로는
+    경계가 맞는 경우가 있다. 400씬 검수는 여러 세션에 걸치므로 확인 결과가 남지
+    않으면 같은 줄을 매번 다시 본다.
+    """
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {"frames": [], "segments_scene": [],
+                                     "segments_sequence": []})
+    items = [{"label": "HH0305_140_0290", "start_ms": 1359000,
+              "end_ms": 1366000}]
+
+    r = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/boundary-ok",
+        json={"items": items})
+    assert r.status_code == 200
+    assert r.json() == {"count": 1}
+
+    got = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")
+    assert got.json()["boundary_ok"] == items
+
+
+async def test_boundary_ok_replaces_the_previous_list(client, db_session,
+                                                      admin_user):
+    """추가가 아니라 '전체 교체' — 클라가 목록의 주인이고 빈 배열이 모두 해제다.
+    추가·삭제를 나누면 부분 상태가 어긋난다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {"frames": [], "segments_scene": [],
+                                     "segments_sequence": []})
+    url = f"/api/v1/video-jobs/{job.external_id}/scenes/boundary-ok"
+
+    await client.post(url, json={"items": [
+        {"label": "A", "start_ms": 0, "end_ms": 100},
+        {"label": "B", "start_ms": 100, "end_ms": 200}]})
+    await client.post(url, json={"items": [
+        {"label": "B", "start_ms": 100, "end_ms": 200}]})
+    got = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")
+    assert [o["label"] for o in got.json()["boundary_ok"]] == ["B"]
+
+    await client.post(url, json={"items": []})
+    got = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")
+    assert got.json()["boundary_ok"] == []
+
+
+async def test_boundary_ok_defaults_to_empty(client, db_session, admin_user):
+    """이 키가 없던 시절의 scenes.json도, 아예 스캔 전인 잡도 []를 준다 —
+    클라가 응답 모양을 갈래 없이 읽을 수 있어야 한다."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {"frames": [], "segments_scene": [],
+                                     "segments_sequence": []})
+    got = await client.get(f"/api/v1/video-jobs/{job.external_id}/scenes")
+    assert got.json()["boundary_ok"] == []
+
+    fresh = await _new_scene_job(db_session, admin_user, status="done")
+    got = await client.get(f"/api/v1/video-jobs/{fresh.external_id}/scenes")
+    assert got.json()["boundary_ok"] == []

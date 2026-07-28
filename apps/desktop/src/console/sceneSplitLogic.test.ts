@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName, probeFileName } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName, probeFileName, splitSegment, applySplitName, boundaryIssueIndices } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -489,6 +489,13 @@ describe("scenePopupAction", () => {
     expect(scenePopupAction({ code: "KeyI", key: "Process" })).toBe("trimIn");
   });
 
+  it("maps S to split, by code and by key (한글 입력 상태 포함)", () => {
+    // 한글 IME에서는 key가 'ㄴ'으로 오므로 code를 함께 본다(기존 키들과 동일 정책).
+    expect(scenePopupAction({ code: "KeyS", key: "ㄴ" })).toBe("split");
+    expect(scenePopupAction({ key: "s" })).toBe("split");
+    expect(scenePopupAction({ key: "S" })).toBe("split");
+  });
+
   it("accepts the shifted brackets on the same physical keys", () => {
     expect(scenePopupAction({ code: "BracketLeft", key: "{" })).toBe("toHead");
     expect(scenePopupAction({ code: "BracketRight", key: "}" })).toBe("toTail");
@@ -773,6 +780,100 @@ describe("exportedFileName", () => {
     expect(exportedFileName("D:\\out\\Scene678.mp4")).toBe("Scene678.mp4");
     expect(exportedFileName("/srv/out/Scene678.mp4")).toBe("Scene678.mp4");
     expect(exportedFileName("Scene678.mp4")).toBe("Scene678.mp4");
+  });
+});
+
+describe("splitSegment", () => {
+  const fps = 24;
+  const segs = [
+    { label: "A", start_ms: 0, end_ms: 10000 },
+    { label: "B", start_ms: 10000, end_ms: 20000 },
+  ];
+
+  it("cuts where the In trim would put the boundary", () => {
+    // 분할과 트림이 다른 수식을 쓰면 익스포트 -ss snap-up과 어긋나 프레임이 밀린다.
+    const out = splitSegment(segs, 1, 5, fps);
+    const cut = shiftBoundaryMs(10000, fps, 4);
+    expect(out).toHaveLength(3);
+    expect(out[1]).toEqual({ label: "B_cut", start_ms: 10000, end_ms: cut });
+    expect(out[2]).toEqual({ label: "B", start_ms: cut, end_ms: 20000 });
+  });
+
+  it("marks the leading part with _cut so the two rows never share a name", () => {
+    // 같은 이름 두 줄이면 어느 쪽을 고쳐야 할지 알 수 없고, 익스포트 파일명에도
+    // dedupe 접미사가 붙어 헷갈린다. 뒤 구간이 원래(읽어낸) 이름을 유지한다.
+    const out = splitSegment(segs, 1, 5, fps);
+    expect(out[1]!.label).toBe("B_cut");
+    expect(out[2]!.label).toBe("B");
+  });
+
+  it("keeps the placeholder unique when the same scene is split again", () => {
+    const once = splitSegment(segs, 1, 5, fps);
+    const twice = splitSegment(once, 2, 5, fps);
+    const labels = twice.map((s) => s.label);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels).toContain("B_cut2");
+  });
+
+  it("leaves the timeline continuous — no gap, no overlap, same total span", () => {
+    const out = splitSegment(segs, 1, 5, fps);
+    expect(out[0]!.end_ms).toBe(out[1]!.start_ms);
+    expect(out[1]!.end_ms).toBe(out[2]!.start_ms);
+    expect(out[0]!.start_ms).toBe(0);
+    expect(out.at(-1)!.end_ms).toBe(20000);
+  });
+
+  it("refuses the first frame — a 0-frame part exports a 0-byte clip", () => {
+    expect(splitSegment(segs, 1, 1, fps)).toBe(segs);
+  });
+
+  it("refuses an out-of-range index or a frame past the end", () => {
+    expect(splitSegment(segs, 5, 3, fps)).toBe(segs);
+    expect(splitSegment(segs, 1, 100000, fps)).toBe(segs);
+  });
+});
+
+describe("applySplitName", () => {
+  const segs = [
+    { label: "A", start_ms: 0, end_ms: 1000 },
+    { label: "B_cut", start_ms: 1000, end_ms: 1500 },
+    { label: "B", start_ms: 1500, end_ms: 2000 },
+  ];
+
+  it("names the placeholder row that is still sitting there", () => {
+    const out = applySplitName(segs, 1, "B_cut", "B_0280");
+    expect(out.map((s) => s.label)).toEqual(["A", "B_0280", "B"]);
+  });
+
+  it("does nothing when that row is no longer the placeholder", () => {
+    // 슬레이트를 읽는 동안 사용자가 되돌리거나 다른 편집을 했을 수 있다 — 그때
+    // 이름을 얹으면 엉뚱한 줄을 덮어쓴다.
+    expect(applySplitName(segs, 2, "B_cut", "B_0280")).toBe(segs);
+    expect(applySplitName(segs, 9, "B_cut", "B_0280")).toBe(segs);
+  });
+});
+
+describe("boundaryIssueIndices", () => {
+  const segs = [
+    { label: "A", start_ms: 0, end_ms: 1000 },
+    { label: "B", start_ms: 1000, end_ms: 2000 },
+  ];
+
+  it("resolves each issue by current label, not a stored index", () => {
+    // 병합·분할로 목록 길이가 바뀌어도 엉뚱한 줄을 가리키면 안 된다.
+    expect(boundaryIssueIndices([{ label: "B" }], segs, [])).toEqual([1]);
+    expect(boundaryIssueIndices([{ label: "gone" }], segs, [])).toEqual([]);
+  });
+
+  it("hides a scene the user confirmed is fine", () => {
+    const ok = [{ label: "B", start_ms: 1000, end_ms: 2000 }];
+    expect(boundaryIssueIndices([{ label: "B" }], segs, ok)).toEqual([]);
+  });
+
+  it("brings it back once that boundary moves — the new cut was never reviewed", () => {
+    const ok = [{ label: "B", start_ms: 1000, end_ms: 2000 }];
+    const moved = [segs[0]!, { label: "B", start_ms: 1200, end_ms: 2000 }];
+    expect(boundaryIssueIndices([{ label: "B" }], moved, ok)).toEqual([1]);
   });
 });
 
