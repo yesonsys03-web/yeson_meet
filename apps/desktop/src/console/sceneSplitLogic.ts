@@ -638,6 +638,14 @@ export function neighborIndices(i: number, n: number): number[] {
   return out;
 }
 
+// 익스포트 탐침 파일 이름. 접두사 `yeson_probe_`는 Rust(probe_file_write/remove의
+// PROBE_PREFIX)와 서버(_PROBE_PREFIX)가 함께 지키는 계약이다 — Rust는 이 접두사가
+// 아닌 경로를 거부하고(사용자 파일을 지울 통로를 막는다), 서버는 같은 이름으로
+// 파일을 찾는다. 한쪽만 바꾸면 탐침이 조용히 실패해 같은 PC에서도 중계로 떨어진다.
+export function probeFileName(token: string): string {
+  return `yeson_probe_${token}.tmp`;
+}
+
 // 구간 이름(=파일명) 수정.
 export function renameSegment(
   segs: SceneSegment[], i: number, label: string,
