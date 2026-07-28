@@ -721,6 +721,31 @@ def test_canonicalize_fixes_delimiter_loss():
     assert out[6] == "HH0307_010_0030_AC_v01"
 
 
+def test_canonicalize_unifies_lookalike_letter_heads():
+    """EASA05 실기: 'Seq'의 q가 g로 읽히는 글자↔글자 오독은 모양(U1L2D2U1)이
+    동일해 템플릿·닮은꼴(글자↔숫자) 교정을 전부 통과하고, 같은 씬이 Seq/Seg
+    두 세그먼트로 갈라진다(혼재 121/200씬 실측). 같은 토큰 자리의 머리글자가
+    닮은꼴 소문자쌍(q↔g) 한 글자 차이로 갈리면 전역 다수결로 통일한다."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    texts = (["Seq01A_S02-Panel4"] * 6
+             + ["Seg01A_S02-Panel5",     # 다수(Seq)와 q↔g 한 글자 차이
+                "Seg12B_S03-Panel1"])    # 다른 씬이어도 같은 자리 오독이면 통일
+    out = canonicalize_texts(texts, ["_", "-"])
+    assert out[:6] == texts[:6]          # 다수형은 그대로
+    assert out[6].startswith("Seq01A_S02")
+    assert out[7].startswith("Seq12B_S03")
+
+
+def test_canonicalize_head_unify_noop_for_stable_shows():
+    """머리글자가 안 갈리는 쇼는 한 글자도 안 바뀐다(타 쇼 무회귀 보증).
+    다수결 동수(어느 쪽이 진짜인지 근거 없음)도 손대지 않는다."""
+    from apps.server.domain.video_captions.scene_split import canonicalize_texts
+    stable = ["HH0307_010_0010_AC_v01"] * 5 + ["HH0307_010_0020_AC_v01"]
+    assert canonicalize_texts(stable, ["_", "-"]) == stable
+    tie = ["Seq01A_S01"] * 3 + ["Seg01A_S01"] * 3
+    assert canonicalize_texts(tie, ["_", "-"]) == tie
+
+
 def test_canonicalize_leaves_ambiguous_and_corrupt():
     from apps.server.domain.video_captions.scene_split import canonicalize_texts
     texts = (["HH0307_010_0010_AC_v01"] * 5
