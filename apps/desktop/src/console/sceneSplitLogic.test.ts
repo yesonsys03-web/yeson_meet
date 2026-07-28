@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName, probeFileName, splitSegment, applySplitName, boundaryIssueIndices } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName, probeFileName, probeToken, upsertBoundaryOk, splitSegment, applySplitName, boundaryIssueIndices } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -815,6 +815,17 @@ describe("splitSegment", () => {
     expect(labels).toContain("B_cut2");
   });
 
+  it("does not stack _cut when the leading _cut part is split again", () => {
+    // 자리표시자 줄을 이어서 나누면 base가 "B_cut"이라 그대로 붙이면 "B_cut_cut"이
+    // 된다(실기 2026-07-28) — 접미사를 벗기고 번호를 올려 "B_cut2"가 돼야 한다.
+    const once = splitSegment(segs, 1, 5, fps);   // [A, B_cut, B]
+    const twice = splitSegment(once, 1, 3, fps);  // 앞 조각(B_cut)을 또 나눈다
+    const labels = twice.map((s) => s.label);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels).toContain("B_cut2");
+    expect(labels.some((l) => l.includes("_cut_cut"))).toBe(false);
+  });
+
   it("leaves the timeline continuous — no gap, no overlap, same total span", () => {
     const out = splitSegment(segs, 1, 5, fps);
     expect(out[0]!.end_ms).toBe(out[1]!.start_ms);
@@ -851,6 +862,19 @@ describe("applySplitName", () => {
     expect(applySplitName(segs, 2, "B_cut", "B_0280")).toBe(segs);
     expect(applySplitName(segs, 9, "B_cut", "B_0280")).toBe(segs);
   });
+
+  it("refuses a name that would duplicate another row", () => {
+    // _cut 줄을 이어 나눈 앞 조각에는 OCR이 대개 '이미 목록에 있는 진짜 이름'을
+    // 제안한다(뒤쪽 원래 줄과 중복). 얹으면 같은 이름 두 줄 — _cut을 만든 이유가
+    // 통째로 무효가 되므로 자리표시자를 남긴다(실기 2026-07-28: _cut이 사라지고
+    // Seg01A_S11 두 줄이 남았다).
+    const stacked = [
+      { label: "B_cut2", start_ms: 1000, end_ms: 1200 },
+      { label: "B_cut", start_ms: 1200, end_ms: 1500 },
+      { label: "B", start_ms: 1500, end_ms: 2000 },
+    ];
+    expect(applySplitName(stacked, 0, "B_cut2", "B")).toBe(stacked);
+  });
 });
 
 describe("boundaryIssueIndices", () => {
@@ -874,6 +898,35 @@ describe("boundaryIssueIndices", () => {
     const ok = [{ label: "B", start_ms: 1000, end_ms: 2000 }];
     const moved = [segs[0]!, { label: "B", start_ms: 1200, end_ms: 2000 }];
     expect(boundaryIssueIndices([{ label: "B" }], moved, ok)).toEqual([1]);
+  });
+});
+
+describe("probeToken", () => {
+  it("encodes bytes as lowercase hex, two digits each", () => {
+    expect(probeToken(new Uint8Array([0, 15, 171, 255]))).toBe("000fabff");
+  });
+
+  it("stays inside the shape the server validates", () => {
+    // 서버가 ^[0-9a-f]+$ · 8~64자로 검증한다(BoundaryOk와 달리 여긴 pattern이 있다).
+    // 모양이 어긋나면 422가 나고 탐침은 조용히 실패해 느린 중계 경로로 떨어진다 —
+    // 에러가 안 뜨므로 눈치채기 어렵다. 그래서 모양을 여기서 잠근다.
+    const token = probeToken(new Uint8Array(8));
+    expect(token).toMatch(/^[0-9a-f]{16}$/);
+  });
+});
+
+describe("upsertBoundaryOk", () => {
+  const a = { label: "A", start_ms: 0, end_ms: 100 };
+  const b = { label: "B", start_ms: 100, end_ms: 200 };
+
+  it("replaces the entry for the same label instead of piling up", () => {
+    // 같은 씬을 두 번 확인하면 항목이 쌓여 어느 경계가 기준인지 알 수 없게 된다.
+    const moved = { label: "B", start_ms: 120, end_ms: 200 };
+    expect(upsertBoundaryOk([a, b], moved)).toEqual([a, moved]);
+  });
+
+  it("appends a label that was not confirmed yet", () => {
+    expect(upsertBoundaryOk([a], b)).toEqual([a, b]);
   });
 });
 

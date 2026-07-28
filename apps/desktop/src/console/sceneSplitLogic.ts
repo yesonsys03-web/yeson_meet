@@ -287,14 +287,21 @@ export function applySplitName(
   segs: SceneSegment[], i: number, placeholder: string, label: string,
 ): SceneSegment[] {
   if (segs[i]?.label !== placeholder) return segs;
+  // 얹으면 같은 이름 두 줄이 되는 제안도 거부한다 — _cut 줄을 이어 나눈 앞 조각에는
+  // OCR이 대개 '이미 목록에 있는 진짜 이름'을 읽어온다(뒤쪽 원래 줄과 중복). 중복
+  // 이름 방지가 _cut의 존재 이유라 여기서도 지킨다(실기 2026-07-28: _cut이 사라지고
+  // 같은 이름 두 줄).
+  if (segs.some((s, j) => j !== i && s.label === label)) return segs;
   return renameSegment(segs, i, label);
 }
 
 // 나눈 앞 구간의 임시 이름. 이미 쓰이고 있으면 숫자를 늘린다 — 같은 씬을 여러 번
 // 나누거나 이름을 안 고친 채 옆 씬을 또 나눠도 이름이 겹치지 않아야 한다.
+// base가 이미 자리표시자면(_cut 줄을 이어 나누는 경우) 접미사를 벗기고 번호만
+// 올린다 — 그대로 붙이면 "…_cut_cut"이 된다(실기 2026-07-28).
 function cutLabel(segs: SceneSegment[], base: string): string {
   const taken = new Set(segs.map((s) => s.label));
-  const first = `${base}_cut`;
+  const first = `${base.replace(/_cut\d*$/, "")}_cut`;
   if (!taken.has(first)) return first;
   for (let n = 2; n < 1000; n += 1) {
     const cand = `${first}${n}`;
@@ -727,6 +734,21 @@ export function neighborIndices(i: number, n: number): number[] {
 // 파일을 찾는다. 한쪽만 바꾸면 탐침이 조용히 실패해 같은 PC에서도 중계로 떨어진다.
 export function probeFileName(token: string): string {
   return `yeson_probe_${token}.tmp`;
+}
+
+// 탐침 토큰 — 서버가 `^[0-9a-f]+$` · 8~64자로 검증한다. 모양이 어긋나면 422가 나고
+// 탐침이 조용히 실패해 느린 중계 경로로 떨어진다(에러가 안 뜨므로 눈치채기 어렵다).
+// 난수 생성은 호출자가 하고(crypto), 여기서는 인코딩만 해 테스트로 모양을 잠근다.
+export function probeToken(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// 경계오류 '문제없음' 목록에 한 건을 얹는다 — 같은 라벨은 교체한다. 쌓이게 두면
+// 같은 씬에 확인 시점이 여럿 남아 어느 경계가 기준인지 알 수 없게 된다.
+export function upsertBoundaryOk(
+  list: BoundaryOk[], entry: BoundaryOk,
+): BoundaryOk[] {
+  return [...list.filter((o) => o.label !== entry.label), entry];
 }
 
 // 구간 이름(=파일명) 수정.
