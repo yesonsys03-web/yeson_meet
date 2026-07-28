@@ -35,6 +35,8 @@ def test_ko_corrections_fix_report_awkwardness(monkeypatch, tmp_path):
     assert fixed == "애니매틱을 전달할 수 있어요"
     assert mod.apply_ko_corrections("2주간의 푸시 아웃을 보여줍니다") \
         == "2주간의 밀림을 보여줍니다"
+    assert mod.apply_ko_corrections("일단 씨앗을 심어두고 다음 주에 얘기해요") \
+        == "일단 미리 말을 꺼내두고 다음 주에 얘기해요"
     # 명사 "딜리버리"는 스튜디오 관례(delivery => 딜리버리)라 건드리면 안 된다.
     assert mod.apply_ko_corrections("딜리버리 일정 확인") == "딜리버리 일정 확인"
 

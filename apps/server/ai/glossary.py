@@ -141,6 +141,8 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("milestone", "마일스톤"),
     ("dailies", "데일리"),
     ("push out", "밀림"),
+    # 회의 관용구 — "씨앗을 심어두고" 직역 관측(2026-07-28 보고서). 뜻으로 옮긴다.
+    ("plant the seed", "미리 말을 꺼내 두다"),
     ("footage", "풋티지"),
     ("frame rate", "프레임레이트"),
     ("resolution", "해상도"),
@@ -301,6 +303,10 @@ DEFAULT_KO_CORRECTIONS: list[tuple[str, str]] = [
     # "순연"은 격식체라 어렵다는 사용자 피드백 → 현장 회화체 "밀림"으로.
     ("푸시 아웃", "밀림"),
     ("푸시아웃", "밀림"),
+    # "plant the seed" 직역("일단 씨앗을 심어두고") — 관용구를 뜻으로. ⚠자막메이커
+    # (작품 대사)에도 적용된다: 정원 가꾸기 대사가 있는 작품에선 오버라이드 파일에서
+    # 이 항목을 무해한 값(씨앗을 심어 => 씨앗을 심어)으로 덮어 끌 것.
+    ("씨앗을 심어", "미리 말을 꺼내"),
 ]
 
 _ko_cache: dict[str, object] = {"key": None, "terms": None}
