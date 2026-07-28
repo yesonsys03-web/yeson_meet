@@ -23,6 +23,20 @@ def test_default_glossary_fixes_cleanup(monkeypatch, tmp_path):
     assert terms["layout"] == "레이아웃"
     assert terms["coloring"] == "컬러"
     assert terms["line art"] == "라인아트"
+    assert terms["element"] == "엘리먼트"  # not the literal "요소" (VFX sense)
+    assert terms["push out"] == "순연"  # schedule sense, not spatial
+    assert terms["yeson"] == "예손"  # heard as "yes on" and dropped otherwise
+
+
+def test_ko_corrections_fix_report_awkwardness(monkeypatch, tmp_path):
+    """실제 보고서에서 나온 어색한 문구가 교정되고, 정당한 표현은 안 다친다."""
+    mod = _fresh(monkeypatch, tmp_path, STORAGE_ROOT=str(tmp_path))
+    fixed = mod.apply_ko_corrections("애니매틱을 딜리버리할 수 있어요")
+    assert fixed == "애니매틱을 전달할 수 있어요"
+    assert mod.apply_ko_corrections("2주간의 푸시 아웃을 보여줍니다") \
+        == "2주간의 순연을 보여줍니다"
+    # 명사 "딜리버리"는 스튜디오 관례(delivery => 딜리버리)라 건드리면 안 된다.
+    assert mod.apply_ko_corrections("딜리버리 일정 확인") == "딜리버리 일정 확인"
 
 
 def test_block_lists_terms(monkeypatch, tmp_path):
