@@ -145,7 +145,10 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       });
       setData({ ...(data as ScenesData), scanned: true,
                 segments_scene: res.segments_scene,
-                segments_sequence: res.segments_sequence });
+                segments_sequence: res.segments_sequence,
+                // 서버도 재계산 시 옛 경계오류 플래그를 버린다 — 화면만 들고
+                // 있으면 리페치 전까지 유령 플래그가 보인다(실기 07-29).
+                boundary_issues: [] });
       setSelectedSeg(null);
       setNotice(`경계 계산 완료 — 시퀀스 ${res.segments_sequence.length}개 · 씬 ${res.segments_scene.length}개. 이제 익스포트하면 최신 경계로 잘립니다.`);
     } catch (e) {

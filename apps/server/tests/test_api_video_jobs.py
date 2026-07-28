@@ -1014,6 +1014,35 @@ async def test_set_rule_computes_boundaries(client, db_session, admin_user):
     assert seq_labels == ["HH0307_020", "HH0307_021"]
 
 
+async def test_set_rule_clears_stale_boundary_issues(client, db_session,
+                                                     admin_user):
+    """경계 계산(세그먼트 재계산)은 옛 boundary_issues를 비워야 한다 — 옛 검사는
+    다른 레이아웃(다른 경계) 기준이라, 남겨 두면 라벨이 우연히 같은 구간에
+    유령 플래그로 되살아난다(실기 2026-07-29: EASA05 재계산 후 21건).
+    boundary_ok(문제없음)는 확인 당시 경계를 저장해 스스로 무효화되므로 유지."""
+    job = await _new_scene_job(db_session, admin_user, status="done")
+    pl.save_scenes(job.external_id, {
+        "method": "fingerprint",
+        "frames": [{"t_ms": 0, "text": "Seq01_S01"}],
+        "runs": [
+            {"start_ms": 0, "end_ms": 1000, "text": "Seq01_S01"},
+            {"start_ms": 1000, "end_ms": 2000, "text": "Seq01_S02"},
+        ],
+        "boundary_issues": [{"index": 0, "label": "Seq01_S01",
+                             "head": False, "tail": True}],
+        "boundary_ok": [{"label": "Seq01_S02", "start_ms": 1000,
+                         "end_ms": 2000}],
+    })
+    resp = await client.post(
+        f"/api/v1/video-jobs/{job.external_id}/scenes/rule",
+        json={"seq_tokens": [0], "scene_tokens": [1]})
+    assert resp.status_code == 200
+    saved = pl.load_scenes(job.external_id)
+    assert saved.get("boundary_issues", []) == []
+    assert saved.get("boundary_ok") == [{"label": "Seq01_S02",
+                                         "start_ms": 1000, "end_ms": 2000}]
+
+
 async def test_export_starts_task(client, db_session, admin_user, monkeypatch):
     started = {}
     monkeypatch.setattr(api_vj, "_start_scene_export",
