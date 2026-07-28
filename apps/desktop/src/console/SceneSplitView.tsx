@@ -2,17 +2,17 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, probeFileName, scanProgressKey, scenePopupAction, stepVisibleIndex,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, boundaryIssueIndices, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, probeFileName, scanProgressKey, scenePopupAction, stepVisibleIndex,
   NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, tokenizeSlate, trimFrames,
   type LabelFix,
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
   cancelSceneOps, exportScenes, getBoundaryStatus, getExportStatus, getRefineStatus,
-  cleanupSceneExport, sceneExportFileUrl, probeExportDir,
+  cleanupSceneExport, sceneExportFileUrl, probeExportDir, saveBoundaryOk,
   getScenes, listSlateTemplates, overrideSceneSegments, refineScenes, scanScenes,
   setOcrRegion as setOcrRegionApi, setSceneRule, startBoundaryCheck, videoMediaUrl,
-  type BoundaryStatus, type ExportStatus, type OcrRegion, type RefineStatus,
+  type BoundaryOk, type BoundaryStatus, type ExportStatus, type OcrRegion, type RefineStatus,
   type SceneMethod, type ScenesData, type SceneSegment, type SlateTemplate,
 } from "./videoApi";
 import { SlateRegionPicker } from "./SlateRegionPicker";
@@ -538,6 +538,30 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       ? { ...prev, boundary_issues: prev.boundary_issues.filter((b) => !drop.has(b.label)) }
       : prev));
   };
+  // 확인 목록을 통째로 저장한다(전체 교체 — 서버도 같은 약속). 실패하면 화면 상태를
+  // 되돌린다: 저장에 실패했는데 화면에서만 빼면 "뺐다고 봤는데 다음에 또 뜨는" 상태가
+  // 된다. 낙관적 갱신 → 실패 시 롤백.
+  const putBoundaryOk = async (next: BoundaryOk[]) => {
+    if (!data) return;
+    const before = data.boundary_ok ?? [];
+    setData({ ...data, boundary_ok: next });
+    try {
+      await saveBoundaryOk(jobId, next);
+    } catch (e) {
+      setData((prev) => (prev ? { ...prev, boundary_ok: before } : prev));
+      setError("확인 표시를 저장하지 못했습니다: "
+        + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+  // 이 씬은 눈으로 확인했고 경계가 맞다 — 경계오류 목록에서 뺀다. 확인 당시의
+  // 경계를 함께 남겨, 나중에 이 씬 경계를 고치면 다시 뜨게 한다.
+  const markBoundaryOk = (i: number) => {
+    const seg = segments[i];
+    if (!seg) return;
+    const rest = (data?.boundary_ok ?? []).filter((o) => o.label !== seg.label);
+    void putBoundaryOk([...rest,
+      { label: seg.label, start_ms: seg.start_ms, end_ms: seg.end_ms }]);
+  };
   // 편집 되돌리기 스택 — 개별 병합(mergeSeg)과 경계 교정(nudgeBoundary)마다 직전
   // 상태를 쌓아 여러 단계 물릴 수 있게 한다. 각 항목=편집 전 세그먼트·경계플래그
   // 스냅샷 + 편집 결과 구간 인덱스(병합=생존 구간, 경계 교정=교정한 구간). 두 종류를
@@ -855,14 +879,14 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   // 모드에선 빈 목록이라 필터 탭이 숨겨진다.
   const [onlyBoundaryErrors, setOnlyBoundaryErrors] = useState(false);
   const boundaryIssues = mode === "scene" ? (data?.boundary_issues ?? []) : [];
-  // 플래그를 저장된 인덱스가 아니라 '현재 세그먼트의 라벨'로 다시 찾는다 — 병합·
-  // 이름수정으로 라벨이 사라지면 자동 제외되고, 편집으로 인덱스가 밀려도 어긋나지
-  // 않는다(편집 콜백의 clearBoundaryFlags가 고친 씬을 즉시 빼는 것과 합쳐 이중 안전).
-  const curLabelToIdx = new Map(segments.map((s, i) => [s.label, i] as const));
-  const boundaryIdx = boundaryIssues
-    .map((b) => curLabelToIdx.get(b.label))
-    .filter((i): i is number => i != null);
+  const boundaryOk = mode === "scene" ? (data?.boundary_ok ?? []) : [];
+  // 라벨로 다시 찾고(인덱스가 밀려도 안전), 사용자가 '문제없음'으로 확인한 구간은
+  // 뺀다 — 단 그 뒤에 경계가 바뀌었으면 확인표시를 무시한다(boundaryIssueIndices).
+  const boundaryIdx = boundaryIssueIndices(boundaryIssues, segments, boundaryOk);
   const boundaryCount = boundaryIdx.length;
+  // 현재 목록에 남아 실제로 무언가를 숨기고 있는 확인표시 수 — '모두 해제' 안내용.
+  const boundaryOkCount = boundaryIssueIndices(boundaryIssues, segments, []).length
+    - boundaryCount;
   // 라벨 검색 — 400+ 줄에서 특정 씬을 스크롤로 찾는 대신 번호 일부를 쳐서 좁힌다.
   // 탭 필터와 교차하므로 "경계 오류 중 0230"처럼 겹쳐 쓸 수 있다.
   const [labelQuery, setLabelQuery] = useState("");
@@ -1455,6 +1479,15 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
               경계(머리·꼬리) 프레임에 이웃 씬의 슬레이트가 잡힌 구간입니다 —
               익스포트 시 앞뒤 씬이 한두 프레임 섞일 수 있습니다. 썸네일을 눌러 실제
               경계 프레임을 확인하고, 필요하면 병합하거나 경계를 조정하세요.
+              확인했는데 문제가 없으면 <b>✓ 문제없음</b>으로 목록에서 뺄 수 있습니다.
+              {boundaryOkCount > 0 ? (
+                <>
+                  {"  "}확인함 {boundaryOkCount}건 ·{" "}
+                  <button type="button" style={consoleStyles.mutedAction}
+                    title="확인 표시를 전부 지우고 처음부터 다시 봅니다"
+                    onClick={() => void putBoundaryOk([])}>모두 해제</button>
+                </>
+              ) : null}
             </p>
           ) : null}
           <SceneFilmstrip jobId={jobId} segments={segments}
@@ -1470,6 +1503,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
             onUndoMerge={undoEdit}
             onExportOne={exportOne} exportingIndex={exportingOne}
             exportDisabled={busy || Boolean(exportProg?.exporting)}
+            // 경계오류 탭에서만 '✓ 문제없음'을 띄운다 — 다른 탭 줄에는 필요 없다.
+            onBoundaryOk={onlyBoundaryErrors ? markBoundaryOk : undefined}
             selectedIndex={selectedSeg} highlight={highlight}
             visibleIndices={visibleIndices}
             suggestions={suggestionOf}

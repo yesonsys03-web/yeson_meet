@@ -43,6 +43,10 @@ type Props = {
   onExportOne?: (i: number) => void;
   exportingIndex?: number | null;
   exportDisabled?: boolean;
+  // 경계오류 탭에서만 넘어온다 — 이 줄을 '확인했고 문제없음'으로 표시해 목록에서
+  // 뺀다. 다른 탭에는 안 넘기므로 버튼도 안 보인다(줄에 이미 병합 2개·익스포트가
+  // 있어 항상 띄우면 좁다).
+  onBoundaryOk?: (i: number) => void;
   // 이전/다음 씬 이동(선택) — 수백 줄을 스크롤로 훑지 않고 선택만 옮겨 검수한다.
   // 보이는 목록(필터·검색 적용) 기준으로 부모가 계산한다.
   onStepSegment?: (delta: number) => void;
@@ -56,7 +60,8 @@ export function SceneFilmstrip(
   { jobId, segments, thumbCount, intervalMs, onMerge, onRename,
     selectedIndex, highlight, onSelectSegment, onClearSelection, videoFps,
     onThumbClick, visibleIndices, suggestions, undoIndex, onUndoMerge,
-    onExportOne, exportingIndex, exportDisabled, onStepSegment }: Props,
+    onExportOne, exportingIndex, exportDisabled, onBoundaryOk,
+    onStepSegment }: Props,
 ) {
   const thumbs = Array.from({ length: thumbCount }, (_, i) => i);
   // 이 쇼의 '정상 라벨 모양' — 병합 추천이 깨진 이웃 쪽을 가리키지 않게 하는
@@ -380,6 +385,14 @@ export function SceneFilmstrip(
                 {/* 화살표는 ↩되돌리기와 같은 화살표 블록(U+2193)을 쓴다 — ⬇(U+2B07)는
                     Windows에서 Segoe UI Emoji로 잡혀 컬러 이모지처럼 튄다. */}
                 {exportingIndex === i ? "내보내는 중…" : "↓익스포트"}</button>
+            ) : null}
+            {/* 확인했고 문제없다 — 경계오류 목록에서 뺀다. 검사가 디졸브를 혼입으로
+                잡는 거짓 양성이 있어, 눈으로 확인한 줄을 지울 수단이 필요하다. */}
+            {onBoundaryOk ? (
+              <button type="button" style={{ ...miniBtn, flexShrink: 0 }}
+                title="이 씬의 경계를 확인했고 문제가 없습니다 — 경계 오류 목록에서 뺍니다(저장됨). 나중에 이 씬 경계를 고치면 다시 나타납니다."
+                onClick={(e) => { e.stopPropagation(); onBoundaryOk(i); }}>
+                ✓ 문제없음</button>
             ) : null}
           </div>
         ))}
