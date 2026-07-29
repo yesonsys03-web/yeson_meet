@@ -287,8 +287,8 @@ def create_translator(
     which remain the fallback when the argument is absent or blank — existing
     call sites that omit the arguments keep their current env-driven behavior.
 
-    ``prompt_builder``는 gemini·CLI 엔진에만 적용된다 — apple/qwen 계열은 자체
-    프롬프트/MT를 쓰므로 무시한다.
+    prompt_builder는 gemini와 CLI 계열 전체(claude/codex/agy/opencode/custom)에
+    적용되고, qwen/apple 계열은 자체 프롬프트를 유지한다.
     """
     provider = (provider or "").strip().lower() or os.environ.get(PROVIDER_ENV, "gemini").strip().lower()
     timeout = _timeout_from_env()
@@ -344,7 +344,9 @@ def create_translator(
             )
         parts = shlex.split(custom)
         if _PROMPT_PLACEHOLDER in parts:
-            return CliTranslator(parts, prompt_via="argv", timeout=timeout)
-        return CliTranslator(parts, prompt_via="stdin", timeout=timeout)
+            return CliTranslator(parts, prompt_via="argv", timeout=timeout,
+                                  prompt_builder=prompt_builder)
+        return CliTranslator(parts, prompt_via="stdin", timeout=timeout,
+                              prompt_builder=prompt_builder)
 
     raise TranslationError(f"알 수 없는 번역 provider '{provider}' ({PROVIDER_ENV})")

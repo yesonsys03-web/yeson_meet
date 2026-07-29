@@ -44,3 +44,15 @@ def test_create_translator_passes_builder_to_cli(monkeypatch):
     t = tc.create_translator("claude", prompt_builder=builder)
     assert isinstance(t, tc.CliTranslator)
     assert t._prompt_builder is builder
+
+
+def test_create_translator_passes_builder_to_custom_cli(monkeypatch):
+    """custom provider도 CliTranslator 기반이라 gemini/claude 등과 동일하게
+    prompt_builder를 받아야 한다 — 누락 시 later PDF 호출부가 조용히 자막
+    프롬프트로 되돌아가는 함정을 막는다."""
+    from apps.server.domain.video_captions import translate_cli as tc
+    monkeypatch.setenv(tc.CUSTOM_CLI_ENV, "some-custom-cli")
+    builder = lambda texts: "B"  # noqa: E731
+    t = tc.create_translator("custom", prompt_builder=builder)
+    assert isinstance(t, tc.CliTranslator)
+    assert t._prompt_builder is builder
