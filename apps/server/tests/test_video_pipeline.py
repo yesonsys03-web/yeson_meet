@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from apps.server.db import session as session_mod
 from apps.server.db.models import AppUser, VideoJob, VideoSegment
+from apps.server.domain.video_captions import caption_run as cr
 from apps.server.domain.video_captions import job_tasks as jt
 from apps.server.domain.video_captions import pipeline as pl
 from apps.server.domain.video_captions import translate as tl
@@ -55,16 +56,16 @@ async def test_run_video_job_happy_path(monkeypatch, db_session, admin_user, tmp
     job = await _make_job(db_session, admin_user, media_path=str(src))
     job_id, external_id = job.id, job.external_id
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
-    monkeypatch.setattr(pl, "transcribe_audio",
+    monkeypatch.setattr(cr, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(cr, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
+    monkeypatch.setattr(cr, "ensure_preview", lambda f, s, d, proc_key=None: s)
+    monkeypatch.setattr(cr, "transcribe_audio",
                         lambda p, m, cb=None: [SubSegment(1, 0, 1000, "Hello")])
 
     async def fake_translate(segs, provider, **kw):
         return [SubSegment(1, 0, 1000, "안녕하세요")]
 
-    monkeypatch.setattr(pl, "translate_segments", fake_translate)
+    monkeypatch.setattr(cr, "translate_segments", fake_translate)
 
     await pl.run_video_job(external_id)
 
@@ -93,9 +94,9 @@ async def test_run_video_job_serialized_by_semaphore(
     jobA = await _make_job(db_session, admin_user, media_path=str(srcA))
     jobB = await _make_job(db_session, admin_user, media_path=str(srcB))
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
-    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
+    monkeypatch.setattr(cr, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(cr, "ensure_preview", lambda f, s, d, proc_key=None: s)
+    monkeypatch.setattr(cr, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
 
     concur = {"cur": 0, "max": 0}
 
@@ -106,12 +107,12 @@ async def test_run_video_job_serialized_by_semaphore(
         concur["cur"] -= 1
         return [SubSegment(1, 0, 1000, "Hi")]
 
-    monkeypatch.setattr(pl, "transcribe_audio", fake_transcribe)
+    monkeypatch.setattr(cr, "transcribe_audio", fake_transcribe)
 
     async def fake_translate(segs, provider, **kw):
         return [SubSegment(1, 0, 1000, "안녕")]
 
-    monkeypatch.setattr(pl, "translate_segments", fake_translate)
+    monkeypatch.setattr(cr, "translate_segments", fake_translate)
 
     await asyncio.gather(
         pl.run_video_job(jobA.external_id), pl.run_video_job(jobB.external_id))
@@ -128,10 +129,10 @@ async def test_cancel_job_task_releases_semaphore(
     job = await _make_job(db_session, admin_user, media_path=str(src))
     ext = job.external_id
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
-    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
-    monkeypatch.setattr(pl, "transcribe_audio",
+    monkeypatch.setattr(cr, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(cr, "ensure_preview", lambda f, s, d, proc_key=None: s)
+    monkeypatch.setattr(cr, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
+    monkeypatch.setattr(cr, "transcribe_audio",
                         lambda p, m, cb=None: [SubSegment(1, 0, 1000, "Hi")])
 
     reached = asyncio.Event()
@@ -142,7 +143,7 @@ async def test_cancel_job_task_releases_semaphore(
         await blocking.wait()  # hold the semaphore (cancellable await) until cancelled
         return [SubSegment(1, 0, 1000, "안녕")]
 
-    monkeypatch.setattr(pl, "translate_segments", fake_translate)
+    monkeypatch.setattr(cr, "translate_segments", fake_translate)
 
     pl.start_job_task(ext, pl.run_video_job(ext))
     await asyncio.wait_for(reached.wait(), timeout=5)
@@ -159,7 +160,7 @@ async def test_run_video_job_records_error(monkeypatch, db_session, admin_user, 
     src.write_bytes(b"v")
     job = await _make_job(db_session, admin_user, media_path=str(src))
     job_id, external_id = job.id, job.external_id
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: None)
+    monkeypatch.setattr(cr, "locate_ffmpeg", lambda: None)
 
     await pl.run_video_job(external_id)
 
@@ -460,8 +461,8 @@ async def test_run_video_job_deletes_audio_after_transcribe(
     external_id = job.external_id
     audio_seen = {}
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
+    monkeypatch.setattr(cr, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(cr, "ensure_preview", lambda f, s, d, proc_key=None: s)
 
     def fake_extract(f, s, d, proc_key=None):
         Path(d).write_bytes(b"a")
@@ -471,13 +472,13 @@ async def test_run_video_job_deletes_audio_after_transcribe(
         audio_seen["exists_during"] = Path(p).exists()
         return [SubSegment(1, 0, 2500, "Hello")]
 
-    monkeypatch.setattr(pl, "extract_audio", fake_extract)
-    monkeypatch.setattr(pl, "transcribe_audio", fake_transcribe)
+    monkeypatch.setattr(cr, "extract_audio", fake_extract)
+    monkeypatch.setattr(cr, "transcribe_audio", fake_transcribe)
 
     async def fake_translate(segs, provider, **kw):
         return [SubSegment(1, 0, 2500, "안녕")]
 
-    monkeypatch.setattr(pl, "translate_segments", fake_translate)
+    monkeypatch.setattr(cr, "translate_segments", fake_translate)
 
     await pl.run_video_job(external_id)
 
@@ -607,8 +608,8 @@ async def test_run_video_job_extract_killed_stays_cancelled_not_error(
     job = await _make_job(db_session, admin_user, media_path=str(src))
     job_id, ext = job.id, job.external_id
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
+    monkeypatch.setattr(cr, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(cr, "ensure_preview", lambda f, s, d, proc_key=None: s)
 
     loop = asyncio.get_running_loop()
 
@@ -626,7 +627,7 @@ async def test_run_video_job_extract_killed_stays_cancelled_not_error(
         # kill_active로 죽은 ffmpeg는 이렇게 FfmpegError로 표면화된다
         raise FfmpegError("ffmpeg failed (code=-9): killed")
 
-    monkeypatch.setattr(pl, "extract_audio", fake_extract)
+    monkeypatch.setattr(cr, "extract_audio", fake_extract)
 
     await pl.run_video_job(ext)
 
