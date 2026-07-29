@@ -4,6 +4,7 @@ import time
 from uuid import uuid4
 
 from apps.server.domain.video_captions import pipeline as pl
+from apps.server.domain.video_captions import scene_refine as sr
 from apps.server.domain.video_captions.scene_split import (
     FrameSample, Segment, SlateRule, build_label, compute_boundaries,
     grouping_key, hold_keys, tokenize,
@@ -306,9 +307,9 @@ def test_refine_runs_boundaries_concurrently(monkeypatch, tmp_path):
         seq = min(4, max(0, int(t // 4000) + (1 if t % 4000 else 0)))
         return f"HH_{seq:03d}_0010_AC"
 
-    monkeypatch.setattr(pl, "extract_frame", fake_extract)
-    monkeypatch.setattr(pl, "read_slate_line", fake_read)
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(sr, "extract_frame", fake_extract)
+    monkeypatch.setattr(sr, "read_slate_line", fake_read)
+    monkeypatch.setattr(sr, "locate_ffmpeg", lambda: "ffmpeg")
     segs = [{"label": f"HH_{i:03d}", "start_ms": i * 4000,
              "end_ms": (i + 1) * 4000} for i in range(5)]
     pl.save_scenes(eid, {
@@ -345,10 +346,10 @@ def test_refine_clears_refining_flag_when_cancelled(monkeypatch, tmp_path):
         if calls["n"] == 3:  # 진행 중 취소(세대 증가)
             pl._bump_generation(eid)
 
-    monkeypatch.setattr(pl, "extract_frame", fake_extract)
-    monkeypatch.setattr(pl, "read_slate_line",
+    monkeypatch.setattr(sr, "extract_frame", fake_extract)
+    monkeypatch.setattr(sr, "read_slate_line",
                         lambda dst, delimiters, top_frac=1.0: "HH_020_0010_AC")
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(sr, "locate_ffmpeg", lambda: "ffmpeg")
     pl.save_scenes(eid, {
         "scanning": False, "interval_ms": 2000, "frames": [],
         "rule": {"delimiters": ["_"], "seq_tokens": [1], "scene_tokens": [2]},
@@ -391,9 +392,9 @@ def test_refine_first_segment_start(monkeypatch, tmp_path):
         return ("HH_010_0010_AC" if frame_pts(calls[str(dst)]) >= t_cut
                 else "")  # 타이틀 카드 = 판독실패
 
-    monkeypatch.setattr(pl, "extract_frame", fake_extract)
-    monkeypatch.setattr(pl, "read_slate_line", fake_read)
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(sr, "extract_frame", fake_extract)
+    monkeypatch.setattr(sr, "read_slate_line", fake_read)
+    monkeypatch.setattr(sr, "locate_ffmpeg", lambda: "ffmpeg")
     pl.save_scenes(eid, {
         "scanning": False, "interval_ms": 2000, "frames": [],
         "rule": {"delimiters": ["_"], "seq_tokens": [1], "scene_tokens": [2]},
@@ -453,9 +454,9 @@ def test_refine_recovers_boundary_outside_window_with_misreads(monkeypatch, tmp_
             return "HH_1200010_AC"
         return "HH_120_0010_AC"
 
-    monkeypatch.setattr(pl, "extract_frame", fake_extract)
-    monkeypatch.setattr(pl, "read_slate_line", fake_read)
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(sr, "extract_frame", fake_extract)
+    monkeypatch.setattr(sr, "read_slate_line", fake_read)
+    monkeypatch.setattr(sr, "locate_ffmpeg", lambda: "ffmpeg")
     pl.save_scenes(eid, {
         "scanning": False, "interval_ms": 2000, "frames": [],
         "rule": {"delimiters": ["_"], "seq_tokens": [1], "scene_tokens": [2]},
@@ -498,9 +499,9 @@ def test_refine_boundary_is_frame_exact(monkeypatch, tmp_path):
         return ("HH_new_x" if frame_pts(calls[str(dst)]) >= t_cut
                 else "HH_old_x")
 
-    monkeypatch.setattr(pl, "extract_frame", fake_extract)
-    monkeypatch.setattr(pl, "read_slate_line", fake_read)
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(sr, "extract_frame", fake_extract)
+    monkeypatch.setattr(sr, "read_slate_line", fake_read)
+    monkeypatch.setattr(sr, "locate_ffmpeg", lambda: "ffmpeg")
     pl.save_scenes(eid, {
         "scanning": False, "interval_ms": 2000, "frames": [],
         "rule": {"delimiters": ["_"], "seq_tokens": [1], "scene_tokens": [2]},
