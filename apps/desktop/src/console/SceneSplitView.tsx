@@ -3,7 +3,7 @@ import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
   absorbFlankedMisreads, anomalousLabels, applyFixes, applySplitName, boundaryIssueIndices, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, probeFileName, probeToken, scanProgressKey, scenePopupAction, stepVisibleIndex, upsertBoundaryOk,
-  NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, splitSegment, tokenizeSlate, trimFrames,
+  NTSC_FPS, prefixRenameFixes, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, splitSegment, tokenizeSlate, trimFrames,
   type LabelFix,
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
@@ -1086,6 +1086,10 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   const [pendingFixes, setPendingFixes] = useState<LabelFix[] | null>(null);
   const [fixChecked, setFixChecked] = useState<Set<number>>(new Set());
   const [undoSnapshot, setUndoSnapshot] = useState<SceneSegment[] | null>(null);
+  // 일괄 이름 바꾸기(접두 치환) 입력 — 자동 제안이 못 다루는 '다른 단어' 급
+  // 접두(실기 EASA06 Scene12_* 26건)를 사용자가 지정해 한 번에 바꾼다.
+  const [renameFrom, setRenameFrom] = useState("");
+  const [renameTo, setRenameTo] = useState("");
 
   // 모드가 바뀌면 구간 목록 자체가 달라진다 — 이전 모드에서 만든 미리보기·되돌리기
   // 스냅샷·필터·선택은 모두 무의미해지므로 지운다(씬별 목록이 시퀀스별 화면에
@@ -1094,6 +1098,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     setPendingFixes(null);
     setFixChecked(new Set());
     setUndoSnapshot(null);
+    setRenameFrom("");
+    setRenameTo("");
     setEditUndo([]);  // 모드가 바뀌면 편집 되돌리기 스택의 인덱스가 무의미
     setOnlyAnomalies(false);
     setOnlyBoundaryErrors(false);
@@ -1138,6 +1144,16 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const fixes = confidentFixes(segments.map((s) => s.label), delimiters);
     setPendingFixes(fixes);
     setFixChecked(new Set(fixes.map((f) => f.index)));  // 기본 전체 선택
+  };
+
+  // 접두 치환도 같은 미리보기·적용 경로를 탄다 — 확인 다이얼로그, 체크 선별,
+  // 되돌리기 스냅샷, 인접 동일 라벨 병합(confirmFixes)이 전부 공유된다.
+  const renameFixes = prefixRenameFixes(
+    segments.map((s) => s.label), renameFrom, renameTo);
+  const openRenamePreview = () => {
+    if (renameFixes.length === 0) return;
+    setPendingFixes(renameFixes);
+    setFixChecked(new Set(renameFixes.map((f) => f.index)));
   };
 
   const confirmFixes = () => {
@@ -1526,6 +1542,36 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                 onClick={openFixPreview}>
                 제안 일괄 적용 ({anomalies.filter((a) => a.suggestion && a.confident).length})…
               </button>
+            ) : null}
+            {/* 일괄 이름 바꾸기 — 자동 제안이 못 다루는 접두(오독 단정 불가한
+                '다른 단어' 급, 실기 Scene12→Seq12 26건)를 명시적 치환으로.
+                접두 일치 행만 대상이고, 적용은 제안 일괄 적용과 같은 확인
+                다이얼로그를 거친다(체크 선별·되돌리기·인접 병합 포함). */}
+            {onlyAnomalies ? (
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 4,
+                              fontSize: 12, opacity: 0.85 }}>
+                일괄 이름 바꾸기
+                <input value={renameFrom}
+                  onChange={(e) => setRenameFrom(e.target.value)}
+                  placeholder="찾을 접두"
+                  style={{ width: 100, fontSize: 12, padding: "4px 6px",
+                           borderRadius: 4, fontFamily: "monospace",
+                           background: "rgba(255,255,255,0.08)", color: "inherit",
+                           border: "1px solid rgba(255,255,255,0.2)" }} />
+                →
+                <input value={renameTo}
+                  onChange={(e) => setRenameTo(e.target.value)}
+                  placeholder="바꿀 접두"
+                  style={{ width: 100, fontSize: 12, padding: "4px 6px",
+                           borderRadius: 4, fontFamily: "monospace",
+                           background: "rgba(255,255,255,0.08)", color: "inherit",
+                           border: "1px solid rgba(255,255,255,0.2)" }} />
+                <button type="button" style={consoleStyles.mutedAction}
+                  disabled={renameFixes.length === 0}
+                  onClick={openRenamePreview}>
+                  바꾸기 ({renameFixes.length})…
+                </button>
+              </label>
             ) : null}
             {/* 오독 갈라짐 정리 — 앞뒤 동일 라벨 사이 낀 오독을 흡수(시퀀스 특효). */}
             {flankedCount > 0 ? (
