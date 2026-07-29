@@ -23,6 +23,14 @@ _DETECT_PAGES = 3
 _LABEL_TEXTS = frozenset(label for label, _kind in _FIELDS)
 
 
+def _looks_like_field_label(text: str) -> bool:
+    """라벨 그대로이거나(빈 필드 다음 라벨) 라벨로 시작하면(다음 필드가
+    라벨+내용 한 블록으로 붙어 나온 변형) 후보에서 제외 — 안 그러면 Dialog가
+    비었을 때 병합된 'Action Notes: ...' 블록을 통째로 대사로 잘못 집어온다
+    (리뷰어 실측 재현 케이스)."""
+    return any(text == lbl or text.startswith(lbl) for lbl in _LABEL_TEXTS)
+
+
 class StoryboardProfile:
     name = "storyboard"
     label = "스토리보드 (Storyboard Pro)"
@@ -104,7 +112,7 @@ def _field_content(raws: list[RawBlock], label: str,
                   if b.bbox[1] >= ly1 - 1.0
                   and (upper_bound is None or b.bbox[1] < upper_bound - 1.0)
                   and abs(b.bbox[0] - lx0) < 60.0
-                  and normalize_ws(b.text) not in _LABEL_TEXTS]
+                  and not _looks_like_field_label(normalize_ws(b.text))]
     if not candidates:
         return None
     return min(candidates, key=lambda b: b.bbox[1])

@@ -33,6 +33,80 @@ def _make_storyboard_pdf(tmp_path: Path, *, korean_dialog: bool = False) -> Path
     return path
 
 
+def _make_storyboard_pdf_empty_dialog(tmp_path: Path) -> Path:
+    """실물(GABE01) 패턴 회귀 가드: Dialog·Action Notes가 같은 x열에 쌓여
+    있고(실물처럼 x0 동일) Dialog 필드가 비어 있을 때(라벨만, 내용 블록
+    없음) — Bug A(라벨 오인식)·Bug B(dialog==action 중복) 재발 방지.
+    브리프 원본 합성 fixture는 Dialog(x=680)와 Action Notes(x=72)를 서로
+    다른 열에 둬서 x허용폭(60pt) 안에서 절대 후보가 되지 않는다 — 그래서
+    실물에서 실제로 터진 버그를 전혀 검증하지 못한다. 이 fixture는 실물처럼
+    같은 x열(72)에 쌓아 진짜로 후보 경합이 생기게 한다."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    page.insert_text((72, 460), "Dialog", fontsize=8)
+    # Dialog 내용 없음(의도) — 실물에서 빈 필드는 플레이스홀더 블록 자체가 생략됨
+    page.insert_text((72, 560), "Action Notes", fontsize=8)
+    page.insert_text((72, 578), "HANK walks to the door.", fontsize=10)
+    path = tmp_path / "sb_empty_dialog.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def _make_storyboard_pdf_empty_dialog_merged_action(tmp_path: Path) -> Path:
+    """리뷰어 실측 재현: Dialog 필드가 비어 있고 Action Notes가 라벨+내용이
+    한 블록으로 붙어 나오는 변형(같은 x열) — Bug A 재발 가드."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    page.insert_text((72, 460), "Dialog", fontsize=8)
+    # Dialog 내용 없음(의도) + Action Notes 라벨·내용이 한 블록으로 병합
+    page.insert_text((72, 560), "Action Notes: HANK walks to the door.", fontsize=10)
+    path = tmp_path / "sb_empty_dialog_merged_action.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_extract_empty_dialog_field_produces_no_dialog_block(tmp_path):
+    """빈 Dialog 필드 회귀 가드(Bug A/B) — 라벨만 있고 내용 블록이 없으면
+    dialog kind 블록이 전혀 나오면 안 된다(라벨 오인식도, action 중복도 금지)."""
+    doc = open_pdf(_make_storyboard_pdf_empty_dialog(tmp_path))
+    try:
+        blocks = StoryboardProfile().extract(doc)
+        dialog_blocks = [b for b in blocks if b.kind == "dialog"]
+        assert dialog_blocks == []  # 빈 필드 → dialog 블록 없음
+        action = next(b for b in blocks if b.kind == "action")
+        assert action.text == "HANK walks to the door."
+        # (a) dialog 블록 중 라벨 그대로이거나 라벨로 시작하는 것 없음
+        assert not any(
+            b.text == "Action Notes" or b.text.startswith("Action Notes")
+            for b in dialog_blocks
+        )
+        # (b) dialog 블록이 action 블록 텍스트를 중복하지 않음
+        assert not any(b.text == action.text for b in dialog_blocks)
+    finally:
+        doc.close()
+
+
+def test_extract_empty_dialog_with_merged_action_label_produces_no_dialog_block(
+    tmp_path,
+):
+    """복합 재현(리뷰어 실측): Dialog 필드가 비어 있고 Action Notes가
+    라벨+내용 한 블록으로 붙어 나오는 실물 변형 — dialog 오인식 없이
+    action만 올바르게 추출되어야 한다."""
+    doc = open_pdf(_make_storyboard_pdf_empty_dialog_merged_action(tmp_path))
+    try:
+        blocks = StoryboardProfile().extract(doc)
+        dialog_blocks = [b for b in blocks if b.kind == "dialog"]
+        assert dialog_blocks == []
+        action = next(b for b in blocks if b.kind == "action")
+        assert action.text == "HANK walks to the door."
+    finally:
+        doc.close()
+
+
 def test_helpers():
     assert has_hangul("씬 내내") is True
     assert has_hangul("If you wanna") is False
