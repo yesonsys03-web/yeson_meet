@@ -348,6 +348,37 @@ class TestTranslateFinalText:
         assert "idioms" in calls[0]["contents"]
         assert "never" in calls[0]["contents"]
         assert "word-for-word" in calls[0]["contents"]
+        # '의역으로 대체'까지 명시한다 — 직역 문장을 내놓고 괄호 해설을 덧붙이는
+        # 반쪽 준수가 실측됨(2026-07-29 보고서: "빙글빙글 돌고 있네요.
+        # (정신없이 바쁘네요.)").
+        assert "never a literal rendering followed by a gloss" in calls[0]["contents"]
+
+    async def test_prompt_keeps_quoted_dialogue_in_english(self) -> None:
+        """작품 대사·가사 인용은 번역하지 않고 영어 원문으로 남긴다 — 리테이크
+        노트에서 캐릭터 대사를 소리내 읽으면 화자의 말로 번역돼 뜻이 무너진다
+        (실기 2026-07-29: "Cuz I got all the eternity" 3회 → "제가 영원함을
+        모두 가지고 있으니까요"). 원문이 팀에게 그 대사를 특정할 단서다."""
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        calls: list = []
+        await _translate_final_text(
+            text_client(reply='카메라는 "I got all the eternity"에서 빠져야 해요.',
+                        calls=calls),
+            "The camera should pull out on cuz I got all the eternity.",
+        )
+        assert "dialogue or lyrics" in calls[0]["contents"]
+        assert "original English" in calls[0]["contents"]
+
+    async def test_prompt_bans_meta_commentary(self) -> None:
+        """번역 모델의 혼잣말이 자막에 실리지 않게 금지한다 — "(프로젝트
+        명칭이라면 그대로 Eternity로 표기하는 것이 좋음)" 같은 메타 주석이
+        자막 줄로 나간 실측(2026-07-29 보고서)."""
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        calls: list = []
+        await _translate_final_text(text_client(reply="안녕.", calls=calls), "Hi.")
+        assert "no notes" in calls[0]["contents"]
+        assert "parenthetical commentary" in calls[0]["contents"]
 
 
 def _final_utt(en="Hello.", ko="라이브 번역."):
