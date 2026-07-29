@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  absorbFlankedMisreads, anomalousLabels, applyFixes, applySplitName, boundaryIssueIndices, confidentFixes, effectiveFps, filterIndices, formatMs, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, nudgeSegments, probeFileName, probeToken, scanProgressKey, segPreviewFor, stepVisibleIndex, upsertBoundaryOk,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, applySplitName, boundaryIssueIndices, confidentFixes, effectiveFps, filterIndices, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, nudgeSegments, probeFileName, probeToken, scanProgressKey, segPreviewFor, stepVisibleIndex, upsertBoundaryOk,
   NTSC_FPS, prefixRenameFixes, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, splitSegment, tokenizeSlate, trimFrames,
   type LabelFix, type SegPreview,
 } from "./sceneSplitLogic";
 import { ScenePreviewPopup, type ScenePreviewPopupHandle } from "./ScenePreviewPopup";
-import { SceneFilmstrip } from "./SceneFilmstrip";
+import { SceneScanControls } from "./SceneScanControls";
+import { SceneListSection } from "./SceneListSection";
 import {
   cancelSceneOps, exportScenes, getBoundaryStatus, getExportStatus, getRefineStatus,
   cleanupSceneExport, sceneExportFileUrl, probeExportDir, saveBoundaryOk,
@@ -17,7 +18,6 @@ import {
   type BoundaryOk, type BoundaryStatus, type ExportStatus, type OcrRegion, type RefineStatus,
   type SceneMethod, type ScenesData, type SceneSegment, type SlateTemplate,
 } from "./videoApi";
-import { SlateRegionPicker } from "./SlateRegionPicker";
 
 type Mode = "scene" | "sequence";
 
@@ -1041,188 +1041,36 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
       {error ? <p style={{ color: "#e5484d", margin: 0 }}>{error}</p> : null}
       {notice ? <p style={consoleStyles.statusInfo}>{notice}</p> : null}
 
-      {/* 슬레이트 구역 — 쇼마다 위치가 다르므로 스캔 전에 잡아두면 판독이 빠르고
-          정확하다. 스캔 후에도 다시 잡을 수 있다(다시 스캔해야 반영). */}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <button type="button" style={consoleStyles.mutedAction}
-          onClick={() => setShowPicker((v) => !v)}>
-          {showPicker ? "구역 지정 닫기" : "슬레이트 구역 지정"}
-        </button>
-        <span style={{ fontSize: 12, opacity: 0.7 }}>
-          {ocrRegion
-            ? `지정됨 — 가로 ${(ocrRegion.w * 100).toFixed(0)}% · 세로 ${(ocrRegion.h * 100).toFixed(0)}%`
-            : "미지정 — 전체 프레임에서 상단을 훑습니다(느리고 쇼에 따라 실패)"}
-        </span>
-        {/* 스캔 방식 — 지문은 전 프레임 컷 감지라 경계가 프레임 정확하고 정밀화가
-            없다. 가짜 컷 등 리스크가 보이면 간격 방식으로 폴백한다. */}
-        <label style={{ fontSize: 12, opacity: 0.8, display: "inline-flex",
-                        alignItems: "center", gap: 5, marginLeft: "auto" }}>
-          방식
-          <select value={scanMethod}
-            onChange={(e) => setScanMethod(e.target.value as SceneMethod)}
-            style={{ fontSize: 12, padding: "3px 6px", borderRadius: 4,
-                     background: "transparent", color: "inherit",
-                     border: "1px solid rgba(255,255,255,0.15)" }}>
-            <option value="interval">간격 스캔 (샘플링+정밀화)</option>
-            <option value="fingerprint">지문 컷 감지 (프레임 정확)</option>
-          </select>
-        </label>
-        {scanMethod !== "fingerprint" ? (
-          <>
-            {/* 샘플 간격 — 짧은 씬(2초 미만)이 많으면 촘촘하게. 놓치면 그 씬 클립이
-                아예 생기지 않는다(2초 샘플이 사이의 짧은 컷을 건너뛴다). */}
-            <label style={{ fontSize: 12, opacity: 0.8, display: "inline-flex",
-                            alignItems: "center", gap: 5 }}>
-              샘플 간격
-              <select value={scanIntervalS}
-                onChange={(e) => setScanIntervalS(Number(e.target.value))}
-                style={{ fontSize: 12, padding: "3px 6px", borderRadius: 4,
-                         background: "transparent", color: "inherit",
-                         border: "1px solid rgba(255,255,255,0.15)" }}>
-                <option value={2.0}>2초 (빠름·긴 컷)</option>
-                <option value={1.0}>1초</option>
-                <option value={0.5}>0.5초</option>
-                <option value={0.25}>0.25초 (짧은 컷·느림)</option>
-              </select>
-            </label>
-            {/* 최소 씬 길이 — 이보다 짧은 구간은 오독 튐으로 보고 흡수. 빈값=자동
-                (간격 비례). 진짜 짧은 씬이 삼켜지면 낮춘다. 지문 방식은 컷이
-                프레임 정확이라 이 흡수 자체가 없다. */}
-            <label style={{ fontSize: 12, opacity: 0.8, display: "inline-flex",
-                            alignItems: "center", gap: 5 }}>
-              최소 씬 길이
-              <input value={minSceneSec} onChange={(e) => setMinSceneSec(e.target.value)}
-                placeholder="자동" inputMode="decimal"
-                style={{ width: 56, fontSize: 12, padding: "3px 6px", borderRadius: 4,
-                         background: "transparent", color: "inherit",
-                         border: "1px solid rgba(255,255,255,0.15)" }} />
-              초
-            </label>
-          </>
-        ) : null}
-      </div>
-      {showPicker ? (
-        <SlateRegionPicker jobId={jobId} sampleMs={sampleMs} region={ocrRegion}
-          onChange={setOcrRegion} templates={templates}
-          onTemplatesChange={setTemplates}
-          rule={{ delimiters, seq_tokens: seqIdx, scene_tokens: sceneIdx,
-                  scan_interval_s: scanIntervalS, method: scanMethod,
-                  example: slateExample.trim() || undefined }}
-          onApplyTemplate={applyTemplate} />
-      ) : null}
+      {/* 스캔 설정·실행 툴바 — 구역/방식/간격, 진행 표시, 실행 버튼, 토큰 규칙. */}
+      <SceneScanControls
+        jobId={jobId} busy={busy} scanned={Boolean(data?.scanned)}
+        method={data?.method} stage={stage} refineProg={refineProg}
+        sample={sample} tokens={tokens} sampleMs={sampleMs}
+        delimiters={delimiters}
+        templates={templates} onTemplatesChange={setTemplates}
+        showPicker={showPicker} onTogglePicker={() => setShowPicker((v) => !v)}
+        ocrRegion={ocrRegion} onOcrRegionChange={setOcrRegion}
+        scanMethod={scanMethod} onScanMethodChange={setScanMethod}
+        scanIntervalS={scanIntervalS} onScanIntervalChange={setScanIntervalS}
+        minSceneSec={minSceneSec} onMinSceneSecChange={setMinSceneSec}
+        spaceDelim={spaceDelim}
+        onSpaceDelimToggle={(checked) => {
+          // 구분자가 바뀌면 토큰 경계가 달라져 인덱스 의미가 바뀐다 → 선택 초기화.
+          setSpaceDelim(checked);
+          setSeqIdx([]); setSceneIdx([]);
+        }}
+        slateExample={slateExample} onSlateExampleChange={setSlateExample}
+        seqIdx={seqIdx} sceneIdx={sceneIdx}
+        onToggleSeq={toggleSeq} onToggleScene={toggleScene}
+        onApplyTemplate={applyTemplate}
+        onCancelAll={() => void cancelAll()}
+        onRunAll={(opts) => void runAll(opts)}
+        onRunScan={() => void runScan()}
+        onApplyRule={() => void applyRule()}
+      />
 
-      {/* 진행 단계 + 중단. 긴 작업이라 무엇이 도는지 보이고 멈출 수 있어야 한다. */}
-      {stage ? (
-        <div style={{ display: "flex", gap: 10, alignItems: "center",
-                      padding: "6px 10px", borderRadius: 6,
-                      background: "rgba(74,158,218,0.12)" }}>
-          <strong style={{ fontSize: 13 }}>{stage}</strong>
-          {refineProg?.refining ? (
-            <span style={{ fontSize: 12, opacity: 0.8 }}>
-              {refineProg.done}/{refineProg.total} 경계
-            </span>
-          ) : null}
-          <button type="button" style={consoleStyles.mutedAction}
-            onClick={() => void cancelAll()}>중단</button>
-        </div>
-      ) : null}
-
-      {!data?.scanned ? (
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button type="button" style={consoleStyles.action} disabled={busy}
-            onClick={() => void runAll({ rescan: true })}>
-            {busy ? "실행 중…"
-              : scanMethod === "fingerprint" ? "전체 실행 (컷 감지 → 경계)"
-              : "전체 실행 (스캔 → 경계 → 정밀화)"}
-          </button>
-          <button type="button" style={consoleStyles.mutedAction} disabled={busy}
-            onClick={() => void runScan()}>스캔만</button>
-          <span style={{ fontSize: 12, opacity: 0.65 }}>
-            토큰 규칙이 없으면 스캔까지만 하고 멈춥니다(스캔 결과를 보고 고르는 값이라).
-          </span>
-        </div>
-      ) : (
+      {data?.scanned ? (
         <>
-          {/* 규칙 지정: 토큰 칩 */}
-          <div>
-            <p style={{ fontSize: 13, opacity: 0.75, margin: "0 0 6px" }}>
-              대표 슬레이트: <code>{sample || "(판독 실패)"}</code> — 시퀀스/씬 토큰을 고르세요.
-            </p>
-            <label style={{ fontSize: 12, opacity: 0.8, display: "inline-flex",
-                            alignItems: "center", gap: 5, marginBottom: 8 }}>
-              <input type="checkbox" checked={spaceDelim}
-                onChange={(e) => {
-                  // 구분자가 바뀌면 토큰 경계가 달라져 인덱스 의미가 바뀐다 → 선택 초기화.
-                  setSpaceDelim(e.target.checked);
-                  setSeqIdx([]); setSceneIdx([]);
-                }} />
-              공백도 구분자로 나누기 (기본: 공백은 필드 안에 유지)
-            </label>
-            {/* 예시 슬레이트 — 선언하면 Seq↔Seg류 머리글자 오독을 다수결 추측이
-                아니라 이 구조로 교정한다(경계 계산 시 적용, 빈값=기존 동작). */}
-            <label style={{ fontSize: 12, opacity: 0.8, display: "flex",
-                            alignItems: "center", gap: 5, marginBottom: 8 }}>
-              예시 슬레이트
-              <input value={slateExample}
-                onChange={(e) => setSlateExample(e.target.value)}
-                placeholder="예: Seq 01A_S01 - Panel 1" maxLength={200}
-                style={{ flex: "0 1 260px", fontSize: 12, padding: "3px 6px",
-                         borderRadius: 4, background: "transparent",
-                         color: "inherit",
-                         border: "1px solid rgba(255,255,255,0.15)" }} />
-              <span style={{ opacity: 0.6 }}>
-                실제 슬레이트 한 줄을 그대로 적으면 오독 교정이 정확해집니다
-              </span>
-            </label>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {tokens.map((tok, i) => (
-                <span key={i} style={{
-                  padding: "3px 8px", borderRadius: 6, fontFamily: "monospace",
-                  border: "1px solid rgba(255,255,255,0.15)",
-                  background: sceneIdx.includes(i) ? "#2b6cb0"
-                    : seqIdx.includes(i) ? "#2f855a" : "transparent",
-                }}>
-                  {tok}
-                  <button type="button" style={{ marginLeft: 6, fontSize: 11 }}
-                    onClick={() => toggleSeq(i)}>SEQ</button>
-                  <button type="button" style={{ marginLeft: 4, fontSize: 11 }}
-                    onClick={() => toggleScene(i)}>SCENE</button>
-                </span>
-              ))}
-            </div>
-            <p style={{ fontSize: 12, opacity: 0.6, marginTop: 6 }}>
-              시퀀스 라벨 미리보기: <code>{previewLabel(tokens, Math.max(-1, ...seqIdx))}</code>
-              {"  ·  "}씬 라벨: <code>{previewLabel(tokens, Math.max(-1, ...seqIdx, ...sceneIdx))}</code>
-            </p>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
-              {/* 토큰을 고른 뒤의 주 동작 — 간격 방식은 경계 계산과 정밀화가 항상
-                  함께 필요하고, 지문 방식은 경계 계산으로 끝난다(이미 프레임 정확). */}
-              <button type="button" style={consoleStyles.action}
-                disabled={busy || seqIdx.length === 0}
-                onClick={() => void runAll({ rescan: false })}>
-                {busy ? "실행 중…"
-                  : data.method === "fingerprint" ? "경계 계산 (시퀀스·씬)"
-                  : "경계 계산 + 정밀화 (시퀀스·씬)"}
-              </button>
-              <button type="button" style={consoleStyles.mutedAction}
-                disabled={busy || seqIdx.length === 0}
-                onClick={() => void applyRule()}>
-                경계 계산만
-              </button>
-              {/* OCR 재판독 — 구역·판독 로직을 바꿨거나 오염된 스캔 복구용. */}
-              <button type="button" style={consoleStyles.mutedAction}
-                disabled={busy}
-                onClick={() => void runAll({ rescan: true })}>
-                다시 스캔(전체)
-              </button>
-              {seqIdx.length === 0 ? (
-                <span style={{ fontSize: 12, color: "#e2b340" }}>
-                  먼저 위에서 SEQ 토큰을 하나 이상 고르세요 (그래야 버튼이 활성화됩니다).
-                </span>
-              ) : null}
-            </div>
-          </div>
-
           {/* 모드 토글 + 필름스트립 */}
           <div style={{ display: "flex", gap: 16, alignItems: "center", fontSize: 13 }}>
             <label><input type="radio" checked={mode === "scene"}
@@ -1251,230 +1099,86 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
                             background: "#4a9eda", transition: "width 0.3s" }} />
             </div>
           ) : null}
-          {/* 구간 목록 탭 — 오독 의심 행만 모아 일괄 교정할 수 있게 한다. */}
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <button type="button"
-              style={(onlyAnomalies || onlyBoundaryErrors)
-                ? consoleStyles.mutedAction : consoleStyles.action}
-              onClick={() => {
-                setOnlyAnomalies(false); setOnlyBoundaryErrors(false);
-                setSelectedSeg(null);
-              }}>
-              전체 ({segments.length})
-            </button>
-            <button type="button"
-              style={onlyAnomalies ? consoleStyles.action : consoleStyles.mutedAction}
-              disabled={anomalies.length === 0}
-              onClick={() => {
-                setOnlyAnomalies(true); setOnlyBoundaryErrors(false);
-                setSelectedSeg(null);
-              }}>
-              {anomalies.length > 0
-                ? `⚠ 확인 필요 (${anomalies.length})` : "확인 필요 없음"}
-            </button>
-            {/* 경계 오류(혼입) — 씬 모드 전용. 머리/꼬리 프레임에 이웃 슬레이트가
-                잡힌 구간만 모아 본다(runAll 마지막 단계가 채운다). */}
-            {mode === "scene" ? (
-              <button type="button"
-                style={onlyBoundaryErrors ? consoleStyles.action : consoleStyles.mutedAction}
-                disabled={boundaryCount === 0}
-                onClick={() => {
-                  setOnlyBoundaryErrors(true); setOnlyAnomalies(false);
-                  setSelectedSeg(null);
-                }}>
-                {boundaryCount > 0
-                  ? `⚠ 경계 오류 (${boundaryCount})` : "경계 오류 없음"}
-              </button>
-            ) : null}
-            {/* 고친 뒤 재검증 — 현재 세그먼트 그대로 경계만 다시 OCR 검사(세그먼트
-                재계산 없음). 편집한 씬은 즉시 필터에서 빠지고, 이 버튼으로 전체를
-                다시 확인할 수 있다(미저장 편집은 자동 저장 후 검사). */}
-            {mode === "scene" && (data?.scanned ?? false) ? (
-              <button type="button" style={consoleStyles.mutedAction}
-                disabled={busy}
-                onClick={() => void recheckBoundaries()}>🔄 경계 다시 검사</button>
-            ) : null}
-            {/* 라벨 검색 — 슬레이트 번호 일부만 쳐도 좁혀진다(대소문자·구분자 무시).
-                400+ 줄을 스크롤로 훑는 대신 쓰는 주 경로. */}
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 4,
-                            fontSize: 12, opacity: 0.85 }}>
-              검색
-              <input value={labelQuery}
-                onChange={(e) => setLabelQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter") return;
-                  // Enter로 첫 결과를 고르고 포커스를 뺀다 — 입력칸에 포커스가 있으면
-                  // 방향키가 캐럿 이동이라 ←/→ 훑기가 안 먹는다(검색 직후가 바로
-                  // 그 상황이다). 검색 → Enter → ←/→로 이어지게 한다.
-                  e.preventDefault();
-                  const first = visibleAll[0];
-                  if (first != null) setSelectedSeg(first);
-                  e.currentTarget.blur();
-                }}
-                placeholder="씬 번호 일부"
-                style={{ width: 130, fontSize: 12, padding: "4px 6px", borderRadius: 4,
-                         fontFamily: "monospace", background: "rgba(255,255,255,0.08)",
-                         color: "inherit", border: "1px solid rgba(255,255,255,0.2)" }} />
-            </label>
-            {labelQuery ? (
-              <>
-                <button type="button" style={consoleStyles.mutedAction}
-                  title="검색 지우기" onClick={() => setLabelQuery("")}>×</button>
-                <span style={{ fontSize: 12, opacity: 0.7 }}>
-                  {visibleIndices?.length ?? 0}개 표시
-                  {(visibleIndices?.length ?? 0) === 0 ? " — 일치하는 씬이 없어요" : ""}
-                </span>
-              </>
-            ) : null}
-            {onlyAnomalies && anomalies.some((a) => a.suggestion && a.confident) ? (
-              <button type="button" style={consoleStyles.mutedAction}
-                onClick={openFixPreview}>
-                제안 일괄 적용 ({anomalies.filter((a) => a.suggestion && a.confident).length})…
-              </button>
-            ) : null}
-            {/* 일괄 이름 바꾸기 — 자동 제안이 못 다루는 접두(오독 단정 불가한
-                '다른 단어' 급, 실기 Scene12→Seq12 26건)를 명시적 치환으로.
-                접두 일치 행만 대상이고, 적용은 제안 일괄 적용과 같은 확인
-                다이얼로그를 거친다(체크 선별·되돌리기·인접 병합 포함).
-                전체·확인필요 목록에서 노출 — 치환 대상은 필터와 무관하게 전체
-                라벨이라, 경계 오류 검수 화면에서만 숨긴다(맥락이 다른 도구). */}
-            {!onlyBoundaryErrors ? (
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 4,
-                              fontSize: 12, opacity: 0.85 }}>
-                일괄 이름 바꾸기
-                <input value={renameFrom}
-                  onChange={(e) => setRenameFrom(e.target.value)}
-                  placeholder="찾을 접두"
-                  style={{ width: 100, fontSize: 12, padding: "4px 6px",
-                           borderRadius: 4, fontFamily: "monospace",
-                           background: "rgba(255,255,255,0.08)", color: "inherit",
-                           border: "1px solid rgba(255,255,255,0.2)" }} />
-                →
-                <input value={renameTo}
-                  onChange={(e) => setRenameTo(e.target.value)}
-                  placeholder="바꿀 접두"
-                  style={{ width: 100, fontSize: 12, padding: "4px 6px",
-                           borderRadius: 4, fontFamily: "monospace",
-                           background: "rgba(255,255,255,0.08)", color: "inherit",
-                           border: "1px solid rgba(255,255,255,0.2)" }} />
-                <button type="button" style={consoleStyles.mutedAction}
-                  disabled={renameFixes.length === 0}
-                  onClick={openRenamePreview}>
-                  바꾸기 ({renameFixes.length})…
-                </button>
-              </label>
-            ) : null}
-            {/* 오독 갈라짐 정리 — 앞뒤 동일 라벨 사이 낀 오독을 흡수(시퀀스 특효). */}
-            {flankedCount > 0 ? (
-              <button type="button" style={consoleStyles.action}
-                onClick={cleanFlanked}>
-                오독 갈라짐 정리 ({flankedCount})
-              </button>
-            ) : null}
-            {/* 인접 중복 병합 — 교정으로 같아졌거나 수동 교정 후 갈라진 씬을 합친다. */}
-            {mergeAdjacentSameLabel(segments).length < segments.length ? (
-              <button type="button" style={consoleStyles.mutedAction}
-                onClick={mergeDuplicates}>
-                인접 중복 병합 ({segments.length - mergeAdjacentSameLabel(segments).length})
-              </button>
-            ) : null}
-            {undoSnapshot ? (
-              <button type="button" style={consoleStyles.mutedAction}
-                onClick={undoFixes}>되돌리기</button>
-            ) : null}
-          </div>
-
-          {/* 일괄 적용 확인 — 무엇이 어떻게 바뀌는지 보고 체크한 것만 적용한다. */}
-          {pendingFixes ? (
-            <div style={{ border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6,
-                          padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-              <strong style={{ fontSize: 13 }}>
-                이렇게 바꿉니다 — 체크한 것만 적용됩니다 ({fixChecked.size}/{pendingFixes.length})
-              </strong>
-              <div style={{ maxHeight: 260, overflowY: "auto", display: "flex",
-                            flexDirection: "column", gap: 3 }}>
-                {pendingFixes.map((f) => (
-                  <label key={f.index}
-                         style={{ display: "flex", gap: 8, alignItems: "center",
-                                  fontSize: 12, fontFamily: "monospace",
-                                  padding: "3px 4px", borderRadius: 3,
-                                  background: "rgba(255,255,255,0.04)" }}>
-                    <input type="checkbox" checked={fixChecked.has(f.index)}
-                      onChange={(e) => {
-                        const next = new Set(fixChecked);
-                        if (e.target.checked) next.add(f.index); else next.delete(f.index);
-                        setFixChecked(next);
-                      }} />
-                    <span style={{ opacity: 0.55, flexShrink: 0 }}>
-                      {formatMs(segments[f.index]?.start_ms ?? 0)}
-                    </span>
-                    <span style={{ color: "#e2b340", overflowWrap: "anywhere" }}>{f.from}</span>
-                    <span style={{ opacity: 0.6, flexShrink: 0 }}>→</span>
-                    <span style={{ color: "#3f9a5f", overflowWrap: "anywhere" }}>{f.to}</span>
-                  </label>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <button type="button" style={consoleStyles.action}
-                  disabled={fixChecked.size === 0}
-                  onClick={confirmFixes}>적용 ({fixChecked.size})</button>
-                <button type="button" style={consoleStyles.mutedAction}
-                  onClick={() => setPendingFixes(null)}>취소</button>
-                <span style={{ fontSize: 11, opacity: 0.6 }}>
-                  적용해도 저장 전이라 "되돌리기"로 한 번 물릴 수 있습니다.
-                </span>
-              </div>
-            </div>
-          ) : null}
-          {onlyAnomalies ? (
-            <p style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>
-              라벨 모양이 다수와 어긋나는 구간입니다(주로 OCR이 구분자를 놓친 경우).
-              제안이 있으면 라벨 오른쪽에 표시되고, 숫자가 남아 애매한 제안은
-              일괄 적용에서 빠집니다 — 썸네일을 눌러 실제 프레임을 확인하세요.
-            </p>
-          ) : null}
-          {onlyBoundaryErrors ? (
-            <p style={{ fontSize: 12, opacity: 0.7, margin: 0 }}>
-              경계(머리·꼬리) 프레임에 이웃 씬의 슬레이트가 잡힌 구간입니다 —
-              익스포트 시 앞뒤 씬이 한두 프레임 섞일 수 있습니다. 썸네일을 눌러 실제
-              경계 프레임을 확인하고, 필요하면 병합하거나 경계를 조정하세요.
-              확인했는데 문제가 없으면 <b>✓ 문제없음</b>으로 목록에서 뺄 수 있습니다.
-              {boundaryOkCount > 0 ? (
-                <>
-                  {"  "}확인함 {boundaryOkCount}건 ·{" "}
-                  <button type="button" style={consoleStyles.mutedAction}
-                    title="확인 표시를 전부 지우고 처음부터 다시 봅니다"
-                    onClick={() => void putBoundaryOk([])}>모두 해제</button>
-                </>
-              ) : null}
-            </p>
-          ) : null}
-          <SceneFilmstrip jobId={jobId} segments={segments}
-            thumbCount={thumbCount}
-            intervalMs={thumbIntervalMs}
-            totalMs={data.total_ms
-              ?? ((data.frames.at(-1)?.t_ms ?? 0) + intervalMs)}
-            onMerge={mergeSeg} onRename={renameSeg}
-            // 리스트 줄의 되돌리기는 스택 top이 '병합'일 때만 뜬다 — 경계 교정은
-            // 팝업에서 물린다(같은 스택, 엄격 LIFO).
-            undoIndex={editUndo.at(-1)?.kind === "merge"
-              ? editUndo.at(-1)!.survivor : null}
-            onUndoMerge={undoEdit}
-            onExportOne={exportOne} exportingIndex={exportingOne}
-            exportDisabled={busy || Boolean(exportProg?.exporting)}
-            // 경계오류 탭에서만 '✓ 문제없음'을 띄운다 — 다른 탭 줄에는 필요 없다.
-            onBoundaryOk={onlyBoundaryErrors ? markBoundaryOk : undefined}
-            selectedIndex={selectedSeg} highlight={highlight}
+          {/* 목록 구역 — 필터 탭·검색·일괄 도구·확인 모달·구간 줄. */}
+          <SceneListSection
+            segments={segments}
+            anomaliesCount={anomalies.length}
+            onlyAnomalies={onlyAnomalies}
+            onlyBoundaryErrors={onlyBoundaryErrors}
+            onFilterAll={() => {
+              setOnlyAnomalies(false); setOnlyBoundaryErrors(false);
+              setSelectedSeg(null);
+            }}
+            onFilterAnomalies={() => {
+              setOnlyAnomalies(true); setOnlyBoundaryErrors(false);
+              setSelectedSeg(null);
+            }}
+            onFilterBoundary={() => {
+              setOnlyBoundaryErrors(true); setOnlyAnomalies(false);
+              setSelectedSeg(null);
+            }}
+            showBoundaryTab={mode === "scene"}
+            boundaryCount={boundaryCount}
+            boundaryOkCount={boundaryOkCount}
+            onClearBoundaryOk={() => void putBoundaryOk([])}
+            canRecheck={mode === "scene" && (data?.scanned ?? false)}
+            busy={busy}
+            onRecheckBoundaries={() => void recheckBoundaries()}
+            labelQuery={labelQuery}
+            onLabelQueryChange={setLabelQuery}
+            onSearchEnter={() => {
+              const first = visibleAll[0];
+              if (first != null) setSelectedSeg(first);
+            }}
             visibleIndices={visibleIndices}
-            suggestions={suggestionOf}
-            videoFps={data.video_fps ?? undefined}
-            onSelectSegment={setSelectedSeg}
-            onStepSegment={stepSegment}
-            onClearSelection={() => setSelectedSeg(null)}
-            onThumbClick={(seekMs, seg, segIndex, side) => {
-              if (!seg || segIndex == null) { setPreview({ seekMs }); return; }
-              setPreview(buildSegPreview(seg, segIndex, seekMs, side ?? "head"));
-            }} />
+            confidentSuggestionCount={
+              anomalies.filter((a) => a.suggestion && a.confident).length}
+            onOpenFixPreview={openFixPreview}
+            renameFrom={renameFrom} renameTo={renameTo}
+            onRenameFromChange={setRenameFrom} onRenameToChange={setRenameTo}
+            renameFixCount={renameFixes.length}
+            onOpenRenamePreview={openRenamePreview}
+            flankedCount={flankedCount}
+            onCleanFlanked={cleanFlanked}
+            adjacentDupCount={segments.length
+              - mergeAdjacentSameLabel(segments).length}
+            onMergeDuplicates={mergeDuplicates}
+            canUndoFixes={Boolean(undoSnapshot)}
+            onUndoFixes={undoFixes}
+            pendingFixes={pendingFixes}
+            fixChecked={fixChecked}
+            onFixCheckedChange={setFixChecked}
+            onConfirmFixes={confirmFixes}
+            onCancelFixes={() => setPendingFixes(null)}
+            filmstrip={{
+              jobId, segments,
+              thumbCount,
+              intervalMs: thumbIntervalMs,
+              totalMs: data.total_ms
+                ?? ((data.frames.at(-1)?.t_ms ?? 0) + intervalMs),
+              onMerge: mergeSeg, onRename: renameSeg,
+              // 리스트 줄의 되돌리기는 스택 top이 '병합'일 때만 뜬다 — 경계 교정은
+              // 팝업에서 물린다(같은 스택, 엄격 LIFO).
+              undoIndex: editUndo.at(-1)?.kind === "merge"
+                ? editUndo.at(-1)!.survivor : null,
+              onUndoMerge: undoEdit,
+              onExportOne: exportOne, exportingIndex: exportingOne,
+              exportDisabled: busy || Boolean(exportProg?.exporting),
+              // 경계오류 탭에서만 '✓ 문제없음'을 띄운다 — 다른 탭 줄에는 필요 없다.
+              onBoundaryOk: onlyBoundaryErrors ? markBoundaryOk : undefined,
+              selectedIndex: selectedSeg, highlight,
+              visibleIndices,
+              suggestions: suggestionOf,
+              videoFps: data.video_fps ?? undefined,
+              onSelectSegment: setSelectedSeg,
+              onStepSegment: stepSegment,
+              onClearSelection: () => setSelectedSeg(null),
+              onThumbClick: (seekMs, seg, segIndex, side) => {
+                if (!seg || segIndex == null) { setPreview({ seekMs }); return; }
+                setPreview(buildSegPreview(seg, segIndex, seekMs, side ?? "head"));
+              },
+            }}
+          />
           {/* 저장·익스포트를 하단에 고정 — 400+ 리스트를 끝까지 스크롤하지 않아도
               항상 접근 가능하게. */}
           <div style={{ position: "sticky", bottom: 0, zIndex: 5,
@@ -1516,7 +1220,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
           ) : null}
           </div>
         </>
-      )}
+      ) : null}
 
       {/* 썸네일 클릭 팝업 — 실제 영상을 그 시각으로 시킹해 크게 보여준다. 구간에서
           열면(머리·꼬리 클릭) 재생을 그 구간 [start,end)로 묶어, 소스 전체가 아니라
