@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from apps.server.db import session as session_mod
 from apps.server.db.models import AppUser, VideoJob, VideoSegment
+from apps.server.domain.video_captions import job_tasks as jt
 from apps.server.domain.video_captions import pipeline as pl
 from apps.server.domain.video_captions import translate as tl
 from apps.server.domain.video_captions.ffmpeg import FfmpegError
@@ -589,7 +590,8 @@ async def test_cancel_job_task_kills_active_ffmpeg_proc(db_session, admin_user, 
     job = await _make_job(db_session, admin_user, status="burning")
     ext = job.external_id
     killed: list[str] = []
-    monkeypatch.setattr(pl, "kill_active", lambda key: killed.append(key) or True)
+    # cancel_job_task는 job_tasks로 옮겨졌다 — 패치도 그 모듈에(파사드 패치는 안 닿는다).
+    monkeypatch.setattr(jt, "kill_active", lambda key: killed.append(key) or True)
 
     pl.cancel_job_task(ext)
 
