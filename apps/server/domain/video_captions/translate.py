@@ -123,9 +123,13 @@ async def maybe_aclose_translator(translator) -> None:
 
 
 class GeminiFlashTranslator:
-    def __init__(self, api_key: str | None = None, model: str | None = None):
+    def __init__(self, api_key: str | None = None, model: str | None = None,
+                 prompt_builder: Callable[[list[str]], str] | None = None):
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
         self._model = model or os.environ.get(TRANSLATE_MODEL_ENV, DEFAULT_TRANSLATE_MODEL)
+        # PDF 번역 등 다른 도메인이 자기 프롬프트를 주입하는 플러그 지점.
+        # 기본값은 기존 자막 프롬프트 — 미지정 호출부는 동작 불변.
+        self._prompt_builder = prompt_builder or build_translation_prompt
 
     async def _generate(self, prompt: str) -> str:  # test seam
         from google import genai
@@ -143,7 +147,7 @@ class GeminiFlashTranslator:
         return response.text or ""
 
     async def translate_batch(self, texts: list[str]) -> list[str]:
-        prompt = build_translation_prompt(texts)
+        prompt = self._prompt_builder(texts)
         raw = await self._generate(prompt)
         try:
             out = json.loads(raw)

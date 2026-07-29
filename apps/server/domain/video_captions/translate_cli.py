@@ -189,11 +189,15 @@ def _extract_json_array(stdout: str, expected_len: int) -> list[str] | None:
 class CliTranslator:
     """TranslationProvider backed by a subscription coding CLI."""
 
-    def __init__(self, argv: list[str], *, prompt_via: str = "stdin", timeout: float = DEFAULT_CLI_TIMEOUT):
+    def __init__(self, argv: list[str], *, prompt_via: str = "stdin", timeout: float = DEFAULT_CLI_TIMEOUT,
+                 prompt_builder=None):
         self._argv = list(argv)
         self._prompt_via = prompt_via
         self._timeout = timeout
         self._checked_bin = False
+        # PDF 번역 등 다른 도메인이 자기 프롬프트를 주입하는 플러그 지점.
+        # 지연 import 순환 방지: 기본값은 translate_batch에서 build_translation_prompt로 대체.
+        self._prompt_builder = prompt_builder
 
     def _ensure_binary(self) -> None:
         if self._checked_bin:
@@ -243,7 +247,7 @@ class CliTranslator:
 
     async def translate_batch(self, texts: list[str]) -> list[str]:
         self._ensure_binary()
-        prompt = build_translation_prompt(texts)
+        prompt = (self._prompt_builder or build_translation_prompt)(texts)
 
         stdout = await asyncio.to_thread(self._run_cli, prompt)
         out = _extract_json_array(stdout, len(texts))
@@ -274,6 +278,7 @@ def _timeout_from_env() -> float:
 
 def create_translator(
     provider: str | None = None, cli_model: str | None = None,
+    *, prompt_builder=None,
 ) -> TranslationProvider:
     """Select a TranslationProvider.
 
@@ -281,12 +286,15 @@ def create_translator(
     ``YESON_VIDEO_TRANSLATE_PROVIDER``/``YESON_TRANSLATE_CLI_MODEL`` env vars,
     which remain the fallback when the argument is absent or blank — existing
     call sites that omit the arguments keep their current env-driven behavior.
+
+    ``prompt_builder``는 gemini·CLI 엔진에만 적용된다 — apple/qwen 계열은 자체
+    프롬프트/MT를 쓰므로 무시한다.
     """
     provider = (provider or "").strip().lower() or os.environ.get(PROVIDER_ENV, "gemini").strip().lower()
     timeout = _timeout_from_env()
 
     if provider in ("", "gemini"):
-        return GeminiFlashTranslator()
+        return GeminiFlashTranslator(prompt_builder=prompt_builder)
 
     if provider == "apple":
         from .translate_apple import AppleTranslator
@@ -325,7 +333,8 @@ def create_translator(
         model = (cli_model or "").strip() or os.environ.get(CLI_MODEL_ENV)
         if model and backend.model_flag:
             argv = argv + [backend.model_flag, model]
-        return CliTranslator(argv, prompt_via=backend.prompt_via, timeout=timeout)
+        return CliTranslator(argv, prompt_via=backend.prompt_via, timeout=timeout,
+                              prompt_builder=prompt_builder)
 
     if provider == "custom":
         custom = os.environ.get(CUSTOM_CLI_ENV)
