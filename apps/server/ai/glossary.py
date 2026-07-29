@@ -148,6 +148,14 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("resolution", "해상도"),
     ("aspect ratio", "화면비"),
     ("pipeline", "파이프라인"),
+    # 제작관리 툴(Autodesk ShotGrid, 구 Shotgun) — 띄어 말해도 툴명이라 붙인다
+    # ("샷 그리드에서 찾아볼 수도" 실측 2026-07-29 보고서).
+    ("ShotGrid", "샷그리드"),
+    ("shot grid", "샷그리드"),
+    # 의상·모자 가장자리 장식 — "그녀의 트림"(한국어 '트림'과 충돌) 실측
+    # (2026-07-29). 음차('트리밍')는 사진 크롭·미용과 겹쳐 뜻으로 옮긴다
+    # ("어떤 각도에서는 그녀의 테두리 장식이 안 보이도록" — 사용자 확정).
+    ("trim", "테두리 장식"),
     # --- Photoshop ---
     ("layer mask", "레이어 마스크"),
     ("clipping mask", "클리핑 마스크"),

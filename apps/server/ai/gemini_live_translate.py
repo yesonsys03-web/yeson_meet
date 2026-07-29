@@ -279,10 +279,29 @@ async def _translate_final_text(text_client: Any, en: str) -> str | None:
                 "날씨'); never leave a Fahrenheit number as a bare N도. "
                 # 관용구 직역 방지 — 사전 등록 항목(plant the seed)만이 아니라
                 # 모든 관용구에 일반화한다(실기 2026-07-28: "씨앗을 심어두고").
+                # '대체'를 명시한다 — 직역을 내놓고 괄호 해설을 덧붙이는 반쪽
+                # 준수가 실측됨(2026-07-29 보고서: "빙글빙글 돌고 있네요.
+                # (정신없이 바쁘네요.)", "고양이 자석인가요? \"고양이들이 잘
+                # 따르나요?\"").
                 "Render idioms and figures of speech by meaning, never "
                 "word-for-word (e.g. 'plant the seed' → '미리 주제로 던져 "
-                "두다', not '씨앗을 심다'). "
-                "Return only Korean.\n\n"
+                "두다', not '씨앗을 심다'). Output the meaning-based rendering "
+                "directly — never a literal rendering followed by a gloss. "
+                # 작품 대사·가사 인용 유지 — 리테이크 노트에서 캐릭터 대사를
+                # 소리내 읽는 일이 잦은데, 화자의 말로 번역하면 뜻이 무너진다
+                # (실기 2026-07-29: "Cuz I got all the eternity" 3회 →
+                # "제가 영원함을 모두 가지고 있으니까요"). 원문 인용이 팀에게
+                # 그 대사를 특정할 유일한 단서라 영어로 남긴다.
+                "If the speaker recites a line of dialogue or lyrics from the "
+                "production (quoting a character's line while giving notes), "
+                "keep that quote in its original English inside quotes "
+                "instead of translating it. "
+                # 메타 주석 금지 — 번역 모델이 "(프로젝트 명칭이라면 그대로
+                # Eternity로 표기하는 것이 좋음)" 같은 혼잣말을 자막에 흘린
+                # 실측(2026-07-29). 자막에는 번역문만 실려야 한다.
+                "Return only the Korean subtitle text — no notes, "
+                "alternatives, explanations, or parenthetical commentary "
+                "about the translation.\n\n"
                 f"English: {stripped}"
             ),
             config=types.GenerateContentConfig(
