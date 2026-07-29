@@ -13,6 +13,7 @@ from apps.server.db.models import AppUser, VideoJob, VideoSegment
 from apps.server.domain.video_captions import burn_run as br
 from apps.server.domain.video_captions import caption_run as cr
 from apps.server.domain.video_captions import job_tasks as jt
+from apps.server.domain.video_captions import scene_scan_fp as fp
 from apps.server.domain.video_captions import pipeline as pl
 from apps.server.domain.video_captions import translate as tl
 from apps.server.domain.video_captions.ffmpeg import FfmpegError
@@ -821,16 +822,16 @@ async def test_run_scene_scan_fingerprint_happy_path(monkeypatch, tmp_path):
         return ("HH0307_010_0010_AC_v01" if t_ms < cut_ms
                 else "HH0307_010_0020_AC_v01")
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
-    monkeypatch.setattr(pl, "build_scan_source",
+    monkeypatch.setattr(fp, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(fp, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(fp, "build_scan_source",
                         lambda ffmpeg, src, dst, region, proc_key=None:
                         dst.write_bytes(b"s"))
-    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
-    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
-    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
-    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
-    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+    monkeypatch.setattr(fp, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(fp, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(fp, "extract_frames_at", fake_extract_at)
+    monkeypatch.setattr(fp, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(fp, "read_slate_line", fake_read)
 
     await pl.run_scene_scan_fingerprint(eid)
 
@@ -861,16 +862,16 @@ async def test_run_scene_scan_fingerprint_failure_writes_error(
     workdir = pl.job_dir(eid)
     workdir.mkdir(parents=True)
     (workdir / "burned.mp4").write_bytes(b"v")
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(fp, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(fp, "video_fps", lambda f, s: 24.0)
 
     def boom(*a, **kw):
         raise FfmpegError("x")
 
-    monkeypatch.setattr(pl, "build_scan_source",
+    monkeypatch.setattr(fp, "build_scan_source",
                         lambda ffmpeg, src, dst, region, proc_key=None:
                         dst.write_bytes(b"s"))
-    monkeypatch.setattr(pl, "extract_fingerprint_frames", boom)
+    monkeypatch.setattr(fp, "extract_fingerprint_frames", boom)
     await pl.run_scene_scan_fingerprint(eid)
     data = pl.load_scenes(eid)
     assert data["scanning"] is False
@@ -1218,16 +1219,16 @@ async def test_run_scene_scan_fingerprint_resolves_unreadable_block(
             return ""  # 도입부 4프레임은 저대비로 판독불가
         return "HH0307_010_0020_AC_v01"
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
-    monkeypatch.setattr(pl, "build_scan_source",
+    monkeypatch.setattr(fp, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(fp, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(fp, "build_scan_source",
                         lambda ffmpeg, src, dst, region, proc_key=None:
                         dst.write_bytes(b"s"))
-    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
-    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
-    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
-    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
-    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+    monkeypatch.setattr(fp, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(fp, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(fp, "extract_frames_at", fake_extract_at)
+    monkeypatch.setattr(fp, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(fp, "read_slate_line", fake_read)
 
     await pl.run_scene_scan_fingerprint(eid)
 
@@ -1342,16 +1343,16 @@ async def test_run_scene_scan_fingerprint_padded_batch_recovers_text(
         # 컷 뒤 씬은 저대비 — 패딩(중간본 전체, w=1.0)에서만 읽힌다.
         return "HH0307_010_0020_AC_v01" if w > tight_w + 0.001 else ""
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
-    monkeypatch.setattr(pl, "build_scan_source",
+    monkeypatch.setattr(fp, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(fp, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(fp, "build_scan_source",
                         lambda ffmpeg, src, dst, region, proc_key=None:
                         dst.write_bytes(b"s"))
-    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
-    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
-    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
-    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
-    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+    monkeypatch.setattr(fp, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(fp, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(fp, "extract_frames_at", fake_extract_at)
+    monkeypatch.setattr(fp, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(fp, "read_slate_line", fake_read)
 
     await pl.run_scene_scan_fingerprint(eid)
 
@@ -1426,16 +1427,16 @@ async def test_run_scene_scan_fingerprint_reports_progress_during_retry(
                     else "HH0307_010_0020_AC_v01")
         return ""                 # 타이트 판독은 전멸(실기 재현)
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
-    monkeypatch.setattr(pl, "build_scan_source",
+    monkeypatch.setattr(fp, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(fp, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(fp, "build_scan_source",
                         lambda ffmpeg, src, dst, region, proc_key=None:
                         dst.write_bytes(b"s"))
-    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
-    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
-    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
-    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
-    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+    monkeypatch.setattr(fp, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(fp, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(fp, "extract_frames_at", fake_extract_at)
+    monkeypatch.setattr(fp, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(fp, "read_slate_line", fake_read)
 
     await pl.run_scene_scan_fingerprint(eid)
 
@@ -1486,20 +1487,20 @@ async def test_run_scene_scan_fingerprint_reports_extraction_stages(
             stages.append(st)
         orig_save(external_id, data)
 
-    monkeypatch.setattr(pl, "save_scenes", spy_save)
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
-    monkeypatch.setattr(pl, "build_scan_source",
+    monkeypatch.setattr(fp, "save_scenes", spy_save)
+    monkeypatch.setattr(fp, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(fp, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(fp, "build_scan_source",
                         lambda ffmpeg, src, dst, region, proc_key=None:
                         dst.write_bytes(b"s"))
-    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
-    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
-    monkeypatch.setattr(pl, "extract_frames_at",
+    monkeypatch.setattr(fp, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(fp, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(fp, "extract_frames_at",
                         lambda *a, **k: {})   # 판독은 이 테스트의 관심 밖
-    monkeypatch.setattr(pl, "extract_frame",
+    monkeypatch.setattr(fp, "extract_frame",
                         lambda ffmpeg, src, t_ms, dst, proc_key=None,
                         region=None: dst.write_text("x"))
-    monkeypatch.setattr(pl, "read_slate_line", lambda *a, **k: "")
+    monkeypatch.setattr(fp, "read_slate_line", lambda *a, **k: "")
 
     await pl.run_scene_scan_fingerprint(eid)
 
