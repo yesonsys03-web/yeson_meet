@@ -469,6 +469,12 @@ export function segmentTailMs(startMs: number, endMs: number, fps = NTSC_FPS): n
 // 인덱스가 1 어긋난다(실측: 28924ms가 24fps→695, 23.976fps→694).
 export const NTSC_FPS = 24000 / 1001;
 
+// 측정 fps가 있으면 그 값, 없거나 0이면 NTSC 가정값. 화면 곳곳에서 같은 판정을
+// 반복하면 한 곳만 고쳐질 때 프레임 계산이 화면마다 어긋난다 — 판정을 한 곳에 둔다.
+export function effectiveFps(videoFps: number | null | undefined): number {
+  return videoFps && videoFps > 0 ? videoFps : NTSC_FPS;
+}
+
 // 머리·꼬리 프레임을 팝업(HTML5 <video>)으로 크게 볼 때의 시킹 시각(ms).
 // 서버 썸네일은 -ss(입력시킹) snap-up(PTS≥t)이라 경계 간극중앙 start_ms에서 그
 // 씬 첫 프레임을 정확히 집는다. 그러나 <video>.currentTime=t는 t를 '포함'하는
@@ -481,6 +487,30 @@ export function frameSeekMs(ms: number, fps = NTSC_FPS): number {
   return Math.round((idx + 0.5) * frameMs);                // 그 프레임 표시구간 중앙
 }
 
+// 팝업 프리뷰 디스크립터 — seekMs(첫 표시 프레임)와, 구간이면 그 [start,end)·라벨·
+// 프레임 정확 재생/정지 시각. playStartMs=첫 프레임 중앙, lastFrameMs=마지막(꼬리)
+// 프레임 중앙(둘 다 소스 fps로 계산). 구간이면 재생을 그 범위로 묶어 경계를 확인
+// 시킨다. 시각 없이 프레임만 보는 팝업({ seekMs }만)도 이 형이라 나머지는 optional.
+export type SegPreview = {
+  seekMs: number; startMs?: number; endMs?: number; label?: string;
+  playStartMs?: number; lastFrameMs?: number; fps?: number;
+  segIndex?: number; side?: "head" | "tail";
+};
+
+// 세그먼트로부터 프리뷰 디스크립터를 구성한다 — 팝업 열기·경계 편집·씬 이동이
+// 전부 이 값을 쓰므로 재생/정지 시각 계산이 한 곳에 있어야 화면마다 어긋나지 않는다.
+export function segPreviewFor(
+  s: SceneSegment, segIndex: number, seekMs: number,
+  side: "head" | "tail", fps: number,
+): SegPreview {
+  return {
+    seekMs, segIndex, side, label: s.label,
+    startMs: s.start_ms, endMs: s.end_ms, fps,
+    playStartMs: frameSeekMs(s.start_ms, fps),
+    lastFrameMs: frameSeekMs(segmentTailMs(s.start_ms, s.end_ms, fps), fps),
+  };
+}
+
 // 인접 두 씬의 공유 경계를 정확히 deltaFrames 프레임만큼 옮긴 새 경계 시각(ms).
 // 스캔이 못 잡는 디졸브/와이프에서 머리·꼬리에 붙은 프레임을 이웃 씬으로 넘길 때
 // 쓴다. 경계는 export -ss(snap-up)가 '뒤 세그먼트 첫 프레임'을 집는 값이라, 그
@@ -491,6 +521,44 @@ export function shiftBoundaryMs(boundaryMs: number, fps: number, deltaFrames: nu
   const frameMs = 1000 / (fps > 0 ? fps : NTSC_FPS);
   const k = Math.ceil(boundaryMs / frameMs - 1e-6);  // export -ss가 집는 뒤 세그 첫 프레임
   return Math.max(0, Math.round((k + deltaFrames - 0.5) * frameMs));
+}
+
+// 인접 두 씬의 공유 경계를 delta 프레임 옮긴 결과 — 팝업 경계 교정·In/Out 트림이
+// 공유하는 순수 계산. 빈 씬 방지 클램프: delta<0(이 씬이 넘김)은 이 씬이 1프레임
+// 남게, delta>0(이웃에서 가져옴)은 이웃이 1프레임 남게, 요청 N이 넘치면 가능한
+// 만큼만 이동. 이동이 0이면(끝 구간·남는 프레임 없음) null — 호출자는 아무것도
+// 바꾸지 않는다. 두 세그먼트가 같은 새 경계를 공유해 시간축에 빈틈이 없고,
+// focusMs는 편집한 경계 프레임(머리=첫 프레임, 꼬리=마지막 프레임)의 표시구간
+// 중앙 — 팝업이 그리로 시킹해 결과를 곧바로 확인시킨다. 입력 배열은 그대로 두고
+// 새 배열을 돌려준다.
+export function nudgeSegments(
+  segs: SceneSegment[], i: number, side: "head" | "tail",
+  delta: number, fps: number,
+): { segs: SceneSegment[]; focusMs: number } | null {
+  const frameMs = 1000 / (fps > 0 ? fps : NTSC_FPS);
+  const frames = (s: SceneSegment) =>
+    Math.max(1, Math.round((s.end_ms - s.start_ms) / frameMs));
+  const out = segs.slice();
+  if (side === "tail") {
+    if (i < 0 || i >= out.length - 1) return null;
+    const d = Math.max(-(frames(out[i]!) - 1),
+                       Math.min(frames(out[i + 1]!) - 1, delta));
+    if (d === 0) return null;
+    const nb = shiftBoundaryMs(out[i]!.end_ms, fps, d);
+    out[i] = { ...out[i]!, end_ms: nb };
+    out[i + 1] = { ...out[i + 1]!, start_ms: nb };
+    return { segs: out,
+             focusMs: frameSeekMs(
+               segmentTailMs(out[i]!.start_ms, out[i]!.end_ms, fps), fps) };
+  }
+  if (i <= 0 || i >= out.length) return null;
+  const d = Math.max(-(frames(out[i - 1]!) - 1),
+                     Math.min(frames(out[i]!) - 1, delta));
+  if (d === 0) return null;
+  const nh = shiftBoundaryMs(out[i]!.start_ms, fps, d);
+  out[i - 1] = { ...out[i - 1]!, end_ms: nh };
+  out[i] = { ...out[i]!, start_ms: nh };
+  return { segs: out, focusMs: frameSeekMs(out[i]!.start_ms, fps) };
 }
 
 // 특정 시각의 '프레임 번호'(1부터). HTML5 <video>는 currentTime t를 포함하는

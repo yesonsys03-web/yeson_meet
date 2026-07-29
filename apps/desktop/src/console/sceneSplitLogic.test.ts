@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName, probeFileName, probeToken, upsertBoundaryOk, splitSegment, applySplitName, boundaryIssueIndices, prefixRenameFixes } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, effectiveFps, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, nudgeSegments, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, segPreviewFor, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName, probeFileName, probeToken, upsertBoundaryOk, splitSegment, applySplitName, boundaryIssueIndices, prefixRenameFixes } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -991,5 +991,80 @@ describe("probeFileName", () => {
     expect(probeFileName("aaaabbbbccccdddd"))
       .toBe("yeson_probe_aaaabbbbccccdddd.tmp");
     expect(probeFileName("ddddccccbbbbaaaa").startsWith("yeson_probe_")).toBe(true);
+  });
+});
+
+describe("effectiveFps", () => {
+  it("uses the measured fps when positive, NTSC assumption otherwise", () => {
+    expect(effectiveFps(25)).toBe(25);
+    expect(effectiveFps(0)).toBe(NTSC_FPS);
+    expect(effectiveFps(null)).toBe(NTSC_FPS);
+    expect(effectiveFps(undefined)).toBe(NTSC_FPS);
+  });
+});
+
+describe("segPreviewFor", () => {
+  it("builds the popup descriptor with frame-exact play/stop times", () => {
+    const seg = { label: "0230", start_ms: 1000, end_ms: 2000 };
+    expect(segPreviewFor(seg, 3, 1234, "tail", 25)).toEqual({
+      seekMs: 1234, segIndex: 3, side: "tail", label: "0230",
+      startMs: 1000, endMs: 2000, fps: 25,
+      // 재생 시작/정지 시각은 "머리로/꼬리로" 버튼과 같은 수식이어야 한다 —
+      // 갈리면 구간 재생이 씬 밖 프레임에서 멈춘다.
+      playStartMs: frameSeekMs(1000, 25),
+      lastFrameMs: frameSeekMs(segmentTailMs(1000, 2000, 25), 25),
+    });
+  });
+});
+
+describe("nudgeSegments", () => {
+  // fps=25 → 프레임 40ms 정각. 각 구간 25프레임.
+  const fps = 25;
+  const segs = [
+    { label: "A", start_ms: 0, end_ms: 1000 },
+    { label: "B", start_ms: 1000, end_ms: 2000 },
+    { label: "C", start_ms: 2000, end_ms: 3000 },
+  ];
+  it("moves a shared tail boundary onto both segments", () => {
+    const r = nudgeSegments(segs, 0, "tail", 5, fps)!;
+    const nb = shiftBoundaryMs(1000, fps, 5);
+    // 두 세그먼트가 같은 새 경계를 공유해야 시간축에 빈틈·겹침이 없다.
+    expect(r.segs[0]).toEqual({ label: "A", start_ms: 0, end_ms: nb });
+    expect(r.segs[1]).toEqual({ label: "B", start_ms: nb, end_ms: 2000 });
+    expect(r.segs[2]).toEqual(segs[2]);
+    // 팝업은 편집한 꼬리(마지막 프레임)로 시킹한다.
+    expect(r.focusMs).toBe(frameSeekMs(segmentTailMs(0, nb, fps), fps));
+  });
+  it("moves a shared head boundary and focuses the new first frame", () => {
+    const r = nudgeSegments(segs, 1, "head", -3, fps)!;
+    const nh = shiftBoundaryMs(1000, fps, -3);
+    expect(r.segs[0]!.end_ms).toBe(nh);
+    expect(r.segs[1]!.start_ms).toBe(nh);
+    expect(r.focusMs).toBe(frameSeekMs(nh, fps));
+  });
+  it("clamps so neither neighbor can become empty", () => {
+    // 다음 씬에서 999프레임을 가져오려 해도 다음 씬에 1프레임은 남긴다(24만 이동).
+    expect(nudgeSegments(segs, 0, "tail", 999, fps)!.segs[0]!.end_ms)
+      .toBe(shiftBoundaryMs(1000, fps, 24));
+    // 이 씬이 999프레임을 넘기려 해도 이 씬에 1프레임은 남는다(-24만 이동).
+    expect(nudgeSegments(segs, 0, "tail", -999, fps)!.segs[0]!.end_ms)
+      .toBe(shiftBoundaryMs(1000, fps, -24));
+  });
+  it("returns null when there is nothing to move", () => {
+    expect(nudgeSegments(segs, 2, "tail", 1, fps)).toBeNull();  // 마지막 구간의 꼬리
+    expect(nudgeSegments(segs, 0, "head", 1, fps)).toBeNull();  // 첫 구간의 머리
+    expect(nudgeSegments(segs, 0, "tail", 0, fps)).toBeNull();  // 이동량 0
+    // 이웃이 한 프레임뿐이면 가져올 프레임이 없다 — 이동 0으로 클램프 → null.
+    const tiny = [
+      { label: "A", start_ms: 0, end_ms: 1000 },
+      { label: "B", start_ms: 1000, end_ms: 1040 },
+    ];
+    expect(nudgeSegments(tiny, 0, "tail", 5, fps)).toBeNull();
+  });
+  it("does not mutate the input array", () => {
+    const before = JSON.parse(JSON.stringify(segs));
+    nudgeSegments(segs, 0, "tail", 5, fps);
+    nudgeSegments(segs, 1, "head", -3, fps);
+    expect(segs).toEqual(before);
   });
 });

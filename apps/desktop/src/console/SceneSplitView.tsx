@@ -2,9 +2,9 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { consoleStyles } from "./consoleStyles";
 import { hasTauriRuntime } from "./useQrFullscreenShortcut";
 import {
-  absorbFlankedMisreads, anomalousLabels, applyFixes, applySplitName, boundaryIssueIndices, confidentFixes, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, probeFileName, probeToken, scanProgressKey, scenePopupAction, stepVisibleIndex, upsertBoundaryOk,
-  NTSC_FPS, prefixRenameFixes, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, splitSegment, tokenizeSlate, trimFrames,
-  type LabelFix,
+  absorbFlankedMisreads, anomalousLabels, applyFixes, applySplitName, boundaryIssueIndices, confidentFixes, effectiveFps, filterIndices, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, mergeSegment, exportedFileName, neighborIndices, nudgeSegments, probeFileName, probeToken, scanProgressKey, scenePopupAction, segPreviewFor, stepVisibleIndex, upsertBoundaryOk,
+  NTSC_FPS, prefixRenameFixes, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, splitSegment, tokenizeSlate, trimFrames,
+  type LabelFix, type SegPreview,
 } from "./sceneSplitLogic";
 import { SceneFilmstrip } from "./SceneFilmstrip";
 import {
@@ -621,7 +621,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const restored = top.segs[top.survivor];
     if ((top.kind === "boundary" || top.kind === "split")
         && p?.segIndex === top.survivor && restored) {
-      const fps = data.video_fps && data.video_fps > 0 ? data.video_fps : NTSC_FPS;
+      const fps = effectiveFps(data.video_fps);
       const side = p.side ?? "head";
       const focusMs = side === "tail"
         ? frameSeekMs(segmentTailMs(restored.start_ms, restored.end_ms, fps), fps)
@@ -643,13 +643,8 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
   // 팝업 단축키 effect의 의존성이 이 값을 읽으므로 그 위에 선언해 둔다(아래에
   // 두면 의존성 배열이 렌더 중 TDZ에 걸린다 — 분할 시 슬레이트 읽기가 쓴다).
   const [ocrRegion, setOcrRegion] = useState<OcrRegion | null>(null);
-  // 팝업 프리뷰 — seekMs(첫 표시 프레임)와, 구간이면 그 [start,end)·라벨·프레임정확
-  // 재생/정지 시각. playStartMs=첫 프레임 중앙, lastFrameMs=마지막(꼬리) 프레임 중앙
-  // (둘 다 소스 fps로 계산). 구간이면 재생을 그 범위로 묶어 분할을 확인하게 한다.
-  const [preview, setPreview] = useState<
-    { seekMs: number; startMs?: number; endMs?: number; label?: string;
-      playStartMs?: number; lastFrameMs?: number; fps?: number;
-      segIndex?: number; side?: "head" | "tail" } | null>(null);
+  // 팝업 프리뷰 — 값 구성과 필드 설명은 sceneSplitLogic의 SegPreview/segPreviewFor.
+  const [preview, setPreview] = useState<SegPreview | null>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   // 구간 반복재생(기본 꺼짐) — 완료 시 꼬리 프레임에 정지해 꼬리를 확인하게 한다.
   // 켜면 [첫 프레임, 꼬리 프레임]을 반복한다.
@@ -743,64 +738,35 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     rafRef.current = requestAnimationFrame(tick);
   };
 
-  // 프리뷰(팝업) 상태를 세그먼트로부터 구성 — 프레임 정확 재생/편집 값 포함.
+  // 프리뷰(팝업) 상태를 세그먼트로부터 구성 — 계산은 segPreviewFor(순수), 여기는
+  // 현재 잡의 fps만 공급한다.
   const buildSegPreview = (s: SceneSegment, segIndex: number, seekMs: number,
-                           side: "head" | "tail") => {
-    const fps = data?.video_fps && data.video_fps > 0 ? data.video_fps : NTSC_FPS;
-    return {
-      seekMs, segIndex, side, label: s.label,
-      startMs: s.start_ms, endMs: s.end_ms, fps,
-      playStartMs: frameSeekMs(s.start_ms, fps),
-      lastFrameMs: frameSeekMs(segmentTailMs(s.start_ms, s.end_ms, fps), fps),
-    };
-  };
+                           side: "head" | "tail") =>
+    segPreviewFor(s, segIndex, seekMs, side, effectiveFps(data?.video_fps));
 
   // 팝업에서 머리/꼬리 경계를 delta 프레임 이동 — 그 프레임을 이웃 씬으로 넘기거나
-  // 이웃에서 가져온다(스캔이 못 잡는 디졸브/와이프 수동 교정). 인접 두 세그먼트를
-  // 같은 새 경계로 갱신(dirty)하고, 팝업 영상을 편집한 경계 프레임으로 시킹해 즉시
-  // 확인시킨다. 경계가 프레임 정렬을 유지하므로 익스포트도 프레임 정확.
+  // 이웃에서 가져온다(스캔이 못 잡는 디졸브/와이프 수동 교정). 클램프·경계 공유
+  // 갱신·focusMs 계산은 nudgeSegments(순수)가 담당하고, 여기는 상태 갱신과 팝업
+  // 시킹만 한다. 경계가 프레임 정렬을 유지하므로 익스포트도 프레임 정확.
   const nudgeBoundary = (side: "head" | "tail", delta: number) => {
     if (!data || preview?.segIndex == null || delta === 0) return;
     const i = preview.segIndex;
-    const fps = data.video_fps && data.video_fps > 0 ? data.video_fps : NTSC_FPS;
-    const frameMs = 1000 / fps;
-    const frames = (s: SceneSegment) =>
-      Math.max(1, Math.round((s.end_ms - s.start_ms) / frameMs));
-    const segs = segments.slice();
-    let focusMs: number;
-    if (side === "tail") {
-      if (i >= segs.length - 1) return;
-      // 빈 씬 방지 클램프: delta<0(이 씬이 넘김)은 이 씬이 1프레임 남게, delta>0(다음
-      // 씬에서 가져옴)은 다음 씬이 1프레임 남게. 요청 N이 넘치면 가능한 만큼만 이동.
-      const d = Math.max(-(frames(segs[i]!) - 1),
-                         Math.min(frames(segs[i + 1]!) - 1, delta));
-      if (d === 0) return;
-      const nb = shiftBoundaryMs(segs[i]!.end_ms, fps, d);
-      segs[i] = { ...segs[i]!, end_ms: nb };
-      segs[i + 1] = { ...segs[i + 1]!, start_ms: nb };
-      focusMs = frameSeekMs(segmentTailMs(segs[i]!.start_ms, segs[i]!.end_ms, fps), fps);
-    } else {
-      if (i <= 0) return;
-      const d = Math.max(-(frames(segs[i - 1]!) - 1),
-                         Math.min(frames(segs[i]!) - 1, delta));
-      if (d === 0) return;
-      const nh = shiftBoundaryMs(segs[i]!.start_ms, fps, d);
-      segs[i - 1] = { ...segs[i - 1]!, end_ms: nh };
-      segs[i] = { ...segs[i]!, start_ms: nh };
-      focusMs = frameSeekMs(segs[i]!.start_ms, fps);
-    }
+    const moved = nudgeSegments(segments, i, side, delta,
+                                effectiveFps(data.video_fps));
+    if (!moved) return;
     // 되돌리기용: 교정 전 세그먼트·경계플래그를 병합과 같은 스택에 쌓는다. In/Out
     // 트림은 한 클릭이라 오조작이 쉬운 만큼 되돌릴 수 있어야 한다.
     setEditUndo((prev) => [
       ...prev,
       { kind: "boundary", segs: segments, issues: data.boundary_issues, survivor: i }]);
-    setSegments(segs);  // dirty — "수정사항 저장" 후 익스포트에 반영
+    setSegments(moved.segs);  // dirty — "수정사항 저장" 후 익스포트에 반영
     // 교정한 씬(+맞닿은 이웃)의 경계 오류 플래그를 뺀다 — 고쳤으면 필터에서 빠져야.
-    clearBoundaryFlags([segs[i]!.label,
-                        side === "tail" ? segs[i + 1]?.label : segs[i - 1]?.label]);
-    setPreview(buildSegPreview(segs[i]!, i, focusMs, side));
+    clearBoundaryFlags([moved.segs[i]!.label,
+                        side === "tail" ? moved.segs[i + 1]?.label
+                                        : moved.segs[i - 1]?.label]);
+    setPreview(buildSegPreview(moved.segs[i]!, i, moved.focusMs, side));
     const v = previewVideoRef.current;
-    if (v) { v.pause(); v.currentTime = focusMs / 1000; }
+    if (v) { v.pause(); v.currentTime = moved.focusMs / 1000; }
   };
   // 편집 프로그램식 In/Out 트림 — 지금 보고 있는 프레임을 이 씬의 첫(In)/마지막(Out)
   // 프레임으로 확정한다. 사용자가 프레임 카운터를 읽어 '프레임씩' 칸에 옮겨 적던
@@ -1015,7 +981,7 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
     const seg = segments[next];
     if (!seg) return;
     const side = preview.side ?? "head";
-    const fps = data.video_fps && data.video_fps > 0 ? data.video_fps : NTSC_FPS;
+    const fps = effectiveFps(data.video_fps);
     const focusMs = side === "tail"
       ? frameSeekMs(segmentTailMs(seg.start_ms, seg.end_ms, fps), fps)
       : frameSeekMs(seg.start_ms, fps);
