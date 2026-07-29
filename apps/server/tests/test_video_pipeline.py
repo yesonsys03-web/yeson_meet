@@ -10,6 +10,12 @@ from sqlalchemy import select
 
 from apps.server.db import session as session_mod
 from apps.server.db.models import AppUser, VideoJob, VideoSegment
+from apps.server.domain.video_captions import burn_run as br
+from apps.server.domain.video_captions import caption_run as cr
+from apps.server.domain.video_captions import job_tasks as jt
+from apps.server.domain.video_captions import maintenance as mt
+from apps.server.domain.video_captions import scene_export as se
+from apps.server.domain.video_captions import scene_scan_fp as fp
 from apps.server.domain.video_captions import pipeline as pl
 from apps.server.domain.video_captions import translate as tl
 from apps.server.domain.video_captions.ffmpeg import FfmpegError
@@ -54,16 +60,16 @@ async def test_run_video_job_happy_path(monkeypatch, db_session, admin_user, tmp
     job = await _make_job(db_session, admin_user, media_path=str(src))
     job_id, external_id = job.id, job.external_id
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
-    monkeypatch.setattr(pl, "transcribe_audio",
+    monkeypatch.setattr(cr, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(cr, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
+    monkeypatch.setattr(cr, "ensure_preview", lambda f, s, d, proc_key=None: s)
+    monkeypatch.setattr(cr, "transcribe_audio",
                         lambda p, m, cb=None: [SubSegment(1, 0, 1000, "Hello")])
 
     async def fake_translate(segs, provider, **kw):
         return [SubSegment(1, 0, 1000, "안녕하세요")]
 
-    monkeypatch.setattr(pl, "translate_segments", fake_translate)
+    monkeypatch.setattr(cr, "translate_segments", fake_translate)
 
     await pl.run_video_job(external_id)
 
@@ -92,9 +98,9 @@ async def test_run_video_job_serialized_by_semaphore(
     jobA = await _make_job(db_session, admin_user, media_path=str(srcA))
     jobB = await _make_job(db_session, admin_user, media_path=str(srcB))
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
-    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
+    monkeypatch.setattr(cr, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(cr, "ensure_preview", lambda f, s, d, proc_key=None: s)
+    monkeypatch.setattr(cr, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
 
     concur = {"cur": 0, "max": 0}
 
@@ -105,12 +111,12 @@ async def test_run_video_job_serialized_by_semaphore(
         concur["cur"] -= 1
         return [SubSegment(1, 0, 1000, "Hi")]
 
-    monkeypatch.setattr(pl, "transcribe_audio", fake_transcribe)
+    monkeypatch.setattr(cr, "transcribe_audio", fake_transcribe)
 
     async def fake_translate(segs, provider, **kw):
         return [SubSegment(1, 0, 1000, "안녕")]
 
-    monkeypatch.setattr(pl, "translate_segments", fake_translate)
+    monkeypatch.setattr(cr, "translate_segments", fake_translate)
 
     await asyncio.gather(
         pl.run_video_job(jobA.external_id), pl.run_video_job(jobB.external_id))
@@ -127,10 +133,10 @@ async def test_cancel_job_task_releases_semaphore(
     job = await _make_job(db_session, admin_user, media_path=str(src))
     ext = job.external_id
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
-    monkeypatch.setattr(pl, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
-    monkeypatch.setattr(pl, "transcribe_audio",
+    monkeypatch.setattr(cr, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(cr, "ensure_preview", lambda f, s, d, proc_key=None: s)
+    monkeypatch.setattr(cr, "extract_audio", lambda f, s, d, proc_key=None: Path(d).write_bytes(b"a"))
+    monkeypatch.setattr(cr, "transcribe_audio",
                         lambda p, m, cb=None: [SubSegment(1, 0, 1000, "Hi")])
 
     reached = asyncio.Event()
@@ -141,7 +147,7 @@ async def test_cancel_job_task_releases_semaphore(
         await blocking.wait()  # hold the semaphore (cancellable await) until cancelled
         return [SubSegment(1, 0, 1000, "안녕")]
 
-    monkeypatch.setattr(pl, "translate_segments", fake_translate)
+    monkeypatch.setattr(cr, "translate_segments", fake_translate)
 
     pl.start_job_task(ext, pl.run_video_job(ext))
     await asyncio.wait_for(reached.wait(), timeout=5)
@@ -158,7 +164,7 @@ async def test_run_video_job_records_error(monkeypatch, db_session, admin_user, 
     src.write_bytes(b"v")
     job = await _make_job(db_session, admin_user, media_path=str(src))
     job_id, external_id = job.id, job.external_id
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: None)
+    monkeypatch.setattr(cr, "locate_ffmpeg", lambda: None)
 
     await pl.run_video_job(external_id)
 
@@ -179,13 +185,13 @@ async def test_run_burn_job(monkeypatch, db_session, admin_user, tmp_path):
     await db_session.commit()
 
     burned = {}
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
 
     def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None, use_gpu=None):
         burned["style"] = style
         Path(dst).write_bytes(b"out")
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     await pl.run_burn_job(external_id, "top", 20, 24)
 
@@ -215,7 +221,7 @@ async def test_run_burn_job_serialized_by_semaphore(
         jobs.append(job)
     await db_session.commit()
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
     concur = {"cur": 0, "max": 0}
 
     def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None,
@@ -226,7 +232,7 @@ async def test_run_burn_job_serialized_by_semaphore(
         concur["cur"] -= 1
         Path(dst).write_bytes(b"out")
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     await asyncio.gather(
         pl.run_burn_job(jobs[0].external_id, "top", 20, 24),
@@ -249,7 +255,7 @@ async def test_cancel_burn_task_releases_burn_semaphore(
     await db_session.commit()
     ext = job.external_id
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
     reached = threading.Event()
     blocking = threading.Event()
 
@@ -258,7 +264,7 @@ async def test_cancel_burn_task_releases_burn_semaphore(
         reached.set()
         blocking.wait(5)  # hold the burn in its worker thread until released
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     pl.start_job_task(ext, pl.run_burn_job(ext, "top", 20, 24))
     await asyncio.to_thread(reached.wait, 5)
@@ -286,7 +292,7 @@ async def test_run_burn_job_always_burns_on_cpu(
     await db_session.commit()
 
     monkeypatch.setattr(pl.gpu_pack, "is_enabled", lambda: enabled)
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
 
     seen_use_gpu = {}
 
@@ -294,7 +300,7 @@ async def test_run_burn_job_always_burns_on_cpu(
         seen_use_gpu["v"] = use_gpu
         Path(dst).write_bytes(b"out")
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     await pl.run_burn_job(external_id, "top", 20, 24)
 
@@ -311,7 +317,7 @@ async def test_run_burn_job_survives_missing_job(db_session):
 
 
 async def test_startup_sweep_fails_inflight_jobs(db_session, admin_user, monkeypatch):
-    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: False)
+    monkeypatch.setattr(mt, "_another_instance_is_serving", lambda: False)
     inflight = await _make_job(db_session, admin_user, status="transcribing")
     inflight_id, inflight_external_id = inflight.id, inflight.external_id
     done = await _make_job(db_session, admin_user, status="done")
@@ -331,7 +337,7 @@ async def test_startup_sweep_skipped_when_another_instance_serving(
         db_session, admin_user, monkeypatch):
     job = await _make_job(db_session, admin_user, status="transcribing")
     external_id = job.external_id
-    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: True)
+    monkeypatch.setattr(mt, "_another_instance_is_serving", lambda: True)
     await pl.fail_inflight_video_jobs_at_startup()
     db_session.expire_all()
     loaded = (await db_session.execute(
@@ -404,7 +410,7 @@ async def test_prune_at_startup_skipped_when_another_instance_serving(
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
     for i in range(12):
         await _make_dated_job(db_session, admin_user, base + timedelta(minutes=i))
-    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: True)
+    monkeypatch.setattr(mt, "_another_instance_is_serving", lambda: True)
 
     removed = await pl.prune_old_video_jobs_at_startup()
 
@@ -439,7 +445,7 @@ async def test_prune_reasserts_status_at_delete_time(
                              .values(status="burning"))
             await db.commit()
 
-    monkeypatch.setattr(pl, "_prune_pre_delete_hook", flip_to_burning)
+    monkeypatch.setattr(mt, "_prune_pre_delete_hook", flip_to_burning)
 
     removed = await pl.prune_old_video_jobs(keep=10)
 
@@ -459,8 +465,8 @@ async def test_run_video_job_deletes_audio_after_transcribe(
     external_id = job.external_id
     audio_seen = {}
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
+    monkeypatch.setattr(cr, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(cr, "ensure_preview", lambda f, s, d, proc_key=None: s)
 
     def fake_extract(f, s, d, proc_key=None):
         Path(d).write_bytes(b"a")
@@ -470,13 +476,13 @@ async def test_run_video_job_deletes_audio_after_transcribe(
         audio_seen["exists_during"] = Path(p).exists()
         return [SubSegment(1, 0, 2500, "Hello")]
 
-    monkeypatch.setattr(pl, "extract_audio", fake_extract)
-    monkeypatch.setattr(pl, "transcribe_audio", fake_transcribe)
+    monkeypatch.setattr(cr, "extract_audio", fake_extract)
+    monkeypatch.setattr(cr, "transcribe_audio", fake_transcribe)
 
     async def fake_translate(segs, provider, **kw):
         return [SubSegment(1, 0, 2500, "안녕")]
 
-    monkeypatch.setattr(pl, "translate_segments", fake_translate)
+    monkeypatch.setattr(cr, "translate_segments", fake_translate)
 
     await pl.run_video_job(external_id)
 
@@ -506,8 +512,8 @@ async def test_run_burn_job_uses_stored_duration_without_wav(
     async def fake_set_progress(eid, pct, generation):
         progress_pcts.append(pct)
 
-    monkeypatch.setattr(pl, "_set_progress", fake_set_progress)
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "_set_progress", fake_set_progress)
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
 
     def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None, use_gpu=None):
         # duration must come from duration_ms (4.0s), NOT the segment max (1.0s),
@@ -516,7 +522,7 @@ async def test_run_burn_job_uses_stored_duration_without_wav(
         progress_cb(2.0)
         Path(dst).write_bytes(b"out")
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     await pl.run_burn_job(external_id, "bottom", 40, 18)
     await asyncio.sleep(0)  # let the thread-scheduled progress callback drain
@@ -589,7 +595,8 @@ async def test_cancel_job_task_kills_active_ffmpeg_proc(db_session, admin_user, 
     job = await _make_job(db_session, admin_user, status="burning")
     ext = job.external_id
     killed: list[str] = []
-    monkeypatch.setattr(pl, "kill_active", lambda key: killed.append(key) or True)
+    # cancel_job_task는 job_tasks로 옮겨졌다 — 패치도 그 모듈에(파사드 패치는 안 닿는다).
+    monkeypatch.setattr(jt, "kill_active", lambda key: killed.append(key) or True)
 
     pl.cancel_job_task(ext)
 
@@ -605,8 +612,8 @@ async def test_run_video_job_extract_killed_stays_cancelled_not_error(
     job = await _make_job(db_session, admin_user, media_path=str(src))
     job_id, ext = job.id, job.external_id
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "ensure_preview", lambda f, s, d, proc_key=None: s)
+    monkeypatch.setattr(cr, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(cr, "ensure_preview", lambda f, s, d, proc_key=None: s)
 
     loop = asyncio.get_running_loop()
 
@@ -624,7 +631,7 @@ async def test_run_video_job_extract_killed_stays_cancelled_not_error(
         # kill_active로 죽은 ffmpeg는 이렇게 FfmpegError로 표면화된다
         raise FfmpegError("ffmpeg failed (code=-9): killed")
 
-    monkeypatch.setattr(pl, "extract_audio", fake_extract)
+    monkeypatch.setattr(cr, "extract_audio", fake_extract)
 
     await pl.run_video_job(ext)
 
@@ -649,7 +656,7 @@ async def test_run_burn_job_killed_ffmpeg_error_stays_cancelled(
                                 text_en="Hello", text_ko="안녕"))
     await db_session.commit()
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
     loop = asyncio.get_running_loop()
 
     async def _cancel_mid_burn():
@@ -664,7 +671,7 @@ async def test_run_burn_job_killed_ffmpeg_error_stays_cancelled(
         asyncio.run_coroutine_threadsafe(_cancel_mid_burn(), loop).result(timeout=10)
         raise FfmpegError("ffmpeg failed (code=-9): killed")
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     await pl.run_burn_job(ext, "bottom", 40, 18)
 
@@ -714,7 +721,7 @@ async def test_run_burn_job_stale_generation_stops_and_keeps_cancelled(
                                 text_en="Hello", text_ko="안녕"))
     await db_session.commit()
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
     loop = asyncio.get_running_loop()
 
     async def _cancel_mid_burn():
@@ -732,7 +739,7 @@ async def test_run_burn_job_stale_generation_stops_and_keeps_cancelled(
         progress_cb(2.0)  # stale 세대 감지 → StaleRunCancelled를 기대
         raise AssertionError("progress_cb must raise StaleRunCancelled on stale run")
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     await pl.run_burn_job(ext, "bottom", 40, 18)
 
@@ -817,16 +824,16 @@ async def test_run_scene_scan_fingerprint_happy_path(monkeypatch, tmp_path):
         return ("HH0307_010_0010_AC_v01" if t_ms < cut_ms
                 else "HH0307_010_0020_AC_v01")
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
-    monkeypatch.setattr(pl, "build_scan_source",
+    monkeypatch.setattr(fp, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(fp, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(fp, "build_scan_source",
                         lambda ffmpeg, src, dst, region, proc_key=None:
                         dst.write_bytes(b"s"))
-    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
-    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
-    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
-    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
-    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+    monkeypatch.setattr(fp, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(fp, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(fp, "extract_frames_at", fake_extract_at)
+    monkeypatch.setattr(fp, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(fp, "read_slate_line", fake_read)
 
     await pl.run_scene_scan_fingerprint(eid)
 
@@ -857,16 +864,16 @@ async def test_run_scene_scan_fingerprint_failure_writes_error(
     workdir = pl.job_dir(eid)
     workdir.mkdir(parents=True)
     (workdir / "burned.mp4").write_bytes(b"v")
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(fp, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(fp, "video_fps", lambda f, s: 24.0)
 
     def boom(*a, **kw):
         raise FfmpegError("x")
 
-    monkeypatch.setattr(pl, "build_scan_source",
+    monkeypatch.setattr(fp, "build_scan_source",
                         lambda ffmpeg, src, dst, region, proc_key=None:
                         dst.write_bytes(b"s"))
-    monkeypatch.setattr(pl, "extract_fingerprint_frames", boom)
+    monkeypatch.setattr(fp, "extract_fingerprint_frames", boom)
     await pl.run_scene_scan_fingerprint(eid)
     data = pl.load_scenes(eid)
     assert data["scanning"] is False
@@ -1214,16 +1221,16 @@ async def test_run_scene_scan_fingerprint_resolves_unreadable_block(
             return ""  # 도입부 4프레임은 저대비로 판독불가
         return "HH0307_010_0020_AC_v01"
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
-    monkeypatch.setattr(pl, "build_scan_source",
+    monkeypatch.setattr(fp, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(fp, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(fp, "build_scan_source",
                         lambda ffmpeg, src, dst, region, proc_key=None:
                         dst.write_bytes(b"s"))
-    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
-    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
-    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
-    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
-    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+    monkeypatch.setattr(fp, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(fp, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(fp, "extract_frames_at", fake_extract_at)
+    monkeypatch.setattr(fp, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(fp, "read_slate_line", fake_read)
 
     await pl.run_scene_scan_fingerprint(eid)
 
@@ -1338,16 +1345,16 @@ async def test_run_scene_scan_fingerprint_padded_batch_recovers_text(
         # 컷 뒤 씬은 저대비 — 패딩(중간본 전체, w=1.0)에서만 읽힌다.
         return "HH0307_010_0020_AC_v01" if w > tight_w + 0.001 else ""
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
-    monkeypatch.setattr(pl, "build_scan_source",
+    monkeypatch.setattr(fp, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(fp, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(fp, "build_scan_source",
                         lambda ffmpeg, src, dst, region, proc_key=None:
                         dst.write_bytes(b"s"))
-    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
-    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
-    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
-    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
-    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+    monkeypatch.setattr(fp, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(fp, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(fp, "extract_frames_at", fake_extract_at)
+    monkeypatch.setattr(fp, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(fp, "read_slate_line", fake_read)
 
     await pl.run_scene_scan_fingerprint(eid)
 
@@ -1422,16 +1429,16 @@ async def test_run_scene_scan_fingerprint_reports_progress_during_retry(
                     else "HH0307_010_0020_AC_v01")
         return ""                 # 타이트 판독은 전멸(실기 재현)
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
-    monkeypatch.setattr(pl, "build_scan_source",
+    monkeypatch.setattr(fp, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(fp, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(fp, "build_scan_source",
                         lambda ffmpeg, src, dst, region, proc_key=None:
                         dst.write_bytes(b"s"))
-    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
-    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
-    monkeypatch.setattr(pl, "extract_frames_at", fake_extract_at)
-    monkeypatch.setattr(pl, "extract_frame", fake_extract_frame)
-    monkeypatch.setattr(pl, "read_slate_line", fake_read)
+    monkeypatch.setattr(fp, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(fp, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(fp, "extract_frames_at", fake_extract_at)
+    monkeypatch.setattr(fp, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(fp, "read_slate_line", fake_read)
 
     await pl.run_scene_scan_fingerprint(eid)
 
@@ -1482,20 +1489,20 @@ async def test_run_scene_scan_fingerprint_reports_extraction_stages(
             stages.append(st)
         orig_save(external_id, data)
 
-    monkeypatch.setattr(pl, "save_scenes", spy_save)
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda f, s: 24.0)
-    monkeypatch.setattr(pl, "build_scan_source",
+    monkeypatch.setattr(fp, "save_scenes", spy_save)
+    monkeypatch.setattr(fp, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(fp, "video_fps", lambda f, s: 24.0)
+    monkeypatch.setattr(fp, "build_scan_source",
                         lambda ffmpeg, src, dst, region, proc_key=None:
                         dst.write_bytes(b"s"))
-    monkeypatch.setattr(pl, "extract_fingerprint_frames", fake_extract_fp)
-    monkeypatch.setattr(pl, "extract_thumbnails", fake_thumbs)
-    monkeypatch.setattr(pl, "extract_frames_at",
+    monkeypatch.setattr(fp, "extract_fingerprint_frames", fake_extract_fp)
+    monkeypatch.setattr(fp, "extract_thumbnails", fake_thumbs)
+    monkeypatch.setattr(fp, "extract_frames_at",
                         lambda *a, **k: {})   # 판독은 이 테스트의 관심 밖
-    monkeypatch.setattr(pl, "extract_frame",
+    monkeypatch.setattr(fp, "extract_frame",
                         lambda ffmpeg, src, t_ms, dst, proc_key=None,
                         region=None: dst.write_text("x"))
-    monkeypatch.setattr(pl, "read_slate_line", lambda *a, **k: "")
+    monkeypatch.setattr(fp, "read_slate_line", lambda *a, **k: "")
 
     await pl.run_scene_scan_fingerprint(eid)
 
@@ -1528,7 +1535,7 @@ async def test_clear_stale_scan_flags_at_startup(monkeypatch):
     (완료·취소·실패), 스캔 도중 서버가 재시작되면 뒤에 도는 작업이 없는데도
     영원히 '실행중'으로 남았다 — 사용자는 취소를 눌러야만 빠져나올 수 있었다.
     """
-    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: False)
+    monkeypatch.setattr(mt, "_another_instance_is_serving", lambda: False)
     eid = uuid4()
     pl.job_dir(eid).mkdir(parents=True)
     region = {"x": 0.749, "y": 0.9, "w": 0.1823, "h": 0.087}
@@ -1555,7 +1562,7 @@ async def test_clear_stale_scan_flags_skips_when_another_instance_serves(
         monkeypatch):
     """이중 기동된 비소유 프로세스가 살아있는 인스턴스의 스캔을 죽이면 안 된다
     — DB 스윕과 같은 가드."""
-    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: True)
+    monkeypatch.setattr(mt, "_another_instance_is_serving", lambda: True)
     eid = uuid4()
     pl.job_dir(eid).mkdir(parents=True)
     pl.save_scenes(eid, {"scanning": True, "frames": []})
@@ -1565,7 +1572,7 @@ async def test_clear_stale_scan_flags_skips_when_another_instance_serves(
 
 async def test_clear_stale_scan_flags_leaves_finished_scans(monkeypatch):
     """끝난 스캔의 결과는 건드리지 않는다(에러를 새로 심지 않는다)."""
-    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: False)
+    monkeypatch.setattr(mt, "_another_instance_is_serving", lambda: False)
     eid = uuid4()
     pl.job_dir(eid).mkdir(parents=True)
     done = {"scanning": False, "frames": [{"t_ms": 0, "text": "A_001"}]}
@@ -1618,10 +1625,10 @@ async def test_scene_export_flags_error_when_file_not_written(monkeypatch):
         {"label": "0010", "start_ms": 0, "end_ms": 1000},
         {"label": "0020", "start_ms": 1000, "end_ms": 2000},
     ]})
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda *a, **k: 24.0)
+    monkeypatch.setattr(se, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(se, "video_fps", lambda *a, **k: 24.0)
     # cut_segment가 '성공'하지만 파일을 만들지 않는 상황을 재현(no-op).
-    monkeypatch.setattr(pl, "cut_segment", lambda *a, **k: None)
+    monkeypatch.setattr(se, "cut_segment", lambda *a, **k: None)
 
     written = await pl.run_scene_export(ext, "scene")
 
@@ -1637,13 +1644,13 @@ async def test_scene_export_writes_files_and_completes(monkeypatch):
     pl.save_scenes(ext, {"segments_scene": [
         {"label": "0010", "start_ms": 0, "end_ms": 1000},
     ]})
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda *a, **k: 24.0)
+    monkeypatch.setattr(se, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(se, "video_fps", lambda *a, **k: 24.0)
 
     def _fake_cut(_ffmpeg, _src, dst, *a, **k):
         Path(dst).write_bytes(b"\x00\x01")  # 실제 파일 생성 시늉
 
-    monkeypatch.setattr(pl, "cut_segment", _fake_cut)
+    monkeypatch.setattr(se, "cut_segment", _fake_cut)
 
     written = await pl.run_scene_export(ext, "scene")
 
@@ -1663,13 +1670,13 @@ async def test_scene_export_partial_keeps_full_list_dedupe_names(monkeypatch, tm
         {"label": "0010", "start_ms": 1000, "end_ms": 2000},  # 비단조 — 같은 라벨 재등장
         {"label": "0020", "start_ms": 2000, "end_ms": 3000},
     ]})
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda *a, **k: 24.0)
+    monkeypatch.setattr(se, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(se, "video_fps", lambda *a, **k: 24.0)
 
     def _fake_cut(_ffmpeg, _src, dst, *a, **k):
         Path(dst).write_bytes(b"\x00\x01")
 
-    monkeypatch.setattr(pl, "cut_segment", _fake_cut)
+    monkeypatch.setattr(se, "cut_segment", _fake_cut)
 
     written = await pl.run_scene_export(ext, "scene", str(tmp_path), [1, 2])
 
