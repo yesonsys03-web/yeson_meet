@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from apps.server.db import session as session_mod
 from apps.server.db.models import AppUser, VideoJob, VideoSegment
+from apps.server.domain.video_captions import burn_run as br
 from apps.server.domain.video_captions import caption_run as cr
 from apps.server.domain.video_captions import job_tasks as jt
 from apps.server.domain.video_captions import pipeline as pl
@@ -181,13 +182,13 @@ async def test_run_burn_job(monkeypatch, db_session, admin_user, tmp_path):
     await db_session.commit()
 
     burned = {}
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
 
     def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None, use_gpu=None):
         burned["style"] = style
         Path(dst).write_bytes(b"out")
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     await pl.run_burn_job(external_id, "top", 20, 24)
 
@@ -217,7 +218,7 @@ async def test_run_burn_job_serialized_by_semaphore(
         jobs.append(job)
     await db_session.commit()
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
     concur = {"cur": 0, "max": 0}
 
     def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None,
@@ -228,7 +229,7 @@ async def test_run_burn_job_serialized_by_semaphore(
         concur["cur"] -= 1
         Path(dst).write_bytes(b"out")
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     await asyncio.gather(
         pl.run_burn_job(jobs[0].external_id, "top", 20, 24),
@@ -251,7 +252,7 @@ async def test_cancel_burn_task_releases_burn_semaphore(
     await db_session.commit()
     ext = job.external_id
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
     reached = threading.Event()
     blocking = threading.Event()
 
@@ -260,7 +261,7 @@ async def test_cancel_burn_task_releases_burn_semaphore(
         reached.set()
         blocking.wait(5)  # hold the burn in its worker thread until released
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     pl.start_job_task(ext, pl.run_burn_job(ext, "top", 20, 24))
     await asyncio.to_thread(reached.wait, 5)
@@ -288,7 +289,7 @@ async def test_run_burn_job_always_burns_on_cpu(
     await db_session.commit()
 
     monkeypatch.setattr(pl.gpu_pack, "is_enabled", lambda: enabled)
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
 
     seen_use_gpu = {}
 
@@ -296,7 +297,7 @@ async def test_run_burn_job_always_burns_on_cpu(
         seen_use_gpu["v"] = use_gpu
         Path(dst).write_bytes(b"out")
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     await pl.run_burn_job(external_id, "top", 20, 24)
 
@@ -508,8 +509,8 @@ async def test_run_burn_job_uses_stored_duration_without_wav(
     async def fake_set_progress(eid, pct, generation):
         progress_pcts.append(pct)
 
-    monkeypatch.setattr(pl, "_set_progress", fake_set_progress)
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "_set_progress", fake_set_progress)
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
 
     def fake_burn(ffmpeg, s, srt, dst, style, progress_cb=None, proc_key=None, use_gpu=None):
         # duration must come from duration_ms (4.0s), NOT the segment max (1.0s),
@@ -518,7 +519,7 @@ async def test_run_burn_job_uses_stored_duration_without_wav(
         progress_cb(2.0)
         Path(dst).write_bytes(b"out")
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     await pl.run_burn_job(external_id, "bottom", 40, 18)
     await asyncio.sleep(0)  # let the thread-scheduled progress callback drain
@@ -652,7 +653,7 @@ async def test_run_burn_job_killed_ffmpeg_error_stays_cancelled(
                                 text_en="Hello", text_ko="안녕"))
     await db_session.commit()
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
     loop = asyncio.get_running_loop()
 
     async def _cancel_mid_burn():
@@ -667,7 +668,7 @@ async def test_run_burn_job_killed_ffmpeg_error_stays_cancelled(
         asyncio.run_coroutine_threadsafe(_cancel_mid_burn(), loop).result(timeout=10)
         raise FfmpegError("ffmpeg failed (code=-9): killed")
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     await pl.run_burn_job(ext, "bottom", 40, 18)
 
@@ -717,7 +718,7 @@ async def test_run_burn_job_stale_generation_stops_and_keeps_cancelled(
                                 text_en="Hello", text_ko="안녕"))
     await db_session.commit()
 
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(br, "locate_ffmpeg", lambda: "ffmpeg")
     loop = asyncio.get_running_loop()
 
     async def _cancel_mid_burn():
@@ -735,7 +736,7 @@ async def test_run_burn_job_stale_generation_stops_and_keeps_cancelled(
         progress_cb(2.0)  # stale 세대 감지 → StaleRunCancelled를 기대
         raise AssertionError("progress_cb must raise StaleRunCancelled on stale run")
 
-    monkeypatch.setattr(pl, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(br, "burn_subtitles", fake_burn)
 
     await pl.run_burn_job(ext, "bottom", 40, 18)
 
