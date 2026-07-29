@@ -13,6 +13,7 @@ from apps.server.db.models import AppUser, VideoJob, VideoSegment
 from apps.server.domain.video_captions import burn_run as br
 from apps.server.domain.video_captions import caption_run as cr
 from apps.server.domain.video_captions import job_tasks as jt
+from apps.server.domain.video_captions import maintenance as mt
 from apps.server.domain.video_captions import scene_export as se
 from apps.server.domain.video_captions import scene_scan_fp as fp
 from apps.server.domain.video_captions import pipeline as pl
@@ -316,7 +317,7 @@ async def test_run_burn_job_survives_missing_job(db_session):
 
 
 async def test_startup_sweep_fails_inflight_jobs(db_session, admin_user, monkeypatch):
-    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: False)
+    monkeypatch.setattr(mt, "_another_instance_is_serving", lambda: False)
     inflight = await _make_job(db_session, admin_user, status="transcribing")
     inflight_id, inflight_external_id = inflight.id, inflight.external_id
     done = await _make_job(db_session, admin_user, status="done")
@@ -336,7 +337,7 @@ async def test_startup_sweep_skipped_when_another_instance_serving(
         db_session, admin_user, monkeypatch):
     job = await _make_job(db_session, admin_user, status="transcribing")
     external_id = job.external_id
-    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: True)
+    monkeypatch.setattr(mt, "_another_instance_is_serving", lambda: True)
     await pl.fail_inflight_video_jobs_at_startup()
     db_session.expire_all()
     loaded = (await db_session.execute(
@@ -409,7 +410,7 @@ async def test_prune_at_startup_skipped_when_another_instance_serving(
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
     for i in range(12):
         await _make_dated_job(db_session, admin_user, base + timedelta(minutes=i))
-    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: True)
+    monkeypatch.setattr(mt, "_another_instance_is_serving", lambda: True)
 
     removed = await pl.prune_old_video_jobs_at_startup()
 
@@ -444,7 +445,7 @@ async def test_prune_reasserts_status_at_delete_time(
                              .values(status="burning"))
             await db.commit()
 
-    monkeypatch.setattr(pl, "_prune_pre_delete_hook", flip_to_burning)
+    monkeypatch.setattr(mt, "_prune_pre_delete_hook", flip_to_burning)
 
     removed = await pl.prune_old_video_jobs(keep=10)
 
@@ -1534,7 +1535,7 @@ async def test_clear_stale_scan_flags_at_startup(monkeypatch):
     (완료·취소·실패), 스캔 도중 서버가 재시작되면 뒤에 도는 작업이 없는데도
     영원히 '실행중'으로 남았다 — 사용자는 취소를 눌러야만 빠져나올 수 있었다.
     """
-    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: False)
+    monkeypatch.setattr(mt, "_another_instance_is_serving", lambda: False)
     eid = uuid4()
     pl.job_dir(eid).mkdir(parents=True)
     region = {"x": 0.749, "y": 0.9, "w": 0.1823, "h": 0.087}
@@ -1561,7 +1562,7 @@ async def test_clear_stale_scan_flags_skips_when_another_instance_serves(
         monkeypatch):
     """이중 기동된 비소유 프로세스가 살아있는 인스턴스의 스캔을 죽이면 안 된다
     — DB 스윕과 같은 가드."""
-    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: True)
+    monkeypatch.setattr(mt, "_another_instance_is_serving", lambda: True)
     eid = uuid4()
     pl.job_dir(eid).mkdir(parents=True)
     pl.save_scenes(eid, {"scanning": True, "frames": []})
@@ -1571,7 +1572,7 @@ async def test_clear_stale_scan_flags_skips_when_another_instance_serves(
 
 async def test_clear_stale_scan_flags_leaves_finished_scans(monkeypatch):
     """끝난 스캔의 결과는 건드리지 않는다(에러를 새로 심지 않는다)."""
-    monkeypatch.setattr(pl, "_another_instance_is_serving", lambda: False)
+    monkeypatch.setattr(mt, "_another_instance_is_serving", lambda: False)
     eid = uuid4()
     pl.job_dir(eid).mkdir(parents=True)
     done = {"scanning": False, "frames": [{"t_ms": 0, "text": "A_001"}]}
