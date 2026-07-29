@@ -13,6 +13,7 @@ from apps.server.db.models import AppUser, VideoJob, VideoSegment
 from apps.server.domain.video_captions import burn_run as br
 from apps.server.domain.video_captions import caption_run as cr
 from apps.server.domain.video_captions import job_tasks as jt
+from apps.server.domain.video_captions import scene_export as se
 from apps.server.domain.video_captions import scene_scan_fp as fp
 from apps.server.domain.video_captions import pipeline as pl
 from apps.server.domain.video_captions import translate as tl
@@ -1623,10 +1624,10 @@ async def test_scene_export_flags_error_when_file_not_written(monkeypatch):
         {"label": "0010", "start_ms": 0, "end_ms": 1000},
         {"label": "0020", "start_ms": 1000, "end_ms": 2000},
     ]})
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda *a, **k: 24.0)
+    monkeypatch.setattr(se, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(se, "video_fps", lambda *a, **k: 24.0)
     # cut_segment가 '성공'하지만 파일을 만들지 않는 상황을 재현(no-op).
-    monkeypatch.setattr(pl, "cut_segment", lambda *a, **k: None)
+    monkeypatch.setattr(se, "cut_segment", lambda *a, **k: None)
 
     written = await pl.run_scene_export(ext, "scene")
 
@@ -1642,13 +1643,13 @@ async def test_scene_export_writes_files_and_completes(monkeypatch):
     pl.save_scenes(ext, {"segments_scene": [
         {"label": "0010", "start_ms": 0, "end_ms": 1000},
     ]})
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda *a, **k: 24.0)
+    monkeypatch.setattr(se, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(se, "video_fps", lambda *a, **k: 24.0)
 
     def _fake_cut(_ffmpeg, _src, dst, *a, **k):
         Path(dst).write_bytes(b"\x00\x01")  # 실제 파일 생성 시늉
 
-    monkeypatch.setattr(pl, "cut_segment", _fake_cut)
+    monkeypatch.setattr(se, "cut_segment", _fake_cut)
 
     written = await pl.run_scene_export(ext, "scene")
 
@@ -1668,13 +1669,13 @@ async def test_scene_export_partial_keeps_full_list_dedupe_names(monkeypatch, tm
         {"label": "0010", "start_ms": 1000, "end_ms": 2000},  # 비단조 — 같은 라벨 재등장
         {"label": "0020", "start_ms": 2000, "end_ms": 3000},
     ]})
-    monkeypatch.setattr(pl, "locate_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(pl, "video_fps", lambda *a, **k: 24.0)
+    monkeypatch.setattr(se, "locate_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(se, "video_fps", lambda *a, **k: 24.0)
 
     def _fake_cut(_ffmpeg, _src, dst, *a, **k):
         Path(dst).write_bytes(b"\x00\x01")
 
-    monkeypatch.setattr(pl, "cut_segment", _fake_cut)
+    monkeypatch.setattr(se, "cut_segment", _fake_cut)
 
     written = await pl.run_scene_export(ext, "scene", str(tmp_path), [1, 2])
 
