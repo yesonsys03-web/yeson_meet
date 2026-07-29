@@ -83,6 +83,29 @@ def test_classify_no_flag_on_own_only():
     assert tail_bad is False
 
 
+def test_classify_ignores_truncated_neighbor_inside_own_slate():
+    # 실기 EASA05: 이웃 라벨이 접두 유실 오독("18A_S01"·"S12_Panel10")이면 그
+    # 문자열은 내 경계 프레임의 '내 슬레이트' 판독("Seq18A_S01-Panel5") 안에
+    # 항상 들어 있다 — 이웃 슬레이트가 보인 게 아니라 이웃 이름이 내 이름의
+    # 조각일 뿐이다. 내 라벨을 걷어낸 나머지에서 찾아야 한다.
+    _, tail_bad = _classify_boundary(
+        "", "Seq18A_S01 - Panel 5", "Seq18A_S01", None, "18A_S01")
+    assert tail_bad is False
+    _, tail_bad2 = _classify_boundary(
+        "", "Seq07B_S12 - Panel 10", "Seq07B_S12", None, "S12_Panel10")
+    assert tail_bad2 is False
+
+
+def test_classify_ignores_neighbor_that_squashes_to_nothing():
+    # 완전 깨진 이웃 라벨("一·_,")은 squash하면 빈 문자열 — 빈 문자열은 모든
+    # 텍스트에 '포함'되므로 그 이웃을 가진 씬이 무조건 혼입 판정됐다(실기 EASA05).
+    head_bad, tail_bad = _classify_boundary(
+        "Seq10A_S08 - Panel 3", "Seq10A_S08 - Panel 9",
+        "Seq10A_S08", "一·_,", "一·_,")
+    assert head_bad is False
+    assert tail_bad is False
+
+
 def test_classify_no_flag_on_empty():
     # 판독불가('')는 미지 — 오류로 표시하지 않는다.
     head_bad, tail_bad = _classify_boundary("", "", _OWN, _PREV, _NEXT)

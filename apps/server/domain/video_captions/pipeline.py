@@ -1934,10 +1934,23 @@ def _classify_boundary(head_text: str, tail_text: str, label: str,
     두 슬레이트가 겹쳐 보이는 오버랩과, 경계가 어긋나 이웃만 보이는 오배치를 모두
     잡는다. 머리 혼입 = 머리 프레임에 이전 라벨(P≠L)이 보임. 꼬리 혼입 = 꼬리
     프레임에 다음 라벨(X≠L)이 보임. 하드컷은 경계 프레임에 이웃 슬레이트가 없어
-    잡히지 않는다."""
+    잡히지 않는다.
+
+    이웃 라벨은 '내 라벨을 한 번 걷어낸 나머지'에서 찾는다 — 이웃 라벨이 접두
+    유실 오독('18A_S01')이면 그 문자열이 내 슬레이트 판독('Seq18A_S01-Panel5')
+    안에 항상 들어 있어, 걷어내지 않으면 멀쩡한 경계가 통째로 혼입 취급된다
+    (실기 EASA05). 디졸브 오버랩은 이웃 슬레이트가 별도 텍스트로 남으므로
+    걷어낸 뒤에도 잡힌다. squash하면 빈 문자열이 되는 깨진 이웃('一·_,')은
+    모든 텍스트에 '포함'되므로 판정 불가로 본다(빈 이웃 라벨과 동급)."""
+    own = _sq(label)
     ht, tt = _sq(head_text), _sq(tail_text)
-    head_bad = bool(prev) and prev != label and _sq(prev) in ht
-    tail_bad = bool(next) and next != label and _sq(next) in tt
+    if own:
+        ht = ht.replace(own, "", 1)
+        tt = tt.replace(own, "", 1)
+    p_sq = _sq(prev) if prev else ""
+    n_sq = _sq(next) if next else ""
+    head_bad = bool(p_sq) and prev != label and p_sq in ht
+    tail_bad = bool(n_sq) and next != label and n_sq in tt
     return head_bad, tail_bad
 
 
