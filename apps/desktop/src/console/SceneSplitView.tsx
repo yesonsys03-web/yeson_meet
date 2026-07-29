@@ -1546,8 +1546,10 @@ export function SceneSplitView({ jobId, onBack }: { jobId: string; onBack: () =>
             {/* 일괄 이름 바꾸기 — 자동 제안이 못 다루는 접두(오독 단정 불가한
                 '다른 단어' 급, 실기 Scene12→Seq12 26건)를 명시적 치환으로.
                 접두 일치 행만 대상이고, 적용은 제안 일괄 적용과 같은 확인
-                다이얼로그를 거친다(체크 선별·되돌리기·인접 병합 포함). */}
-            {onlyAnomalies ? (
+                다이얼로그를 거친다(체크 선별·되돌리기·인접 병합 포함).
+                전체·확인필요 목록에서 노출 — 치환 대상은 필터와 무관하게 전체
+                라벨이라, 경계 오류 검수 화면에서만 숨긴다(맥락이 다른 도구). */}
+            {!onlyBoundaryErrors ? (
               <label style={{ display: "inline-flex", alignItems: "center", gap: 4,
                               fontSize: 12, opacity: 0.85 }}>
                 일괄 이름 바꾸기
