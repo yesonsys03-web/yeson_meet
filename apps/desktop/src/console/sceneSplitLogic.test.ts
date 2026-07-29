@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName, probeFileName, probeToken, upsertBoundaryOk, splitSegment, applySplitName, boundaryIssueIndices } from "./sceneSplitLogic";
+import { absorbFlankedMisreads, anomalousLabels, applyFixes, confidentFixes, formatMs, frameNumberAt, frameSeekMs, mergeAdjacentSameLabel, regionFromDrag, labelTemplate, mergeSegment, NTSC_FPS, previewLabel, renameSegment, segFrameNumber, segmentTailMs, segmentThumbRange, shiftBoundaryMs, suggestLabelFix, tokenShape, tokenizeSlate, trimFrames, neighborIndices, matchesLabelQuery, filterIndices, stepVisibleIndex, scenePopupAction, scanProgressKey, mergeNeighborHint, labelClassKey, modalLabelClass, modalLabelPrefix, isWellFormedLabel, exportedFileName, probeFileName, probeToken, upsertBoundaryOk, splitSegment, applySplitName, boundaryIssueIndices, prefixRenameFixes } from "./sceneSplitLogic";
 
 describe("tokenizeSlate", () => {
   it("splits underscore slate", () => {
@@ -261,6 +261,44 @@ describe("confidentFixes / applyFixes", () => {
     expect(out[3]!.label).toBe("HH0307_040_0110");     // 미체크 → 그대로
     expect(out[1]!.start_ms).toBe(1000);               // 시간은 안 건드린다
     expect(segs[1]!.label).toBe("HH0307_0400080_ACV01");  // 원본 불변
+  });
+});
+
+describe("prefixRenameFixes", () => {
+  it("renames only labels that start with the exact prefix", () => {
+    // 실기 EASA06: Scene12_* 26건은 오독 단정 근거가 없어(편집거리 3) 자동 제안
+    // 불가 — 사용자가 접두를 지정해 바꾸는 명시적 치환. 접두 일치만 대상이다:
+    // 라벨 중간의 같은 문자열까지 바꾸면 엉뚱한 행이 걸린다.
+    const labels = ["Scene12_S03", "Seq11_S01", "PreScene12_S99"];
+    expect(prefixRenameFixes(labels, "Scene12", "Seq12")).toEqual([
+      { index: 0, from: "Scene12_S03", to: "Seq12_S03" },
+    ]);
+  });
+  it("returns nothing for blank or identity input", () => {
+    expect(prefixRenameFixes(["Scene12_S03"], "", "Seq12")).toEqual([]);
+    expect(prefixRenameFixes(["Scene12_S03"], "  ", "Seq12")).toEqual([]);
+    expect(prefixRenameFixes(["Scene12_S03"], "Scene12", "Scene12")).toEqual([]);
+  });
+  it("allows prefix stripping but never an empty result label", () => {
+    expect(prefixRenameFixes(["XSeq01_S01", "XSeq01"], "XSeq01", "")).toEqual([
+      // "XSeq01" 전체가 접두와 같으면 결과가 빈 라벨 — 그 행은 건너뛴다.
+      { index: 0, from: "XSeq01_S01", to: "_S01" },
+    ]);
+  });
+  it("composes with applyFixes + mergeAdjacentSameLabel to heal fragments", () => {
+    // 치환으로 이웃과 라벨이 같아진 파편은 기존 적용 경로가 그대로 병합한다.
+    const segs = [
+      { label: "Seq12_S09", start_ms: 0, end_ms: 1000 },
+      { label: "Scene12_S10", start_ms: 1000, end_ms: 2000 },
+      { label: "Seq12_S10", start_ms: 2000, end_ms: 3000 },
+    ];
+    const fixes = prefixRenameFixes(segs.map((s) => s.label), "Scene12", "Seq12");
+    const out = mergeAdjacentSameLabel(
+      applyFixes(segs, fixes, new Set(fixes.map((f) => f.index))));
+    expect(out).toEqual([
+      { label: "Seq12_S09", start_ms: 0, end_ms: 1000 },
+      { label: "Seq12_S10", start_ms: 1000, end_ms: 3000 },
+    ]);
   });
 });
 

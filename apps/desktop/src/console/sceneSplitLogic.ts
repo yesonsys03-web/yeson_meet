@@ -393,6 +393,26 @@ export function confidentFixes(
     .map((a) => ({ index: a.index, from: a.label, to: a.suggestion as string }));
 }
 
+// 접두 일괄 치환 미리보기 — 오독 판정과 무관한 명시적 이름 정책 도구. 자동 제안
+// (confidentFixes)은 잘림·닮은꼴만 다루므로 '다른 단어' 급 접두(실기 EASA06:
+// Scene12_* 26건, Seq와 편집거리 3이라 오독 단정 불가)는 여기로 바꾼다. 접두
+// 일치만 치환한다 — 라벨 중간까지 바꾸면 씬 번호 등 우연한 일치가 걸린다.
+export function prefixRenameFixes(
+  labels: string[], from: string, to: string,
+): LabelFix[] {
+  const find = from.trim();
+  const repl = to.trim();
+  if (!find || find === repl) return [];
+  const out: LabelFix[] = [];
+  labels.forEach((label, index) => {
+    if (!label.startsWith(find)) return;
+    const next = repl + label.slice(find.length);
+    if (!next || next === label) return;
+    out.push({ index, from: label, to: next });
+  });
+  return out;
+}
+
 // 선택된 교정만 적용한다(시간은 건드리지 않는다). 원본 배열은 변경하지 않는다 —
 // 호출자가 적용 전 스냅샷을 그대로 들고 있다가 되돌릴 수 있어야 한다.
 // from이 현재 라벨과 다르면 건너뛴다: 씬별에서 만든 목록이 시퀀스별에 적용돼
