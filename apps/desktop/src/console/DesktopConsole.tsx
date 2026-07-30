@@ -12,6 +12,7 @@ import { useAutoUpdate } from "../updater/useAutoUpdate";
 import { KnowledgeRepositoryPanel } from "./KnowledgeRepositoryPanel";
 import { NativeCaptureBanner } from "./NativeCaptureBanner";
 import { VideoCaptionPanel } from "./VideoCaptionPanel";
+import { PdfTranslatePanel } from "./PdfTranslatePanel";
 import { consoleStyles } from "./consoleStyles";
 import type { ConsoleView } from "./types";
 
@@ -100,6 +101,10 @@ export function DesktopConsole() {
           <VideoCaptionPanel
             active={activeView === "video"}
           />
+        </section>
+        <section hidden={activeView !== "pdf"}
+          style={activeView === "pdf" ? consoleStyles.sectionScroll : undefined}>
+          <PdfTranslatePanel active={activeView === "pdf"} />
         </section>
       </main>
     </div>
