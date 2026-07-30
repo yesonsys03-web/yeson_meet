@@ -63,11 +63,10 @@ def test_house_style_is_idempotent():
     assert once == twice
 
 
-@pytest.mark.parametrize("before,after", CASES)
-def test_house_style_idempotent_per_case(before, after):
-    once = apply_house_style(before)
-    assert apply_house_style(once) == once
-    assert once == after
+# (리뷰 라운드 2 볼륨 판정: 케이스별 파라미터화 멱등 테스트 13개가
+# `assert once == after`로 위 test_house_style_substitution을 그대로
+# 되풀이했다 — 멱등성 자체는 아래 test_house_style_is_idempotent가 통합
+# 텍스트로 이미 덮으므로, 신호 손실 없이 제거했다.)
 
 
 # ── 적용 순서 무관(새더튼/태더튼 둘 다 대더튼으로) ───────────────────────
@@ -245,6 +244,32 @@ def test_house_style_fx_rule_never_captures_across_newline():
             == "연기 효과\n다음 줄은 그대로")
     assert (apply_house_style("이펙트 연기\r\n두 번째 줄")
             == "연기 효과\r\n두 번째 줄")
+
+
+def test_house_style_fx_rule_does_not_split_crlf_when_capture_would_be_only_cr():
+    """라운드 2→3 결함: 캡처가 `.+?`였을 때 "이펙트 " 바로 뒤에 CR이 오면
+    그 한 글자가 캡처에 딸려가 CRLF를 떠돌이 `\\r`+`\\n`으로 쪼갰다(내용
+    손실은 없지만 줄 구조 손상). 캡처를 `[^\\r\\n]+?`로 좁혀 개행 문자
+    자체가 캡처에 들어가지 않게 했다 — 그 결과 이 형태는 캡처할 문자가
+    없어 규칙이 발동하지 않고 원문 그대로 남는다(줄을 쪼개거나 넘기느니
+    미변환이 낫다는 방침, 팀 리드 지시)."""
+    assert apply_house_style("이펙트 \r\n연기") == "이펙트 \r\n연기"
+
+
+# ── 문말 부호 집합 대칭 (리뷰 라운드 3 Important — dedupe 키와 일치) ─────
+
+def test_house_style_fx_rule_seg_end_symmetric_for_full_sentence_final_set():
+    """라운드 2의 `_SEG_END` 수정은 `.`에만 대칭이었다 — 이 태스크가 이미
+    dedupe 키(translate_blocks.py의 `_DEDUPE_KEY_RE`)에서 문말 부호로
+    정의해 둔 `? ! . …` 중 `.` 하나만 인정하면 같은 결함 클래스가
+    `?`·`!`·`…`에 남는다(리뷰가 실행으로 재현). 세 부호 전부 대칭이어야
+    한다."""
+    assert (apply_house_style("이펙트 연기! 다음 문장.")
+            == "연기 효과! 다음 문장.")
+    assert (apply_house_style("이펙트 연기? 다음 문장.")
+            == "연기 효과? 다음 문장.")
+    assert (apply_house_style("이펙트 연기… 다음 문장.")
+            == "연기 효과… 다음 문장.")
 
 
 def test_house_style_fx_rule_order_is_fixed_and_locked():
