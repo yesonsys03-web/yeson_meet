@@ -255,14 +255,22 @@ class ConcurrencyTrackingTranslator:
 
 
 @pytest.mark.asyncio
-async def test_translate_texts_runs_chunks_concurrently(monkeypatch):
-    """청크 병렬화 핵심 계약: workers>=2면 청크가 실제로 동시에 실행돼야
-    한다(순차 for 루프였다면 max_active는 항상 1)."""
-    monkeypatch.setenv("YESON_PDF_TRANSLATE_WORKERS", "3")
+@pytest.mark.parametrize("workers", [1, 2, 3])
+async def test_translate_texts_honors_configured_worker_count(monkeypatch, workers):
+    """청크 병렬화 핵심 계약: 동시 실행 수가 `YESON_PDF_TRANSLATE_WORKERS`와
+    **정확히** 일치해야 한다.
+
+    이전 단언은 `max_active >= 2`(workers=3 한 케이스)였다 — 세마포어 크기가
+    환경변수를 무시하고 아무 값이나 되어도, 심지어 무한이어도 통과한다.
+    이 변수는 사용자 성능 피드백("번역 50분")에 대응하는 유일한 다이얼인데
+    문서도 테스트도 0건이었다(전브랜치 리뷰 I-5 + 팀 리드 지시).
+    청크 3개(150텍스트/chunk 50)라 기대값은 workers 그대로 1·2·3이다.
+    """
+    monkeypatch.setenv("YESON_PDF_TRANSLATE_WORKERS", str(workers))
     t = ConcurrencyTrackingTranslator()
     texts = [str(i) for i in range(150)]  # chunk_size 50 → 3청크
     await translate_texts(texts, t, chunk_size=50)
-    assert t.max_active >= 2
+    assert t.max_active == workers
 
 
 @pytest.mark.asyncio

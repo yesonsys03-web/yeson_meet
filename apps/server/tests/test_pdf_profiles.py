@@ -652,8 +652,13 @@ def test_real_storyboard_sample(monkeypatch):
         assert 295 <= len(panel_blocks) <= 350
 
         # 불변식(2026-07-30 실기 피드백 후속): 어떤 배치 경로를 타든 주석
-        # rect는 원문 block.bbox와 절대 교차하지 않는다 — 전 문서 전 블록
-        # (패널 라벨 포함, Task 14 후속).
+        # rect는 **자기 블록 자신의** block.bbox와 교차하지 않는다 — 전 문서
+        # 전 블록에 대해 확인(패널 라벨 포함, Task 14 후속). 사용자
+        # 스크린샷으로 신고된 원래 버그(주석이 자기 원문을 덮음)가 이 성질이다.
+        #
+        # ⚠ 범위 정정(전브랜치 리뷰 M-9(a)): 이 루프는 블록 A의 주석이 블록 B의
+        # 원문 위에 얹히는지는 **보지 않는다** — 그건 Task 13이 이연한 별개
+        # 항목이고, placeholder 길이 보정(M-9(b))과 함께 재측정 대상이다.
         profile2 = StoryboardProfile()
         for b in all_blocks:
             placeholder_ko = "가" * max(10, len(b.text) // 2)
