@@ -228,4 +228,44 @@ class VideoSegment(Base):
         Index("idx_video_segment_job", "job_id"),
     )
 # === ANCHOR: MODELS_VIDEO_SEGMENT_END ===
+
+
+# === ANCHOR: MODELS_PDF_JOB_START ===
+class PdfJob(Base):
+    __tablename__ = "pdf_job"
+
+    id: Mapped[int] = mapped_column(_BigIntId, primary_key=True, autoincrement=True)
+    external_id: Mapped[PyUUID] = mapped_column(
+        Uuid(as_uuid=True), unique=True, nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        _BigIntId, ForeignKey("app_user.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    # 원 업로드 파일명 — 다운로드 파일명(<stem>_번역.pdf) 유도에 쓴다
+    source_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    # 감지된 포맷 프로파일 이름 (extracting 단계에서 채워짐)
+    format: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    translate_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    translate_cli_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # queued|extracting|translating|overlaying|done|error|cancelled
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="queued", default="queued"
+    )
+    progress: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0", default=0
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    translated_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    block_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        server_default=func.now(), onupdate=func.now(),
+    )
+# === ANCHOR: MODELS_PDF_JOB_END ===
 # === ANCHOR: MODELS_END ===
