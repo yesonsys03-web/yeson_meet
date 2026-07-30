@@ -21,6 +21,7 @@ from apps.server.domain.video_captions.translate import (
 )
 
 from .house_style import apply_house_style
+from .profiles.base import has_hangul
 
 logger = logging.getLogger("yeson.pdf.translate")
 
@@ -38,39 +39,42 @@ _DEFAULT_WORKERS = 3
 # 에서만 쓰인다 — 일반 서술형 액션(예: "Hank grabs the gear shift lever.")은
 # 전부 평서형이었다. 아래 예시가 그 구분을 보여준다.
 #
-# 편집 정규화(리뷰 후속, 2026-07-30) — 아래 예시는 원문 주석의 바이트 단위
-# 사본이 아니다: (1) 콜론 뒤 공백 삽입("화자명:대사" 붙여쓰기 원문 → "화자명:
-# 대사" 표기, "화자명: 대사" 규칙과 일치시키려는 편집), (2) 화살표 예시의
-# "바비: " 화자 접두는 원문 주석("바비:화살표가...")에 실재하던 걸 그대로
-# 복원한 것(창작 아님) — 단, 그 EN 절반은 두 패널 큐 태그("123 BOBBY" +
-# "(CONT.)")를 결합해 재구성했다.
+# 편집 정규화(Task 19, 2026-07-30) — 아래 예시는 원문 주석의 바이트 단위
+# 사본이 아니다: (1) 콜론 붙임("화자명:대사", 공백 0) — Task 18 리뷰 당시
+# "화자명: 대사"(공백 1) 규칙에 맞추려 공백을 넣었던 편집을, 전수 비교
+# (1090쌍, 화자 콜론 붙임 520건 대상 vs 사람 127/127 예외 없이 붙임)로
+# 되돌렸다 — 강제 출력 정규화(apply_output_normalization)와 few-shot을
+# 일관시킨다. (2) 화살표 예시의 "바비:" 화자 접두는 원문 주석
+# ("바비:화살표가...")에 실재하던 걸 그대로 복원한 것(창작 아님) — 단,
+# 그 EN 절반은 두 패널 큐 태그("123 BOBBY" + "(CONT.)")를 결합해
+# 재구성했다.
 _STYLE_EXAMPLES: list[tuple[str, str]] = [
     # 화살표 예시(GABE01 A1 p963-964 결합) — 사용자 리포트 원본 사례.
     # 사진 포즈 상황에 맞춘 의역("...서보자")이지 "화살표가 말이 되도록"류
-    # 축자번역이 아니다. 화자줄(화자명: 대사) 관례도 함께 시연.
+    # 축자번역이 아니다. 화자줄(화자명:대사) 관례도 함께 시연.
     ("123 BOBBY Let's walk around... (CONT.) ...so the arrows make sense!",
-     "바비: 화살표가 이해되게 함께 서보자.."),
+     "바비:화살표가 이해되게 함께 서보자.."),
     # 화자줄: 다중 화자(/) 표기 + 큐번호 생략 (GABE01 A1 p30)
-    ("3 HANK/EMPLOYEES Propane.", "행크/직원들: 프로판."),
+    ("3 HANK/EMPLOYEES Propane.", "행크/직원들:프로판."),
     # (CONT.)로 두 패널에 쪼개진 미완성 문장 — 이웃 문맥으로 이어 완결된
     # 두 문장으로 재구성 (GABE01 A1 p53+58)
     (("6 HANK (CONT.) I want to say how proud I am of all of you... "
       "for getting this showroom worthy of the fine product we sell."),
-     ("행크: 난 그냥 자네들이 얼마나 자랑스러운지 말하고 싶었어. 여러분 모두가 "
+     ("행크:난 그냥 자네들이 얼마나 자랑스러운지 말하고 싶었어. 여러분 모두가 "
       "우리가 판매하는 훌륭한 제품에 걸맞은 쇼룸을 만들어 준 것에 대해 정말 "
       "감사해.")),
     # (O.S.) 표시는 대사에 옮기지 않고 생략 + "suck" 구어체 의역
     # (GABE01 A1 p579)
-    ("66 JIMMY (O.S.) Your pro-nuts suck!", "지미: 당신들 도너츠 완전 별로야!"),
+    ("66 JIMMY (O.S.) Your pro-nuts suck!", "지미:당신들 도너츠 완전 별로야!"),
     # 짧은 구어체 의역 — 축자 "통과"가 아닌 자연스러운 대화체 (GABE01 A1 p130)
-    ("16 HANK Pass.", "행크: 넘어가죠."),
+    ("16 HANK Pass.", "행크:넘어가죠."),
     # 감탄 어미(-군) 자연스러운 구어체 (GABE01 A1 p215)
-    ("26 ENRIQUE Like Propane Jesus!", "엔리케: 프로판가스 예수님같군!"),
+    ("26 ENRIQUE Like Propane Jesus!", "엔리케:프로판가스 예수님같군!"),
     # 팝컬처 고유명사는 음역으로 유지 (GABE01 A1 p99)
-    ("10 HANK (CONT.) Lando Calrissian?", "행크: 랜도 칼리시안?"),
+    ("10 HANK (CONT.) Lando Calrissian?", "행크:랜도 칼리시안?"),
     # 관용구(배 은유)는 축자번역 대신 의미로 (GABE01 A1 p64+68)
     ("The Strickland ship has officially been righted.",
-     "행크: 스트릭랜드는 이제 완전히 제자리를 찾았어."),
+     "행크:스트릭랜드는 이제 완전히 제자리를 찾았어."),
     # action: 평서형(-ㄴ다) 종결 관례 — 요청형이 아님 (GABE01 A1 p6)
     ("Hank grabs the gear shift lever.", "행크가 기어변속 레버를 잡는다."),
     # action: 문장 재구성(의역) + 과거 서술체. 원문 자체가 마침표 없이 끊긴
@@ -143,18 +147,22 @@ def build_pdf_prompt(texts: list[str]) -> str:
         "Do NOT translate asset IDs, scene/panel codes, or file-name-like "
         "tokens (e.g. TGNO_PizzaBox_CL_V01, 5LBW03_07_01) — copy them "
         "unchanged.\n"
+        "Short all-caps tokens with periods inside dialogue (e.g. \"M.F.\") "
+        "are expletives/initialisms, NOT asset codes — translate them "
+        "naturally.\n"
         "Panel callout labels: translate the word part and keep any trailing "
         "code (e.g. \"CAR006A\" → \"차006A\", \"HANK'S TRUCK\" → \"행크의 "
         "트럭\"); labels that are pure codes (e.g. \"1000SB\", \"656A\") — "
         "copy them unchanged.\n"
         "When a dialog block begins with a leading cue number and speaker "
         "name (e.g. \"3 HANK/EMPLOYEES Propane.\"), format the Korean as "
-        "\"화자명: 대사\" — translate the speaker name, omit the leading "
-        "cue number (e.g. \"행크/직원들: 프로판.\").\n"
+        "\"화자명:대사\" (no space after the colon) — translate the speaker "
+        "name, omit the leading cue number (e.g. \"행크/직원들:프로판.\").\n"
         + _style_examples_block() + "\n\n"
         "Copy every digit sequence (scene/shot references like sc103, "
         "counts, codes) EXACTLY as in the source — never alter, swap, or "
         "invent digits.\n"
+        "Preserve \\n line breaks from the source in your translation.\n"
         "Input is a JSON array of strings; return ONLY a JSON array of the "
         "same length with the Korean translations in the same order.\n"
         "Return ONLY the JSON array. No prose, no markdown fences.\n"
@@ -163,6 +171,52 @@ def build_pdf_prompt(texts: list[str]) -> str:
         + glossary_block()
         + "\n\nInput:\n" + numbered
     )
+
+
+# 출력 하우스 정규화 — Task 19(사람 납품본 전수 비교, 1090쌍, 2026-07-30).
+# apply_house_style(Task 18) 다음, 숫자 게이트 이전에 강제 적용한다(고정
+# 순서, 아래 translate_texts/_verify_and_fix_numbers에서 잠금). 두 항목
+# 모두 사람 쪽이 예외 0건으로 완전 일관이라 강제 정규화가 안전하다.
+
+# 따옴표: 사람은 큰따옴표 전용(122건), 홑따옴표는 0건 — 우리는 홑따옴표
+# 68건(전수 실측). bounded 스팬만 치환해 어포스트로피(영어 소유격 's,
+# 축약형)를 오폭하지 않는다 — 닫는 홑따옴표가 40자 안에 없으면 매치되지
+# 않으므로, 한글 문장 내 "HANK's" 같은 소유격은 건드리지 않는다.
+_QUOTE_SPAN_RE = re.compile(r"'([^']{1,40})'")
+
+
+def _normalize_quotes(ko: str) -> str:
+    return _QUOTE_SPAN_RE.sub(r'"\1"', ko)
+
+
+# 화자 콜론: 사람은 "화자명:대사"(공백 0, 127/127) — 우리는 공백 520건
+# (전수 실측). KO 문자열 맨 앞의 첫 콜론만 대상 — 대사 내부 콜론·URL
+# (콜론 뒤 공백 없음)·시각 표기(숫자는 문자 클래스에 없음)는 매치되지
+# 않는다.
+_SPEAKER_COLON_RE = re.compile(r"^([가-힣A-Za-z/·& ()]{1,20}):\s+")
+
+
+def _normalize_speaker_colon(ko: str) -> str:
+    return _SPEAKER_COLON_RE.sub(r"\1:", ko, count=1)
+
+
+def apply_output_normalization(ko: str) -> str:
+    """따옴표(홑→쌍) + 화자 콜론(공백 제거) 강제 정규화. 순서: 따옴표 먼저,
+    콜론 나중(브리프 표기 순서 그대로 — 서로 겹치는 영역이 없어 실질적
+    영향은 없지만 순서를 고정해 회귀를 감지한다).
+
+    ⚠ apply_house_style/apply_ko_corrections와 달리 이 두 정규식은 좌변이
+    한글 전용이 아니다(콜론 패턴은 A-Za-z도 받는다 — 브리프 요구사항) —
+    그래서 has_hangul 가드가 필요하다. translate_texts의 "원문 유지 폴백"
+    판정(주석 참고)은 폴백 시 값이 영문 원문과 바이트 그대로 같다는
+    전제에 기대는데, 추출 단계 has_hangul 필터가 소스에 한글이 없음을
+    보장하므로 그 폴백 값도 한글이 없다 — 한글이 하나도 없는 문자열은
+    건드리지 않아야 그 전제가 깨지지 않는다(예: 영문 원문이 그대로
+    반환됐는데 "NOTE: ..." 같은 콜론부가 우연히 공백-제거 패턴에 걸려
+    바뀌면 폴백 식별이 조용히 실패한다)."""
+    if not ko or not has_hangul(ko):
+        return ko
+    return _normalize_speaker_colon(_normalize_quotes(ko))
 
 
 _DIGITS_RE = re.compile(r"\d+")
@@ -225,7 +279,8 @@ async def _verify_and_fix_numbers(
 
     # unresolved → 블록 단건 재번역 폴백(기존 kept-as-source 경로 재사용).
     retried = await _resilient(provider, [src])
-    retried_ko = apply_house_style(apply_ko_corrections(retried[0].strip()))
+    retried_ko = apply_output_normalization(
+        apply_house_style(apply_ko_corrections(retried[0].strip())))
     re_fixed, re_verdict = _verify_numbers(src, retried_ko)
     if re_verdict != "unresolved":
         if re_verdict == "fixed":
@@ -338,11 +393,13 @@ async def translate_texts(
         nonlocal done_blocks
         async with sem:
             translated = await _resilient(provider, chunk)
-            # 하우스 표기 강제 치환(Task 18)은 apply_ko_corrections
-            # 다음·숫자 게이트 이전에 적용한다(숫자와 무관해 순서가 결과에
-            # 영향을 주진 않지만, 고정 순서로 테스트가 잠근다).
+            # 고정 순서(Task 18+19, 테스트로 잠금): apply_ko_corrections →
+            # apply_house_style → 출력 정규화(따옴표·콜론) → 숫자 게이트.
+            # 숫자와 무관해 결과에 영향을 주진 않지만, 고정 순서로 회귀를
+            # 감지한다.
             corrected = [
-                apply_house_style(apply_ko_corrections(t.strip()))
+                apply_output_normalization(
+                    apply_house_style(apply_ko_corrections(t.strip())))
                 for t in translated
             ]
             # 숫자 보존 게이트(Task 16) — 순서·진행률 계약을 흔들지 않게

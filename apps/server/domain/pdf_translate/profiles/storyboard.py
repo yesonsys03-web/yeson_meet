@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 
 from ..backend import PdfDocument, RawBlock
 from ..panel_ocr import find_panel_labels
@@ -82,10 +83,16 @@ class StoryboardProfile:
             raws = doc.raw_blocks(page)
             for i, (label, kind) in enumerate(_FIELDS):
                 next_label = _FIELDS[i + 1][0] if i + 1 < len(_FIELDS) else None
-                content = _field_content(raws, label, next_label)
+                content = _field_content(raws, label, next_label,
+                                         is_action=(kind == "action"))
                 if content is None:
                     continue
-                text = normalize_ws(content.text)
+                # normalize_ws는 \n도 공백으로 접어버려 _merge_pieces가
+                # 슬러그라인 뒤에 넣은 개행(Task 19)을 지운다 — 줄 단위로
+                # 정규화하고 \n 구분자는 그대로 둔다(개행이 없으면 기존과
+                # 동일한 단일 정규화).
+                text = "\n".join(
+                    normalize_ws(line) for line in content.text.split("\n"))
                 if not text or has_hangul(text):
                     continue
                 out.append(PdfBlock(page=page, kind=kind, text=text,
@@ -200,7 +207,8 @@ def _panel_region(raws: list[RawBlock], page_w: float
 
 
 def _field_content(raws: list[RawBlock], label: str,
-                    next_label: str | None = None) -> RawBlock | None:
+                    next_label: str | None = None, *,
+                    is_action: bool = False) -> RawBlock | None:
     """라벨 아래, '다음 라벨' 앞까지의 창 안에 있는 **모든** 콘텐츠 블록을
     y좌표 오름차순으로 병합해 하나의 RawBlock으로 반환한다(2026-07-30
     E2E 실측: Dialog 754페이지 중 45%가 화자 줄과 대사가 별개 블록으로
@@ -250,14 +258,39 @@ def _field_content(raws: list[RawBlock], label: str,
         sorted(candidates, key=lambda b: b.bbox[1])
     if not pieces:
         return None
-    return _merge_pieces(pieces)
+    return _merge_pieces(pieces, is_action=is_action)
 
 
-def _merge_pieces(pieces: list[RawBlock]) -> RawBlock:
-    """y좌표 순 후보 블록들을 공백 1개로 이어붙이고 bbox는 union으로.
-    place()가 이 union 아래에 주석을 놓으므로 원본 블록 간 겹침이
-    자연히 해소된다."""
-    text = " ".join(normalize_ws(p.text) for p in pieces)
+# 슬러그라인 패턴(Task 19) — 씬 헤딩("INT. STRICKLAND PROPANE - SALES
+# FLOOR - MORNING")은 "INT."/"EXT."로 시작하거나(주요 형태), 그 접두가
+# 없이 전부 대문자·하이픈으로만 된 헤딩 변형도 실물에 있다(사람 납품본
+# 실측: human_ko가 첫 조각을 "\r"로 분리해 별도 줄 취급 — pairs_all.jsonl
+# page=2 action). 이 두 형태 중 하나면 슬러그라인으로 본다.
+_SLUGLINE_PREFIX_RE = re.compile(r"^(?:INT|EXT)\.")
+
+
+def _looks_like_slugline(text: str) -> bool:
+    if _SLUGLINE_PREFIX_RE.match(text):
+        return True
+    return ("-" in text and text == text.upper()
+            and any(c.isalpha() for c in text))
+
+
+def _merge_pieces(pieces: list[RawBlock], *, is_action: bool = False) -> RawBlock:
+    """y좌표 순 후보 블록들을 이어붙이고 bbox는 union으로. place()가 이
+    union 아래에 주석을 놓으므로 원본 블록 간 겹침이 자연히 해소된다.
+
+    action 필드 한정(Task 19, 사람 납품본 실측: human_ko가 슬러그라인
+    뒤를 "\\r"로 분리): 첫 조각이 슬러그라인 패턴이고 뒤따르는 조각이
+    있으면 그 경계만 "\\n"으로 잇는다(그 외 조각 사이는 기존대로 공백
+    1개) — 슬러그라인이 아니거나 dialog 필드면 기존 동작 그대로."""
+    if is_action and len(pieces) > 1 and _looks_like_slugline(
+            normalize_ws(pieces[0].text)):
+        first = normalize_ws(pieces[0].text)
+        rest = " ".join(normalize_ws(p.text) for p in pieces[1:])
+        text = first + "\n" + rest
+    else:
+        text = " ".join(normalize_ws(p.text) for p in pieces)
     x0 = min(p.bbox[0] for p in pieces)
     y0 = min(p.bbox[1] for p in pieces)
     x1 = max(p.bbox[2] for p in pieces)

@@ -7,7 +7,10 @@ import logging
 import pytest
 
 from apps.server.domain.pdf_translate.translate_blocks import (
+    _normalize_quotes,
+    _normalize_speaker_colon,
     _verify_numbers,
+    apply_output_normalization,
     build_pdf_prompt,
     translate_texts,
 )
@@ -45,10 +48,12 @@ def test_pdf_prompt_mentions_panel_callout_convention():
 
 
 def test_pdf_prompt_mentions_speaker_line_convention():
-    """수작업본(납품 기준) 관례 실측: 화자 줄은 '화자명: 대사'로,
-    선행 큐 번호는 생략(2026-07-30 E2E 후속)."""
+    """수작업본(납품 기준) 관례 실측: 화자 줄은 '화자명:대사'(공백 0)로,
+    선행 큐 번호는 생략. 공백 표기(2026-07-30 E2E 후속 당시 잠정 규칙)는
+    Task 19 전수 비교(1090쌍, 사람 127/127 붙임)로 되돌렸다 — few-shot·
+    출력 정규화(apply_output_normalization)와 일관시킨다."""
     p = build_pdf_prompt(["3 HANK/EMPLOYEES Propane."])
-    assert "화자명: 대사" in p
+    assert "화자명:대사" in p
     assert "cue number" in p
 
 
@@ -71,10 +76,11 @@ def test_pdf_prompt_includes_style_examples():
     """Task 15: 수작업본(납품 기준)에서 큐레이션한 few-shot 예시가 프롬프트에
     포함돼야 한다 — 사용자가 직접 지목한 '화살표' 쌍(GABE01 A1 p963-964)
     포함 확인. 리뷰 후속(2026-07-30): 원문 주석에 실재하던 '바비:' 화자
-    접두도 함께 복원돼 있어야 한다(화자줄 관례를 이 예시로도 시연)."""
+    접두도 함께 복원돼 있어야 한다(화자줄 관례를 이 예시로도 시연).
+    Task 19: 콜론 붙임(공백 0)으로 되돌린 형태로 확인한다."""
     p = build_pdf_prompt(["HANK walks."])
     assert "EN:" in p and "KO:" in p
-    assert "바비: 화살표가 이해되게 함께 서보자.." in p
+    assert "바비:화살표가 이해되게 함께 서보자.." in p
 
 
 def test_pdf_prompt_examples_disclose_merged_length_contract():
@@ -441,8 +447,9 @@ async def test_translate_texts_dedupe_with_house_style_and_number_gate():
 
 @pytest.mark.asyncio
 async def test_translate_texts_applies_house_style_before_number_gate(monkeypatch):
-    """통합 순서 고정(브리프 1번): house_style 적용은 apply_ko_corrections
-    다음, 숫자 게이트 이전 — 실행 순서를 스파이로 직접 관찰해 잠근다."""
+    """통합 순서 고정(브리프 1번, Task 19로 확장): apply_house_style →
+    출력 정규화(apply_output_normalization) → 숫자 게이트 — 실행 순서를
+    스파이로 직접 관찰해 잠근다."""
     import apps.server.domain.pdf_translate.translate_blocks as tb
 
     order: list[str] = []
@@ -452,6 +459,12 @@ async def test_translate_texts_applies_house_style_before_number_gate(monkeypatc
         order.append("house")
         return orig_house(ko)
 
+    orig_normalize = tb.apply_output_normalization
+
+    def spy_normalize(ko):
+        order.append("normalize")
+        return orig_normalize(ko)
+
     orig_gate = tb._verify_and_fix_numbers
 
     async def spy_gate(provider, src, ko):
@@ -459,11 +472,12 @@ async def test_translate_texts_applies_house_style_before_number_gate(monkeypatc
         return await orig_gate(provider, src, ko)
 
     monkeypatch.setattr(tb, "apply_house_style", spy_house)
+    monkeypatch.setattr(tb, "apply_output_normalization", spy_normalize)
     monkeypatch.setattr(tb, "_verify_and_fix_numbers", spy_gate)
 
     t = FakeTranslator([["태더튼, sc103 확인"]])
     await translate_texts(["Thatherton, confirm sc103"], t)
-    assert order == ["house", "gate"]
+    assert order == ["house", "normalize", "gate"]
 
 
 # ── dedupe × 원문 유지 폴백 상호작용 (리뷰 Important 1) ──────────────────
@@ -525,3 +539,108 @@ def test_pdf_prompt_notes_props_house_style_overrides_glossary():
     p = build_pdf_prompt(["a prop on the table"])
     assert "prop" in p and "소품" in p
     assert "takes precedence" in p
+
+
+# ── 프롬프트 단언: 개행 보존·M.F. 예외 (Task 19) ─────────────────────────
+
+def test_pdf_prompt_includes_newline_preservation_instruction():
+    """Task 19: 슬러그라인 개행(추출 병합 단계, storyboard.py) 도입에 맞춰
+    프롬프트에도 개행 보존 지시를 보조로 추가한다 — 주 기전은 추출 단계
+    join이고 이 지시는 LLM이 스스로 개행을 옮기거나 지우지 않게 하는
+    보조 방어선이다."""
+    p = build_pdf_prompt(["INT. HOUSE - DAY\nHank walks in."])
+    assert "Preserve" in p and "line breaks" in p
+
+
+def test_pdf_prompt_includes_mf_abbreviation_exception():
+    """Task 19: 전수 비교(1090쌍)에서 "M.F.?!"가 미번역으로 남은 n=1 사례
+    ('56 HANK M.F.?! What are you doing here?' → 사람 '이런 젠장?!') —
+    대문자 약어를 애셋 코드로 오인하지 말라는 예외 1문장."""
+    p = build_pdf_prompt(["HANK M.F.?! What are you doing here?"])
+    assert "M.F." in p
+    assert "NOT asset codes" in p
+    assert "expletives" in p
+
+
+# ── 출력 하우스 정규화: 따옴표·콜론 (Task 19, 전수 1090쌍 실측) ──────────
+
+def test_normalize_quotes_converts_bounded_span():
+    assert _normalize_quotes("행크가 'Owner' 표시를 봤다") == '행크가 "Owner" 표시를 봤다'
+
+
+def test_normalize_quotes_does_not_fire_on_english_possessive_apostrophe():
+    """어포스트로피(영어 소유격 's)는 닫는 홑따옴표가 근방에 없으면
+    스팬 패턴에 안 걸려야 한다 — 오폭 방지(브리프 명시 가드)."""
+    text = "행크's 트럭이 도착했다"
+    assert _normalize_quotes(text) == text
+
+
+def test_normalize_quotes_ignores_spans_longer_than_bound():
+    """40자를 넘는 홑따옴표 간격은 스팬으로 보지 않는다(우연한 어포스트로피
+    두 번 등장 오폭 방지)."""
+    long_text = "'" + "가" * 41 + "'"
+    assert _normalize_quotes(long_text) == long_text
+
+
+def test_normalize_speaker_colon_removes_space_after_leading_colon():
+    assert _normalize_speaker_colon("행크: 프로판.") == "행크:프로판."
+    assert _normalize_speaker_colon("행크/직원들: 프로판.") == "행크/직원들:프로판."
+
+
+def test_normalize_speaker_colon_only_touches_leading_colon():
+    """첫 콜론만 대상 — 대사 중간의 콜론은 손대지 않는다."""
+    text = "행크: 시간 확인해봐, 지금 몇 시야: 늦었나?"
+    assert _normalize_speaker_colon(text) == "행크:시간 확인해봐, 지금 몇 시야: 늦었나?"
+
+
+def test_normalize_speaker_colon_preserves_url_and_time_notation():
+    """URL(콜론 뒤 공백 없음)·시각 표기(숫자는 문자 클래스에 없음)는
+    선두에 와도 매치되지 않아야 한다(브리프 명시 가드)."""
+    url_text = "http://example.com 참고하세요"
+    assert _normalize_speaker_colon(url_text) == url_text
+    time_text = "8:30에 만나자"
+    assert _normalize_speaker_colon(time_text) == time_text
+
+
+def test_apply_output_normalization_combines_quotes_and_colon():
+    assert (apply_output_normalization("행크: 'Owner' 표시를 봤다")
+            == '행크:"Owner" 표시를 봤다')
+
+
+def test_apply_output_normalization_skips_pure_english_fallback_text():
+    """폴백 안전판: has_hangul(ko)이 False면(영문 원문 그대로인 폴백) 손대지
+    않는다 — translate_texts의 "원문 유지 폴백" 식별은 폴백 값이 영문
+    원문과 바이트 그대로 같다는 데 기댄다. 콜론 패턴은 A-Za-z도 받으므로
+    (브리프 요구사항) 이 가드가 없으면 "NOTE: PLEASE..." 같은 영문
+    폴백에서 공백이 제거돼 식별이 조용히 실패한다."""
+    text = "NOTE: PLEASE HOOKUP DESK TO SC13"
+    assert apply_output_normalization(text) == text
+
+
+def test_apply_output_normalization_empty_string():
+    assert apply_output_normalization("") == ""
+
+
+@pytest.mark.asyncio
+async def test_translate_texts_applies_output_normalization_in_pipeline():
+    """통합: translate_texts 전체 경로에서 따옴표·콜론 정규화가 실제로
+    반영돼야 한다."""
+    src = "3 HANK/EMPLOYEES Propane."
+    t = FakeTranslator([["행크/직원들: 'Propane' 입니다."]])
+    out = await translate_texts([src], t)
+    assert out == ['행크/직원들:"Propane" 입니다.']
+
+
+# ── FX 규칙 × 실물 개행 상호작용 (Task 19) ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_translate_texts_fx_rule_converts_across_real_multiline_action_block():
+    """Task 18의 house_style FX 규칙은 개행을 세그먼트 경계로 미리 대비해
+    뒀지만(가상 문자열 단위 테스트만 존재), Task 19가 실제로 개행 있는
+    액션 블록(슬러그라인 join)을 만드는 첫 사례다 — translate_texts 전체
+    파이프라인(dedupe→house_style→출력 정규화→숫자 게이트)을 통과한 뒤에도
+    두 번째 줄의 FX 라벨이 정확히 변환되는지 실물 경로로 확인한다."""
+    src = "INT. STRICKLAND PROPANE - SALES FLOOR - MORNING\nFX Fire in the corner."
+    t = FakeTranslator([["스트릭랜드 프로판 내부-매장-아침\n이펙트 불 코너에서 발생."]])
+    out = await translate_texts([src], t)
+    assert out == ["스트릭랜드 프로판 내부-매장-아침\n불 코너에서 발생. 효과"]

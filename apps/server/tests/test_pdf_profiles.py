@@ -199,6 +199,72 @@ def test_extract_merged_label_block_continues_merging_lower_candidates(tmp_path)
         doc.close()
 
 
+def _make_storyboard_pdf_action_slugline(tmp_path: Path) -> Path:
+    """실물 패턴(Task 19, 사람 납품본 실측 — pairs_all.jsonl page=2 action:
+    human_ko가 슬러그라인 뒤를 "\\r"로 분리해 별도 줄 취급): action 필드의
+    첫 조각이 슬러그라인(INT./EXT.)이고 뒤에 추가 조각이 있는 다중 블록
+    페이지."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    page.insert_text((72, 460), "Dialog", fontsize=8)
+    page.insert_text((72, 478), "If you wanna go, then go.", fontsize=10)
+    page.insert_text((72, 560), "Action Notes", fontsize=8)
+    page.insert_text((72, 578),
+                     "INT. STRICKLAND PROPANE - SALES FLOOR - MORNING",
+                     fontsize=10)
+    page.insert_text((72, 596), "Hank walks to the door.", fontsize=10)
+    path = tmp_path / "sb_action_slugline.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_extract_joins_slugline_first_piece_with_newline_for_action(tmp_path):
+    """Task 19: action 필드 병합 시 첫 조각이 슬러그라인(INT./EXT.)이면
+    뒤 조각과 "\\n"으로 잇는다(사람 납품본 관례 — pairs_all.jsonl page=2
+    action의 human_ko가 "\\r"로 슬러그라인 뒤를 분리). dialog 필드는
+    영향받지 않는다(is_action 한정)."""
+    doc = open_pdf(_make_storyboard_pdf_action_slugline(tmp_path))
+    try:
+        blocks = StoryboardProfile().extract(doc)
+        action = next(b for b in blocks if b.kind == "action")
+        assert action.text == (
+            "INT. STRICKLAND PROPANE - SALES FLOOR - MORNING\n"
+            "Hank walks to the door.")
+        dialog = next(b for b in blocks if b.kind == "dialog")
+        assert "\n" not in dialog.text
+    finally:
+        doc.close()
+
+
+def test_extract_non_slugline_first_piece_still_joins_with_space(tmp_path):
+    """회귀 가드: 첫 조각이 슬러그라인이 아니면 기존처럼 공백으로 이어
+    붙여야 한다(슬러그라인 분기 추가가 일반 다중 블록 병합을 깨지 않았는지
+    명시적으로 잠근다)."""
+    path = _make_storyboard_pdf_multi_block_fields(tmp_path)
+    doc = open_pdf(path)
+    try:
+        blocks = StoryboardProfile().extract(doc)
+        action = next(b for b in blocks if b.kind == "action")
+        assert action.text == "The rest join in. CAM ADJUST"
+        assert "\n" not in action.text
+    finally:
+        doc.close()
+
+
+def test_looks_like_slugline_recognizes_both_forms():
+    """슬러그라인 두 형태(INT./EXT. 접두, 또는 접두 없이 전부 대문자+
+    하이픈) 모두 인식하고, 일반 액션/지시문은 아니라고 판정해야 한다."""
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        _looks_like_slugline,
+    )
+    assert _looks_like_slugline("INT. STRICKLAND PROPANE - SALES FLOOR - MORNING")
+    assert _looks_like_slugline("STRICKLAND PROPANE - SALES FLOOR")
+    assert not _looks_like_slugline("Hank walks to the door.")
+    assert not _looks_like_slugline("CAM ADJUST")  # 하이픈 없음
+
+
 def test_helpers():
     assert has_hangul("씬 내내") is True
     assert has_hangul("If you wanna") is False
