@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -326,6 +327,74 @@ def test_place_bottom_edge_block_returns_nondegenerate_onpage_rect():
     assert 0.0 <= y0 and y1 <= page_size[1]  # 페이지 안
 
 
+def _make_storyboard_pdf_with_panel_label(tmp_path: Path) -> Path:
+    """필드(Dialog/Action Notes) + 패널 영역(y 95~455) 안의 빨간 콜아웃
+    라벨(사각 테두리 + 빨간 글자, panel_ocr.py 프로토타입 실증과 동일
+    구성) — 합성 통합 테스트용(Task 14)."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    page.draw_line((100, 150), (400, 300), color=(0, 0, 0), width=1.5)
+    rect = fitz.Rect(300, 200, 500, 240)
+    page.draw_rect(rect, color=(1, 0, 0), width=2)
+    page.insert_text((rect.x0 + 10, rect.y0 + 28), "HANK'S TRUCK", fontsize=14,
+                     color=(1, 0, 0))
+    page.insert_text((72, 460), "Dialog", fontsize=8)
+    page.insert_text((72, 478), "If you wanna go, then go.", fontsize=10)
+    page.insert_text((72, 560), "Action Notes", fontsize=8)
+    page.insert_text((72, 578), "HANK walks to the door.", fontsize=10)
+    path = tmp_path / "sb_panel_label.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_extract_includes_panel_label_and_place_avoids_intersection(tmp_path):
+    """합성 통합(Task 14): 필드 + 빨간 패널 라벨 페이지 → extract에
+    panel_label kind 포함, place()가 라벨 위(또는 우측) + 원문 비교차."""
+    doc = open_pdf(_make_storyboard_pdf_with_panel_label(tmp_path))
+    try:
+        profile = StoryboardProfile()
+        blocks = profile.extract(doc)
+        panel_blocks = [b for b in blocks if b.kind == "panel_label"]
+        assert len(panel_blocks) == 1
+        assert "HANK" in panel_blocks[0].text.upper()
+        assert "TRUCK" in panel_blocks[0].text.upper()
+        ov = profile.place(panel_blocks[0], "행크의 트럭", doc.page_size(0))
+        assert not _rects_intersect(ov.rect, panel_blocks[0].bbox)
+        x0, y0, x1, y1 = ov.rect
+        assert 0.0 <= x0 and x1 <= 1008.0 and 0.0 <= y0 and y1 <= 612.0
+        # 다른 필드(dialog/action) 배치와도 교차하지 않아야 함(비교차 불변식)
+        for other in blocks:
+            if other is panel_blocks[0]:
+                continue
+            other_ov = profile.place(other, "가" * 10, doc.page_size(0))
+            assert not _rects_intersect(ov.rect, other.bbox)
+            assert not _rects_intersect(other_ov.rect, panel_blocks[0].bbox)
+    finally:
+        doc.close()
+
+
+def test_place_panel_label_above_when_room():
+    """패널 라벨 배치 기본 경로: 라벨 바로 위, fontsize 10.0 고정."""
+    block = PdfBlock(page=0, kind="panel_label", text="HANK'S TRUCK",
+                     bbox=(300.0, 250.0, 500.0, 290.0))
+    ov = StoryboardProfile().place(block, "행크의 트럭", (1008.0, 612.0))
+    assert ov.rect[3] <= block.bbox[1]  # 라벨 위(rect 아래끝이 라벨 위끝 이하)
+    assert not _rects_intersect(ov.rect, block.bbox)
+    assert ov.fontsize == 10.0
+
+
+def test_place_panel_label_switches_to_right_when_near_top():
+    """라벨이 페이지 상단 가까이 있어 '위' 배치가 페이지 밖으로 나가면
+    필드용 오른쪽/아래 로직으로 전환(폭 문턱 90pt로 완화)."""
+    block = PdfBlock(page=0, kind="panel_label", text="HANK'S TRUCK",
+                     bbox=(300.0, 20.0, 500.0, 40.0))
+    ov = StoryboardProfile().place(block, "행크의 트럭", (1008.0, 612.0))
+    assert not _rects_intersect(ov.rect, block.bbox)
+    assert ov.rect[0] >= block.bbox[2]  # 오른쪽 경로로 전환됨
+
+
 def test_detect_rejects_portrait(tmp_path):
     import fitz
     doc = fitz.open()
@@ -344,7 +413,7 @@ SAMPLES = os.environ.get("YESON_PDF_SAMPLES")
 
 
 @pytest.mark.skipif(not SAMPLES, reason="실물 샘플 경로(YESON_PDF_SAMPLES) 미지정")
-def test_real_storyboard_sample():
+def test_real_storyboard_sample(monkeypatch):
     """실물 검증(로컬 전용): GABE01_A1 앞 30페이지에서 감지 + 블록 추출.
 
     2026-07-30 E2E 후속(다중 블록 병합) 재측정: 병합 전 30페이지 기준
@@ -352,17 +421,57 @@ def test_real_storyboard_sample():
     필드당 후보가 다중 블록인 페이지가 없어 블록 '개수'는 그대로
     22(16d+6a) — 대신 병합으로 각 블록의 '내용'이 달라진다(대사 누락
     수정). page 30의 dialog는 원래 화자 줄(`3 HANK/EMPLOYEES`)만
-    반환했으나 병합 후에는 실제 대사(`Propane.`)까지 포함해야 한다."""
+    반환했으나 병합 후에는 실제 대사(`Propane.`)까지 포함해야 한다.
+
+    Task 14 후속(패널 콜아웃 라벨 OCR): 이 문서(1037페이지) 전체를
+    extract()하므로 패널 OCR도 전 페이지에서 돈다 — page idx 1에
+    "HANK'S TRUCK" 라벨이 실재(수작업본 관례상 '행크의 트럭' 주석)해야
+    한다. 프리필터 통과 카운트는 find_panel_labels가 프리필터를 통과했을
+    때만 호출하는 panel_ocr._get_engine을 스파이해 별도 재스캔 없이 이
+    단일 extract() 호출에서 얻는다.
+
+    프리필터 통과 페이지 수 범위 재측정(실물 전체 문서 스캔, 2026-07-30):
+    실측 146페이지/블록 280개 — 브리프의 "85주석/47페이지" 추정보다 훨씬
+    많다. 원인은 버그가 아니라 서로 다른 모집단 비교였다: "85/47"은
+    **납품(번역 완료)본**에서 육안으로 셀 수 있는 주석 수 — 순수 코드
+    라벨(1000SB, 651 등)은 기존 스킵 규칙(ko==원문이면 주석 생략)으로
+    납품본에 아예 안 나타난다. 이 테스트는 **추출 단계** 카운트라 코드
+    라벨도 전부 포함된다(스킵은 번역 이후 오버레이 단계 몫). 실제로
+    상위 빈도 라벨을 단어/코드로 나눠 보면 캐릭터 이름(HANK 15회, CONNIE
+    13회, JOSEPH 11회, BOOMHAUER 10회, BOBBY 10회, BILL 8회, DALE 7회,
+    MUSTACHES 7회 = 81)이 "85주석" 추정과 거의 정확히 들어맞고, 나머지는
+    차량/자산 코드(1000SB·1000SA·651·652·658·656A 등, 다수 페이지 반복)
+    — 브리프가 예측한 "대부분 캐릭터 이름"과 일치한다. 이상치 페이지도
+    없다(최대 10라벨/페이지, 전부 다중 차량 주차장 씬 등 정당한 케이스).
+    허위양성은 표지 페이지(0) 로고 텍스트("KING"/"HILL") 1건뿐 — 알려진
+    한계로 보고서에 기록."""
+    from apps.server.domain.pdf_translate import panel_ocr
+
+    prefilter_pass = {"n": 0}
+    orig_get_engine = panel_ocr._get_engine
+
+    def _counting_get_engine():
+        prefilter_pass["n"] += 1
+        return orig_get_engine()
+
+    monkeypatch.setattr(panel_ocr, "_get_engine", _counting_get_engine)
+
     path = Path(SAMPLES) / "1601_콘티번역" / "GABE01_A1_FinalShipped.pdf"
     doc = open_pdf(path)
     try:
         profile = detect_profile(doc)
         assert profile is not None and profile.name == "storyboard"
+        t0 = time.time()
         all_blocks = profile.extract(doc)
+        elapsed = time.time() - t0
         blocks = [b for b in all_blocks if b.page < 30]
-        assert len(blocks) == 22
-        dialog = [b for b in blocks if b.kind == "dialog"]
-        action = [b for b in blocks if b.kind == "action"]
+        # Task 14 후속: blocks에는 이제 panel_label도 섞여 있으므로 필드
+        # (dialog/action) 개수 불변식은 필드 kind로만 필터링해 검증한다 —
+        # 안 그러면 새로 생긴 panel_label 블록이 22 카운트를 깨뜨린다.
+        field_blocks = [b for b in blocks if b.kind in ("dialog", "action")]
+        assert len(field_blocks) == 22
+        dialog = [b for b in field_blocks if b.kind == "dialog"]
+        action = [b for b in field_blocks if b.kind == "action"]
         assert len(dialog) == 16
         assert len(action) == 6
         assert all("\t" not in b.text for b in blocks)
@@ -370,8 +479,24 @@ def test_real_storyboard_sample():
             b for b in all_blocks if b.page == 30 and b.kind == "dialog")
         assert "Propane." in page30_dialog.text
 
+        panel_blocks = [b for b in all_blocks if b.kind == "panel_label"]
+        page1_panel = [b for b in panel_blocks if b.page == 1]
+        print(
+            f"\npdf-translate panel OCR: extract() wall_time={elapsed:.1f}s "
+            f"prefilter_pass_pages={prefilter_pass['n']} "
+            f"panel_labels_found={len(panel_blocks)} "
+            f"page1_labels={[b.text for b in page1_panel]}")
+        assert any("HANK" in b.text.upper() for b in page1_panel)
+        # 실측(2026-07-30, 전체 1037페이지) 146페이지/280블록 — 위 docstring
+        # 설명대로 순수 코드 라벨까지 포함하는 추출-단계 카운트라 "85주석/
+        # 47페이지"(납품본 기준)보다 크다. 100~250은 그 실측치 주변 여유폭 —
+        # 지나치게 적으면(프리필터 붕괴) 또는 지나치게 많으면(빨강 문턱이
+        # 너무 느슨해 잡음까지 통과) 회귀로 잡는다.
+        assert 100 <= prefilter_pass["n"] <= 250
+
         # 불변식(2026-07-30 실기 피드백 후속): 어떤 배치 경로를 타든 주석
-        # rect는 원문 block.bbox와 절대 교차하지 않는다 — 전 문서 전 블록.
+        # rect는 원문 block.bbox와 절대 교차하지 않는다 — 전 문서 전 블록
+        # (패널 라벨 포함, Task 14 후속).
         profile2 = StoryboardProfile()
         for b in all_blocks:
             placeholder_ko = "가" * max(10, len(b.text) // 2)

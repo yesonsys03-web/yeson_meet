@@ -10,6 +10,7 @@ import logging
 import math
 
 from ..backend import PdfDocument, RawBlock
+from ..panel_ocr import find_panel_labels
 from .base import Overlay, PdfBlock, has_hangul, normalize_ws
 
 logger = logging.getLogger("yeson.pdf.profiles.storyboard")
@@ -21,6 +22,16 @@ _MIN_WIDTH = 280.0        # 주석 박스 최소 폭(아래 배치 폴백)
 _MIN_RIGHT_WIDTH = 180.0  # 오른쪽 배치가 성립하려면 필요한 최소 여유폭
 _FONT_SIZES = (12.0, 10.0, 9.0, 8.0)  # 축소 폴백 사다리(최후 8pt로 확정)
 _DETECT_PAGES = 3
+
+# 패널 콜아웃 라벨(빨강 리더라인) — 패널 래스터 이미지는 헤더/씬 테이블
+# (y<95) 아래, Dialog 라벨(있으면 그 위 5pt, 없으면 460pt 고정) 위까지다.
+# 템플릿 익스포트라 전 페이지 동일 — 실물(GABE01) 검증으로 확정한 상수.
+_PANEL_LABEL_KIND = "panel_label"
+_PANEL_Y_TOP = 95.0
+_PANEL_Y_BOTTOM_DEFAULT = 460.0
+_PANEL_FONTSIZE = 10.0
+_PANEL_MIN_WIDTH = 90.0   # 위/오른쪽 배치 라벨 폭 문턱(필드 배치보다 완화)
+_PANEL_TOP_MARGIN = 24.0  # 이보다 위로 올라가면(페이지 상단 근접) 오른쪽/아래로 전환
 # 실물(GABE01) 실측: 빈 Dialog 필드는 플레이스홀더 블록 없이 통째로
 # 생략된다 — 그러면 "가장 가까운 아래 블록"이 다음 필드의 라벨 자체가
 # 되어버린다("Action Notes" 문자열이 대사로 오인식). 라벨 텍스트는
@@ -67,44 +78,107 @@ class StoryboardProfile:
                     continue
                 out.append(PdfBlock(page=page, kind=kind, text=text,
                                     bbox=content.bbox))
+            page_w, _page_h = doc.page_size(page)
+            region = _panel_region(raws, page_w)
+            for raw in find_panel_labels(doc, page, region):
+                text = normalize_ws(raw.text)
+                if not text or has_hangul(text):
+                    continue
+                out.append(PdfBlock(page=page, kind=_PANEL_LABEL_KIND, text=text,
+                                    bbox=raw.bbox))
         return out
 
     def place(self, block: PdfBlock, ko_text: str,
               page_size: tuple[float, float]) -> Overlay:
-        """오른쪽 우선 배치(2026-07-30 실기 피드백): 필드 박스는 페이지
-        전폭이고 원문은 좌측 절반만 차지하는 실물 관례를 따라, 원문 오른쪽
-        빈 공간에 y 정렬로 나란히 배치한다. 오른쪽 여유가 부족하면 기존처럼
-        블록 아래에 배치.
+        """필드(dialog/action)는 오른쪽 우선 배치, 패널 콜아웃 라벨은
+        라벨 바로 위 우선 배치로 분기한다.
 
-        오른쪽 경로는 x축이 이미 원문과 분리돼 있어(x0 = block.x1 + 8) y를
-        얼마든 움직여도 교차 위험이 없다 — 8pt에서도 안 맞으면 페이지
-        상단 쪽으로 밀어 올려 실제 텍스트가 다 보이게 한다(리뷰 후속,
-        2026-07-30). 아래 경로는 여전히 밀지 않는다 — 그게 원문을 덮는
-        원래 버그였다(잘리더라도 원문 비침범이 우선)."""
+        오른쪽 우선(2026-07-30 실기 피드백): 필드 박스는 페이지 전폭이고
+        원문은 좌측 절반만 차지하는 실물 관례를 따라, 원문 오른쪽 빈 공간에
+        y 정렬로 나란히 배치한다. 오른쪽 여유가 부족하면 기존처럼 블록
+        아래에 배치(자세한 이유는 _place_right_or_below 참고)."""
+        if block.kind == _PANEL_LABEL_KIND:
+            return self._place_panel_label(block, ko_text, page_size)
+        return _place_right_or_below(block, ko_text, page_size,
+                                     min_right_width=_MIN_RIGHT_WIDTH)
+
+    def _place_panel_label(self, block: PdfBlock, ko_text: str,
+                           page_size: tuple[float, float]) -> Overlay:
+        """패널 콜아웃 라벨(예: HANK'S TRUCK)은 수작업본 관례상 라벨
+        **바로 위**에 고정 10pt로 놓는다(필드처럼 12→8pt 축소 사다리를
+        타지 않음 — 라벨은 짧은 단어 1~2개라 축소가 불필요).
+
+        라벨이 페이지 상단 가까이(y<95 헤더 바로 아래) 있으면 '위'가
+        페이지 밖(_PANEL_TOP_MARGIN 미만)으로 나갈 수 있다 — 이때는 필드용
+        오른쪽/아래 배치 로직을 그대로 재사용한다(폭 문턱만 90pt로 완화:
+        필드 박스는 전폭이라 180pt 여유가 흔하지만 라벨은 패널 중간 어디든
+        있을 수 있어 더 좁은 여유에서도 오른쪽을 시도해야 한다)."""
         page_w, page_h = page_size
-        bx0, by0, bx1, by1 = block.bbox
-        right_w = page_w - 8.0 - (bx1 + 8.0)
-        if right_w >= _MIN_RIGHT_WIDTH:
-            x0 = bx1 + 8.0
-            x1 = page_w - 8.0
-            y0 = by0  # 원문 첫 줄과 y 정렬
-            allow_shift = True
-        else:
-            x0 = bx0
-            x1 = min(page_w - 8.0, max(bx1, x0 + _MIN_WIDTH))
-            y0 = by1 + _GAP
-            allow_shift = False
-        rect, fontsize = _fit_rect(x0, y0, x1, page_h, ko_text,
-                                   allow_shift=allow_shift)
-        needed = _estimate_height(ko_text, rect[2] - rect[0], fontsize)
-        available = rect[3] - rect[1]
-        if needed - available > 0.5:  # 부동소수 오차 여유
-            logger.warning(
-                "pdf-translate: page %d %s 주석이 8pt에서도 다 안 들어감"
-                "(clip) — 필요 %.0fpt / 가용 %.0fpt",
-                block.page, block.kind, needed, available)
+        bx0, by0, bx1, _by1 = block.bbox
+        x0 = bx0
+        x1 = min(page_w - 8.0, max(bx1, bx0 + _PANEL_MIN_WIDTH))
+        height = _estimate_height(ko_text, x1 - x0, _PANEL_FONTSIZE)
+        y1 = by0 - 2.0
+        y0 = y1 - height
+        if y0 < _PANEL_TOP_MARGIN:
+            return _place_right_or_below(block, ko_text, page_size,
+                                         min_right_width=_PANEL_MIN_WIDTH)
+        rect = _clamp_nondegenerate(x0, y0, x1, y1, page_h)
         return Overlay(page=block.page, rect=rect, text=ko_text,
-                       fontsize=fontsize)
+                       fontsize=_PANEL_FONTSIZE)
+
+
+def _place_right_or_below(
+    block: PdfBlock, ko_text: str, page_size: tuple[float, float],
+    *, min_right_width: float,
+) -> Overlay:
+    """오른쪽 여유(>= min_right_width)가 있으면 원문 오른쪽에 y 정렬로,
+    없으면 원문 아래에 배치한다. 필드(dialog/action) 배치의 원래 로직이며,
+    패널 라벨의 '위 배치가 페이지 밖으로 나가는' 폴백 경로도 이 함수를
+    그대로 재사용한다(폭 문턱만 호출부에서 다르게 준다).
+
+    오른쪽 경로는 x축이 이미 원문과 분리돼 있어(x0 = block.x1 + 8) y를
+    얼마든 움직여도 교차 위험이 없다 — 8pt에서도 안 맞으면 페이지 상단
+    쪽으로 밀어 올려 실제 텍스트가 다 보이게 한다. 아래 경로는 밀지
+    않는다 — 그게 원문을 덮는 원래 버그였다(잘리더라도 원문 비침범이
+    우선)."""
+    page_w, page_h = page_size
+    bx0, by0, bx1, by1 = block.bbox
+    right_w = page_w - 8.0 - (bx1 + 8.0)
+    if right_w >= min_right_width:
+        x0 = bx1 + 8.0
+        x1 = page_w - 8.0
+        y0 = by0  # 원문 첫 줄과 y 정렬
+        allow_shift = True
+    else:
+        x0 = bx0
+        x1 = min(page_w - 8.0, max(bx1, x0 + _MIN_WIDTH))
+        y0 = by1 + _GAP
+        allow_shift = False
+    rect, fontsize = _fit_rect(x0, y0, x1, page_h, ko_text,
+                               allow_shift=allow_shift)
+    needed = _estimate_height(ko_text, rect[2] - rect[0], fontsize)
+    available = rect[3] - rect[1]
+    if needed - available > 0.5:  # 부동소수 오차 여유
+        logger.warning(
+            "pdf-translate: page %d %s 주석이 8pt에서도 다 안 들어감"
+            "(clip) — 필요 %.0fpt / 가용 %.0fpt",
+            block.page, block.kind, needed, available)
+    return Overlay(page=block.page, rect=rect, text=ko_text,
+                   fontsize=fontsize)
+
+
+def _panel_region(raws: list[RawBlock], page_w: float
+                  ) -> tuple[float, float, float, float]:
+    """패널 OCR 영역 — 헤더/씬 테이블(y<95) 아래부터 Dialog 라벨 위(5pt
+    여유) 또는 없으면 460pt 고정까지, x는 페이지 전폭(실물 GABE01 실측
+    기반 템플릿 고정 상수)."""
+    y_bottom = _PANEL_Y_BOTTOM_DEFAULT
+    for b in raws:
+        if normalize_ws(b.text) == "Dialog":
+            y_bottom = b.bbox[1] - 5.0
+            break
+    return (0.0, _PANEL_Y_TOP, page_w, y_bottom)
 
 
 def _field_content(raws: list[RawBlock], label: str,

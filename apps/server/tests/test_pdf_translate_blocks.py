@@ -34,6 +34,14 @@ def test_pdf_prompt_mentions_production_not_subtitles():
     assert "HANK walks." in p
 
 
+def test_pdf_prompt_mentions_panel_callout_convention():
+    """패널 콜아웃 라벨(빨강 OCR) 지시 실측(Task 14): 단어부 번역+코드부
+    유지, 순수 코드는 원문 복사(스킵 규칙과 연동)."""
+    p = build_pdf_prompt(["HANK'S TRUCK"])
+    assert "Panel callout labels" in p
+    assert "CAR006A" in p and "차006A" in p
+
+
 def test_pdf_prompt_mentions_speaker_line_convention():
     """수작업본(납품 기준) 관례 실측: 화자 줄은 '화자명: 대사'로,
     선행 큐 번호는 생략(2026-07-30 E2E 후속)."""
