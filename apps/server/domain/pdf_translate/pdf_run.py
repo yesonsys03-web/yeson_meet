@@ -31,6 +31,7 @@ from .pdf_tasks import (
 )
 from .profiles import detect_profile
 from .translate_blocks import build_pdf_prompt, translate_texts
+from .utterances import group_utterances
 
 logger = logging.getLogger("yeson.pdf.pipeline")
 
@@ -99,6 +100,13 @@ async def run_pdf_job(external_id: UUID) -> None:
         await _set_status(external_id, "translating", format=profile.name,
                           page_count=doc.page_count, block_count=len(blocks))
 
+        # 발화 단위 병합(Task 17): 한 발화가 여러 페이지에 걸치면((CONT.)
+        # 조각) 조각째 번역할 경우 어순이 붕괴하고 헤더뿐인 조각은 "화자
+        # (계속)"만 남는다 — 사람 번역본 관례(발화 전문을 걸친 모든
+        # 페이지에 동일하게 반복 기재)를 재현하려면 번역은 그룹(발화)
+        # 단위로 하고, 결과를 멤버 블록 전체에 팬아웃해야 한다.
+        groups, group_texts = group_utterances(blocks)
+
         async def on_progress(frac: float) -> None:
             # 세대가 바뀌었으면(취소) 다음 청크로 가기 전에 중단한다
             if generation != _current_generation(external_id):
@@ -108,8 +116,8 @@ async def run_pdf_job(external_id: UUID) -> None:
         translator = create_translator(provider, cli_model,
                                        prompt_builder=build_pdf_prompt)
         try:
-            ko_texts = await translate_texts([b.text for b in blocks], translator,
-                                             progress_cb=on_progress)
+            ko_group_texts = await translate_texts(group_texts, translator,
+                                                    progress_cb=on_progress)
         finally:
             await maybe_aclose_translator(translator)
 
@@ -119,18 +127,28 @@ async def run_pdf_job(external_id: UUID) -> None:
         # list_translate_engines의 available은 resolve_cli()만 확인해 실제
         # 로그인 여부는 못 잡는다). 이 경우를 그냥 done으로 넘기면 사용자가
         # "원본과 바이트만 다를 뿐 내용은 똑같은 번역본"을 조용히 받는다.
-        kept_as_source = sum(
-            1 for block, ko in zip(blocks, ko_texts)
-            if not (ko.strip() and ko.strip() != block.text.strip())
-        )
-        effective = len(blocks) - kept_as_source
+        #
+        # 판정은 반드시 그룹 단위(group.merged_text 대조)여야 한다 — 조각
+        # 블록 자신의 텍스트와 비교하면 (CONT.)-헤더만 있던 조각은 항상
+        # "달라졌다"고 오판되어, 번역 실패 시에도 전문 영어가 그 조각의
+        # 주석으로 그대로 새 나간다(Task 17).
+        ko_by_block: list[str | None] = [None] * len(blocks)
+        kept_as_source = 0
+        for group, ko in zip(groups, ko_group_texts):
+            ko_stripped = ko.strip()
+            if ko_stripped and ko_stripped != group.merged_text.strip():
+                for idx in group.member_indices:
+                    ko_by_block[idx] = ko_stripped
+            else:
+                kept_as_source += 1
+        effective = len(groups) - kept_as_source
         if kept_as_source > 0:
             # 부분 실패(청크 병렬화로 CLI 콜 수가 늘어난 뒤 특히 조용히
-            # 묻히기 쉽다) — 몇 블록이 원문 그대로 남았는지 남겨야 다음
+            # 묻히기 쉽다) — 몇 그룹이 원문 그대로 남았는지 남겨야 다음
             # 실기 런에서 CLI 오류를 추적할 수 있다(2026-07-30 리뷰 Finding 3a).
             logger.warning(
-                "pdf-translate: %d/%d blocks kept as source (번역 실패 폴백)",
-                kept_as_source, len(blocks))
+                "pdf-translate: %d/%d groups kept as source (번역 실패 폴백)",
+                kept_as_source, len(groups))
         if effective == 0:
             raise PdfTranslateError(
                 "모든 블록 번역에 실패했습니다 — 번역 엔진 상태를 확인하세요")
@@ -138,10 +156,10 @@ async def run_pdf_job(external_id: UUID) -> None:
         await _set_status(external_id, "overlaying")
 
         def _overlay_and_save() -> Path | None:
-            for block, ko in zip(blocks, ko_texts):
-                ko = ko.strip()
+            for i, block in enumerate(blocks):
+                ko = ko_by_block[i]
                 # 번역 실패 폴백(원문 복사)·빈 결과는 주석을 달지 않는다
-                if not ko or ko == block.text.strip():
+                if ko is None:
                     continue
                 ov = profile.place(block, ko, doc.page_size(block.page))
                 if not _is_usable_rect(ov.rect, doc.page_size(block.page)):
