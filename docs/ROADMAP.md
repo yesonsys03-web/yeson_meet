@@ -361,6 +361,16 @@ Slice 5 통과 시점에 다음을 결정한 뒤 β로 진입:
 - [x] T14: `fetch-ffmpeg.sh`(cloudflared 패턴 복제, evermeet/BtbN/johnvansickle 정적 바이너리 벤더링) + `build-server.sh`/`build-server.ps1` PyInstaller `--collect-all faster_whisper/ctranslate2/av/onnxruntime/yt_dlp` + `tauri.conf.json` `binaries/ffmpeg-*` 리소스 glob + `server_process.rs::locate_bundled_ffmpeg()` → `YESON_FFMPEG_BIN` 주입 + 프로즌 재동결·자동화 스모크(curl 인증 게이트) 완료
 - [ ] T14 수동 E2E (자동화 세션 불가 — 운영자 확인 필요): 클라 "영상 자막" 탭 로그인→모델 목록, tiny 모델 실다운로드, 로컬 mp4 업로드→전사/번역/검수 진행, 검수 뷰 플레이어+오버레이+세킹+텍스트 수정, 스타일 조정→burn→MP4 다운로드 자막 위치 일치, 유튜브 URL 실입수 1건, 서버 pytest 전체 + 클라 vitest 전체 재확인
 
+### 스토리보드 PDF 번역 (Storyboard PDF Translate)
+
+> (2026-07-29) `feat/pdf-translate-slice1` 브랜치. 영문 납품 문서(대본/스토리보드/컬러노트/리드시트 PDF) → 포맷 프로파일 자동 감지 → Dialog/Action Notes 블록 번역(자막메이커 번역 엔진 스택 재사용) → 원본 위 한국어 FreeText 주석 오버레이 → 프리뷰(페이지 PNG)·번역 PDF 다운로드. 설계 근거: `docs/pdf-translation-feasibility-2026-07-29.md`(확정 결정 섹션 포함), 계획: `docs/superpowers/plans/2026-07-29-pdf-translate-slice1.md`.
+
+- [x] Task 1~9: PDF 백엔드 격리(`domain/pdf_translate/backend.py` 인터페이스 + `backend_mupdf.py` PyMuPDF 구현, AGPL 교체점 1파일) + 포맷 프로파일 플러그인(`profiles/`, Storyboard Pro 1종 구현) + 번역 프로바이더 `prompt_builder` 주입(기본값=기존 자막 프롬프트, 잠금 테스트로 무변경 보장) + PDF 전용 프롬프트·리질리언트 배치 번역(`translate_blocks.py`) + `PdfJob` 모델 + alembic `0007_pdf_jobs` + 잡 러너(`pdf_tasks.py`/`pdf_run.py`, video_captions 패턴 미러) + API `/pdf-jobs` 라우트(업로드/상태/취소/삭제) + Tauri 업로드 커맨드(Rust) + 프런트 최상위 "스토리보드 번역" 탭(A안) + `PdfTranslatePanel`(업로드·목록·진행률·취소·삭제) 구현
+- [x] Task 10: 프리뷰(원본/번역 페이지 PNG 토글, 페이지 이동) + 번역 PDF 다운로드 UI
+- [x] Task 11: 동결 번들 반영 — `build-server.sh`/`build-server.ps1` `--collect-all pymupdf --hidden-import fitz`(+ cv2 전례와 동형의 uv 캐시 미실체화 가드) + PDF 셀프테스트(`YESON_PDF_SELFTEST=1`, 1페이지 한글 FreeText 주석 왕복+PNG 래스터 검증) + `smoke-server-bundle.sh` 통합 + 문서 갱신. 로컬(Intel Mac) 재동결+스모크 PASS 확인
+- [ ] Task 11 남은 실물 E2E (수동, 사람 확인 필요): `GABE01_A3_FinalShipped.pdf`(129MB) 업로드→추출→번역→프리뷰→"번역 PDF 저장" 왕복 + macOS 미리보기/Acrobat에서 한글 주석 렌더 확인(어피어런스 폰트 이식성) + 수작업 번역본과 배치 비교 + 번역 중 취소→재업로드 + `EASA04_ColorNotes_V04.pdf`로 "지원하지 않는 PDF 포맷" 오류 확인 + Windows 왕복
+- [ ] 슬라이스 1 범위 밖(후속): 대본형(Final Draft)·컬러노트·리드시트 프로파일 추가(구조는 `profiles/`에 준비됨), 컬러노트·리드시트 한국어 배치 방식 결정(본문 삽입 vs 주석 통일), 기존 수작업 번역본에서 원문-번역 쌍 추출 → few-shot/용어집 보강
+
 ---
 
 ## 위험 / 미해결 항목

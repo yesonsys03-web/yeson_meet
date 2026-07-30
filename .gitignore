@@ -67,6 +67,9 @@ Thumbs.db
 .omc/project-memory.json
 **/.omc/
 
+# superpowers SDD scratch dir (task briefs/reports/reviews) — never commit
+.superpowers/
+
 # Build artifacts that should never be committed
 *.exe
 
