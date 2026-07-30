@@ -621,6 +621,16 @@ def test_normalize_quotes_converts_when_particle_attaches_after_closing_quote():
             == '"저질스럽다"는 반응이었다')
 
 
+def test_normalize_quotes_symmetric_boundary_rejects_digit_adjacency():
+    """리뷰 라운드 3 Minor 재현: 라운드 2의 경계는 여는 쪽만 숫자를 받고
+    닫는 쪽은 문자만 받아 비대칭이었다 — 닫는 따옴표 바로 뒤가 숫자면
+    걸러지지 않아 두 형태가 오폭했다. 양쪽 다 `[A-Za-z0-9]`로 맞춰
+    수정됐음을 잠근다."""
+    assert _normalize_quotes("'56년과 '57년 사이") == "'56년과 '57년 사이"
+    assert (_normalize_quotes("행크's 트럭 '90s 스타일")
+            == "행크's 트럭 '90s 스타일")
+
+
 def test_normalize_speaker_colon_removes_space_after_leading_colon():
     assert _normalize_speaker_colon("행크: 프로판.") == "행크:프로판."
     assert _normalize_speaker_colon("행크/직원들: 프로판.") == "행크/직원들:프로판."
