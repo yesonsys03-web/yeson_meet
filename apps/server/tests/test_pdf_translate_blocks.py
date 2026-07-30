@@ -576,10 +576,32 @@ def test_normalize_quotes_does_not_fire_on_english_possessive_apostrophe():
 
 
 def test_normalize_quotes_ignores_spans_longer_than_bound():
-    """40자를 넘는 홑따옴표 간격은 스팬으로 보지 않는다(우연한 어포스트로피
-    두 번 등장 오폭 방지)."""
+    """40자를 넘는 홑따옴표 간격은 스팬으로 보지 않는다(길이 초과 가드 —
+    아래 word-boundary 가드와는 별개 방어선)."""
     long_text = "'" + "가" * 41 + "'"
     assert _normalize_quotes(long_text) == long_text
+
+
+# ── 따옴표 word-boundary 가드 (리뷰 라운드 1 Important 2 재현) ───────────
+# 리뷰가 실행으로 재현한 오폭: 40자 안에 어포스트로피 두 개(둘 다 소유격)가
+# 있으면 그 사이를 스팬으로 오인했다. 여는/닫는 따옴표 양쪽에 단어 경계
+# 조건(`(?<!\w)'...'(?!\w)`)을 추가해 고쳤다 — 아래 세 케이스가 그 수정을
+# 실측대로 잠근다(전부 리뷰가 실행으로 확인한 값).
+
+def test_normalize_quotes_does_not_misfire_on_two_possessives_within_bound():
+    """소유격 어포스트로피가 40자 안에 두 번 있으면 예전엔 그 사이를
+    스팬으로 오인했다 — word-boundary 가드로 수정됨을 잠근다."""
+    text = "행크's 트럭과 페기's 차"
+    assert _normalize_quotes(text) == text
+    text2 = "바비's 개와 행크's 트럭이 보인다"
+    assert _normalize_quotes(text2) == text2
+
+
+def test_normalize_quotes_does_not_misfire_on_year_apostrophe_before_possessive():
+    """실제 코퍼스 형태(M.F. 예외 문장의 연호 표기 "'56 HANK M.F.?!")의
+    선행 연도 아포스트로피 + 후행 소유격 조합 — 가공 케이스가 아니다."""
+    text = "'56년 행크's 트럭"
+    assert _normalize_quotes(text) == text
 
 
 def test_normalize_speaker_colon_removes_space_after_leading_colon():
@@ -600,6 +622,26 @@ def test_normalize_speaker_colon_preserves_url_and_time_notation():
     assert _normalize_speaker_colon(url_text) == url_text
     time_text = "8:30에 만나자"
     assert _normalize_speaker_colon(time_text) == time_text
+
+
+# ── 화자 콜론 좁히기 (리뷰 라운드 1 Fold-in) ──────────────────────────────
+
+def test_normalize_speaker_colon_does_not_tighten_latin_prefixed_labels():
+    """전수 실측(리뷰): 사람 쪽 붙임 콜론 717건 전부 라틴 문자 0개(순수
+    한글 화자명) — "NOTE:"/"SFX:"/"PLEASE:" 같은 제작진 지시문·효과음
+    라벨은 화자 줄이 아니므로 붙임 대상이 아니다."""
+    assert (_normalize_speaker_colon("NOTE: 데스크를 SC13에 연결하세요")
+            == "NOTE: 데스크를 SC13에 연결하세요")
+    assert _normalize_speaker_colon("SFX: 문 여는 소리") == "SFX: 문 여는 소리"
+    assert _normalize_speaker_colon("PLEASE: 확인하세요") == "PLEASE: 확인하세요"
+
+
+def test_normalize_speaker_colon_does_not_swallow_newline_after_colon():
+    """리뷰 재현: `\\s+`는 개행도 삼켜 "행크:\\n대사" → "행크:대사"로 이
+    태스크가 도입한 개행 보존과 충돌했다 — `[^\\S\\n]+`로 좁혀 콜론 바로
+    뒤가 개행뿐이면(공백 없음) 건드리지 않는다."""
+    text = "행크:\n대사입니다."
+    assert _normalize_speaker_colon(text) == text
 
 
 def test_apply_output_normalization_combines_quotes_and_colon():

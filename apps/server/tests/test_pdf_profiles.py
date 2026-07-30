@@ -325,6 +325,29 @@ def test_place_prefers_right_side_when_room_available():
     assert ov.fontsize == 12.0
 
 
+def test_place_reserves_extra_height_for_embedded_newline():
+    """리뷰 후속(Task 19 round 1, Important 1): `_estimate_height`가 개행을
+    그냥 1글자로 세어 실제 렌더 줄 수를 과소 추정하던 결함 — place()가
+    실제로 만드는 rect 높이가 개행 있는 텍스트에서 더 커야 한다(같은 총
+    글자 수, 폰트 크기도 동일하게 유지되는 기하에서 개행 유무만 다름).
+    이전에는 코드베이스 전체에 place()가 개행 텍스트를 받은 적이 없었다
+    (슬러그라인 테스트는 extract() 출력만, 문서 전체 배치 불변식 루프는
+    "가"*n만 사용) — 이 테스트가 그 경로를 처음으로 실행한다."""
+    block = PdfBlock(page=0, kind="action", text="a" * 40,
+                     bbox=(72.0, 100.0, 130.0, 120.0))
+    page_size = (1008.0, 612.0)
+    flat_ko = "가" * 50
+    newline_ko = ("가" * 25) + "\n" + ("가" * 25)  # 같은 총 글자 수, 개행 1개
+    profile = StoryboardProfile()
+    ov_flat = profile.place(block, flat_ko, page_size)
+    ov_newline = profile.place(block, newline_ko, page_size)
+    assert ov_flat.fontsize == ov_newline.fontsize == 12.0  # 폰트 축소 미개입
+    flat_height = ov_flat.rect[3] - ov_flat.rect[1]
+    newline_height = ov_newline.rect[3] - ov_newline.rect[1]
+    assert newline_height > flat_height
+    assert not _rects_intersect(ov_newline.rect, block.bbox)
+
+
 def test_place_falls_back_below_when_right_side_too_narrow():
     """블록이 페이지 오른쪽 끝까지 거의 차지해 오른쪽 여유가 180pt 미만이면
     기존처럼 블록 아래에 배치한다."""
@@ -610,6 +633,19 @@ def test_real_storyboard_sample(monkeypatch):
         # 적으면(프리필터 붕괴) 또는 지나치게 많으면(빨강 문턱이 너무
         # 느슨해 잡음까지 통과) 회귀로 잡는다.
         assert 100 <= prefilter_pass["n"] <= 250
+        # 리뷰 후속(라운드 1 Minor 3): 라벨 총계에도 회귀 단언을 추가한다
+        # (페이지 수는 라벨 수의 간접 프록시일 뿐). 실측 신규 25건 전부를
+        # OLD(구 마스크·문턱) 스캔과 대조 확인(소실 0건, 신규만 25건) —
+        # 카테고리는 전부 기존에 이미 정당성이 확인된 부류다: 차량/자산
+        # 코드(651·652·2000~2024류, p18 CAR006A/CAR010/CAR018A/1000SB
+        # 포함), 기존에 이미 등장하던 캐릭터 이름(DALE·BILL, 이전 실측에서
+        # 각 7·8회로 이미 정당한 것으로 확인됨)의 추가 등장, HANK'S TRUCK
+        # 계열 라벨 2건 추가. 유일하게 애매한 건 p537의 "1025HATHER1026"
+        # (두 코드가 OCR로 합쳐 읽힌 것으로 보임 — 페이지 자체가 표지류
+        # 오탐이 아니라 정상 템플릿 페이지의 실제 빨강 라벨 영역이라
+        # Task 14류 페이지 오인식은 아니다. 텍스트 품질 이슈로 남겨둔다).
+        # 260~350은 이 실측치(303) 주변 여유폭.
+        assert 260 <= len(panel_blocks) <= 350
 
         # 불변식(2026-07-30 실기 피드백 후속): 어떤 배치 경로를 타든 주석
         # rect는 원문 block.bbox와 절대 교차하지 않는다 — 전 문서 전 블록

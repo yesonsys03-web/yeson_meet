@@ -266,6 +266,16 @@ def _field_content(raws: list[RawBlock], label: str,
 # 없이 전부 대문자·하이픈으로만 된 헤딩 변형도 실물에 있다(사람 납품본
 # 실측: human_ko가 첫 조각을 "\r"로 분리해 별도 줄 취급 — pairs_all.jsonl
 # page=2 action). 이 두 형태 중 하나면 슬러그라인으로 본다.
+#
+# 리뷰 후속(라운드 1 Minor 7): "전부 대문자+하이픈" 분기는 이론상 카메라
+# 지시문("CU - HANK" 등)에도 발동할 수 있다는 지적 — 전 문서(1037페이지)
+# 실측으로 대조했다: 개행 join은 총 4건만 발동했고(사람 쪽 개행 주석은
+# 58건 — 우리가 훨씬 적게 발동, 과다 발동 아님), 4건 전부 "INT."/"EXT."
+# 접두 분기였다(하이픈-전용 분기는 이 코퍼스에서 단 한 번도 발동하지
+# 않음). 카메라 지시문 오탐 우려는 이 코퍼스에서 실증되지 않았다 — 실제
+# 격차는 과다 발동이 아니라 과소 발동(사람 58건 대비 4건, 라벨+내용이
+# 이미 한 블록으로 붙어 나와 join 지점 자체가 없는 경우가 대부분으로
+# 추정)이다.
 _SLUGLINE_PREFIX_RE = re.compile(r"^(?:INT|EXT)\.")
 
 
@@ -351,7 +361,19 @@ def _clamp_nondegenerate(
 
 
 def _estimate_height(text: str, width: float, fontsize: float) -> float:
-    """CJK 근사 폭(글자당 ≈ fontsize pt)으로 줄수 → 박스 높이."""
+    """CJK 근사 폭(글자당 ≈ fontsize pt)으로 줄수 → 박스 높이.
+
+    리뷰 후속(Task 19 round 1, Important 1): 개행(`\\n`, 슬러그라인 join)을
+    그냥 1글자로 세면(옛 `ceil(len(text)/cpl)`) 실제 렌더 줄 수를 과소
+    추정한다 — 실제 줄 수는 줄마다 따로 올림한 값의 합이고, 이는 전체
+    길이 기준 추정치보다 개행 하나당 최대 1줄 크다(구체 사례: cpl=25,
+    각 줄 26자 → 전체기준 `ceil(53/25)=3`줄이지만 실제는 `2+2=4`줄).
+    `_fit_rect`가 이 추정치로 폰트 축소 여부를 판단하므로, 과소 추정은
+    "12pt로 충분하다"는 잘못된 결론 → 납품 PDF에서 마지막 줄이 rect
+    밖으로 잘리는 결과로 이어진다. 줄 단위로 합산해 고친다(개행 없는
+    텍스트는 `text.split("\\n")`이 `[text]` 하나뿐이라 기존과 동일하게
+    계산된다 — 회귀 없음)."""
     chars_per_line = max(8, int(width / fontsize))
-    lines = max(1, math.ceil(len(text) / chars_per_line))
+    lines = sum(max(1, math.ceil(len(line) / chars_per_line))
+                for line in text.split("\n"))
     return (lines + 0.5) * fontsize * 1.25
