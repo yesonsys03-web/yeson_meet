@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 from uuid import uuid4
 
@@ -178,3 +179,71 @@ async def test_run_pdf_job_semaphore_released_when_close_raises_cancelled(
     row = (await db_session.execute(
         select(PdfJob).where(PdfJob.id == job_id))).scalar_one()
     assert row.status == "done"  # cleanup 실패가 이미 커밋된 결과를 훼손하지 않음
+
+
+async def test_run_pdf_job_all_translations_failed_sets_error(
+        db_session, admin_user, monkeypatch):
+    """FINDING 1 커버 테스트 — 번역 엔진이 전량 실패(원문을 그대로 반환)하면
+    done으로 조용히 넘기지 말고 명시적으로 error 처리해야 한다. 한글 블록은
+    추출 단계에서 이미 걸러지므로, 정상 실행에서 유효 번역 0은 나올 수 없다.
+    """
+    class EchoTranslator:
+        async def translate_batch(self, texts):
+            return list(texts)  # 번역 실패를 흉내: 원문을 그대로 반환
+
+    monkeypatch.setattr(
+        pdf_run, "create_translator",
+        lambda provider, cli_model, prompt_builder: EchoTranslator())
+
+    job = await _seed_job(db_session, admin_user)
+    job_id = job.id
+
+    await pdf_run.run_pdf_job(job.external_id)
+
+    db_session.expire_all()
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.id == job_id))).scalar_one()
+    assert row.status == "error"
+    assert "모든 블록 번역에 실패" in (row.error or "")
+    assert row.translated_path is None
+
+
+async def test_run_pdf_job_skips_save_when_dir_deleted_during_overlay(
+        db_session, admin_user, monkeypatch):
+    """FINDING 2 커버 테스트 — 오버레이 배치 도중(= doc.save() 직전) DELETE가
+    도착한 상황을 흉내(실제 delete_pdf_job과 동일하게 세대를 올리고 작업
+    폴더를 지운다). doc.save()의 mkdir(parents=True)이 방금 지워진 폴더를
+    되살려 DB 행 없는 고아 translated.pdf를 남기면 안 된다.
+    """
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        StoryboardProfile,
+    )
+
+    job = await _seed_job(db_session, admin_user)
+    eid = job.external_id
+    job_id = job.id
+    job_dir = pdf_job_dir(eid)
+
+    _orig_place = StoryboardProfile.place
+
+    def _place_then_delete(self, block, ko_text, page_size):
+        # delete_pdf_job이 실제로 하는 일: cancel_pdf_task(세대 bump) 후
+        # 작업 폴더를 rmtree — 이 시점 이후 doc.save()가 실행되면 안 된다.
+        pdf_run._bump_generation(eid)
+        shutil.rmtree(job_dir, ignore_errors=True)
+        return _orig_place(self, block, ko_text, page_size)
+
+    monkeypatch.setattr(StoryboardProfile, "place", _place_then_delete)
+
+    with pytest.raises(asyncio.CancelledError):
+        await pdf_run.run_pdf_job(eid)
+
+    assert not job_dir.exists()  # rmtree 이후 doc.save()의 mkdir이 되살리지 않았다
+    assert not (job_dir / "translated.pdf").exists()
+    assert pdf_run._PDF_SEMAPHORE._value == 1  # 세마포어도 정상 반납
+
+    db_session.expire_all()
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.id == job_id))).scalar_one()
+    assert row.status != "done"
+    assert row.translated_path is None

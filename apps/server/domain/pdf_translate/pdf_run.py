@@ -89,9 +89,23 @@ async def run_pdf_job(external_id: UUID) -> None:
         finally:
             await maybe_aclose_translator(translator)
 
+        # 한글 블록은 추출 단계(has_hangul)에서 이미 걸러지므로, 정상적으로
+        # 도는 실행이라면 유효 번역이 0일 수 없다. 0이면 번역 엔진이 전량
+        # 실패해 원문을 그대로 복사한 것이다(예: 구독 CLI가 로그아웃 상태 —
+        # list_translate_engines의 available은 resolve_cli()만 확인해 실제
+        # 로그인 여부는 못 잡는다). 이 경우를 그냥 done으로 넘기면 사용자가
+        # "원본과 바이트만 다를 뿐 내용은 똑같은 번역본"을 조용히 받는다.
+        effective = sum(
+            1 for block, ko in zip(blocks, ko_texts)
+            if ko.strip() and ko.strip() != block.text.strip()
+        )
+        if effective == 0:
+            raise PdfTranslateError(
+                "모든 블록 번역에 실패했습니다 — 번역 엔진 상태를 확인하세요")
+
         await _set_status(external_id, "overlaying")
 
-        def _overlay_and_save() -> Path:
+        def _overlay_and_save() -> Path | None:
             for block, ko in zip(blocks, ko_texts):
                 ko = ko.strip()
                 # 번역 실패 폴백(원문 복사)·빈 결과는 주석을 달지 않는다
@@ -99,11 +113,19 @@ async def run_pdf_job(external_id: UUID) -> None:
                     continue
                 ov = profile.place(block, ko, doc.page_size(block.page))
                 doc.add_freetext(ov.page, ov.rect, ov.text, fontsize=ov.fontsize)
+            if generation != _current_generation(external_id):
+                # 취소/삭제가 오버레이 배치 도중 도착했다 — 여기서 저장을
+                # 건너뛰지 않으면 doc.save()의 mkdir(parents=True)이 DELETE가
+                # 방금 지운 작업 폴더를 되살리고, DB 행 없는 고아
+                # translated.pdf를 남긴다(pdf_jobs엔 프루닝 스윕도 없다).
+                return None
             dest = pdf_job_dir(external_id) / "translated.pdf"
             doc.save(dest)
             return dest
 
         dest = await asyncio.to_thread(_with_doc_lock, doc_lock, _overlay_and_save)
+        if dest is None:
+            raise asyncio.CancelledError
         await _set_status(external_id, "done", translated_path=str(dest))
     except asyncio.CancelledError:
         raise
