@@ -20,6 +20,8 @@ from apps.server.domain.video_captions.translate import (
     TranslationProvider,
 )
 
+from .house_style import apply_house_style
+
 logger = logging.getLogger("yeson.pdf.translate")
 
 WORKERS_ENV = "YESON_PDF_TRANSLATE_WORKERS"
@@ -89,6 +91,22 @@ _STYLE_EXAMPLES: list[tuple[str, str]] = [
 ]
 
 
+# 하우스 표기·화계 시트 — Task 18(사람 납품본 실측, house_style.py의
+# HOUSE_KO_CORRECTIONS 표와 동일 근거). 프롬프트 단에서 먼저 맞는 표기·
+# 화계로 내게 하고, house_style.apply_house_style이 KO→KO 후처리로 한 번
+# 더 고정한다(이중 방어 — LLM이 프롬프트를 놓쳐도 후처리가 잡는다).
+_HOUSE_STYLE_BLOCK = (
+    "House-style renderings (use EXACTLY these Korean forms):\n"
+    "Joseph=죠셉, Boomhauer=붐하우어, Thatherton=대더튼, Ray Roy=레이로이,\n"
+    "Char King Especiale=챠 킹 에스페시알레, FX=효과, props=소품, ANGLE ON:=구도:,\n"
+    "ESTABLISHING=설정, Camera move=카메라 무브, Cam Pos.=카메라 포즈, NEW ART=뉴 아트.\n"
+    "Register (화계) consistency: keep each character's politeness level consistent\n"
+    "toward the same listener across the whole document. HANK speaks politely\n"
+    "(해요체/합쇼체) to employees and customers — never 반말/하게체 to them.\n"
+    "When unsure, match the register of neighboring lines by the same speaker.\n"
+)
+
+
 def _style_examples_block() -> str:
     lines = [f"EN: {en}\nKO: {ko}" for en, ko in _STYLE_EXAMPLES]
     return (
@@ -137,6 +155,7 @@ def build_pdf_prompt(texts: list[str]) -> str:
         "Input is a JSON array of strings; return ONLY a JSON array of the "
         "same length with the Korean translations in the same order.\n"
         "Return ONLY the JSON array. No prose, no markdown fences.\n"
+        + _HOUSE_STYLE_BLOCK + "\n"
         "Use this glossary:\n"
         + glossary_block()
         + "\n\nInput:\n" + numbered
@@ -203,7 +222,7 @@ async def _verify_and_fix_numbers(
 
     # unresolved → 블록 단건 재번역 폴백(기존 kept-as-source 경로 재사용).
     retried = await _resilient(provider, [src])
-    retried_ko = apply_ko_corrections(retried[0].strip())
+    retried_ko = apply_house_style(apply_ko_corrections(retried[0].strip()))
     re_fixed, re_verdict = _verify_numbers(src, retried_ko)
     if re_verdict != "unresolved":
         if re_verdict == "fixed":
@@ -249,6 +268,20 @@ def _workers_from_env() -> int:
     return max(1, workers)
 
 
+# 동일 원문 dedupe 정규화 키(Task 18) — 공백·기타 구두점은 한 칸으로 접되,
+# 문말 부호(? ! . …)는 지우지 않는다. 전부 지우면(원래 시도했던
+# `re.sub(r"[\s\W]+", " ", src.lower())`) 실측 코퍼스에서 실제 충돌이
+# 났다 — `'37 BOBBY (CONT.) ...this?'`(의문으로 흐리는 조각)와 `'37 BOBBY
+# (CONT.) This...'`(새로 여는 조각)가 같은 키로 뭉쳐 서로 다른 번역을
+# 공유했다. 문말 부호만 보존하면 이 충돌이 사라진다(구두점 전체를 보존할
+# 필요는 없다).
+_DEDUPE_KEY_RE = re.compile(r"[^\w?!.…]+")
+
+
+def _dedupe_key(text: str) -> str:
+    return _DEDUPE_KEY_RE.sub(" ", text.lower()).strip()
+
+
 async def translate_texts(
     texts: list[str],
     provider: TranslationProvider,
@@ -271,8 +304,28 @@ async def translate_texts(
     """
     if not texts:
         return []
-    chunks = [texts[i:i + chunk_size] for i in range(0, len(texts), chunk_size)]
-    total = len(texts)
+
+    # 동일 원문 번역 캐시(Task 18) — Task 17이 발화를 그룹 텍스트로 낮춘
+    # 뒤에도 남는 (CONT.)-헤더 조각·패널 콜아웃 라벨류 중복을 없애 LLM
+    # 호출을 줄이고, 같은 원문이 페이지마다 다르게 번역되는 비결정성(사람
+    # 번역본 비교 P3)도 구조적으로 없앤다. 경쟁 조건 없음 — 배치 전
+    # 결정적 전처리라 병렬 청크는 유니크 목록 위에서만 돈다.
+    first_seen: dict[str, int] = {}
+    unique_texts: list[str] = []
+    index_map: list[int] = []
+    for text in texts:
+        key = _dedupe_key(text)
+        unique_idx = first_seen.get(key)
+        if unique_idx is None:
+            unique_idx = len(unique_texts)
+            first_seen[key] = unique_idx
+            unique_texts.append(text)
+        index_map.append(unique_idx)
+    logger.info("pdf-translate: dedupe: %d→%d unique", len(texts), len(unique_texts))
+
+    chunks = [unique_texts[i:i + chunk_size]
+              for i in range(0, len(unique_texts), chunk_size)]
+    total = len(unique_texts)
     sem = asyncio.Semaphore(_workers_from_env())
     progress_lock = asyncio.Lock()
     results: list[list[str]] = [[] for _ in chunks]
@@ -282,7 +335,13 @@ async def translate_texts(
         nonlocal done_blocks
         async with sem:
             translated = await _resilient(provider, chunk)
-            corrected = [apply_ko_corrections(t.strip()) for t in translated]
+            # 하우스 표기 강제 치환(Task 18)은 apply_ko_corrections
+            # 다음·숫자 게이트 이전에 적용한다(숫자와 무관해 순서가 결과에
+            # 영향을 주진 않지만, 고정 순서로 테스트가 잠근다).
+            corrected = [
+                apply_house_style(apply_ko_corrections(t.strip()))
+                for t in translated
+            ]
             # 숫자 보존 게이트(Task 16) — 순서·진행률 계약을 흔들지 않게
             # 같은 청크 워커·같은 세마포어 구간 안에서 후처리한다.
             results[idx] = [
@@ -310,7 +369,7 @@ async def translate_texts(
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
 
-    out: list[str] = []
+    unique_out: list[str] = []
     for chunk_result in results:
-        out.extend(chunk_result)
-    return out
+        unique_out.extend(chunk_result)
+    return [unique_out[i] for i in index_map]

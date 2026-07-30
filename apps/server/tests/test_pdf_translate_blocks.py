@@ -96,6 +96,35 @@ def test_pdf_prompt_includes_digit_preservation_instruction():
     assert "never alter, swap, or invent digits" in p
 
 
+def test_pdf_prompt_includes_house_style_section():
+    """Task 18: 사람 납품본 실측 하우스 표기 목록이 프롬프트에 EXACT 지시로
+    포함돼야 한다(house_style.py의 HOUSE_KO_CORRECTIONS와 동일 근거)."""
+    p = build_pdf_prompt(["Thatherton walks in."])
+    assert "House-style renderings (use EXACTLY these Korean forms):" in p
+    assert "Joseph=죠셉" in p
+    assert "Boomhauer=붐하우어" in p
+    assert "Thatherton=대더튼" in p
+    assert "Ray Roy=레이로이" in p
+    assert "Char King Especiale=챠 킹 에스페시알레" in p
+    assert "FX=효과" in p
+    assert "props=소품" in p
+    assert "ANGLE ON:=구도:" in p
+    assert "ESTABLISHING=설정" in p
+    assert "Camera move=카메라 무브" in p
+    assert "Cam Pos.=카메라 포즈" in p
+    assert "NEW ART=뉴 아트" in p
+
+
+def test_pdf_prompt_includes_register_consistency_instruction():
+    """Task 18(P4): 화계 혼용(행크가 같은 상대에게 해요체/반말 혼용) 방지
+    지시가 프롬프트에 있어야 한다."""
+    p = build_pdf_prompt(["HANK speaks to an employee."])
+    assert "Register (화계) consistency" in p
+    assert "HANK speaks politely" in p
+    assert "해요체/합쇼체" in p
+    assert "never 반말/하게체 to them" in p
+
+
 # ── _verify_numbers 단위 테스트 (Task 16) ──────────────────────────────
 
 def test_verify_numbers_fixes_single_candidate_contamination():
@@ -364,3 +393,73 @@ async def test_translate_texts_number_gate_logs_info_on_fix(caplog):
     with caplog.at_level(logging.INFO, logger="yeson.pdf.translate"):
         await translate_texts([src], t)
     assert any("109" in r.message and "103" in r.message for r in caplog.records)
+
+
+# ── 동일 원문 번역 캐시(dedupe, Task 18) ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_translate_texts_dedupes_repeated_source_text(caplog):
+    """동일 원문 3회 포함 6입력 → 유니크 4개만 번역 호출되고, 출력 6개
+    전부 올바른 자리에 동일 번역으로 채워진다."""
+    texts = ["a", "b", "c", "a", "d", "a"]
+    t = FakeTranslator(["echo-ko"])
+    with caplog.at_level(logging.INFO, logger="yeson.pdf.translate"):
+        out = await translate_texts(texts, t)
+    assert out == ["KO:a", "KO:b", "KO:c", "KO:a", "KO:d", "KO:a"]
+    assert len(t.calls) == 1
+    assert t.calls[0] == ["a", "b", "c", "d"]  # 유니크 4개만 호출
+    assert any("dedupe: 6" in r.message and "4" in r.message
+               for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_translate_texts_dedupe_normalization_preserves_sentence_final_punctuation():
+    """정규화 키 충돌 실측(브리프): '...this?'(의문으로 흐리는 조각)와
+    'This...'(새로 여는 조각)는 문말 부호를 지우면 같은 키로 뭉쳐 서로
+    다른 번역을 공유하게 된다 — 문말 부호(? ! . …)는 키에서 지우지 않아
+    이 둘이 서로 다른 번역을 유지해야 한다."""
+    a = "37 BOBBY (CONT.) ...this?"
+    b = "37 BOBBY (CONT.) This..."
+    t = FakeTranslator([["질문 번역", "새 문장 번역"]])
+    out = await translate_texts([a, b], t)
+    assert len(t.calls[0]) == 2  # dedupe로 뭉쳐지지 않음 — 별개 호출
+    assert out == ["질문 번역", "새 문장 번역"]
+
+
+@pytest.mark.asyncio
+async def test_translate_texts_dedupe_with_house_style_and_number_gate():
+    """dedupe + 숫자 게이트/하우스 치환 상호작용: 동일 원문 중복 위치 모두
+    하우스 치환·숫자 게이트를 통과한 동일 최종 결과로 팬아웃돼야 한다."""
+    src = "Thatherton, confirm sc103"
+    t = FakeTranslator([["태더튼, 씬109 확인", "기타 번역"]])
+    out = await translate_texts([src, "other text", src], t)
+    assert t.calls == [[src, "other text"]]  # 유니크 2개만 호출
+    assert out[0] == out[2] == "대더튼, 씬103 확인"  # 하우스 치환 + 숫자 교정
+    assert out[1] == "기타 번역"
+
+
+@pytest.mark.asyncio
+async def test_translate_texts_applies_house_style_before_number_gate(monkeypatch):
+    """통합 순서 고정(브리프 1번): house_style 적용은 apply_ko_corrections
+    다음, 숫자 게이트 이전 — 실행 순서를 스파이로 직접 관찰해 잠근다."""
+    import apps.server.domain.pdf_translate.translate_blocks as tb
+
+    order: list[str] = []
+    orig_house = tb.apply_house_style
+
+    def spy_house(ko):
+        order.append("house")
+        return orig_house(ko)
+
+    orig_gate = tb._verify_and_fix_numbers
+
+    async def spy_gate(provider, src, ko):
+        order.append("gate")
+        return await orig_gate(provider, src, ko)
+
+    monkeypatch.setattr(tb, "apply_house_style", spy_house)
+    monkeypatch.setattr(tb, "_verify_and_fix_numbers", spy_gate)
+
+    t = FakeTranslator([["태더튼, sc103 확인"]])
+    await translate_texts(["Thatherton, confirm sc103"], t)
+    assert order == ["house", "gate"]
