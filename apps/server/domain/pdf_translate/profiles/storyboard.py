@@ -112,7 +112,14 @@ def _field_content(raws: list[RawBlock], label: str,
     upper_bound = None
     if next_label is not None:
         for b in raws:
-            if normalize_ws(b.text) == next_label:
+            t = normalize_ws(b.text)
+            # 다음 라벨이 내용과 한 블록으로 붙어 나오는 변형도 경계로
+            # 인정해야 한다 — 안 그러면 upper_bound가 None으로 남아
+            # 현재 필드의 창이 무한정 열려서 다음 필드 아래쪽 블록까지
+            # 잘못 병합해온다(리뷰어 실측 재현: 병합 라벨형 다음-필드
+            # 경계 인식 실패로 인한 크로스필드 누수).
+            if t == next_label or (t.startswith(next_label)
+                                    and len(t) > len(next_label)):
                 upper_bound = b.bbox[1]
                 break
     candidates = [b for b in raws

@@ -168,11 +168,20 @@ def test_extract_merges_all_candidate_blocks_in_field_window(tmp_path):
 
 def test_extract_merged_label_block_continues_merging_lower_candidates(tmp_path):
     """라벨+내용 병합 블록 분기도 그 아래 창 안의 추가 후보를 이어
-    병합해야 한다(현재는 remainder만 반환하던 회귀)."""
+    병합해야 한다(현재는 remainder만 반환하던 회귀).
+
+    크로스필드 누수 회귀 가드(리뷰어 실측 재현, 2026-07-30): 다음 필드
+    라벨("Action Notes")이 내용과 한 블록으로 붙어 나오면 정확 일치 탐색
+    만으로는 upper_bound를 못 찾아 Dialog 필드의 창이 무한정 열린다 —
+    그러면 Action Notes 아래 "CAM ADJUST"까지 Dialog로 새어 들어가
+    중복·오염된다. Dialog는 원래 내용 그대로여야 하고, Action은 여전히
+    CAM ADJUST까지 병합돼야 한다."""
     doc = open_pdf(_make_storyboard_pdf_merged_label_with_extra_block(tmp_path))
     try:
         blocks = StoryboardProfile().extract(doc)
+        dialog = next(b for b in blocks if b.kind == "dialog")
         action = next(b for b in blocks if b.kind == "action")
+        assert dialog.text == "If you wanna go, then go."  # 누수·중복 없음
         assert action.text == "HANK walks to the door. CAM ADJUST"
     finally:
         doc.close()
