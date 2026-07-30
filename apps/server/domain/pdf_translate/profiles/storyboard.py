@@ -39,6 +39,18 @@ _PANEL_TOP_MARGIN = 24.0  # 이보다 위로 올라가면(페이지 상단 근�
 _LABEL_TEXTS = frozenset(label for label, _kind in _FIELDS)
 
 
+def _has_field_label(raws: list[RawBlock]) -> bool:
+    """페이지가 실제 스토리보드 템플릿 페이지인지 판정(Dialog/Action Notes
+    라벨 중 하나라도 존재) — detect()와 동일한 라벨 매칭 관례(정확 일치 또는
+    라벨로 시작하는 병합형)를 그대로 재사용한다(새 매칭 변형 도입 금지)."""
+    for b in raws:
+        t = normalize_ws(b.text)
+        for label, _kind in _FIELDS:
+            if t == label or t.startswith(label):
+                return True
+    return False
+
+
 def _looks_like_field_label(text: str) -> bool:
     """라벨 그대로이거나(빈 필드 다음 라벨) 라벨로 시작하면(다음 필드가
     라벨+내용 한 블록으로 붙어 나온 변형) 후보에서 제외 — 안 그러면 Dialog가
@@ -78,14 +90,20 @@ class StoryboardProfile:
                     continue
                 out.append(PdfBlock(page=page, kind=kind, text=text,
                                     bbox=content.bbox))
-            page_w, _page_h = doc.page_size(page)
-            region = _panel_region(raws, page_w)
-            for raw in find_panel_labels(doc, page, region):
-                text = normalize_ws(raw.text)
-                if not text or has_hangul(text):
-                    continue
-                out.append(PdfBlock(page=page, kind=_PANEL_LABEL_KIND, text=text,
-                                    bbox=raw.bbox))
+            # 표지/타이틀 페이지(리뷰 후속, 2026-07-30): Dialog/Action Notes
+            # 라벨이 아예 없으면 실제 패널 템플릿 페이지가 아니다 —
+            # _panel_region이 이때 기본값(y_bottom=460)으로 열리는데, 표지의
+            # 빨간 로고/타이틀 텍스트("KING"/"HILL")가 그 안에서 라벨로
+            # 오인식되던 회귀(page 0 실물 확인)를 막는다.
+            if _has_field_label(raws):
+                page_w, _page_h = doc.page_size(page)
+                region = _panel_region(raws, page_w)
+                for raw in find_panel_labels(doc, page, region):
+                    text = normalize_ws(raw.text)
+                    if not text or has_hangul(text):
+                        continue
+                    out.append(PdfBlock(page=page, kind=_PANEL_LABEL_KIND,
+                                        text=text, bbox=raw.bbox))
         return out
 
     def place(self, block: PdfBlock, ko_text: str,

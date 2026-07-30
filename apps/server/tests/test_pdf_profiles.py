@@ -375,6 +375,44 @@ def test_extract_includes_panel_label_and_place_avoids_intersection(tmp_path):
         doc.close()
 
 
+def _make_storyboard_title_page_pdf(tmp_path: Path) -> Path:
+    """표지/타이틀 페이지 흉내 — 빨간 큰 로고/타이틀 텍스트만 있고
+    Dialog/Action Notes 필드 라벨은 전혀 없다(리뷰 후속 회귀 가드: 실물
+    GABE01_A1 page 0에서 쇼 로고 텍스트 "KING"/"HILL"이 패널 라벨로
+    오인식되던 문제의 재현)."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    page.insert_text((300, 200), "KING", fontsize=40, color=(1, 0, 0))
+    page.insert_text((300, 260), "HILL", fontsize=40, color=(1, 0, 0))
+    path = tmp_path / "sb_title_page.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_extract_skips_panel_ocr_on_pages_without_field_labels(tmp_path, monkeypatch):
+    """리뷰 후속 회귀 가드: 표지/타이틀 페이지(Dialog/Action Notes 라벨
+    없음)는 빨간 텍스트가 있어도 패널 OCR 자체를 건너뛴다 — panel_label
+    블록이 0개여야 하고, OCR 엔진(RapidOCR)은 아예 생성되지 않아야 한다
+    (엔진 생성 스파이로 확인 — find_panel_labels 자체의 프리필터 스파이
+    테스트와 동일 기법을 extract() 호출부에 적용)."""
+    from apps.server.domain.pdf_translate import panel_ocr
+
+    calls: list[dict] = []
+    monkeypatch.setattr(panel_ocr, "_new_engine",
+                        lambda **kw: calls.append(kw))
+    panel_ocr._reset_engines()
+    doc = open_pdf(_make_storyboard_title_page_pdf(tmp_path))
+    try:
+        blocks = StoryboardProfile().extract(doc)
+        assert [b for b in blocks if b.kind == "panel_label"] == []
+        assert calls == []
+    finally:
+        doc.close()
+        panel_ocr._reset_engines()
+
+
 def test_place_panel_label_above_when_room():
     """패널 라벨 배치 기본 경로: 라벨 바로 위, fontsize 10.0 고정."""
     block = PdfBlock(page=0, kind="panel_label", text="HANK'S TRUCK",
@@ -431,20 +469,24 @@ def test_real_storyboard_sample(monkeypatch):
     단일 extract() 호출에서 얻는다.
 
     프리필터 통과 페이지 수 범위 재측정(실물 전체 문서 스캔, 2026-07-30):
-    실측 146페이지/블록 280개 — 브리프의 "85주석/47페이지" 추정보다 훨씬
-    많다. 원인은 버그가 아니라 서로 다른 모집단 비교였다: "85/47"은
-    **납품(번역 완료)본**에서 육안으로 셀 수 있는 주석 수 — 순수 코드
-    라벨(1000SB, 651 등)은 기존 스킵 규칙(ko==원문이면 주석 생략)으로
-    납품본에 아예 안 나타난다. 이 테스트는 **추출 단계** 카운트라 코드
-    라벨도 전부 포함된다(스킵은 번역 이후 오버레이 단계 몫). 실제로
-    상위 빈도 라벨을 단어/코드로 나눠 보면 캐릭터 이름(HANK 15회, CONNIE
-    13회, JOSEPH 11회, BOOMHAUER 10회, BOBBY 10회, BILL 8회, DALE 7회,
-    MUSTACHES 7회 = 81)이 "85주석" 추정과 거의 정확히 들어맞고, 나머지는
-    차량/자산 코드(1000SB·1000SA·651·652·658·656A 등, 다수 페이지 반복)
-    — 브리프가 예측한 "대부분 캐릭터 이름"과 일치한다. 이상치 페이지도
-    없다(최대 10라벨/페이지, 전부 다중 차량 주차장 씬 등 정당한 케이스).
-    허위양성은 표지 페이지(0) 로고 텍스트("KING"/"HILL") 1건뿐 — 알려진
-    한계로 보고서에 기록."""
+    브리프의 "85주석/47페이지" 추정보다 훨씬 많다. 원인은 버그가 아니라
+    서로 다른 모집단 비교였다: "85/47"은 **납품(번역 완료)본**에서 육안
+    으로 셀 수 있는 주석 수 — 순수 코드 라벨(1000SB, 651 등)은 기존 스킵
+    규칙(ko==원문이면 주석 생략)으로 납품본에 아예 안 나타난다. 이
+    테스트는 **추출 단계** 카운트라 코드 라벨도 전부 포함된다(스킵은
+    번역 이후 오버레이 단계 몫). 상위 빈도 라벨을 단어/코드로 나눠 보면
+    캐릭터 이름(HANK 15회, CONNIE 13회, JOSEPH 11회, BOOMHAUER 10회,
+    BOBBY 10회, BILL 8회, DALE 7회, MUSTACHES 7회 = 81)이 "85주석"
+    추정과 거의 정확히 들어맞고, 나머지는 차량/자산 코드(1000SB·1000SA·
+    651·652·658·656A 등, 다수 페이지 반복) — 브리프가 예측한 "대부분
+    캐릭터 이름"과 일치한다. 이상치 페이지도 없다(최대 10라벨/페이지,
+    전부 다중 차량 주차장 씬 등 정당한 케이스).
+
+    표지 페이지 게이트(리뷰 후속, 2026-07-30): 최초 실측(146페이지/280
+    블록)에는 표지 페이지(0)의 쇼 로고 텍스트("KING"/"HILL")가 패널
+    라벨로 잘못 섞여 있었다 — Dialog/Action Notes 필드 라벨이 있는
+    페이지만 패널 OCR을 돌리도록 extract()에 게이트를 추가해 제거했다
+    (page 0은 필드 라벨이 없는 표지라 패널 OCR 자체가 스킵된다)."""
     from apps.server.domain.pdf_translate import panel_ocr
 
     prefilter_pass = {"n": 0}
@@ -480,18 +522,25 @@ def test_real_storyboard_sample(monkeypatch):
         assert "Propane." in page30_dialog.text
 
         panel_blocks = [b for b in all_blocks if b.kind == "panel_label"]
+        page0_panel = [b for b in panel_blocks if b.page == 0]
         page1_panel = [b for b in panel_blocks if b.page == 1]
         print(
             f"\npdf-translate panel OCR: extract() wall_time={elapsed:.1f}s "
             f"prefilter_pass_pages={prefilter_pass['n']} "
             f"panel_labels_found={len(panel_blocks)} "
+            f"page0_labels={[b.text for b in page0_panel]} "
             f"page1_labels={[b.text for b in page1_panel]}")
+        # 리뷰 후속(2026-07-30): 표지 페이지(0)는 Dialog/Action Notes 라벨이
+        # 없으므로 패널 OCR 자체가 게이트에 걸려 스킵된다 — 로고 텍스트
+        # ("KING"/"HILL")가 더 이상 라벨로 오인식되면 안 된다.
+        assert page0_panel == []
         assert any("HANK" in b.text.upper() for b in page1_panel)
-        # 실측(2026-07-30, 전체 1037페이지) 146페이지/280블록 — 위 docstring
-        # 설명대로 순수 코드 라벨까지 포함하는 추출-단계 카운트라 "85주석/
-        # 47페이지"(납품본 기준)보다 크다. 100~250은 그 실측치 주변 여유폭 —
-        # 지나치게 적으면(프리필터 붕괴) 또는 지나치게 많으면(빨강 문턱이
-        # 너무 느슨해 잡음까지 통과) 회귀로 잡는다.
+        # 실측(2026-07-30, 전체 1037페이지, 표지 게이트 적용 후) 145페이지/
+        # 278블록 — 위 docstring 설명대로 순수 코드 라벨까지 포함하는
+        # 추출-단계 카운트라 "85주석/47페이지"(납품본 기준)보다 크다.
+        # 100~250은 그 실측치 주변 여유폭 — 지나치게 적으면(프리필터 붕괴)
+        # 또는 지나치게 많으면(빨강 문턱이 너무 느슨해 잡음까지 통과)
+        # 회귀로 잡는다.
         assert 100 <= prefilter_pass["n"] <= 250
 
         # 불변식(2026-07-30 실기 피드백 후속): 어떤 배치 경로를 타든 주석
