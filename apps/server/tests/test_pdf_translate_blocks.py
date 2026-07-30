@@ -582,15 +582,20 @@ def test_normalize_quotes_ignores_spans_longer_than_bound():
     assert _normalize_quotes(long_text) == long_text
 
 
-# ── 따옴표 word-boundary 가드 (리뷰 라운드 1 Important 2 재현) ───────────
+# ── 따옴표 경계 가드 (리뷰 라운드 1 Important 2 재현, 라운드 2 정정) ─────
 # 리뷰가 실행으로 재현한 오폭: 40자 안에 어포스트로피 두 개(둘 다 소유격)가
-# 있으면 그 사이를 스팬으로 오인했다. 여는/닫는 따옴표 양쪽에 단어 경계
-# 조건(`(?<!\w)'...'(?!\w)`)을 추가해 고쳤다 — 아래 세 케이스가 그 수정을
-# 실측대로 잠근다(전부 리뷰가 실행으로 확인한 값).
+# 있으면 그 사이를 스팬으로 오인했다. 라운드 1은 여는/닫는 따옴표 양쪽에
+# `\w`(유니코드 인식이라 한글 포함) 경계 조건을 추가해 고쳤지만, 그러면
+# 닫는 따옴표 바로 뒤에 한글 조사가 붙는 정상 문형(예: "'쓰리 아미고스
+# 경례'를")까지 "닫는 따옴표 아님"으로 오판해 정당한 변환의 36%를
+# 놓쳤다(라운드 2 리뷰 실측: 코퍼스 34건 중 21건만 변환). 경계를
+# 라틴 문자·숫자 전용(`(?<![A-Za-z0-9])'...'(?![A-Za-z])`)으로 좁혀 두
+# 요구를 동시에 만족한다 — 아래는 그 수정을 실측대로 잠근다.
 
 def test_normalize_quotes_does_not_misfire_on_two_possessives_within_bound():
     """소유격 어포스트로피가 40자 안에 두 번 있으면 예전엔 그 사이를
-    스팬으로 오인했다 — word-boundary 가드로 수정됨을 잠근다."""
+    스팬으로 오인했다 — 라틴 전용 경계로 여전히 막힌다(닫는 쪽 바로 뒤가
+    영문 's'라 라틴 경계에 걸림)."""
     text = "행크's 트럭과 페기's 차"
     assert _normalize_quotes(text) == text
     text2 = "바비's 개와 행크's 트럭이 보인다"
@@ -602,6 +607,18 @@ def test_normalize_quotes_does_not_misfire_on_year_apostrophe_before_possessive(
     선행 연도 아포스트로피 + 후행 소유격 조합 — 가공 케이스가 아니다."""
     text = "'56년 행크's 트럭"
     assert _normalize_quotes(text) == text
+
+
+def test_normalize_quotes_converts_when_particle_attaches_after_closing_quote():
+    """리뷰 라운드 2 Important 1 재현: 라운드 1의 `\\w` 경계는 닫는
+    따옴표 뒤에 한글 조사가 바로 붙는 정상 문형까지 오판해 막았다(코퍼스
+    실측: 34건 중 12건, 36% 손실 — 전부 조사 부착형). 라틴 전용 경계는
+    한글 조사를 막지 않으므로 이 케이스들이 다시 변환돼야 한다."""
+    assert (_normalize_quotes("'쓰리 아미고스 경례'를 외쳤다")
+            == '"쓰리 아미고스 경례"를 외쳤다')
+    assert _normalize_quotes("'프로너츠'도 맛있다") == '"프로너츠"도 맛있다'
+    assert (_normalize_quotes("'저질스럽다'는 반응이었다")
+            == '"저질스럽다"는 반응이었다')
 
 
 def test_normalize_speaker_colon_removes_space_after_leading_colon():
@@ -638,10 +655,12 @@ def test_normalize_speaker_colon_does_not_tighten_latin_prefixed_labels():
 
 def test_normalize_speaker_colon_does_not_swallow_newline_after_colon():
     """리뷰 재현: `\\s+`는 개행도 삼켜 "행크:\\n대사" → "행크:대사"로 이
-    태스크가 도입한 개행 보존과 충돌했다 — `[^\\S\\n]+`로 좁혀 콜론 바로
-    뒤가 개행뿐이면(공백 없음) 건드리지 않는다."""
-    text = "행크:\n대사입니다."
-    assert _normalize_speaker_colon(text) == text
+    태스크가 도입한 개행 보존과 충돌했다 — `[^\\S\\r\\n]+`로 좁혀 콜론
+    바로 뒤가 개행뿐이면(공백 없음) 건드리지 않는다. 리뷰 라운드 2
+    Minor: 라운드 1의 `[^\\S\\n]+`는 `\\n`만 뺐지 `\\r`은 여전히
+    삼켰다 — 사람 납품본이 실제로 쓰는 줄 구분자(`\\r`)라 함께 잠근다."""
+    assert _normalize_speaker_colon("행크:\n대사입니다.") == "행크:\n대사입니다."
+    assert _normalize_speaker_colon("행크:\r대사입니다.") == "행크:\r대사입니다."
 
 
 def test_apply_output_normalization_combines_quotes_and_colon():
@@ -652,11 +671,19 @@ def test_apply_output_normalization_combines_quotes_and_colon():
 def test_apply_output_normalization_skips_pure_english_fallback_text():
     """폴백 안전판: has_hangul(ko)이 False면(영문 원문 그대로인 폴백) 손대지
     않는다 — translate_texts의 "원문 유지 폴백" 식별은 폴백 값이 영문
-    원문과 바이트 그대로 같다는 데 기댄다. 콜론 패턴은 A-Za-z도 받으므로
-    (브리프 요구사항) 이 가드가 없으면 "NOTE: PLEASE..." 같은 영문
-    폴백에서 공백이 제거돼 식별이 조용히 실패한다."""
-    text = "NOTE: PLEASE HOOKUP DESK TO SC13"
+    원문과 바이트 그대로 같다는 데 기댄다.
+
+    리뷰 라운드 2 Important 2 재현: 예전 픽스처("NOTE: PLEASE HOOKUP DESK
+    TO SC13")는 라운드 1 Fold-in 2가 콜론 패턴에서 A-Za-z를 뺀 뒤로는
+    가드 없이도 두 규칙 중 어느 쪽도 발동하지 않는다 — 즉 has_hangul
+    가드를 통째로 지워도 이 테스트는 여전히 통과해, 정작 지켜야 할
+    안전판이 공허 테스트가 돼 있었다. 따옴표 규칙은 여전히 좌변에 한글
+    요구가 없어 영문에도 발동하므로(콜론 패턴과 달리), 그 규칙이 실제로
+    건드릴 문장으로 픽스처를 바꿔 가드를 다시 의미 있게 잠근다."""
+    text = "A SIGN READS 'OWNER' ON THE DOOR"
     assert apply_output_normalization(text) == text
+    # 가드가 없다면 이 값이 됐을 것 — 가드가 실제로 막고 있음을 대조 확인.
+    assert _normalize_quotes(text) != text
 
 
 def test_apply_output_normalization_empty_string():
