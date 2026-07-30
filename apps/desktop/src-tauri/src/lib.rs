@@ -5,6 +5,7 @@ mod discovery;
 #[cfg(windows)]
 mod job;
 mod orphan_reaper;
+mod pdf_upload;
 mod sidecar;
 mod video_download;
 mod video_upload;
@@ -39,6 +40,7 @@ pub fn run() {
             discovery::device_label,
             discovery::scan_subnet,
             video_download::download_to_file,
+            pdf_upload::upload_pdf_file,
             video_download::probe_file_write,
             video_download::probe_file_remove,
             video_upload::list_video_files,
