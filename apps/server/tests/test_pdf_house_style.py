@@ -15,6 +15,7 @@ import pytest
 
 from apps.server.domain.pdf_translate.house_style import (
     HOUSE_KO_CORRECTIONS,
+    HOUSE_KO_PATTERN_CORRECTIONS,
     apply_house_style,
 )
 
@@ -130,11 +131,25 @@ def test_house_style_fx_rule_standalone(before, after):
     assert apply_house_style(before) == after
 
 
-@pytest.mark.parametrize("before,after", FX_CASES)
-def test_house_style_fx_rule_standalone_is_idempotent(before, after):
+@pytest.mark.parametrize("before", [before for before, _ in FX_CASES])
+def test_house_style_fx_rule_standalone_is_idempotent(before):
     once = apply_house_style(before)
-    assert once == after
     assert apply_house_style(once) == once
+
+
+def test_house_style_pattern_corrections_all_covered():
+    """HOUSE_KO_PATTERN_CORRECTIONS(FX 정규식 2개) 각각이 FX_CASES로
+    실제로 발동되는지 확인 — HOUSE_KO_CORRECTIONS 쪽의
+    `test_house_style_all_table_entries_covered`와 대응하는 자체검증.
+    향후 패턴이 추가되고 테스트가 빠지는 사고를 방지한다(리뷰 지적)."""
+    triggered = {
+        pattern.pattern
+        for pattern, _ in HOUSE_KO_PATTERN_CORRECTIONS
+        for before, _ in FX_CASES
+        if pattern.search(before)
+    }
+    all_patterns = {pattern.pattern for pattern, _ in HOUSE_KO_PATTERN_CORRECTIONS}
+    assert triggered == all_patterns
 
 
 def test_house_style_fx_rule_embedded_with_slash_delimiter():
@@ -166,9 +181,70 @@ def test_house_style_fx_rule_guards_bare_effect_with_no_adjacent_word():
 
 def test_house_style_fx_rule_leaves_single_interior_occurrence_untouched():
     """"이펙트"가 문장 중간에 단독으로 끼고(양옆 다 일반 단어, 슬래시·
-    마침표 경계 없음) 세그먼트 경계 신호가 없으면 건드리지 않는다 —
-    오폭 방지(실측: 문자열 전체가 바뀌지 않는다)."""
+    마침표·개행 경계 없음) 세그먼트 경계 신호가 없으면 건드리지 않는다.
+    ⚠ 이건 순수한 오폭 방지 가드가 아니라 **커버리지 축소**이기도 하다
+    (리뷰 재지적) — 제거된 리터럴 항목 `("연기 이펙트", "연기 효과")`는
+    부분 문자열 치환이라 이 문자열도 실제로 바꿨을 것이다("연기 효과
+    연기"). 코퍼스 실측상 이 모양(경계 없는 문장 중간 이펙트)은 0건이라
+    감수한 트레이드오프다."""
     assert apply_house_style("연기 이펙트 연기") == "연기 이펙트 연기"
+
+
+# ── _SEG_END 비대칭 수정 (리뷰 라운드 2 Important) ───────────────────────
+
+def test_house_style_fx_rule_seg_end_symmetric_does_not_swallow_following_sentence():
+    """라운드 1의 `_SEG_END`는 세그먼트 시작(". " 뒤 인정)과 비대칭이라,
+    실제 문장(마침표가 단어에 바로 붙음, 공백 없음)에서 리딩 규칙의
+    비탐욕 캡처가 다음 경계까지 뒤 문장 전체를 삼켰다 — 캡처가 `효과`
+    앞으로 이동하므로 삼켜진 문장째로 라벨이 엉뚱한 문장 뒤에 붙는
+    틀린 주석이 됐다(리뷰가 실행으로 재현한 두 케이스를 그대로 잠근다)."""
+    assert (apply_house_style("이펙트 연기. 다음 문장은 그대로 있어야 한다. / 세 번째")
+            == "연기 효과. 다음 문장은 그대로 있어야 한다. / 세 번째")
+    assert (apply_house_style("이펙트 연기. 다음 문장.")
+            == "연기 효과. 다음 문장.")
+
+
+def test_house_style_fx_rule_guards_dialogue_false_positive():
+    """대사 속 일반 명사 "이펙트"(예: "특수 이펙트.")는 세그먼트 경계
+    신호가 없으므로 `_SEG_END`에 `\\.\\s`를 추가한 뒤에도 건드리면 안
+    된다 — 마침표 뒤에 공백이 없는 문장 끝(문자열 그대로 종료)은
+    경계가 아니다(리뷰가 이 가드 유지를 확인)."""
+    assert apply_house_style("행크: 그거 특수 이펙트.") == "행크: 그거 특수 이펙트."
+
+
+def test_house_style_fx_rule_residual_trailing_period_is_awkward_but_lossless():
+    """알려진 잔여 케이스(팀 리드 판단 보류 — Task 19 출력 정규화가 흡수할지
+    그쪽에서 결정) — 문자열이 마침표로 끝나면(공백 없이) 라벨이 문장 뒤로
+    빠져 어색하지만 내용 손실·중복은 없다. 개선 대상이 아니라 현재 동작을
+    회귀 감지용으로 잠근다."""
+    assert apply_house_style("이펙트 연기.") == "연기. 효과"
+
+
+# ── 개행(\r/\n) 경계 (리뷰 라운드 2 — Task 19가 실물로 만들 것) ──────────
+
+def test_house_style_fx_rule_converts_on_own_line_after_newline():
+    """Task 19가 액션 블록에 실제 줄바꿈을 도입한다(슬러그라인 join) —
+    이전 줄 뒤에 개행으로 이어지는 FX 라벨도 규칙이 잡아야 한다(개행도
+    세그먼트 경계)."""
+    assert apply_house_style("line one\n이펙트 연기") == "line one\n연기 효과"
+    assert (apply_house_style("첫째 줄\n불 이펙트\n셋째 줄")
+            == "첫째 줄\n불 효과\n셋째 줄")
+
+
+def test_house_style_fx_rule_does_not_swallow_trailing_carriage_return():
+    """캡처 끝에 \\r가 갇혀 라벨이 줄바꿈 뒤로 밀리는 결함(리뷰 Minor,
+    현재 코퍼스엔 미발현) — \\r/\\n을 경계로 인정해 라벨이 줄바꿈 앞에
+    정확히 붙어야 한다."""
+    assert apply_house_style("줄바꿈 뒤. 이펙트 연기\r") == "줄바꿈 뒤. 연기 효과\r"
+
+
+def test_house_style_fx_rule_never_captures_across_newline():
+    """re.DOTALL을 쓰지 않으므로(의도적 — 쓰면 캡처가 줄 경계를 넘어 다른
+    줄의 텍스트까지 삼킬 수 있다) 다음 줄 내용은 그대로 보존돼야 한다."""
+    assert (apply_house_style("이펙트 연기\n다음 줄은 그대로")
+            == "연기 효과\n다음 줄은 그대로")
+    assert (apply_house_style("이펙트 연기\r\n두 번째 줄")
+            == "연기 효과\r\n두 번째 줄")
 
 
 def test_house_style_fx_rule_order_is_fixed_and_locked():
