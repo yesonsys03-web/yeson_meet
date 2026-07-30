@@ -72,6 +72,110 @@ def test_action_block_between_chain_members_does_not_break_chain():
     assert set(texts) == {chain.merged_text, action.merged_text}
 
 
+@pytest.mark.parametrize(
+    ("first", "second", "expected_merged"),
+    [
+        # 리뷰 실측 — 슬래시 화자, 자체 few-shot 예시(translate_blocks.py:52)와 동일 형태.
+        (
+            "3 HANK/EMPLOYEES Propane.",
+            "3 HANK/EMPLOYEES (CONT.) and butane.",
+            "3 HANK/EMPLOYEES Propane. and butane.",
+        ),
+        # 리뷰 실측 — 공백 두 토큰 화자.
+        (
+            "5 BOODA SACK My bad, Hank.",
+            "5 BOODA SACK (CONT.) Accidentally opened the valve.",
+            "5 BOODA SACK My bad, Hank. Accidentally opened the valve.",
+        ),
+        # 리뷰 실측 — 화자명 자체가 두 토큰(HANK HILL).
+        (
+            "97 HANK HILL You know,",
+            "97 HANK HILL (CONT.) more words",
+            "97 HANK HILL You know, more words",
+        ),
+        # 리뷰 실측 — 마침표 포함 화자.
+        (
+            "26 MR. STRICKLAND Well,",
+            "26 MR. STRICKLAND (CONT.) text",
+            "26 MR. STRICKLAND Well, text",
+        ),
+        # 리뷰 실측 — 괄호 접미(O.S.) + (CONT.) 이중 주석.
+        (
+            "66 JIMMY (O.S.) Your pro-nuts suck!",
+            "66 JIMMY (O.S.) (Cont.) more",
+            "66 JIMMY (O.S.) Your pro-nuts suck! more",
+        ),
+        # 리뷰 실측 — `#`는 기존 문자 클래스에 아예 없던 문자.
+        (
+            "45 CLIENT #1 Strained?!",
+            "45 CLIENT #1 (Cont.) Ray Roy hit on my mom!",
+            "45 CLIENT #1 Strained?! Ray Roy hit on my mom!",
+        ),
+    ],
+)
+def test_multitoken_speaker_chain_strips_full_header_no_stray_markers(
+    first: str, second: str, expected_merged: str,
+) -> None:
+    """Important #1 회귀: 다중 토큰(공백·/·.·#) 화자에서 헤더가 부분만
+    제거되면 (CONT.)/(Cont.) 마커나 화자명 파편이 merged_text 본문에
+    남는다 — 이는 병합 실패 사실을 감추고 모든 멤버 페이지에 노이즈를
+    번역·기재하게 만든다."""
+    blocks = [_block(0, "dialog", first), _block(1, "dialog", second)]
+    groups, texts = group_utterances(blocks)
+    assert len(groups) == 1
+    merged = groups[0].merged_text
+    assert merged == expected_merged
+    assert "(CONT" not in merged
+    assert "(Cont" not in merged
+    assert texts == [expected_merged]
+
+
+def test_reprinted_dialogue_tail_is_not_duplicated():
+    """Important #2 회귀: 소스가 다음 패널에 누적 대사의 꼬리를 그대로
+    재인쇄하면(DONNA 케이스, 화자는 단일 토큰이라 Important #1과 무관),
+    무조건 이어붙이기는 이미 누적된 문장을 중복 기재한다."""
+    blocks = [
+        _block(0, "dialog", "9 DONNA Ray Roy sure did a lot of damage."),
+        _block(1, "dialog", "9 DONNA (CONT.) But look at all these clients we still have!"),
+        _block(2, "dialog", "9 DONNA (CONT.) look at all these clients we still have!"),
+    ]
+    groups, texts = group_utterances(blocks)
+    assert len(groups) == 1
+    merged = groups[0].merged_text
+    assert groups[0].member_indices == [0, 1, 2]
+    assert merged == (
+        "9 DONNA Ray Roy sure did a lot of damage. "
+        "But look at all these clients we still have!"
+    )
+    assert merged.count("look at all these clients we still have") == 1
+    assert texts == [merged]
+
+
+def test_reprinted_dialogue_tail_with_ellipsis_spacing_variant_is_not_duplicated():
+    """Important #2 회귀 — 실물 코퍼스 그대로(GABE01_A1 p85-93 DONNA
+    체인, 헤더-only (CONT.) 조각 포함): 재인쇄된 꼬리가 원 발화에서는
+    `But... look`(말줄임표 뒤 공백)로, 재인쇄 조각에서는 `...look`(공백
+    없음)으로 나타난다 — 순수 문자열 포함 비교라면 이 공백 차이 때문에
+    중복을 놓친다."""
+    blocks = [
+        _block(0, "dialog", "9 DONNA Ray Roy sure did a lot of damage."),
+        _block(1, "dialog", "9 DONNA (CONT.)"),
+        _block(2, "dialog", "9 DONNA (CONT.) But... look at all these clients we still have!"),
+        _block(3, "dialog", "9 DONNA (CONT.)"),
+        _block(4, "dialog", "9 DONNA (CONT.) ...look at all these clients we still have!"),
+    ]
+    groups, texts = group_utterances(blocks)
+    assert len(groups) == 1
+    merged = groups[0].merged_text
+    assert groups[0].member_indices == [0, 1, 2, 3, 4]
+    assert merged == (
+        "9 DONNA Ray Roy sure did a lot of damage. "
+        "But... look at all these clients we still have!"
+    )
+    assert merged.count("look at all these clients we still have") == 1
+    assert texts == [merged]
+
+
 SAMPLES = os.environ.get("YESON_PDF_SAMPLES")
 
 
