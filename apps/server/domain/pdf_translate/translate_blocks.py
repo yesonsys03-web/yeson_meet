@@ -27,18 +27,25 @@ _DEFAULT_WORKERS = 3
 # E2E 후속(2026-07-30). 원문-번역 300+쌍(오프라인 스크립트, 커밋 안 함)에서
 # 대표 14쌍만 뽑았다. 화살표 예시는 사용자가 실기에서 직접 지목한 케이스
 # ("...so the arrows make sense!" → 축자번역 "그래야 화살표가 말이 되지!"는
-# 오역, 수작업본은 "화살표가 이해되게 함께 서보자..").
+# 오역, 수작업본은 "바비:화살표가 이해되게 함께 서보자..").
 #
 # 액션 노트 종결형 실측(615쌍 중): "-ㄴ다/-한다" 평서형이 압도적 다수이고
 # "-하세요/-십시오" 요청형은 "NOTE:"/"PLEASE" 같은 명시적 제작진 지시문(21건)
 # 에서만 쓰인다 — 일반 서술형 액션(예: "Hank grabs the gear shift lever.")은
 # 전부 평서형이었다. 아래 예시가 그 구분을 보여준다.
+#
+# 편집 정규화(리뷰 후속, 2026-07-30) — 아래 예시는 원문 주석의 바이트 단위
+# 사본이 아니다: (1) 콜론 뒤 공백 삽입("화자명:대사" 붙여쓰기 원문 → "화자명:
+# 대사" 표기, "화자명: 대사" 규칙과 일치시키려는 편집), (2) 화살표 예시의
+# "바비: " 화자 접두는 원문 주석("바비:화살표가...")에 실재하던 걸 그대로
+# 복원한 것(창작 아님) — 단, 그 EN 절반은 두 패널 큐 태그("123 BOBBY" +
+# "(CONT.)")를 결합해 재구성했다.
 _STYLE_EXAMPLES: list[tuple[str, str]] = [
     # 화살표 예시(GABE01 A1 p963-964 결합) — 사용자 리포트 원본 사례.
     # 사진 포즈 상황에 맞춘 의역("...서보자")이지 "화살표가 말이 되도록"류
-    # 축자번역이 아니다.
-    ("Let's walk around... so the arrows make sense!",
-     "화살표가 이해되게 함께 서보자.."),
+    # 축자번역이 아니다. 화자줄(화자명: 대사) 관례도 함께 시연.
+    ("123 BOBBY Let's walk around... (CONT.) ...so the arrows make sense!",
+     "바비: 화살표가 이해되게 함께 서보자.."),
     # 화자줄: 다중 화자(/) 표기 + 큐번호 생략 (GABE01 A1 p30)
     ("3 HANK/EMPLOYEES Propane.", "행크/직원들: 프로판."),
     # (CONT.)로 두 패널에 쪼개진 미완성 문장 — 이웃 문맥으로 이어 완결된
@@ -82,7 +89,12 @@ _STYLE_EXAMPLES: list[tuple[str, str]] = [
 
 def _style_examples_block() -> str:
     lines = [f"EN: {en}\nKO: {ko}" for en, ko in _STYLE_EXAMPLES]
-    return "Examples of the required style (English → Korean):\n" + "\n\n".join(lines)
+    return (
+        "Examples of the required style (English → Korean). Some examples "
+        "show text merged from consecutive panels for context; your OUTPUT "
+        "must still contain exactly one translation per input array item — "
+        "never merge or split items.\n" + "\n\n".join(lines)
+    )
 
 
 def build_pdf_prompt(texts: list[str]) -> str:

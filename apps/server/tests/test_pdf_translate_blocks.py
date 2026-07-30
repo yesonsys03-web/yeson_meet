@@ -68,10 +68,21 @@ def test_pdf_prompt_mentions_context_instruction():
 def test_pdf_prompt_includes_style_examples():
     """Task 15: 수작업본(납품 기준)에서 큐레이션한 few-shot 예시가 프롬프트에
     포함돼야 한다 — 사용자가 직접 지목한 '화살표' 쌍(GABE01 A1 p963-964)
-    포함 확인."""
+    포함 확인. 리뷰 후속(2026-07-30): 원문 주석에 실재하던 '바비:' 화자
+    접두도 함께 복원돼 있어야 한다(화자줄 관례를 이 예시로도 시연)."""
     p = build_pdf_prompt(["HANK walks."])
     assert "EN:" in p and "KO:" in p
-    assert "화살표가 이해되게 함께 서보자.." in p
+    assert "바비: 화살표가 이해되게 함께 서보자.." in p
+
+
+def test_pdf_prompt_examples_disclose_merged_length_contract():
+    """리뷰 후속(2026-07-30, Finding 2): 일부 few-shot 예시는 연속 패널의
+    텍스트를 문맥용으로 결합해 보여준다 — 이게 "출력을 병합/분할해도 된다"는
+    뜻으로 오독되지 않게, 입력 배열 항목당 정확히 1개 번역이라는 계약을
+    명시하는 문장이 있어야 한다."""
+    p = build_pdf_prompt(["HANK walks."])
+    assert "exactly one translation per input array item" in p
+    assert "never merge or split items" in p
 
 
 @pytest.mark.asyncio
