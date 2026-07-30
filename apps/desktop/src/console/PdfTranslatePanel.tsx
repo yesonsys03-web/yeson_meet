@@ -20,20 +20,28 @@ function hasTauriRuntime(): boolean {
 // 번역 완료 PDF 저장 — VideoCaptionPanel.tsx의 download_to_file 호출부(url·path
 // 인자, camelCase 그대로)를 그대로 따른다. 브라우저 dev 폴백은 위치 선택 없는
 // 앵커 다운로드. 주의: 전체 버퍼링(비스트리밍)이라 대용량 PDF도 메모리를 그만큼 쓴다.
-async function downloadPdf(job: PdfJobSummary): Promise<void> {
+// VideoReviewView.tsx:190-192와 동형 — save()를 try 밖에 두면 다이얼로그/전송 오류가
+// void로 삼켜져 "클릭했는데 아무 반응 없음"이 된다. 전체를 try/catch로 감싸 onError로 표면화.
+async function downloadPdf(
+  job: PdfJobSummary, onError: (msg: string) => void,
+): Promise<void> {
   const name = `${job.source_ref.replace(/\.pdf$/i, "")}_번역.pdf`;
-  if (hasTauriRuntime()) {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const dest = await save({ defaultPath: name,
-      filters: [{ name: "PDF", extensions: ["pdf"] }] });
-    if (!dest) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("download_to_file", { url: pdfDownloadUrl(job.job_id), path: dest });
-  } else {
-    const a = document.createElement("a");
-    a.href = pdfDownloadUrl(job.job_id);
-    a.download = name;
-    a.click();
+  try {
+    if (hasTauriRuntime()) {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const dest = await save({ defaultPath: name,
+        filters: [{ name: "PDF", extensions: ["pdf"] }] });
+      if (!dest) return;
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("download_to_file", { url: pdfDownloadUrl(job.job_id), path: dest });
+    } else {
+      const a = document.createElement("a");
+      a.href = pdfDownloadUrl(job.job_id);
+      a.download = name;
+      a.click();
+    }
+  } catch (e) {
+    onError(`저장 실패: ${String(e)}`);
   }
 }
 
@@ -141,13 +149,15 @@ export function PdfTranslatePanel({ active }: { active: boolean }) {
           onChange={(e) => void onBrowserFiles(e.target.files)} />
       </div>
       {message ? <p style={{ color: "#f87171", fontSize: 12 }}>{message}</p> : null}
-      <PdfJobList jobs={jobs} onChanged={refresh} />
+      <PdfJobList jobs={jobs} onChanged={refresh} onError={setMessage} />
     </div>
   );
 }
 
-function PdfJobList({ jobs, onChanged }:
-  { jobs: PdfJobSummary[]; onChanged: () => Promise<void> }) {
+function PdfJobList({ jobs, onChanged, onError }: {
+  jobs: PdfJobSummary[]; onChanged: () => Promise<void>;
+  onError: (msg: string) => void;
+}) {
   const [previewId, setPreviewId] = useState<string | null>(null);
   if (!jobs.length) {
     return <p style={{ color: "#64748b", fontSize: 12 }}>작업이 없습니다.</p>;
@@ -181,7 +191,7 @@ function PdfJobList({ jobs, onChanged }:
               setPreviewId((cur) => (cur === j.job_id ? null : j.job_id))
             }>프리뷰</button>
             {j.status === "done" ? (
-              <button type="button" onClick={() => void downloadPdf(j)}>
+              <button type="button" onClick={() => void downloadPdf(j, onError)}>
                 번역 PDF 저장
               </button>
             ) : null}
