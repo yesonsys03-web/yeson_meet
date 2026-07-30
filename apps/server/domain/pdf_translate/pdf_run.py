@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import threading
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from apps.server.db.models import PdfJob
 from apps.server.db.session import AsyncSessionLocal
@@ -34,6 +35,18 @@ from .translate_blocks import build_pdf_prompt, translate_texts
 from .utterances import group_utterances
 
 logger = logging.getLogger("yeson.pdf.pipeline")
+
+# 진행 중 상태 — 프루닝이 절대 건드리면 안 되는 집합이자, 재시작 스윕이
+# error로 정리하는 집합이다. 두 곳이 같은 상수를 봐야 한쪽만 갱신하는
+# 사고가 안 난다(video의 maintenance._INFLIGHT_STATUSES와 같은 취지).
+_INFLIGHT_STATUSES = ("queued", "extracting", "translating", "overlaying")
+
+# PDF 작업이 무한정 쌓이지 않도록 유지할 최근 작업 수 (개수 상한 정책).
+# 영상 자막(maintenance.RETENTION_KEEP=30)보다 작게 잡는다 — 이 기능의 기준
+# 문서 실측이 원본 129MB + 번역본 ~180MB로 **작업 1건당 약 300MB**라, 같은
+# 30을 쓰면 상한이 9GB가 된다. 자가호스팅 데스크톱 앱이라 이 디스크는
+# 사용자의 개인 디스크다(2026-07-30 전브랜치 리뷰 I-2).
+RETENTION_KEEP = 10
 
 
 class PdfTranslateError(RuntimeError):
@@ -230,11 +243,81 @@ async def fail_inflight_pdf_jobs_at_startup() -> None:
             "startup pdf-job sweep skipped: another instance is already serving")
         return
     async with AsyncSessionLocal() as db:
-        rows = (await db.execute(select(PdfJob).where(PdfJob.status.in_(
-            ("queued", "extracting", "translating", "overlaying"))))
+        rows = (await db.execute(
+            select(PdfJob).where(PdfJob.status.in_(_INFLIGHT_STATUSES)))
         ).scalars().all()
         for job in rows:
             job.status = "error"
             job.error = "서버 재시작으로 중단됨 — 다시 업로드하세요"
         if rows:
             await db.commit()
+
+
+async def _prune_pre_delete_hook(candidate_ids: list[int]) -> None:
+    """프루닝의 SELECT와 DELETE 사이 지점 (기본 no-op). 테스트가 여기서 상태
+    전이(done→translating 재실행)를 주입해 DELETE 시점의 상태 재확인 가드를
+    검증한다 — video maintenance의 동명 훅과 같은 역할."""
+
+
+async def prune_old_pdf_jobs(keep: int = RETENTION_KEEP) -> int:
+    """가장 최근 ``keep``개만 남기고 오래된 PDF 작업을 삭제한다 (작업 폴더 + DB 행).
+
+    PDF 작업은 source.pdf와 translated.pdf를 작업 폴더에 쌓으므로 정리하지
+    않으면 무한정 누적된다(작업 1건 ≈ 300MB 실측). 서버 시작 시와 새 작업
+    생성 직후 호출해 개수를 상한으로 유지한다 — video 잡 리텐션과 동일한
+    형태·동일한 규칙이다.
+
+    진행 중(in-flight) 작업은 아무리 오래돼도 절대 지우지 않는다. 방금 만든
+    작업도 두 겹으로 안전하다 — 정렬상 가장 최신이라 ``rows[keep:]``에 들지
+    않고, 상태가 queued(in-flight)라 후보에서도 빠진다.
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(
+                select(PdfJob.id, PdfJob.status).order_by(
+                    PdfJob.created_at.desc(), PdfJob.id.desc())
+            )).all()
+            candidate_ids = [r.id for r in rows[keep:]
+                             if r.status not in _INFLIGHT_STATUSES]
+            if not candidate_ids:
+                return 0
+            await _prune_pre_delete_hook(candidate_ids)
+            # 삭제 시점에 상태를 원자적으로 재확인한다. SELECT와 DELETE 사이에
+            # in-flight로 전이한 작업(같은 문서를 다시 돌리기 시작한 경우)은
+            # 지우지 않는다 — 그 폴더/행을 지우면 실행 중인 run_pdf_job이
+            # 깨진다. Core 벌크 삭제라 동시 프루닝 두 개가 겹쳐도
+            # StaleDataError가 나지 않고, 실제로 삭제된 행만 RETURNING으로
+            # 받아 그 폴더만 정리한다.
+            deleted = (await db.execute(
+                delete(PdfJob)
+                .where(PdfJob.id.in_(candidate_ids),
+                       PdfJob.status.not_in(_INFLIGHT_STATUSES))
+                .returning(PdfJob.external_id)
+            )).all()
+            await db.commit()
+        for row in deleted:
+            shutil.rmtree(pdf_job_dir(row.external_id), ignore_errors=True)
+        if deleted:
+            logger.info("retention: pruned %d old pdf job(s) (keep=%d)",
+                        len(deleted), keep)
+        return len(deleted)
+    except Exception:  # fire-and-forget 태스크로도 호출되므로 삼키고 로그만
+        logger.exception("pdf-job retention prune failed")
+        return 0
+
+
+async def prune_old_pdf_jobs_at_startup() -> int:
+    """서버 시작 시 리텐션 프루닝 — in-flight 스윕과 동일한 '다른 인스턴스가
+    서빙 중' 가드로 보호한다.
+
+    이중 기동된 비소유 프로세스(uvicorn lifespan이 포트 바인딩보다 먼저 도는)가
+    살아있는 인스턴스의 작업 폴더/DB 행을 지운 뒤 'address already in use'로
+    죽는 것을 막는다. 런타임 작업 생성 시 호출되는 prune_old_pdf_jobs()는
+    자기 자신이 이미 포트를 점유하고 있어 이 가드를 쓰면 항상 스킵되므로,
+    가드는 startup 경로에만 둔다.
+    """
+    if _another_instance_is_serving():
+        logger.warning(
+            "startup pdf retention prune skipped: another instance is already serving")
+        return 0
+    return await prune_old_pdf_jobs()

@@ -28,7 +28,10 @@ from apps.server.api.v1.video_jobs import router as video_jobs_router
 from apps.server.api.v1.pdf_jobs import router as pdf_jobs_router
 from apps.server.api.v1.reports import router as reports_router
 from apps.server.ai.gemini_live import gemini_config_health
-from apps.server.domain.pdf_translate.pdf_run import fail_inflight_pdf_jobs_at_startup
+from apps.server.domain.pdf_translate.pdf_run import (
+    fail_inflight_pdf_jobs_at_startup,
+    prune_old_pdf_jobs_at_startup,
+)
 from apps.server.domain.video_captions.pipeline import (
     clear_stale_scan_flags_at_startup,
     fail_inflight_video_jobs_at_startup,
@@ -163,6 +166,13 @@ async def lifespan(app: FastAPI):
         await prune_old_video_jobs_at_startup()
     except Exception:
         logger.exception("Startup video-job retention prune failed")
+
+    # PDF 번역 작업 폴더(원본 + 번역본, 실측 건당 ~300MB)도 같은 이유로 상한을
+    # 둔다 — 사용자가 UI에서 일일이 삭제하지 않는 한 회수되는 경로가 없었다.
+    try:
+        await prune_old_pdf_jobs_at_startup()
+    except Exception:
+        logger.exception("Startup pdf-job retention prune failed")
 
     interval = safety_poll_interval()
     if interval > 0:

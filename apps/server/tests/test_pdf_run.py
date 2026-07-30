@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -467,3 +468,132 @@ async def test_english_lhs_glossary_override_cannot_defeat_all_failed_guard(
     assert row.status == "error"
     assert "모든 블록 번역에 실패" in (row.error or "")
     assert row.translated_path is None
+
+
+# ── 리텐션 프루닝 (전브랜치 리뷰 I-2) ─────────────────────────────────────
+# video 잡 리텐션(maintenance.prune_old_video_jobs)의 규칙을 그대로 미러한다:
+# 최근 keep개 유지, in-flight는 절대 삭제 금지, DELETE 시점 상태 재확인,
+# startup 경로는 '다른 인스턴스가 서빙 중' 가드. 사용자 산출물을 지우는
+# 코드라 "무엇이 살아남는지"를 행·파일 단위로 단언한다.
+
+async def _make_dated_pdf_job(db_session, admin_user, created_at, *,
+                              status="done"):
+    eid = uuid4()
+    d = pdf_job_dir(eid)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "source.pdf").write_bytes(b"x")
+    (d / "translated.pdf").write_bytes(b"y")
+    job = PdfJob(external_id=eid, owner_user_id=admin_user.id, title="t",
+                 source_ref="sb.pdf", status=status,
+                 source_path=str(d / "source.pdf"), created_at=created_at)
+    db_session.add(job)
+    await db_session.commit()
+    return job
+
+
+async def test_prune_keeps_most_recent_n(db_session, admin_user):
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    jobs = [await _make_dated_pdf_job(db_session, admin_user,
+                                      base + timedelta(minutes=i))
+            for i in range(12)]  # index 0 = 가장 오래됨, 11 = 최신
+    ext = [j.external_id for j in jobs]
+
+    removed = await pdf_run.prune_old_pdf_jobs(keep=10)
+
+    assert removed == 2
+    db_session.expire_all()
+    surviving = {r.external_id for r in (await db_session.execute(
+        select(PdfJob))).scalars()}
+    # 최신 10개만 남고, 오래된 2개는 DB 행과 디스크 폴더 둘 다 사라진다
+    assert ext[0] not in surviving and ext[1] not in surviving
+    assert not pdf_job_dir(ext[0]).exists()
+    assert not pdf_job_dir(ext[1]).exists()
+    for e in ext[2:]:
+        assert e in surviving
+        assert (pdf_job_dir(e) / "translated.pdf").exists()
+
+
+@pytest.mark.parametrize("inflight", ["queued", "extracting", "translating",
+                                      "overlaying"])
+async def test_prune_never_deletes_inflight_job(db_session, admin_user, inflight):
+    """진행 중 작업은 keep 밖으로 밀려나도 절대 지우지 않는다 — 실행 중인
+    run_pdf_job의 입력 파일(source.pdf)을 없애면 안 된다. 네 in-flight 상태를
+    전부 확인해 상태 목록이 한 곳에서만 갱신되는 사고를 막는다."""
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    running = await _make_dated_pdf_job(db_session, admin_user, base,
+                                        status=inflight)
+    older_done = await _make_dated_pdf_job(
+        db_session, admin_user, base + timedelta(minutes=1), status="done")
+    recent = [await _make_dated_pdf_job(
+        db_session, admin_user, base + timedelta(minutes=2 + i))
+        for i in range(10)]
+    running_ext, older_ext = running.external_id, older_done.external_id
+    recent_ext = [j.external_id for j in recent]
+
+    removed = await pdf_run.prune_old_pdf_jobs(keep=10)
+
+    assert removed == 1  # older_done만 — 진행 중 작업은 보호됨
+    db_session.expire_all()
+    surviving = {r.external_id for r in (await db_session.execute(
+        select(PdfJob))).scalars()}
+    assert running_ext in surviving
+    assert (pdf_job_dir(running_ext) / "source.pdf").exists()
+    assert older_ext not in surviving
+    assert not pdf_job_dir(older_ext).exists()
+    assert all(e in surviving for e in recent_ext)
+
+
+async def test_prune_reasserts_status_at_delete_time(db_session, admin_user,
+                                                     monkeypatch):
+    """SELECT와 DELETE 사이에 in-flight로 전이한 작업은 지우면 안 된다 —
+    스냅샷에선 done(정당한 후보)이었다가 그 사이 같은 문서를 다시 돌리기
+    시작한 경우. 상태 재확인 가드가 이를 살려야 한다."""
+    from sqlalchemy import update as sa_update
+
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    stale = await _make_dated_pdf_job(db_session, admin_user, base, status="done")
+    stale_ext, stale_pk = stale.external_id, stale.id
+    for i in range(10):
+        await _make_dated_pdf_job(db_session, admin_user,
+                                  base + timedelta(minutes=1 + i))
+
+    async def flip_to_translating(candidate_ids):
+        assert stale_pk in candidate_ids  # 스냅샷 시점엔 분명히 후보였다
+        async with pdf_run.AsyncSessionLocal() as db:
+            await db.execute(sa_update(PdfJob).where(PdfJob.id == stale_pk)
+                             .values(status="translating"))
+            await db.commit()
+
+    monkeypatch.setattr(pdf_run, "_prune_pre_delete_hook", flip_to_translating)
+
+    removed = await pdf_run.prune_old_pdf_jobs(keep=10)
+
+    assert removed == 0
+    db_session.expire_all()
+    surviving = {r.external_id for r in (await db_session.execute(
+        select(PdfJob))).scalars()}
+    assert stale_ext in surviving
+    assert (pdf_job_dir(stale_ext) / "source.pdf").exists()
+
+
+async def test_prune_at_startup_skipped_when_another_instance_serving(
+        db_session, admin_user, monkeypatch):
+    """이중 기동된 비소유 프로세스는 살아있는 인스턴스의 작업을 지우면 안 된다."""
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    for i in range(12):
+        await _make_dated_pdf_job(db_session, admin_user,
+                                  base + timedelta(minutes=i))
+    monkeypatch.setattr(pdf_run, "_another_instance_is_serving", lambda: True)
+
+    removed = await pdf_run.prune_old_pdf_jobs_at_startup()
+
+    assert removed == 0
+    db_session.expire_all()
+    assert len((await db_session.execute(select(PdfJob))).scalars().all()) == 12
+
+
+async def test_prune_default_keep_is_smaller_than_video_retention():
+    """PDF는 작업 1건이 원본+번역본 ~300MB라 영상(30)보다 상한이 작아야 한다 —
+    같은 30이면 9GB가 된다."""
+    from apps.server.domain.video_captions import maintenance
+    assert pdf_run.RETENTION_KEEP < maintenance.RETENTION_KEEP

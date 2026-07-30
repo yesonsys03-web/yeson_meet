@@ -25,9 +25,16 @@ from apps.server.api.v1.video_jobs import _default_owner_id
 from apps.server.db.models import PdfJob
 from apps.server.db.session import get_session
 from apps.server.domain.pdf_translate.backend import open_pdf
-from apps.server.domain.pdf_translate.pdf_run import run_pdf_job
+from apps.server.domain.pdf_translate.pdf_run import (
+    prune_old_pdf_jobs,
+    run_pdf_job,
+)
 from apps.server.domain.pdf_translate.pdf_store import pdf_job_dir
-from apps.server.domain.pdf_translate.pdf_tasks import cancel_pdf_task, start_pdf_task
+from apps.server.domain.pdf_translate.pdf_tasks import (
+    cancel_pdf_task,
+    start_background_task,
+    start_pdf_task,
+)
 from apps.server.domain.video_captions.ingest import save_upload
 from apps.server.domain.video_captions.translate_cli import list_translate_engines
 
@@ -42,6 +49,13 @@ _TERMINAL = ("done", "error", "cancelled")
 
 def _start_pdf_pipeline(external_id: UUID) -> None:  # test seam
     start_pdf_task(external_id, run_pdf_job(external_id))
+
+
+def _prune_old_jobs() -> None:  # test seam
+    # 새 작업이 생길 때마다 최근 RETENTION_KEEP개만 유지 (개수 상한 정책).
+    # 응답을 막지 않도록 fire-and-forget — 방금 만든 작업은 queued(in-flight)라
+    # 삭제 대상에서 제외된다. video_jobs._prune_old_jobs 미러.
+    start_background_task(prune_old_pdf_jobs())
 
 
 async def _get_job(db: AsyncSession, job_id: UUID) -> PdfJob:
@@ -91,6 +105,7 @@ async def create_pdf_job(
     except Exception:
         shutil.rmtree(pdf_job_dir(external_id), ignore_errors=True)
         raise
+    _prune_old_jobs()
     _start_pdf_pipeline(external_id)
     return {"job_id": str(external_id)}
 

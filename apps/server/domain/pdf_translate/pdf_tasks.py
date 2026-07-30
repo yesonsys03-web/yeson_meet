@@ -36,6 +36,14 @@ def _current_generation(external_id: UUID | str) -> int:
     return _job_generation.get(str(external_id), 0)
 
 
+def start_background_task(coro) -> None:
+    """작업(external_id)에 매이지 않는 뒷정리 코루틴용 — job_tasks.start_task
+    미러. _tasks에 강한 참조를 남겨 GC가 실행 중 태스크를 거두지 않게 한다."""
+    task = asyncio.create_task(coro)
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+
+
 def start_pdf_task(external_id: UUID, coro) -> None:
     key = str(external_id)
     task = asyncio.create_task(coro)

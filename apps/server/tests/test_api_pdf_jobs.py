@@ -15,7 +15,24 @@ from apps.server.domain.pdf_translate.pdf_store import pdf_job_dir
 def _env(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
     monkeypatch.setattr(api_pdf, "_start_pdf_pipeline", lambda eid: None)
+    # 리텐션 프루닝은 fire-and-forget 태스크라 테스트 이벤트 루프/세션 수명
+    # 밖에서 돌면 잡음이 된다 — 배선 자체는 아래 전용 테스트가 잠근다
+    # (test_api_video_jobs.py:21과 같은 처리).
+    monkeypatch.setattr(api_pdf, "_prune_old_jobs", lambda: None)
     yield
+
+
+async def test_upload_triggers_retention_prune(client, admin_user, monkeypatch):
+    """업로드 직후 프루닝이 호출돼야 한다 — _env가 이 심을 무력화하므로,
+    배선이 빠져도 다른 테스트는 아무도 안 깨진다(그래서 전용 테스트)."""
+    called: list[bool] = []
+    monkeypatch.setattr(api_pdf, "_prune_old_jobs", lambda: called.append(True))
+    resp = await client.post(
+        "/api/v1/pdf-jobs/upload",
+        files={"file": ("a.pdf", _tiny_pdf_bytes(), "application/pdf")},
+    )
+    assert resp.status_code == 201
+    assert called == [True]
 
 
 def _tiny_pdf_bytes() -> bytes:
