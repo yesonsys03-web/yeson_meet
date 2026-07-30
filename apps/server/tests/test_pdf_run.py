@@ -146,3 +146,35 @@ async def test_run_pdf_job_cancelled_mid_translate_releases_semaphore(
         select(PdfJob).where(PdfJob.id == job_id))).scalar_one()
     assert row.status == "translating"  # 에러로 덮어써지지 않았다
     assert row.error is None
+
+
+async def test_run_pdf_job_semaphore_released_when_close_raises_cancelled(
+        db_session, admin_user, monkeypatch):
+    """Round-2 커버 테스트(NEW FINDING) — finally에서 doc.close()를 기다리는
+    도중 두 번째 취소가 도착한 상황을 흉내(닫기 자체가 CancelledError를 던짐).
+
+    닫기 실패(또는 재취소)가 나더라도 `_PDF_SEMAPHORE.release()`는 반드시
+    실행돼야 한다 — 안 그러면 모듈 전역 세마포어(값 1)가 영구 고갈돼 이후
+    모든 PDF 작업이 서버 재시작 전까지 조용히 멈춘다. 이미 성공적으로 끝난
+    작업(상태 done)의 결과도 cleanup 실패로 훼손되면 안 된다.
+    """
+    from apps.server.domain.pdf_translate.backend_mupdf import MuPdfDocument
+
+    def _boom_close(self) -> None:
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(MuPdfDocument, "close", _boom_close)
+
+    job = await _seed_job(db_session, admin_user)
+    job_id = job.id
+
+    # 실제 파이프라인(추출→번역→오버레이→done)은 정상 완료되고, 오직 마지막
+    # cleanup의 doc.close()만 (두 번째 취소를 흉내내) 실패한다 — 그 실패가
+    # 예외로 새어나오면 안 된다(이미 끝난 작업이므로 정상 반환돼야 한다).
+    await pdf_run.run_pdf_job(job.external_id)
+
+    assert pdf_run._PDF_SEMAPHORE._value == 1  # 반납됨(영구 고갈 아님)
+    db_session.expire_all()
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.id == job_id))).scalar_one()
+    assert row.status == "done"  # cleanup 실패가 이미 커밋된 결과를 훼손하지 않음

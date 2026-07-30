@@ -112,13 +112,27 @@ async def run_pdf_job(external_id: UUID) -> None:
         if generation == _current_generation(external_id):
             await _try_set_error(external_id, str(exc))
     finally:
-        if doc is not None:
-            # 락을 쥔 채(고아 스레드가 doc을 다 쓸 때까지) 닫는다. 대기 자체도
-            # 워커 스레드에서 해야 이벤트 루프(실시간 자막 WebSocket)를 막지
-            # 않는다 — 세마포어는 이 close가 끝난 뒤에만 반납한다(취소 시에도
-            # 고아 스레드가 doc을 다 쓰기 전에 다음 작업이 시작되지 않도록).
-            await asyncio.to_thread(_with_doc_lock, doc_lock, doc.close)
-        _PDF_SEMAPHORE.release()
+        # 세마포어 반납은 무조건 실행돼야 한다 — close 대기 중 두 번째 취소가
+        # 도착하면(cancel_pdf_task는 task.done()이 아닌 한 언제든 재취소 가능,
+        # 셧다운/그룹 취소·루프 종료 시 executor 거부도 마찬가지) 안쪽 await이
+        # CancelledError/RuntimeError를 던지고, 그걸 못 잡으면 release() 줄이
+        # 통째로 건너뛰어져 모듈 전역 _PDF_SEMAPHORE(값 1)가 영구 고갈된다
+        # (재시작 전까진 이후 모든 작업이 조용히 멈춤).
+        try:
+            if doc is not None:
+                # 락을 쥔 채(고아 스레드가 doc을 다 쓸 때까지) 닫는다. 대기 자체도
+                # 워커 스레드에서 해야 이벤트 루프(실시간 자막 WebSocket)를 막지
+                # 않는다. asyncio.shield: close 도중 두 번째 취소가 와도 close
+                # 작업 자체는 백그라운드에서 끝까지 돌게 한다(중간에 버려지면
+                # 파일 핸들이 안 닫힌 채 새는 fitz 문서가 된다) — shield는 취소를
+                # 호출자(여기)에게는 그대로 전달하므로 바로 아래 except가 받는다.
+                await asyncio.shield(
+                    asyncio.to_thread(_with_doc_lock, doc_lock, doc.close))
+        except BaseException:  # 무엇이 오든(재취소·RuntimeError 등) release는 반드시 실행
+            logger.exception("pdf job %s: doc close failed (during cleanup)",
+                             external_id)
+        finally:
+            _PDF_SEMAPHORE.release()
 
 
 async def fail_inflight_pdf_jobs_at_startup() -> None:
