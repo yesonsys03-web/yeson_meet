@@ -14,7 +14,9 @@ from .base import Overlay, PdfBlock, has_hangul, normalize_ws
 _FIELDS = (("Dialog", "dialog"), ("Action Notes", "action"))
 _FONTSIZE = 12.0          # 기존 수작업 번역본 실측(AdobeMyungjoStd 12pt)
 _GAP = 4.0                # 원문 블록과 주석 사이 여백(pt)
-_MIN_WIDTH = 280.0        # 주석 박스 최소 폭
+_MIN_WIDTH = 280.0        # 주석 박스 최소 폭(아래 배치 폴백)
+_MIN_RIGHT_WIDTH = 180.0  # 오른쪽 배치가 성립하려면 필요한 최소 여유폭
+_FONT_SIZES = (12.0, 10.0, 9.0, 8.0)  # 축소 폴백 사다리(최후 8pt로 확정)
 _DETECT_PAGES = 3
 # 실물(GABE01) 실측: 빈 Dialog 필드는 플레이스홀더 블록 없이 통째로
 # 생략된다 — 그러면 "가장 가까운 아래 블록"이 다음 필드의 라벨 자체가
@@ -66,18 +68,26 @@ class StoryboardProfile:
 
     def place(self, block: PdfBlock, ko_text: str,
               page_size: tuple[float, float]) -> Overlay:
+        """오른쪽 우선 배치(2026-07-30 실기 피드백): 필드 박스는 페이지
+        전폭이고 원문은 좌측 절반만 차지하는 실물 관례를 따라, 원문 오른쪽
+        빈 공간에 y 정렬로 나란히 배치한다. 오른쪽 여유가 부족하면 기존처럼
+        블록 아래에 배치. 어느 경로든 페이지 하단을 넘으면 예전처럼 위로
+        밀어 올리지 않고(그게 원문을 덮는 원인이었다) 폰트를 축소해
+        page_h - 4 안에 맞춘다."""
         page_w, page_h = page_size
-        x0 = block.bbox[0]
-        x1 = min(page_w - 8.0, max(block.bbox[2], x0 + _MIN_WIDTH))
-        width = x1 - x0
-        height = _estimate_height(ko_text, width, _FONTSIZE)
-        y0 = block.bbox[3] + _GAP
-        y1 = y0 + height
-        if y1 > page_h - 4.0:  # 페이지 하단을 넘으면 위로 밀어 올린다
-            y1 = page_h - 4.0
-            y0 = max(0.0, y1 - height)
-        return Overlay(page=block.page, rect=(x0, y0, x1, y1),
-                       text=ko_text, fontsize=_FONTSIZE)
+        bx0, by0, bx1, by1 = block.bbox
+        right_w = page_w - 8.0 - (bx1 + 8.0)
+        if right_w >= _MIN_RIGHT_WIDTH:
+            x0 = bx1 + 8.0
+            x1 = page_w - 8.0
+            y0 = by0  # 원문 첫 줄과 y 정렬
+        else:
+            x0 = bx0
+            x1 = min(page_w - 8.0, max(bx1, x0 + _MIN_WIDTH))
+            y0 = by1 + _GAP
+        rect, fontsize = _fit_rect(x0, y0, x1, page_h, ko_text)
+        return Overlay(page=block.page, rect=rect, text=ko_text,
+                       fontsize=fontsize)
 
 
 def _field_content(raws: list[RawBlock], label: str,
@@ -144,6 +154,26 @@ def _merge_pieces(pieces: list[RawBlock]) -> RawBlock:
     x1 = max(p.bbox[2] for p in pieces)
     y1 = max(p.bbox[3] for p in pieces)
     return RawBlock(text=text, bbox=(x0, y0, x1, y1))
+
+
+def _fit_rect(x0: float, y0: float, x1: float, page_h: float,
+             ko_text: str) -> tuple[tuple[float, float, float, float], float]:
+    """x0/x1/y0 고정 상태에서 페이지 하단(page_h - 4) 안에 들어오도록
+    폰트를 12→10→9→8pt로 줄여가며 재추정한다. 8pt에서도 못 맞으면 8pt로
+    확정하고 y1만 페이지 하단으로 클램프한다(더 이상 위로 밀어 올리지
+    않는다 — 그게 원문을 덮는 원인이었다). x0가 block.x1보다 오른쪽이거나
+    y0가 block.y1보다 아래이므로, 이 함수가 어떤 fontsize를 고르든 rect는
+    원문 bbox와 교차하지 않는다(호출부의 기하 구성이 보장)."""
+    max_y1 = page_h - 4.0
+    width = x1 - x0
+    fontsize = _FONT_SIZES[-1]
+    height = 0.0
+    for fontsize in _FONT_SIZES:
+        height = _estimate_height(ko_text, width, fontsize)
+        if y0 + height <= max_y1:
+            break
+    y1 = max(y0, min(y0 + height, max_y1))
+    return (x0, y0, x1, y1), fontsize
 
 
 def _estimate_height(text: str, width: float, fontsize: float) -> float:

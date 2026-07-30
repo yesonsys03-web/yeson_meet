@@ -6,8 +6,10 @@ _translate_resilient(자막 모듈 private)를 import하지 않고 동일 알고
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 from collections.abc import Awaitable, Callable
 
 from apps.server.ai.glossary import apply_ko_corrections, glossary_block
@@ -17,6 +19,9 @@ from apps.server.domain.video_captions.translate import (
 )
 
 logger = logging.getLogger("yeson.pdf.translate")
+
+WORKERS_ENV = "YESON_PDF_TRANSLATE_WORKERS"
+_DEFAULT_WORKERS = 3
 
 
 def build_pdf_prompt(texts: list[str]) -> str:
@@ -66,6 +71,15 @@ async def _resilient(provider: TranslationProvider, texts: list[str],
     return left + right
 
 
+def _workers_from_env() -> int:
+    raw = os.environ.get(WORKERS_ENV, "")
+    try:
+        workers = int(raw) if raw.strip() else _DEFAULT_WORKERS
+    except ValueError:
+        workers = _DEFAULT_WORKERS
+    return max(1, workers)
+
+
 async def translate_texts(
     texts: list[str],
     provider: TranslationProvider,
@@ -73,12 +87,55 @@ async def translate_texts(
     chunk_size: int = 50,
     progress_cb: Callable[[float], Awaitable[None]] | None = None,
 ) -> list[str]:
-    out: list[str] = []
-    for i in range(0, len(texts), chunk_size):
-        chunk = texts[i:i + chunk_size]
-        translated = await _resilient(provider, chunk)
-        out.extend(apply_ko_corrections(t.strip()) for t in translated)
-        logger.info("pdf-translate: %d/%d blocks", len(out), len(texts))
+    """청크(chunk_size블록) 단위로 나눠 Semaphore(workers)로 동시 실행한다
+    (YESON_PDF_TRANSLATE_WORKERS, 기본 3 — 1 이하면 사실상 기존 직렬과
+    동일하게 동작). 결과는 청크 인덱스로 재조립해 입력 순서를 그대로
+    보존하고, 진행률은 "완료된" 청크들의 블록 수 누적이라 완료 순서와
+    무관하게 단조 증가한다(progress_cb 호출은 락으로 직렬화).
+
+    CliTranslator 인스턴스 하나를 여러 청크가 동시에 공유해도 안전하다 —
+    유일한 가변 상태 변경은 translate_batch() 맨 앞의 _ensure_binary()가
+    argv[0]을 절대경로로 1회 교체하는 것뿐인데, 이 헬퍼 자체가 await 없는
+    동기 코드라 각 translate_batch 호출의 첫 진입부에서 이벤트 루프로
+    제어권이 넘어가기 전에 원자적으로 끝난다(다른 태스크가 끼어들 수
+    없고, 같은 절대경로를 여러 번 써도 멱등이라 실제 경쟁도 없다).
+    """
+    if not texts:
+        return []
+    chunks = [texts[i:i + chunk_size] for i in range(0, len(texts), chunk_size)]
+    total = len(texts)
+    sem = asyncio.Semaphore(_workers_from_env())
+    progress_lock = asyncio.Lock()
+    results: list[list[str]] = [[] for _ in chunks]
+    done_blocks = 0
+
+    async def _run_chunk(idx: int, chunk: list[str]) -> None:
+        nonlocal done_blocks
+        async with sem:
+            translated = await _resilient(provider, chunk)
+        results[idx] = [apply_ko_corrections(t.strip()) for t in translated]
         if progress_cb is not None:
-            await progress_cb(len(out) / len(texts))
+            async with progress_lock:
+                done_blocks += len(chunk)
+                logger.info("pdf-translate: %d/%d blocks", done_blocks, total)
+                await progress_cb(done_blocks / total)
+
+    tasks = [asyncio.ensure_future(_run_chunk(i, chunk))
+             for i, chunk in enumerate(chunks)]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        # 러너의 세대 가드(progress_cb의 CancelledError) 등 어떤 예외로든
+        # 여기 도달하면, 아직 끝나지 않은 청크 태스크를 명시적으로
+        # cancel + await 해서 고아 태스크(=백그라운드에서 계속 도는 CLI
+        # 서브프로세스)를 남기지 않는다.
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+    out: list[str] = []
+    for chunk_result in results:
+        out.extend(chunk_result)
     return out

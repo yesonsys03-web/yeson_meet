@@ -7,8 +7,19 @@ import pytest
 
 from apps.server.domain.pdf_translate.backend import open_pdf
 from apps.server.domain.pdf_translate.profiles import detect_profile
-from apps.server.domain.pdf_translate.profiles.base import has_hangul, normalize_ws
+from apps.server.domain.pdf_translate.profiles.base import (
+    PdfBlock,
+    has_hangul,
+    normalize_ws,
+)
 from apps.server.domain.pdf_translate.profiles.storyboard import StoryboardProfile
+
+
+def _rects_intersect(a: tuple[float, float, float, float],
+                     b: tuple[float, float, float, float]) -> bool:
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    return ax0 < bx1 and bx0 < ax1 and ay0 < by1 and by0 < ay1
 
 
 def _make_storyboard_pdf(tmp_path: Path, *, korean_dialog: bool = False) -> Path:
@@ -217,18 +228,57 @@ def test_extract_skips_hangul_blocks(tmp_path):
         doc.close()
 
 
-def test_place_returns_rect_below_block_within_page(tmp_path):
+def test_place_returns_rect_within_page_and_not_intersecting_source(tmp_path):
+    """이 fixture의 Dialog 블록은 페이지가 넓어(1008pt) 오른쪽 여유가
+    충분(right_w ≈ 200pt >= _MIN_RIGHT_WIDTH)하므로 2026-07-30 배치 규칙상
+    오른쪽 배치가 선택된다 — 'below'는 더 이상 이 fixture에 대한 정확한
+    가정이 아니다(경로 무관 불변식만 검증: 원문 비교차 + 페이지 안)."""
     doc = open_pdf(_make_storyboard_pdf(tmp_path))
     try:
         profile = StoryboardProfile()
         block = next(b for b in profile.extract(doc) if b.kind == "dialog")
         ov = profile.place(block, "가고 싶다면 가세요", doc.page_size(0))
-        _x0, y0, x1, y1 = ov.rect
-        assert y0 >= block.bbox[3]          # 원문 아래
+        _x0, _y0, x1, y1 = ov.rect
+        assert not _rects_intersect(ov.rect, block.bbox)
         assert y1 <= 612 and x1 <= 1008     # 페이지 안
         assert ov.page == 0 and ov.fontsize == 12.0
     finally:
         doc.close()
+
+
+def test_place_prefers_right_side_when_room_available():
+    """오른쪽 여유폭이 충분(>= 180pt)하면 원문 옆(오른쪽)에 y 정렬로 배치한다
+    (2026-07-30 실기 피드백: 하단 시프트가 원문을 덮던 문제의 대안 배치)."""
+    block = PdfBlock(page=0, kind="dialog", text="If you wanna go, then go.",
+                     bbox=(72.0, 400.0, 300.0, 420.0))
+    ov = StoryboardProfile().place(block, "가고 싶다면 가세요", (1008.0, 612.0))
+    assert ov.rect[0] >= block.bbox[2]       # 원문 오른쪽
+    assert ov.rect[1] == block.bbox[1]       # 원문 첫 줄과 y 정렬
+    assert not _rects_intersect(ov.rect, block.bbox)
+    assert ov.fontsize == 12.0
+
+
+def test_place_falls_back_below_when_right_side_too_narrow():
+    """블록이 페이지 오른쪽 끝까지 거의 차지해 오른쪽 여유가 180pt 미만이면
+    기존처럼 블록 아래에 배치한다."""
+    block = PdfBlock(page=0, kind="action", text="HANK walks to the door.",
+                     bbox=(72.0, 400.0, 900.0, 420.0))
+    ov = StoryboardProfile().place(block, "행크가 문으로 걸어간다", (1008.0, 612.0))
+    assert ov.rect[1] >= block.bbox[3]       # 원문 아래
+    assert not _rects_intersect(ov.rect, block.bbox)
+    assert ov.fontsize == 12.0
+
+
+def test_place_shrinks_font_near_bottom_instead_of_shifting_up():
+    """페이지 하단 근접 + 오른쪽 협소 → 위로 밀어 원문을 덮던 옛 로직 대신
+    폰트를 축소해 페이지 하단(page_h - 4) 안에 맞춘다. 원문과 비교차 유지."""
+    long_ko = "가나다라마바사아자차카타파하" * 40  # 축소 없이는 못 담을 분량
+    block = PdfBlock(page=0, kind="action", text="a" * 200,
+                     bbox=(72.0, 590.0, 900.0, 600.0))
+    ov = StoryboardProfile().place(block, long_ko, (1008.0, 612.0))
+    assert ov.fontsize < 12.0
+    assert not _rects_intersect(ov.rect, block.bbox)
+    assert ov.rect[3] <= 612.0 - 4.0
 
 
 def test_detect_rejects_portrait(tmp_path):
@@ -274,5 +324,15 @@ def test_real_storyboard_sample():
         page30_dialog = next(
             b for b in all_blocks if b.page == 30 and b.kind == "dialog")
         assert "Propane." in page30_dialog.text
+
+        # 불변식(2026-07-30 실기 피드백 후속): 어떤 배치 경로를 타든 주석
+        # rect는 원문 block.bbox와 절대 교차하지 않는다 — 전 문서 전 블록.
+        profile2 = StoryboardProfile()
+        for b in all_blocks:
+            placeholder_ko = "가" * max(10, len(b.text) // 2)
+            ov = profile2.place(b, placeholder_ko, doc.page_size(b.page))
+            assert not _rects_intersect(ov.rect, b.bbox), (
+                f"page {b.page} kind={b.kind}: rect {ov.rect} intersects "
+                f"bbox {b.bbox}")
     finally:
         doc.close()
