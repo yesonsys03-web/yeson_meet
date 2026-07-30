@@ -6,9 +6,11 @@ import logging
 
 import pytest
 
+from apps.server.ai.glossary import apply_ko_corrections
 from apps.server.domain.pdf_translate.translate_blocks import (
     _normalize_quotes,
     _normalize_speaker_colon,
+    _post_process,
     _verify_numbers,
     apply_output_normalization,
     build_pdf_prompt,
@@ -723,3 +725,85 @@ async def test_translate_texts_fx_rule_converts_across_real_multiline_action_blo
     t = FakeTranslator([["스트릭랜드 프로판 내부-매장-아침\n이펙트 불 코너에서 발생."]])
     out = await translate_texts([src], t)
     assert out == ["스트릭랜드 프로판 내부-매장-아침\n불 코너에서 발생. 효과"]
+
+
+# ── 후처리 체인의 "영문 불변" 계약 (전브랜치 리뷰 I-1) ────────────────────
+# 브랜치 전체가 기대는 안전 성질: 번역 실패 폴백값(영문 원문)은 후처리를
+# 통과해도 바이트 그대로 남는다. 그래야 translate_texts의 폴백 식별 →
+# pdf_run의 kept_as_source 집계 → "모든 블록 번역에 실패했습니다"(effective
+# == 0) 가드가 성립한다.
+#
+# 아래 테스트들이 잠그는 건 **동작이 아니라 전제**다. 기본 치환표만으로는
+# 전제가 우연히 참이라(좌변이 전부 한글) 어떤 테스트도 깨지지 않았고, 그게
+# I-1이 태스크별 리뷰 19라운드를 통과한 구조적 이유다. 그래서 전제를 깨는
+# 입력 — 운영자가 콘솔(PUT /api/v1/glossary/{name})로 넣을 수 있는 **영문
+# 좌변 오버라이드** — 을 실제로 심고 검증한다.
+
+def test_post_process_leaves_english_untouched_even_with_english_lhs_override(
+        tmp_path, monkeypatch):
+    """운영자 오버라이드에 영문 좌변이 들어와도 _post_process는 한글 없는
+    값을 바이트 그대로 돌려줘야 한다.
+
+    첫 단언이 픽스처 자체의 유효성을 잠근다 — 오버라이드가 실제로 로드돼
+    발동하지 않으면(경로·캐시·파싱 중 하나라도 어긋나면) 두 번째 단언은
+    아무것도 증명하지 않는 공허한 테스트가 된다."""
+    monkeypatch.setenv("YESON_GLOSSARY_KO_PATH",
+                       str(tmp_path / "glossary_ko.txt"))
+    (tmp_path / "glossary_ko.txt").write_text("props => 소품\n", encoding="utf-8")
+    src = "NOTE: PLEASE MOVE THE props TO SC13"
+
+    # 픽스처 유효성: 가드가 없으면 이 값이 실제로 오염된다
+    assert apply_ko_corrections(src) == "NOTE: PLEASE MOVE THE 소품 TO SC13"
+    # 계약: 후처리 체인 전체는 한글 없는 값을 건드리지 않는다
+    assert _post_process(src) == src
+
+
+def test_post_process_still_applies_full_chain_to_korean(tmp_path, monkeypatch):
+    """가드가 정상 번역까지 막지 않는다는 반대편 잠금 — 한글이 있으면 세
+    단계(ko교정·하우스표기·출력정규화)가 모두 걸린다. 이게 없으면 위
+    테스트를 `return ko` 한 줄로도 통과시킬 수 있다."""
+    monkeypatch.setenv("YESON_GLOSSARY_KO_PATH",
+                       str(tmp_path / "glossary_ko.txt"))
+    (tmp_path / "glossary_ko.txt").write_text("붐하워 => 붐하우어\n",
+                                              encoding="utf-8")
+    # 태더튼=하우스표기(house_style), 홑따옴표=출력정규화, 콜론 뒤 공백 제거
+    assert _post_process("행크: 태더튼이 '프로판'을 판다") \
+        == '행크:대더튼이 "프로판"을 판다'
+
+
+@pytest.mark.asyncio
+async def test_english_lhs_override_does_not_break_fallback_detection(
+        tmp_path, monkeypatch):
+    """통합: 영문 좌변 오버라이드가 심긴 상태에서 번역이 실패하면, 폴백값은
+    여전히 원문과 바이트 그대로 같아야 한다(그래야 pdf_run이 실패로 센다).
+
+    가드 이전에는 이 케이스가 'NOTE: PLEASE MOVE THE 소품 TO SC13'을
+    돌려줘 폴백 식별이 False가 됐고, 번역 전량 실패가 'done'으로 납품됐다."""
+    monkeypatch.setenv("YESON_GLOSSARY_KO_PATH",
+                       str(tmp_path / "glossary_ko.txt"))
+    (tmp_path / "glossary_ko.txt").write_text("props => 소품\n", encoding="utf-8")
+    src = "NOTE: PLEASE MOVE THE props TO SC13"
+    t = FakeTranslator([TranslationError("boom")])
+    out = await translate_texts([src], t)
+    assert out == [src]
+
+
+@pytest.mark.asyncio
+async def test_english_lhs_override_does_not_break_retranslation_fallback(
+        tmp_path, monkeypatch):
+    """같은 계약, 두 번째 후처리 호출부(_verify_and_fix_numbers의 재번역 결과).
+
+    숫자 게이트가 unresolved라 재번역을 걸었는데 그 재번역마저 실패하면
+    _resilient가 영문 원문을 돌려주고, 그 값이 이 경로에서 다시 후처리된다 —
+    헬퍼를 _run_chunk 한쪽에만 쓰면 여기서만 가드가 빠져, 오염된 영문이
+    숫자 검증을 'ok'로 통과해 **번역 성공**으로 납품된다."""
+    monkeypatch.setenv("YESON_GLOSSARY_KO_PATH",
+                       str(tmp_path / "glossary_ko.txt"))
+    (tmp_path / "glossary_ko.txt").write_text("stage => 무대\n", encoding="utf-8")
+    src = "Move sc103 near sc105 stage"
+    t = FakeTranslator([
+        ["씬109 근처로 무대를 옮겨주세요."],  # 1차: 모호 오염 → unresolved
+        TranslationError("boom"),             # 재번역 실패 → 원문 그대로 반환
+    ])
+    out = await translate_texts([src], t)
+    assert out == [src]

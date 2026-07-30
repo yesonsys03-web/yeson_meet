@@ -429,3 +429,41 @@ async def test_run_pdf_job_chained_group_failure_skips_all_member_pages(
         assert len(contents) == 1
         assert contents[0] == "KO:Joseph gestures."
     d.close()
+
+
+async def test_english_lhs_glossary_override_cannot_defeat_all_failed_guard(
+        db_session, admin_user, monkeypatch, tmp_path):
+    """전브랜치 리뷰 I-1 — 운영자가 콘솔(PUT /api/v1/glossary/{name})로 넣을 수
+    있는 **영문 좌변** 교정 한 줄이 이 파일의 안전망 두 개를 동시에 무력화할 수
+    있었다.
+
+    후처리(apply_ko_corrections)가 번역 실패 폴백값(=영문 원문)을 바꿔버리면
+    translate_blocks의 폴백 식별이 실패하고 → 여기 kept_as_source가 그 그룹을
+    "번역 성공"으로 세고 → effective == 0 가드가 안 걸려 → 영문 원문이 한국어
+    주석인 척 납품 PDF에 박힌 채 status=done이 된다.
+
+    이 테스트는 오버라이드를 **실제 운영 경로**(STORAGE_ROOT/glossary_ko.txt)에
+    심는다. 수정 전에는 status=done, 수정 후에는 error다.
+    """
+    class EchoTranslator:
+        async def translate_batch(self, texts):
+            return list(texts)  # 번역 엔진 전량 실패 흉내
+
+    monkeypatch.setattr(
+        pdf_run, "create_translator",
+        lambda provider, cli_model, prompt_builder: EchoTranslator())
+    # _env 픽스처가 STORAGE_ROOT=tmp_path로 잡아둔다 — 운영자 오버라이드 파일의
+    # 기본 경로가 정확히 여기다(glossary.py: STORAGE_ROOT/glossary_ko.txt).
+    (tmp_path / "glossary_ko.txt").write_text("door => 문\n", encoding="utf-8")
+
+    job = await _seed_job(db_session, admin_user)
+    job_id = job.id
+
+    await pdf_run.run_pdf_job(job.external_id)
+
+    db_session.expire_all()
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.id == job_id))).scalar_one()
+    assert row.status == "error"
+    assert "모든 블록 번역에 실패" in (row.error or "")
+    assert row.translated_path is None

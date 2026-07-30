@@ -237,23 +237,48 @@ def _normalize_speaker_colon(ko: str) -> str:
 
 def apply_output_normalization(ko: str) -> str:
     """따옴표(홑→쌍) + 화자 콜론(공백 제거) 강제 정규화. 순서: 따옴표 먼저,
-    콜론 나중(브리프 표기 순서 그대로 — 서로 겹치는 영역이 없어 실질적
-    영향은 없지만 순서를 고정해 회귀를 감지한다).
+    콜론 나중(브리프 표기 순서대로 고정 — 두 정규식은 겹치는 영역이 없어
+    (따옴표 규칙은 `'`로 시작하는 스팬, 콜론 규칙은 문자열 맨 앞 한글+`:`)
+    순서를 바꿔도 결과가 같다. 회귀 감지용 고정이지 의미 있는 의존이 아니다).
 
-    ⚠ apply_house_style/apply_ko_corrections와 달리 이 두 정규식은 좌변이
-    한글 전용이 아니다 — 그래서 has_hangul 가드가 필요하다(리뷰 라운드 2
-    정정: 화자 콜론 패턴은 라운드 1 Fold-in 2에서 이미 A-Za-z를 뺐지만,
-    따옴표 정규식은 여전히 좌변에 한글 요구가 없어 영문 문장에도 그대로
-    발동한다 — 예: `"A SIGN READS 'OWNER' ON THE DOOR"` → 가드 없이는
-    `'A SIGN READS "OWNER" ON THE DOOR'`). translate_texts의 "원문 유지
-    폴백" 판정(주석 참고)은 폴백 시 값이 영문 원문과 바이트 그대로 같다는
-    전제에 기대는데, 추출 단계 has_hangul 필터가 소스에 한글이 없음을
-    보장하므로 그 폴백 값도 한글이 없다 — 한글이 하나도 없는 문자열은
-    건드리지 않아야 그 전제가 깨지지 않는다(따옴표 규칙이 발동해 폴백
-    값을 바꿔버리면 폴백 식별이 조용히 실패한다)."""
+    ⚠ 이 두 정규식은 좌변이 한글 전용이 아니라 영문 문장에도 그대로
+    발동한다(예: `"A SIGN READS 'OWNER' ON THE DOOR"` → 가드 없이는
+    `'A SIGN READS "OWNER" ON THE DOOR'`) — 그래서 자체 has_hangul 가드를
+    둔다. 이 함수를 직접 부르는 곳(테스트 등)에서도 영문 불변이 성립하게
+    하려는 것이고, 프로덕션 경로의 계약 강제는 _post_process가 한다."""
     if not ko or not has_hangul(ko):
         return ko
     return _normalize_speaker_colon(_normalize_quotes(ko))
+
+
+def _post_process(ko: str) -> str:
+    """번역 결과 KO→KO 후처리 체인 — 프로덕션 진입점은 여기 하나다.
+
+    고정 순서(Task 18+19, 테스트로 잠금): apply_ko_corrections →
+    apply_house_style → 출력 정규화(따옴표·콜론).
+
+    ⚠ 한글이 없는 값은 체인 전체를 건너뛴다. 이 가드가 브랜치 전체가 기대는
+    안전 성질 — "번역 실패 폴백값(영문 원문)은 후처리를 통과해도 바이트
+    그대로 남는다" — 을 **문서가 아니라 코드로** 강제한다. 그 성질이
+    translate_texts의 폴백 식별(아래 `value.strip() == unique_texts[uidx]`),
+    pdf_run의 kept_as_source 집계, 그리고 "모든 블록 번역에 실패했습니다"
+    (effective == 0) 가드까지 세 겹으로 떠받친다.
+
+    가드를 세 함수 중 하나(apply_output_normalization)에만 두면 부족하다 —
+    apply_ko_corrections는 DEFAULT_KO_CORRECTIONS에 **운영자 오버라이드
+    파일**({STORAGE_ROOT}/glossary_ko.txt, 콘솔의 PUT /api/v1/glossary/{name}로
+    편집 가능)을 병합해 쓰고, 저장 검증(invalid_glossary_lines)은 파싱
+    가능성만 볼 뿐 좌변의 문자 종류를 보지 않는다. 즉 `props => 소품` 한 줄로
+    영문 폴백값이 바뀌어(`...MOVE THE props TO SC13` → `...MOVE THE 소품 TO
+    SC13`) 폴백 식별이 실패하고, 번역 전량 실패가 "성공"으로 보고된다
+    (2026-07-30 전브랜치 리뷰 I-1, 재현 확인). "치환표 좌변이 전부 한글"은
+    런타임에 편집 가능한 전제라 계약의 근거가 될 수 없다.
+
+    정상 번역에는 동작 변화가 없다 — 한국어 번역문은 항상 한글을 포함한다.
+    """
+    if not has_hangul(ko):
+        return ko
+    return apply_output_normalization(apply_house_style(apply_ko_corrections(ko)))
 
 
 _DIGITS_RE = re.compile(r"\d+")
@@ -316,8 +341,7 @@ async def _verify_and_fix_numbers(
 
     # unresolved → 블록 단건 재번역 폴백(기존 kept-as-source 경로 재사용).
     retried = await _resilient(provider, [src])
-    retried_ko = apply_output_normalization(
-        apply_house_style(apply_ko_corrections(retried[0].strip())))
+    retried_ko = _post_process(retried[0].strip())
     re_fixed, re_verdict = _verify_numbers(src, retried_ko)
     if re_verdict != "unresolved":
         if re_verdict == "fixed":
@@ -430,15 +454,10 @@ async def translate_texts(
         nonlocal done_blocks
         async with sem:
             translated = await _resilient(provider, chunk)
-            # 고정 순서(Task 18+19, 테스트로 잠금): apply_ko_corrections →
-            # apply_house_style → 출력 정규화(따옴표·콜론) → 숫자 게이트.
-            # 숫자와 무관해 결과에 영향을 주진 않지만, 고정 순서로 회귀를
-            # 감지한다.
-            corrected = [
-                apply_output_normalization(
-                    apply_house_style(apply_ko_corrections(t.strip())))
-                for t in translated
-            ]
+            # 후처리 체인(_post_process: ko교정 → 하우스표기 → 출력정규화) →
+            # 숫자 게이트 순서. 재번역 폴백 경로(_verify_and_fix_numbers)도
+            # 같은 헬퍼를 쓴다 — 두 경로가 갈라지면 한쪽만 한글 가드를 잃는다.
+            corrected = [_post_process(t.strip()) for t in translated]
             # 숫자 보존 게이트(Task 16) — 순서·진행률 계약을 흔들지 않게
             # 같은 청크 워커·같은 세마포어 구간 안에서 후처리한다.
             results[idx] = [
@@ -488,14 +507,19 @@ async def translate_texts(
             # 더 정확하다 — 각자 자기 표기를 그대로 지킨다).
             #
             # ⚠ 이 판정은 "폴백 시 unique_out[uidx]가 영문 원문 그대로
-            # 남는다"는 전제에 기댄다 — apply_ko_corrections/apply_house_style은
-            # 전부 한글 좌변 패턴이라 영문 원문에는 발동하지 않기 때문에
-            # 값이 바뀌지 않는 것이다. 이건 추출 단계의 `has_hangul` 필터
-            # (한글이 섞인 소스는 애초에 번역 대상에서 제외됨)가 원문에
-            # 한글이 없다는 것을 보장해주기 때문에 성립하는 교차 모듈
-            # 전제다 — 그 필터를 완화해 한글 섞인 원문도 번역 대상에
-            # 넣게 되면, 폴백 값에 치환이 발동해 원문과 달라질 수 있고
-            # 이 판정이 조용히 실패한다(리뷰 task-18-rereview.md).
+            # 남는다"는 전제에 기댄다. 그 전제를 지키는 건 `_post_process`의
+            # has_hangul 가드다 — 후처리 체인 전체가 한글 없는 값을 건너뛰고,
+            # 추출 단계의 `has_hangul` 필터가 소스에 한글이 없음을 보장하므로
+            # 폴백 값(=원문)은 반드시 그 가드에 걸려 불변으로 통과한다.
+            #
+            # 예전 주석은 이 안전성을 "치환표 좌변이 전부 한글이라 영문에는
+            # 발동하지 않는다"에 귀속시켰는데, 그건 틀렸다 —
+            # apply_ko_corrections의 표는 운영자가 콘솔에서 편집 가능해
+            # (glossary_ko.txt) 영문 좌변을 넣을 수 있고, 그러면 폴백 값이
+            # 바뀌어 이 판정이 조용히 실패한다(전브랜치 리뷰 I-1).
+            # 전제는 이제 표의 내용이 아니라 `_post_process`의 가드에만 걸려
+            # 있고, 그 성질은 테스트로 잠겨 있다
+            # (test_post_process_leaves_english_untouched_even_with_*).
             out.append(texts[pos])
         else:
             out.append(value)
