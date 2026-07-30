@@ -175,8 +175,13 @@ api/v1/pdf_jobs.py  # 업로드/상태/프리뷰(페이지 PNG)/다운로드 라
 
 - PyMuPDF는 win_amd64 휠 제공(컴파일 불요) — uv.lock은 멀티플랫폼 해석이라 lock
   재생성만 하면 Windows CI(`uv sync --frozen`)가 자동 수급
-- 폰트는 OS 의존 금지: AdobeMyungjoStd는 Acrobat 내장 폰트 — **번들 폰트 임베드**로
-  Mac/Win 동일 렌더 보장
+- 폰트: 위 "동결 번들 반영 체크리스트"에서 확인했듯 **번들 폰트 임베드는 불필요로
+  판명** — `add_freetext_annot`은 fontname 미지정 시 어피어런스 생성기가 CJK
+  폴백 폰트를 자동으로 써서 한글을 렌더한다(AdobeMyungjoStd 같은 OS/Acrobat
+  내장 폰트에 의존하지 않음). MuPDF 자체 렌더(서버 프리뷰 PNG·셀프테스트)는
+  Mac에서 검증 완료. **남은 검증은 Windows에서의 동일 확인 + macOS 미리보기/
+  Acrobat 등 MuPDF 외 뷰어에서의 어피어런스 폰트 이식성**(실물 수동 검증
+  전, 위 체크리스트 11-4와 동일 항목) — 아래 실기 검증 항목에 포함
 - 한글 파일명(`*_번역.pdf`) 자체는 NTFS 유니코드라 안전. cp949 함정은 subprocess
   한정인데 이 파이프라인은 전부 in-process(PyMuPDF)라 해당 없음 — **단, 향후
   외부 도구 호출을 추가하면 `encoding="utf-8"` 필수**(기존 교훈)
@@ -184,4 +189,6 @@ api/v1/pdf_jobs.py  # 업로드/상태/프리뷰(페이지 PNG)/다운로드 라
 - PDF 선택 다이얼로그: 폴더 아닌 **파일 선택**이므로 PR#73의 폴더 피커 이슈와 무관.
   `open({ filters: [{ extensions: ["pdf"] }] })` 파일 모드 사용
 - 실기 검증 항목(릴리스 전): Win에서 업로드→번역→프리뷰→다운로드 왕복 1회,
-  173MB급 스토리보드 포함
+  173MB급 스토리보드 포함 + 다운로드한 번역본을 Windows 기본 PDF 뷰어(또는
+  Acrobat)로 열어 CJK 폴백 폰트 어피어런스가 정상 렌더되는지 확인(위 폰트
+  항목의 남은 검증)
