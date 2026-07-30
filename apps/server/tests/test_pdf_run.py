@@ -247,3 +247,80 @@ async def test_run_pdf_job_skips_save_when_dir_deleted_during_overlay(
         select(PdfJob).where(PdfJob.id == job_id))).scalar_one()
     assert row.status != "done"
     assert row.translated_path is None
+
+
+async def test_run_pdf_job_skips_degenerate_overlay_rect_with_warning(
+        db_session, admin_user, monkeypatch, caplog):
+    """2026-07-30 리뷰 Finding 1(b) 커버 테스트 — place()가 퇴화된(폭·높이가
+    0 이하이거나 페이지 밖인) rect를 반환해도 그 블록만 건너뛰고 잡 전체는
+    'done'으로 완료돼야 한다(+ 경고 로그). 방어선이 없으면
+    add_freetext_annot이 'rect is infinite or empty'로 터져 이미 끝낸
+    번역(dialog+action 둘 다)까지 통째로 날아간다."""
+    from apps.server.domain.pdf_translate.profiles.base import Overlay
+    from apps.server.domain.pdf_translate.profiles.storyboard import StoryboardProfile
+
+    _orig_place = StoryboardProfile.place
+
+    def _degenerate_for_dialog(self, block, ko_text, page_size):
+        if block.kind == "dialog":
+            # 리뷰어 실측 재현: y1 == y0(퇴화) — 방어선 없으면
+            # add_freetext_annot이 여기서 크래시한다.
+            return Overlay(page=block.page,
+                           rect=(block.bbox[0], 613.0, block.bbox[2], 613.0),
+                           text=ko_text, fontsize=8.0)
+        return _orig_place(self, block, ko_text, page_size)
+
+    monkeypatch.setattr(StoryboardProfile, "place", _degenerate_for_dialog)
+
+    job = await _seed_job(db_session, admin_user)
+    job_id = job.id
+
+    with caplog.at_level("WARNING", logger="yeson.pdf.pipeline"):
+        await pdf_run.run_pdf_job(job.external_id)
+
+    assert any("유효하지" in r.message for r in caplog.records)
+
+    db_session.expire_all()
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.id == job_id))).scalar_one()
+    assert row.status == "done"  # 한 블록의 퇴화 rect가 잡 전체를 날리지 않았다
+
+    import fitz
+    out = Path(row.translated_path)
+    d = fitz.open(out)
+    contents = [a.info.get("content", "") for a in d[0].annots()]
+    d.close()
+    # dialog는 건너뛰었으니 action의 KO 주석 1개만 남아야 한다
+    assert len(contents) == 1
+    assert contents[0].startswith("KO:")
+
+
+async def test_run_pdf_job_logs_kept_as_source_warning_on_partial_failure(
+        db_session, admin_user, monkeypatch, caplog):
+    """2026-07-30 리뷰 Finding 3(a) 커버 테스트 — 일부 블록만 번역 실패로
+    원문 그대로 남으면(부분 실패), 잡은 여전히 'done'이지만 몇 블록이
+    원문 그대로 남았는지 경고 로그로 남아야 한다(청크 병렬화로 CLI 콜
+    수가 늘어난 뒤 부분 실패가 조용히 묻히기 쉬워서)."""
+
+    class PartialFailTranslator:
+        async def translate_batch(self, texts):
+            # 첫 블록만 "번역 실패"를 흉내(원문 그대로 반환), 나머지는 정상.
+            return [texts[0]] + [f"KO:{t}" for t in texts[1:]]
+
+    monkeypatch.setattr(
+        pdf_run, "create_translator",
+        lambda provider, cli_model, prompt_builder: PartialFailTranslator())
+
+    job = await _seed_job(db_session, admin_user)
+    job_id = job.id
+
+    with caplog.at_level("WARNING", logger="yeson.pdf.pipeline"):
+        await pdf_run.run_pdf_job(job.external_id)
+
+    assert any(
+        "1/2 blocks kept as source" in r.message for r in caplog.records)
+
+    db_session.expire_all()
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.id == job_id))).scalar_one()
+    assert row.status == "done"  # 부분 실패는 전체 실패가 아니다(effective > 0)

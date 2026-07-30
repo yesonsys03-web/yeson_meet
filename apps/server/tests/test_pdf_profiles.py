@@ -269,16 +269,61 @@ def test_place_falls_back_below_when_right_side_too_narrow():
     assert ov.fontsize == 12.0
 
 
-def test_place_shrinks_font_near_bottom_instead_of_shifting_up():
-    """페이지 하단 근접 + 오른쪽 협소 → 위로 밀어 원문을 덮던 옛 로직 대신
-    폰트를 축소해 페이지 하단(page_h - 4) 안에 맞춘다. 원문과 비교차 유지."""
+def test_place_shrinks_font_near_bottom_instead_of_shifting_up(caplog):
+    """아래 경로: 페이지 하단 근접 + 오른쪽 협소 → 위로 밀어 원문을 덮던
+    옛 로직 대신 폰트를 축소해 페이지 하단(page_h - 4) 안에 맞춘다. 원문과
+    비교차 유지(2026-07-30 리뷰 Finding 2: 이 경로는 밀지 않는다 — 그게
+    원래 버그였다 — 대신 8pt에서도 못 맞으면 경고 로그를 남긴다)."""
     long_ko = "가나다라마바사아자차카타파하" * 40  # 축소 없이는 못 담을 분량
     block = PdfBlock(page=0, kind="action", text="a" * 200,
                      bbox=(72.0, 590.0, 900.0, 600.0))
-    ov = StoryboardProfile().place(block, long_ko, (1008.0, 612.0))
+    with caplog.at_level("WARNING", logger="yeson.pdf.profiles.storyboard"):
+        ov = StoryboardProfile().place(block, long_ko, (1008.0, 612.0))
     assert ov.fontsize < 12.0
     assert not _rects_intersect(ov.rect, block.bbox)
     assert ov.rect[3] <= 612.0 - 4.0
+    assert any("clip" in r.message for r in caplog.records)  # Finding 2(b)
+
+
+def test_place_right_side_shift_up_recovers_full_legibility():
+    """오른쪽 경로: x축이 이미 원문과 분리돼 있어(x0 = block.x1 + 8) y를
+    얼마든 움직여도 교차 위험이 없다 — 8pt에서도 못 맞으면 위로 밀어 올려
+    실제로 텍스트 전체가 들어가야 한다(2026-07-30 리뷰 Finding 2: 아래
+    경로와 달리 오른쪽 경로는 시프트-업을 복원한다). 좁고 짧은(우측 여유
+    충분) 블록을 페이지 하단 근처에 둬서, 시프트 없이는 못 담을 양의
+    텍스트로도 결국 다 들어가야 함을 검증."""
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        _estimate_height,
+    )
+
+    long_ko = "가나다라마바사아자차카타파하" * 40
+    block = PdfBlock(page=0, kind="dialog", text="a" * 200,
+                     bbox=(72.0, 590.0, 130.0, 600.0))  # 오른쪽 여유 충분
+    page_size = (1008.0, 612.0)
+    ov = StoryboardProfile().place(block, long_ko, page_size)
+    assert ov.rect[0] >= block.bbox[2]  # 여전히 원문 오른쪽
+    assert not _rects_intersect(ov.rect, block.bbox)
+    assert ov.rect[1] < block.bbox[1]  # 실제로 위로 밀렸다(y0가 원문보다 위)
+    available = ov.rect[3] - ov.rect[1]
+    needed = _estimate_height(long_ko, ov.rect[2] - ov.rect[0], ov.fontsize)
+    assert available >= needed - 0.5  # 잘리지 않고 전부 들어감
+
+
+def test_place_bottom_edge_block_returns_nondegenerate_onpage_rect():
+    """Finding 1(critical) 재현: 원문 블록이 페이지 맨 끝에 거의 붙어(우측
+    여유도 없음) 있으면 y0(=block.y1 + GAP)가 페이지 하단 안전 마진(그리고
+    심지어 물리적 페이지 자체)을 넘어선다. 예전 코드는 rect (x, 613, x,
+    613)처럼 y1==y0인 퇴화 rect를 반환해 PyMuPDF add_freetext_annot이
+    'rect is infinite or empty'로 터졌다(리뷰어 실측 재현) — 반드시
+    유효한(양의 높이) 온페이지 rect를 반환해야 한다."""
+    block = PdfBlock(page=0, kind="action", text="a" * 100,
+                     bbox=(72.0, 600.0, 900.0, 609.0))
+    page_size = (1008.0, 612.0)
+    ov = StoryboardProfile().place(block, "행크가 문으로 걸어간다", page_size)
+    x0, y0, x1, y1 = ov.rect
+    assert y1 > y0  # 퇴화 아님
+    assert x1 > x0
+    assert 0.0 <= y0 and y1 <= page_size[1]  # 페이지 안
 
 
 def test_detect_rejects_portrait(tmp_path):

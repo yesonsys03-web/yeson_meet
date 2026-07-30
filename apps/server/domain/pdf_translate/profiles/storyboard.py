@@ -6,10 +6,13 @@
 """
 from __future__ import annotations
 
+import logging
 import math
 
 from ..backend import PdfDocument, RawBlock
 from .base import Overlay, PdfBlock, has_hangul, normalize_ws
+
+logger = logging.getLogger("yeson.pdf.profiles.storyboard")
 
 _FIELDS = (("Dialog", "dialog"), ("Action Notes", "action"))
 _FONTSIZE = 12.0          # 기존 수작업 번역본 실측(AdobeMyungjoStd 12pt)
@@ -71,9 +74,13 @@ class StoryboardProfile:
         """오른쪽 우선 배치(2026-07-30 실기 피드백): 필드 박스는 페이지
         전폭이고 원문은 좌측 절반만 차지하는 실물 관례를 따라, 원문 오른쪽
         빈 공간에 y 정렬로 나란히 배치한다. 오른쪽 여유가 부족하면 기존처럼
-        블록 아래에 배치. 어느 경로든 페이지 하단을 넘으면 예전처럼 위로
-        밀어 올리지 않고(그게 원문을 덮는 원인이었다) 폰트를 축소해
-        page_h - 4 안에 맞춘다."""
+        블록 아래에 배치.
+
+        오른쪽 경로는 x축이 이미 원문과 분리돼 있어(x0 = block.x1 + 8) y를
+        얼마든 움직여도 교차 위험이 없다 — 8pt에서도 안 맞으면 페이지
+        상단 쪽으로 밀어 올려 실제 텍스트가 다 보이게 한다(리뷰 후속,
+        2026-07-30). 아래 경로는 여전히 밀지 않는다 — 그게 원문을 덮는
+        원래 버그였다(잘리더라도 원문 비침범이 우선)."""
         page_w, page_h = page_size
         bx0, by0, bx1, by1 = block.bbox
         right_w = page_w - 8.0 - (bx1 + 8.0)
@@ -81,11 +88,21 @@ class StoryboardProfile:
             x0 = bx1 + 8.0
             x1 = page_w - 8.0
             y0 = by0  # 원문 첫 줄과 y 정렬
+            allow_shift = True
         else:
             x0 = bx0
             x1 = min(page_w - 8.0, max(bx1, x0 + _MIN_WIDTH))
             y0 = by1 + _GAP
-        rect, fontsize = _fit_rect(x0, y0, x1, page_h, ko_text)
+            allow_shift = False
+        rect, fontsize = _fit_rect(x0, y0, x1, page_h, ko_text,
+                                   allow_shift=allow_shift)
+        needed = _estimate_height(ko_text, rect[2] - rect[0], fontsize)
+        available = rect[3] - rect[1]
+        if needed - available > 0.5:  # 부동소수 오차 여유
+            logger.warning(
+                "pdf-translate: page %d %s 주석이 8pt에서도 다 안 들어감"
+                "(clip) — 필요 %.0fpt / 가용 %.0fpt",
+                block.page, block.kind, needed, available)
         return Overlay(page=block.page, rect=rect, text=ko_text,
                        fontsize=fontsize)
 
@@ -156,14 +173,24 @@ def _merge_pieces(pieces: list[RawBlock]) -> RawBlock:
     return RawBlock(text=text, bbox=(x0, y0, x1, y1))
 
 
-def _fit_rect(x0: float, y0: float, x1: float, page_h: float,
-             ko_text: str) -> tuple[tuple[float, float, float, float], float]:
-    """x0/x1/y0 고정 상태에서 페이지 하단(page_h - 4) 안에 들어오도록
-    폰트를 12→10→9→8pt로 줄여가며 재추정한다. 8pt에서도 못 맞으면 8pt로
-    확정하고 y1만 페이지 하단으로 클램프한다(더 이상 위로 밀어 올리지
-    않는다 — 그게 원문을 덮는 원인이었다). x0가 block.x1보다 오른쪽이거나
-    y0가 block.y1보다 아래이므로, 이 함수가 어떤 fontsize를 고르든 rect는
-    원문 bbox와 교차하지 않는다(호출부의 기하 구성이 보장)."""
+def _fit_rect(x0: float, y0: float, x1: float, page_h: float, ko_text: str,
+             *, allow_shift: bool
+             ) -> tuple[tuple[float, float, float, float], float]:
+    """x0/x1 고정 상태에서 페이지 하단(page_h - 4) 안에 들어오도록 폰트를
+    12→10→9→8pt로 줄여가며 재추정한다.
+
+    allow_shift=True(오른쪽 경로): x축이 이미 원문과 분리돼 있어(호출부
+    보장) y를 얼마든 움직여도 교차 위험이 없다 — 8pt에서도 안 맞으면
+    페이지 상단(0) 쪽으로 밀어 올려 텍스트가 실제로 다 보이게 한다.
+
+    allow_shift=False(아래 경로): 위로 밀지 않는다 — 그게 원문을 덮던
+    원래 버그였다. 다만 y0 자체가 이미 페이지 하단 안전 마진을 넘는 극단
+    케이스(리뷰어 실측 재현: 원문 블록이 페이지 맨 끝에 거의 붙어 GAP을
+    더하면 페이지 밖으로 나가는 경우)에서도 반드시 유효한(퇴화하지 않은)
+    온페이지 rect를 반환해야 한다 — 안 그러면 PyMuPDF add_freetext_annot이
+    'rect is infinite or empty'로 터져 이미 끝난 번역까지 포함해 잡
+    전체가 날아간다(2026-07-30 리뷰 Finding 1). 이건 "위로 밀어 가독성
+    확보"가 아니라 순수 크래시 방지 안전망이라 최소 1줄만 확보한다."""
     max_y1 = page_h - 4.0
     width = x1 - x0
     fontsize = _FONT_SIZES[-1]
@@ -171,9 +198,31 @@ def _fit_rect(x0: float, y0: float, x1: float, page_h: float,
     for fontsize in _FONT_SIZES:
         height = _estimate_height(ko_text, width, fontsize)
         if y0 + height <= max_y1:
-            break
-    y1 = max(y0, min(y0 + height, max_y1))
-    return (x0, y0, x1, y1), fontsize
+            return _clamp_nondegenerate(x0, y0, x1, y0 + height, page_h), fontsize
+
+    if allow_shift:
+        y0 = max(0.0, min(y0, max_y1 - height))
+        y1 = min(y0 + height, max_y1)
+        return _clamp_nondegenerate(x0, y0, x1, y1, page_h), fontsize
+
+    if y0 >= max_y1:  # 크래시 방지 안전망 — 최소 1줄을 페이지 안으로
+        min_height = _estimate_height("x", width, fontsize)
+        y0 = max(0.0, max_y1 - min_height)
+    y1 = min(y0 + height, max_y1)
+    return _clamp_nondegenerate(x0, y0, x1, y1, page_h), fontsize
+
+
+def _clamp_nondegenerate(
+    x0: float, y0: float, x1: float, y1: float, page_h: float,
+) -> tuple[float, float, float, float]:
+    """마지막 안전망 — 위 로직이 어떤 경로를 거치든, 반환되는 rect는
+    반드시 y1 > y0(퇴화 아님)이고 [0, page_h] 안이어야 한다. 정상 경로에서는
+    이미 그렇게 계산돼 있어 사실상 no-op이지만, 페이지 자체가 극단적으로
+    작은 이론적 엣지케이스까지 add_freetext_annot 크래시로 이어지지 않게
+    한다(2026-07-30 리뷰 Finding 1 — 마지막 방어선)."""
+    y0 = max(0.0, min(y0, page_h))
+    y1 = max(y0 + 1.0, min(y1, page_h))
+    return (x0, y0, x1, y1)
 
 
 def _estimate_height(text: str, width: float, fontsize: float) -> float:

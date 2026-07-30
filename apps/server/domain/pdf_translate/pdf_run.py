@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from apps.server.db.models import PdfJob
 from apps.server.db.session import AsyncSessionLocal
+
 # 이중 기동 가드(포트 프로브)는 video 스윕의 단일 진실을 그대로 재사용한다 —
 # uvicorn lifespan이 소켓 바인딩보다 먼저 도는 문제는 도메인과 무관하게 같은
 # 증상이라, 별도 구현을 두면 한쪽만 고치는 사고가 난다.
@@ -20,8 +21,14 @@ from apps.server.domain.video_captions.translate_cli import create_translator
 
 from .backend import open_pdf
 from .pdf_store import pdf_job_dir
-from .pdf_tasks import (_PDF_SEMAPHORE, _bump_generation, _current_generation,
-                        _set_progress, _set_status, _try_set_error)
+from .pdf_tasks import (
+    _PDF_SEMAPHORE,
+    _bump_generation,
+    _current_generation,
+    _set_progress,
+    _set_status,
+    _try_set_error,
+)
 from .profiles import detect_profile
 from .translate_blocks import build_pdf_prompt, translate_texts
 
@@ -30,6 +37,23 @@ logger = logging.getLogger("yeson.pdf.pipeline")
 
 class PdfTranslateError(RuntimeError):
     pass
+
+
+def _is_usable_rect(rect: tuple[float, float, float, float],
+                    page_size: tuple[float, float]) -> bool:
+    """add_freetext에 넘기기 전 마지막 방어선(2026-07-30 리뷰 Finding 1b).
+
+    profile.place()가 아무리 견고해도(스토리보드 프로파일은 이미
+    비퇴화·온페이지를 보장하지만, 다른/미래 프로파일까지 같은 보장을
+    한다는 계약은 없다) rect의 폭·높이가 0 이하이거나 완전히 페이지
+    밖이면 PyMuPDF add_freetext_annot이 'rect is infinite or empty'로
+    터진다 — 그 예외가 _overlay_and_save 루프 중간에서 나면 이미 끝낸
+    번역(최대 수백~천 블록)까지 통째로 날아간다."""
+    x0, y0, x1, y1 = rect
+    page_w, page_h = page_size
+    if not (x1 > x0 and y1 > y0):
+        return False
+    return x1 > 0.0 and y1 > 0.0 and x0 < page_w and y0 < page_h
 
 
 def _with_doc_lock(lock: threading.Lock, fn, *args):
@@ -95,10 +119,18 @@ async def run_pdf_job(external_id: UUID) -> None:
         # list_translate_engines의 available은 resolve_cli()만 확인해 실제
         # 로그인 여부는 못 잡는다). 이 경우를 그냥 done으로 넘기면 사용자가
         # "원본과 바이트만 다를 뿐 내용은 똑같은 번역본"을 조용히 받는다.
-        effective = sum(
+        kept_as_source = sum(
             1 for block, ko in zip(blocks, ko_texts)
-            if ko.strip() and ko.strip() != block.text.strip()
+            if not (ko.strip() and ko.strip() != block.text.strip())
         )
+        effective = len(blocks) - kept_as_source
+        if kept_as_source > 0:
+            # 부분 실패(청크 병렬화로 CLI 콜 수가 늘어난 뒤 특히 조용히
+            # 묻히기 쉽다) — 몇 블록이 원문 그대로 남았는지 남겨야 다음
+            # 실기 런에서 CLI 오류를 추적할 수 있다(2026-07-30 리뷰 Finding 3a).
+            logger.warning(
+                "pdf-translate: %d/%d blocks kept as source (번역 실패 폴백)",
+                kept_as_source, len(blocks))
         if effective == 0:
             raise PdfTranslateError(
                 "모든 블록 번역에 실패했습니다 — 번역 엔진 상태를 확인하세요")
@@ -112,6 +144,17 @@ async def run_pdf_job(external_id: UUID) -> None:
                 if not ko or ko == block.text.strip():
                     continue
                 ov = profile.place(block, ko, doc.page_size(block.page))
+                if not _is_usable_rect(ov.rect, doc.page_size(block.page)):
+                    # 방어선(2026-07-30 리뷰 Finding 1b) — place()가 아무리
+                    # 견고해도, 퇴화(폭·높이 0 이하)하거나 페이지 밖으로 나간
+                    # rect를 add_freetext에 넘기면 PyMuPDF가
+                    # 'rect is infinite or empty'로 터진다. 그 한 블록
+                    # 때문에 이미 끝낸 번역(최대 수백~천 블록)까지 통째로
+                    # 잃을 수는 없으니, 이 블록만 건너뛰고 경고를 남긴다.
+                    logger.warning(
+                        "pdf-translate: page %d %s block의 rect가 유효하지 "
+                        "않아 주석을 건너뜀 %r", block.page, block.kind, ov.rect)
+                    continue
                 doc.add_freetext(ov.page, ov.rect, ov.text, fontsize=ov.fontsize)
             if generation != _current_generation(external_id):
                 # 취소/삭제가 오버레이 배치 도중 도착했다 — 여기서 저장을
@@ -129,7 +172,7 @@ async def run_pdf_job(external_id: UUID) -> None:
         await _set_status(external_id, "done", translated_path=str(dest))
     except asyncio.CancelledError:
         raise
-    except Exception as exc:  # noqa: BLE001 — 최종 방어선
+    except Exception as exc:
         logger.exception("pdf job %s failed", external_id)
         if generation == _current_generation(external_id):
             await _try_set_error(external_id, str(exc))
