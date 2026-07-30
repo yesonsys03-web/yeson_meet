@@ -24,17 +24,27 @@ from .profiles.base import PdfBlock
 # 아래 _strip_cue_header가 이 잘린 키에 기대지 않고 별도로 담당한다.
 _CUE_RE = re.compile(
     r"^(\d+)\s+([A-Z][A-Z'/.()&\- ]*?)(?:\s*\((?:CONT|Cont)\.?\))?\b")
-_CONT_MARKER_RE = re.compile(r"^\s*\((?:CONT|Cont)\.?\)\s*")
 
-# _strip_cue_header 전용: 화자 런 전체를 안전하게 소비하려면 "괄호 주석이
-# 최소 하나는 뒤따른다"는 신호가 필요하다 — 그렇지 않으면 본문의 대문자
-# 단독 단어("I", "Well" 등)를 화자명 일부로 오인해 삼킬 위험이 있다(실제
-# 이 코퍼스의 다중 토큰 화자 조각은 전부 (CONT.)/(O.S.) 류 주석을
-# 동반한다). 공백으로 토큰을 나눠 (1) 소문자가 섞이지 않은 "전부
-# 대문자류" 토큰을 화자 런으로 소비하고 (2) 곧이어 오는 괄호 토큰들을
-# 주석으로 소비한다.
+# _strip_cue_header 전용: 화자 런 소비는 이 조각 자신의 텍스트만으로
+# 판단한다 — 공백으로 토큰을 나눠 소문자가 섞이지 않은 "전부 대문자류"
+# 토큰(`_HEADER_TOKEN_RE`)을 전부 삼킨다. 다음 토큰이 본문 소문자 단어라면
+# 자연히 거기서 멈춘다(예: "BILL/DALE/BOOMHAUER Oh..."의 "Oh"). 화자 런
+# 뒤에 곧바로 오는 연속된 괄호 토큰 구간(`_ANNOTATION_TOKEN_RE`)에서는
+# (CONT.)/(Cont.) 계속 표시(`_CONT_TOKEN_RE`)만 제거하고, (O.S.)/(V.O.)
+# 등 다른 주석은 조각 고유의 본문 정보로 보존한다. 주의: `_HEADER_TOKEN_RE`는
+# 형태(대소문자·기호)만 보고 의미를 모른다 — 첫 화자 토큰 다음 토큰부터는
+# 길이 1인 토큰("I" 등 본문 대명사와 형태가 같다)을 화자 런에서 제외해
+# 실제로 관측된 오소비(`37 BOBBY I am...`)를 막는다(길이 2 이상인 토큰은
+# 여전히 형태만으로 판단하므로 잔여 위험은 남는다 — 예: "12 HANK NO."류).
 _HEADER_TOKEN_RE = re.compile(r"^[A-Z0-9'&/.\-#]+$")
 _ANNOTATION_TOKEN_RE = re.compile(r"^\([^()]*\)$")
+_CONT_TOKEN_RE = re.compile(r"^\((?:CONT|Cont)\.?\)$")
+
+# 추출 과정에서 화자명과 괄호 주석 사이 공백이 없는 조각이 실제로
+# 나온다(예: "34 BOBBY(CONT.) ...you."). 공백 기반 토큰화가 이를
+# 한 토큰으로 붙여버려 화자 런·주석 인식이 전부 실패하므로, 소비 전에
+# 공백이 아닌 문자 바로 뒤에 붙은 "("를 띄어 놓는다.
+_GLUED_PAREN_RE = re.compile(r"(?<=[^\s(])(\()")
 
 
 def _normalize_ws(text: str) -> str:
@@ -60,34 +70,67 @@ def _parse_cue(text: str) -> tuple[str, str] | None:
     return m.group(1), m.group(2)
 
 
-def _strip_cue_header(text: str) -> str:
-    """체인 후속 조각에서 큐 헤더(큐번호 + 화자 런 전체 + (O.S.)/(V.O.)/
-    (CONT.) 등 괄호 주석 전부)를 제거한 나머지. (CONT.)-헤더만 있는
-    조각은 빈 문자열을 반환한다.
-
-    화자 런 뒤에 괄호 주석이 하나도 없으면(=진짜 계속(cont) 표시가 없는
-    예외 케이스) 화자 런의 끝을 안전하게 구분할 신호가 없으므로, 기존
-    _CUE_RE의 lazy 경계로 대체 동작한다(단일 토큰 화자에서는 이 경로로도
-    정확하다)."""
-    m = _CUE_RE.match(text)
-    if m is None:
+def _strip_cue_header(text: str, seen_text: str) -> str:
+    """체인 후속 조각에서 큐 헤더(큐번호 + 화자 런)를 제거한 나머지에서
+    (CONT.)/(Cont.) 계속 표시를 제거한다. 화자 런과 주석 소비는 모두 이
+    조각 자신의 텍스트만으로 판단한다 — 위 정규식 주석 참고. (O.S.)/
+    (V.O.) 등 다른 주석은 원칙적으로 조각 고유의 본문 정보로 보존하되,
+    `seen_text`(체인에 지금까지 누적된 텍스트)에 이미 등장한 토큰이면
+    같은 주석의 반복이므로 함께 제거한다(예: 첫 멤버가 이미 "(O.S.)"를
+    달고 있었다면 후속 조각의 "(O.S.)" 반복은 새 정보가 아니다).
+    (CONT.)-헤더만 있는 조각(뒤에 다른 본문이 없음)은 빈 문자열을
+    반환한다."""
+    if _CUE_RE.match(text) is None:
         return text.strip()
 
-    tokens = text.split()
+    tokens = _GLUED_PAREN_RE.sub(r" \1", text).split()
     n = len(tokens)
     i = 1  # tokens[0] = 큐번호
-    while i < n and _HEADER_TOKEN_RE.match(tokens[i]):
+    if i < n and _HEADER_TOKEN_RE.match(tokens[i]):
         i += 1
-    saw_annotation = False
+        # 첫 화자 토큰 다음부터는 길이 1인 토큰("I" 등 본문 대명사와
+        # 형태가 같다)은 화자 런으로 잇지 않는다 — 실물 코퍼스에 뒤에
+        # 아무 주석도 없이 바로 본문 대명사가 오는 조각이 실재한다
+        # (예: "37 BOBBY I am..." — GABE01_A1 p335).
+        while i < n and len(tokens[i]) > 1 and _HEADER_TOKEN_RE.match(tokens[i]):
+            i += 1
+
+    seen_tokens = seen_text.split()
+    kept: list[str] = []
     while i < n and _ANNOTATION_TOKEN_RE.match(tokens[i]):
-        saw_annotation = True
+        if not _CONT_TOKEN_RE.match(tokens[i]) and tokens[i] not in seen_tokens:
+            kept.append(tokens[i])
         i += 1
 
-    if not saw_annotation:
-        rest = _CONT_MARKER_RE.sub("", text[m.end():], count=1)
-        return rest.strip()
+    return " ".join(kept + tokens[i:]).strip()
 
-    return " ".join(tokens[i:]).strip()
+
+def _overlap_trim(acc: str, piece: str) -> str:
+    """acc(누적 텍스트)의 꼬리와 piece(새 조각)의 시작이 토큰 단위로
+    겹치는 부분을 찾아 잘라내고, piece가 새로 기여하는 부분만 반환한다.
+
+    소스가 누적 대사를 다음 패널에 재인쇄할 때 그 재인쇄가 (a) 이미
+    누적된 문장 전체와 같거나(완전 포함) (b) 그 문장을 반복한 뒤 새
+    내용을 이어 붙이는(부분 중첩) 두 형태 모두를 흡수한다 — (a)는 빈
+    문자열을, (b)는 겹친 접두를 뺀 나머지를 반환한다. 겹치는 부분이
+    없으면 piece를 그대로 반환(원문 형식 보존)."""
+    acc_tokens = acc.split()
+    piece_tokens = piece.split()
+    if not piece_tokens:
+        return ""
+
+    max_k = min(len(acc_tokens), len(piece_tokens))
+    for k in range(max_k, 0, -1):
+        if acc_tokens[-k:] == piece_tokens[:k]:
+            return " ".join(piece_tokens[k:])
+
+    # 원문 토큰 그대로는 겹침을 못 찾았다면, 말줄임표 전후 공백 유무
+    # 차이 등으로 인한 완전 포함인지 정규화 비교로 한 번 더 확인한다
+    # (부분 중첩까지는 재구성하지 않는다 — 완전 포함만 여기서 흡수).
+    if _normalize_ws(piece) in _normalize_ws(acc):
+        return ""
+
+    return piece.strip()
 
 
 def group_utterances(
@@ -99,9 +142,10 @@ def group_utterances(
     순서상 연속된 dialog 블록이 같은 (큐번호, 화자)를 공유하면 한 그룹으로
     묶여, 첫 조각의 전체 텍스트에 후속 조각들의 큐 헤더 제거분을 공백으로
     이어 붙인다(전부 헤더-only면 첫 조각 원문 그대로 — 어쩔 수 없는
-    케이스). 소스가 누적 대사를 다음 패널에 재인쇄하는 경우 그 조각은
-    이미 누적된 텍스트에 포함돼 있으므로 새 내용을 기여하지 않는다 —
-    멤버로는 여전히 집계되지만 merged_text에는 반영하지 않고 건너뛴다.
+    케이스). 소스가 누적 대사를 다음 패널에 재인쇄하는 경우(완전
+    반복이든, 반복 뒤 새 내용이 이어지는 부분 중첩이든) 그 재인쇄와
+    겹치는 부분은 `_overlap_trim`이 잘라내 새로 기여하는 부분만 남긴다 —
+    멤버로는 여전히 집계되지만 겹치는 부분은 merged_text에 반영하지 않는다.
     사이에 낀 action/panel 블록은 dialog 시퀀스 기준으로 체인을 끊지
     않는다 — 각자 단독 그룹으로 그 자리에 남는다. 다른 큐의 dialog(또는
     큐 패턴이 없는 dialog)가 끼면 체인이 끝난다.
@@ -138,9 +182,11 @@ def group_utterances(
             continue
         if chain_slot >= 0 and key == chain_key:
             chain_indices.append(i)
-            piece = _strip_cue_header(block.text)
-            if piece and _normalize_ws(piece) not in _normalize_ws(chain_merged):
-                chain_merged = f"{chain_merged} {piece}"
+            piece = _strip_cue_header(block.text, chain_merged)
+            if piece:
+                contribution = _overlap_trim(chain_merged, piece)
+                if contribution:
+                    chain_merged = f"{chain_merged} {contribution}"
         else:
             flush_chain()
             chain_key = key

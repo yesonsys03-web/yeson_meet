@@ -176,6 +176,72 @@ def test_reprinted_dialogue_tail_with_ellipsis_spacing_variant_is_not_duplicated
     assert texts == [merged]
 
 
+def test_real_bill_dale_boomhauer_chain_no_annotation_fragment_and_partial_overlap():
+    """재리뷰(라운드 1) 잔존 회귀 — GABE01_A1 p625-633 실물 그대로(9블록).
+    두 번째 조각(p626)이 괄호 주석 하나 없이 곧장 다중 토큰 화자
+    "BILL/DALE/BOOMHAUER" 뒤에 새 본문을 잇는 형태라, 화자 런 경계를 이
+    조각 자신만으로 판단해야 한다(예전엔 이 경우 옛 lazy 경계로 대체
+    동작해 "/DALE/BOOMHAUER" 파편이 남았다). 동시에 그 조각 자체가 이미
+    누적된 문장을 그대로 반복한 뒤 새 내용을 잇는 부분 중첩이라(완전
+    포함이 아니므로 예전 방식은 스킵하지 못하고 통째로 붙였다), 겹치는
+    접두를 잘라내는 처리도 함께 검증한다. 이후 헤더-only 조각과 부분
+    재인쇄 조각(p631·632)이 더 섞여 있다."""
+    blocks = [
+        _block(625, "dialog", "75 BILL/DALE/BOOMHAUER Oh my goodness./ No!/ Yeah man,"),
+        _block(626, "dialog",
+               "75 BILL/DALE/BOOMHAUER Oh my goodness./ No!/ Yeah man, you talkin’ "
+               "‘bout dang ol’ (IMITATES HANK AGAIN, SHUDDERING) Thatherton."),
+        _block(627, "dialog", "75 BILL/DALE/BOOMHAUER (Cont.)"),
+        _block(628, "dialog", "75 BILL/DALE/BOOMHAUER (Cont.)"),
+        _block(629, "dialog", "75 BILL/DALE/BOOMHAUER (Cont.)"),
+        _block(630, "dialog", "75 BILL/DALE/BOOMHAUER (Cont.)"),
+        _block(631, "dialog", "75 BILL/DALE/BOOMHAUER (Cont.) you talkin’ ‘bout dang ol’"),
+        _block(632, "dialog",
+               "75 BILL/DALE/BOOMHAUER (Cont.) (IMITATES HANK AGAIN, SHUDDERING) Thatherton."),
+        _block(633, "dialog", "75 BILL/DALE/BOOMHAUER (Cont.)"),
+    ]
+    groups, texts = group_utterances(blocks)
+    assert len(groups) == 1
+    merged = groups[0].merged_text
+    assert merged == (
+        "75 BILL/DALE/BOOMHAUER Oh my goodness./ No!/ Yeah man, you talkin’ "
+        "‘bout dang ol’ (IMITATES HANK AGAIN, SHUDDERING) Thatherton."
+    )
+    assert merged.count("/DALE/BOOMHAUER") == 1
+    assert merged.count("Oh my goodness") == 1
+    assert "(CONT" not in merged
+    assert "(Cont" not in merged
+    assert texts == [merged]
+
+
+def test_real_bobby_chain_preserves_offscreen_annotation_and_leading_pronoun():
+    """재리뷰(라운드 1) Minor 회귀 + 라운드 2에서 새로 드러난 결함 —
+    GABE01_A1 p330-339 실물 그대로. 화자 런 뒤 곧바로 대문자 단독 단어
+    "I"가 오는 조각("37 BOBBY I am...")에서 "I"를 화자명 일부로 오인해
+    삼키면 안 되고("am..."만 남으면 안 됨), 그룹 첫 멤버에 없던 "(O.S.)"
+    주석이 나중 조각에서 처음 등장하면 그 조각 고유의 정보이므로 보존해야
+    한다(무차별적으로 모든 괄호 주석을 지우면 사라진다)."""
+    blocks = [
+        _block(330, "dialog", "37 BOBBY I need to say something."),
+        _block(331, "dialog", "37 BOBBY (CONT.)"),
+        _block(332, "dialog", "37 BOBBY (CONT.)"),
+        _block(333, "dialog", "37 BOBBY (CONT.)"),
+        _block(335, "dialog", "37 BOBBY I am..."),
+        _block(336, "dialog", "37 BOBBY (CONT.) ...so..."),
+        _block(337, "dialog", "37 BOBBY (CONT.) ...happy right now!"),
+        _block(342, "dialog", "37 BOBBY (O.S.) This living arrangement..."),
+    ]
+    groups, texts = group_utterances(blocks)
+    assert len(groups) == 1
+    merged = groups[0].merged_text
+    assert "I need to say something." in merged
+    assert "I am..." in merged
+    assert "(O.S.) This living arrangement..." in merged
+    assert "(CONT" not in merged
+    assert "(Cont" not in merged
+    assert texts == [merged]
+
+
 SAMPLES = os.environ.get("YESON_PDF_SAMPLES")
 
 
