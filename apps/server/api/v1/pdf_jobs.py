@@ -7,8 +7,16 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import (APIRouter, Depends, File, Form, HTTPException, Response,
-                     UploadFile, status)
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,8 +27,7 @@ from apps.server.db.session import get_session
 from apps.server.domain.pdf_translate.backend import open_pdf
 from apps.server.domain.pdf_translate.pdf_run import run_pdf_job
 from apps.server.domain.pdf_translate.pdf_store import pdf_job_dir
-from apps.server.domain.pdf_translate.pdf_tasks import (cancel_pdf_task,
-                                                        start_pdf_task)
+from apps.server.domain.pdf_translate.pdf_tasks import cancel_pdf_task, start_pdf_task
 from apps.server.domain.video_captions.ingest import save_upload
 from apps.server.domain.video_captions.translate_cli import list_translate_engines
 

@@ -85,12 +85,12 @@ async def _set_progress(external_id: UUID, pct: int, generation: int) -> None:
             job = await _load_job(db, external_id)
             job.progress = pct
             await db.commit()
-    except Exception:  # noqa: BLE001 — 진행률은 부가 정보
+    except Exception:  # 진행률은 부가 정보 — 실패해도 작업을 죽이지 않는다
         logger.exception("failed to update progress for pdf job %s", external_id)
 
 
 async def _try_set_error(external_id: UUID, message: str) -> None:
     try:
         await _set_status(external_id, "error", error=message)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("failed to record error for pdf job %s", external_id)

@@ -40,7 +40,7 @@ async def test_custom_prompt_builder_is_used(monkeypatch):
 def test_create_translator_passes_builder_to_cli(monkeypatch):
     from apps.server.domain.video_captions import translate_cli as tc
     monkeypatch.setenv("GEMINI_API_KEY", "x")
-    builder = lambda texts: "B"  # noqa: E731
+    builder = lambda texts: "B"
     t = tc.create_translator("claude", prompt_builder=builder)
     assert isinstance(t, tc.CliTranslator)
     assert t._prompt_builder is builder
@@ -52,7 +52,7 @@ def test_create_translator_passes_builder_to_custom_cli(monkeypatch):
     프롬프트로 되돌아가는 함정을 막는다."""
     from apps.server.domain.video_captions import translate_cli as tc
     monkeypatch.setenv(tc.CUSTOM_CLI_ENV, "some-custom-cli")
-    builder = lambda texts: "B"  # noqa: E731
+    builder = lambda texts: "B"
     t = tc.create_translator("custom", prompt_builder=builder)
     assert isinstance(t, tc.CliTranslator)
     assert t._prompt_builder is builder
