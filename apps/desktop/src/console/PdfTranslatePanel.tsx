@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listTranslateEngines, type TranslateEngineInfo } from "./videoApi";
 import {
   cancelPdfJob, deletePdfJob, isActivePdfStatus, listPdfJobs,
-  pdfUploadUrl, uploadPdfJob, type PdfJobSummary,
+  pdfDownloadUrl, pdfUploadUrl, uploadPdfJob, type PdfJobSummary,
 } from "./pdfApi";
+import { PdfPreview } from "./PdfPreview";
 
 const STATUS_LABEL: Record<string, string> = {
   queued: "대기", extracting: "추출 중", translating: "번역 중",
@@ -14,6 +15,26 @@ const STATUS_LABEL: Record<string, string> = {
 type TauriGlobal = typeof globalThis & { __TAURI_INTERNALS__?: unknown };
 function hasTauriRuntime(): boolean {
   return Boolean((globalThis as TauriGlobal).__TAURI_INTERNALS__);
+}
+
+// 번역 완료 PDF 저장 — VideoCaptionPanel.tsx의 download_to_file 호출부(url·path
+// 인자, camelCase 그대로)를 그대로 따른다. 브라우저 dev 폴백은 위치 선택 없는
+// 앵커 다운로드. 주의: 전체 버퍼링(비스트리밍)이라 대용량 PDF도 메모리를 그만큼 쓴다.
+async function downloadPdf(job: PdfJobSummary): Promise<void> {
+  const name = `${job.source_ref.replace(/\.pdf$/i, "")}_번역.pdf`;
+  if (hasTauriRuntime()) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const dest = await save({ defaultPath: name,
+      filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    if (!dest) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("download_to_file", { url: pdfDownloadUrl(job.job_id), path: dest });
+  } else {
+    const a = document.createElement("a");
+    a.href = pdfDownloadUrl(job.job_id);
+    a.download = name;
+    a.click();
+  }
 }
 
 export function PdfTranslatePanel({ active }: { active: boolean }) {
@@ -127,6 +148,7 @@ export function PdfTranslatePanel({ active }: { active: boolean }) {
 
 function PdfJobList({ jobs, onChanged }:
   { jobs: PdfJobSummary[]; onChanged: () => Promise<void> }) {
+  const [previewId, setPreviewId] = useState<string | null>(null);
   if (!jobs.length) {
     return <p style={{ color: "#64748b", fontSize: 12 }}>작업이 없습니다.</p>;
   }
@@ -155,7 +177,18 @@ function PdfJobList({ jobs, onChanged }:
                 void deletePdfJob(j.job_id).then(onChanged);
               }}>삭제</button>
             )}
+            <button type="button" onClick={() =>
+              setPreviewId((cur) => (cur === j.job_id ? null : j.job_id))
+            }>프리뷰</button>
+            {j.status === "done" ? (
+              <button type="button" onClick={() => void downloadPdf(j)}>
+                번역 PDF 저장
+              </button>
+            ) : null}
           </div>
+          {previewId === j.job_id ? (
+            <PdfPreview job={j} onClose={() => setPreviewId(null)} />
+          ) : null}
         </div>
       ))}
     </div>
