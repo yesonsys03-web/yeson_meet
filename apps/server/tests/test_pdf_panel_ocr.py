@@ -16,14 +16,22 @@ _REGION = (0.0, 95.0, 1008.0, 460.0)
 
 def _make_panel_pdf(tmp_path: Path, *, label_color=(1, 0, 0)) -> Path:
     """가로형 페이지 + 빨간 사각 테두리 라벨(리더라인 콜아웃 흉내) + 검정
-    잡선(패널 그림선 흉내). label_color를 검정으로 주면 빨강 프리필터
-    가드 검증용 fixture가 된다."""
+    잡선(패널 그림선 흉내) + 검정 **글자** 미끼. label_color를 검정으로 주면
+    빨강 프리필터 가드 검증용 fixture가 된다.
+
+    검정 글자 미끼("OPEN 24 HOURS", 패널 안 간판 글씨 흉내)는 2026-07-30
+    테스트 품질 스윕에서 추가됐다 — 그 전엔 검정 요소가 전부 벡터 도형이라
+    OCR 히트가 아예 생기지 않았고, 그래서 히트 단위 빨강 비율 필터
+    (_HIT_RED_RATIO_MIN)가 오프라인에서 **한 번도 무언가를 걸러내지 않았다**.
+    미끼가 있으면 raw 히트 2개 중 1개가 필터에서 떨어져, 아래 테스트들의
+    `len(labels) == 1`이 비로소 판별력을 갖는다."""
     import fitz
     doc = fitz.open()
     page = doc.new_page(width=1008, height=612)
     page.draw_line((100, 150), (400, 300), color=(0, 0, 0), width=1.5)
     page.draw_line((500, 120), (700, 350), color=(0, 0, 0), width=1.5)
     page.draw_circle((300, 200), 40, color=(0, 0, 0), width=1.5)
+    page.insert_text((120, 180), "OPEN 24 HOURS", fontsize=16, color=(0, 0, 0))
     rect = fitz.Rect(300, 250, 500, 290)
     if label_color == (1, 0, 0):
         page.draw_rect(rect, color=(1, 0, 0), width=2)
@@ -54,6 +62,31 @@ def test_find_panel_labels_reads_red_callout(tmp_path, monkeypatch):
         # 테두리 안에 완전히 들어오는지로 "근방"을 검증한다.
         assert 280.0 <= x0 and x1 <= 520.0
         assert 230.0 <= y0 and y1 <= 310.0
+    finally:
+        doc.close()
+
+
+def test_hit_red_ratio_filter_drops_black_text_that_ocr_actually_read(
+        tmp_path, monkeypatch):
+    """_HIT_RED_RATIO_MIN이 실제로 하중을 받는지 직접 잠근다.
+
+    문턱을 0으로 낮추면 검정 글자 미끼("OPEN 24 HOURS")까지 함께 나오고,
+    실제 문턱(0.15)에서는 빨간 라벨만 남는다 — 즉 이 상수가 없으면 패널 안
+    간판·표지판 글씨가 번역 대상으로 새어 들어간다. 첫 단언이 픽스처의
+    유효성(미끼가 정말 OCR에 잡힘)을 함께 잠근다."""
+    monkeypatch.delenv(panel_ocr.ENV_ENABLED, raising=False)
+    path = _make_panel_pdf(tmp_path)
+    doc = open_pdf(path)
+    try:
+        monkeypatch.setattr(panel_ocr, "_HIT_RED_RATIO_MIN", 0.0)
+        unfiltered = panel_ocr.find_panel_labels(doc, 0, _REGION)
+        texts = " ".join(b.text.upper() for b in unfiltered)
+        assert "TRUCK" in texts and "HOURS" in texts  # 미끼가 실제 OCR 히트다
+
+        monkeypatch.setattr(panel_ocr, "_HIT_RED_RATIO_MIN", 0.15)
+        filtered = panel_ocr.find_panel_labels(doc, 0, _REGION)
+        assert len(filtered) == 1
+        assert "TRUCK" in filtered[0].text.upper()
     finally:
         doc.close()
 

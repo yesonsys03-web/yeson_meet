@@ -296,20 +296,60 @@ async def test_translate_texts_progress_monotonic_even_out_of_order(monkeypatch)
     assert fracs[-1] == 1.0
 
 
+class EdgeRecordingTranslator:
+    """청크의 **시작과 종료** 경계를 모두 기록한다.
+
+    시작 시점만 기록하면(=SlowFirstChunkTranslator의 self.calls) 세마포어를
+    통째로 지워도 같은 순서가 나온다 — asyncio.gather가 태스크를 생성 순서로
+    처음 깨우기 때문이다. 그래서 "workers=1이면 직렬"이라는 성질은 시작
+    순서로는 증명되지 않고, 구간이 겹치지 않는다는 것으로만 증명된다."""
+
+    def __init__(self):
+        self.events: list[tuple[str, str]] = []
+
+    async def translate_batch(self, texts):
+        tag = texts[0]
+        self.events.append(("start", tag))
+        # 첫 청크만 느리게 — 병렬이라면 뒤 청크가 그 사이에 끼어들어 끝난다
+        await asyncio.sleep(0.05 if tag == "0" else 0)
+        self.events.append(("end", tag))
+        return [f"KO:{t}" for t in texts]
+
+
 @pytest.mark.asyncio
-async def test_translate_texts_workers_one_calls_chunks_in_submission_order(
+async def test_translate_texts_workers_one_runs_chunks_without_overlap(
         monkeypatch):
-    """workers=1이면(기존 직렬과 동일 동작) 첫 청크가 느려도 CLI 호출
-    순서는 청크 제출 순서를 그대로 따른다."""
+    """workers=1이면(기존 직렬과 동일 동작) 첫 청크가 느려도 청크 실행 구간이
+    서로 겹치지 않고, 순서는 제출 순서를 그대로 따른다.
+
+    단언이 시작·종료 경계 전체를 보는 것이 핵심이다 — 세마포어를 지우면
+    (start 0, start 50, end 50, ...)로 무너져 바로 깨진다. 시작 순서만 보던
+    이전 버전은 세마포어 유무와 무관하게 통과하는 공허한 테스트였다
+    (2026-07-30 테스트 품질 스윕)."""
     monkeypatch.setenv("YESON_PDF_TRANSLATE_WORKERS", "1")
-    t = SlowFirstChunkTranslator()
+    t = EdgeRecordingTranslator()
     texts = [str(i) for i in range(120)]
     await translate_texts(texts, t, chunk_size=50)
-    assert t.calls == [
-        [str(i) for i in range(50)],
-        [str(i) for i in range(50, 100)],
-        [str(i) for i in range(100, 120)],
+    assert t.events == [
+        ("start", "0"), ("end", "0"),
+        ("start", "50"), ("end", "50"),
+        ("start", "100"), ("end", "100"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_translate_texts_workers_three_overlaps_chunks(monkeypatch):
+    """위 테스트의 대조군 — 같은 계측으로 workers=3이면 구간이 실제로 겹친다.
+    이게 있어야 위 단언이 "세마포어가 하는 일"을 잠근다는 게 확인된다(둘 다
+    직렬이면 위 테스트는 아무것도 증명하지 않는다)."""
+    monkeypatch.setenv("YESON_PDF_TRANSLATE_WORKERS", "3")
+    t = EdgeRecordingTranslator()
+    texts = [str(i) for i in range(120)]
+    await translate_texts(texts, t, chunk_size=50)
+    # 느린 첫 청크가 끝나기 전에 다른 청크가 시작됐다 = 구간 겹침
+    first_end = t.events.index(("end", "0"))
+    assert any(kind == "start" and tag != "0"
+               for kind, tag in t.events[:first_end])
 
 
 @pytest.mark.asyncio
@@ -449,12 +489,22 @@ async def test_translate_texts_dedupe_with_house_style_and_number_gate():
 
 @pytest.mark.asyncio
 async def test_translate_texts_applies_house_style_before_number_gate(monkeypatch):
-    """통합 순서 고정(브리프 1번, Task 19로 확장): apply_house_style →
-    출력 정규화(apply_output_normalization) → 숫자 게이트 — 실행 순서를
-    스파이로 직접 관찰해 잠근다."""
+    """통합 순서 고정(브리프 1번, Task 19로 확장): apply_ko_corrections →
+    apply_house_style → 출력 정규화(apply_output_normalization) → 숫자 게이트
+    — 실행 순서를 스파이로 직접 관찰해 잠근다.
+
+    ko_corrections까지 스파이에 넣은 건 2026-07-30 테스트 품질 스윕 결과다 —
+    프로덕션 주석은 4단계 순서가 "테스트로 잠금"돼 있다고 적었지만 스파이는
+    뒤 3단계만 덮고 있었다."""
     import apps.server.domain.pdf_translate.translate_blocks as tb
 
     order: list[str] = []
+    orig_ko = tb.apply_ko_corrections
+
+    def spy_ko(ko):
+        order.append("ko_corrections")
+        return orig_ko(ko)
+
     orig_house = tb.apply_house_style
 
     def spy_house(ko):
@@ -473,13 +523,14 @@ async def test_translate_texts_applies_house_style_before_number_gate(monkeypatc
         order.append("gate")
         return await orig_gate(provider, src, ko)
 
+    monkeypatch.setattr(tb, "apply_ko_corrections", spy_ko)
     monkeypatch.setattr(tb, "apply_house_style", spy_house)
     monkeypatch.setattr(tb, "apply_output_normalization", spy_normalize)
     monkeypatch.setattr(tb, "_verify_and_fix_numbers", spy_gate)
 
     t = FakeTranslator([["태더튼, sc103 확인"]])
     await translate_texts(["Thatherton, confirm sc103"], t)
-    assert order == ["house", "normalize", "gate"]
+    assert order == ["ko_corrections", "house", "normalize", "gate"]
 
 
 # ── dedupe × 원문 유지 폴백 상호작용 (리뷰 Important 1) ──────────────────

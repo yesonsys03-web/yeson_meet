@@ -91,13 +91,13 @@ def test_extract_empty_dialog_field_produces_no_dialog_block(tmp_path):
         assert dialog_blocks == []  # 빈 필드 → dialog 블록 없음
         action = next(b for b in blocks if b.kind == "action")
         assert action.text == "HANK walks to the door."
-        # (a) dialog 블록 중 라벨 그대로이거나 라벨로 시작하는 것 없음
-        assert not any(
-            b.text == "Action Notes" or b.text.startswith("Action Notes")
-            for b in dialog_blocks
-        )
-        # (b) dialog 블록이 action 블록 텍스트를 중복하지 않음
-        assert not any(b.text == action.text for b in dialog_blocks)
+        # (a)·(b)는 `blocks` 전체를 본다 — 2026-07-30 테스트 품질 스윕 전에는
+        # 이미 빈 것으로 단언된 dialog_blocks를 순회해(`not any(<빈 리스트>)`)
+        # 무조건 참이었다. 전체를 보면 실제로 깨질 수 있는 단언이 된다.
+        # (a) 어떤 블록도 필드 라벨을 텍스트로 갖지 않는다
+        assert not any(b.text.startswith("Action Notes") for b in blocks)
+        # (b) action 텍스트가 어느 kind로도 중복 추출되지 않는다
+        assert sum(1 for b in blocks if b.text == action.text) == 1
     finally:
         doc.close()
 
