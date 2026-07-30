@@ -50,6 +50,30 @@ def test_pdf_prompt_mentions_speaker_line_convention():
     assert "cue number" in p
 
 
+def test_pdf_prompt_forbids_word_for_word_literalism():
+    """Task 15 E2E 후속: 직역 금지 지시 실측(사용자 리포트 — "그래야 화살표가
+    말이 되지!" 같은 축자번역 대신 의역을 요구)."""
+    p = build_pdf_prompt(["HANK walks."])
+    assert "word-for-word" in p
+
+
+def test_pdf_prompt_mentions_context_instruction():
+    """Task 15: 배열 내 이웃 블록(같은 에피소드 연속 스토리보드)을 대명사·
+    (CONT.) 이어붙임·미완성 문장 해석의 문맥으로 쓰라는 지시가 있어야 한다."""
+    p = build_pdf_prompt(["HANK walks."])
+    assert "neighboring items" in p
+    assert "context" in p
+
+
+def test_pdf_prompt_includes_style_examples():
+    """Task 15: 수작업본(납품 기준)에서 큐레이션한 few-shot 예시가 프롬프트에
+    포함돼야 한다 — 사용자가 직접 지목한 '화살표' 쌍(GABE01 A1 p963-964)
+    포함 확인."""
+    p = build_pdf_prompt(["HANK walks."])
+    assert "EN:" in p and "KO:" in p
+    assert "화살표가 이해되게 함께 서보자.." in p
+
+
 @pytest.mark.asyncio
 async def test_translate_texts_happy_path():
     t = FakeTranslator(["echo-ko"])

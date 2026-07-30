@@ -23,6 +23,67 @@ logger = logging.getLogger("yeson.pdf.translate")
 WORKERS_ENV = "YESON_PDF_TRANSLATE_WORKERS"
 _DEFAULT_WORKERS = 3
 
+# 수작업본(납품 기준, GABE01 King of the Hill 콘티) few-shot 큐레이션 — Task 15
+# E2E 후속(2026-07-30). 원문-번역 300+쌍(오프라인 스크립트, 커밋 안 함)에서
+# 대표 14쌍만 뽑았다. 화살표 예시는 사용자가 실기에서 직접 지목한 케이스
+# ("...so the arrows make sense!" → 축자번역 "그래야 화살표가 말이 되지!"는
+# 오역, 수작업본은 "화살표가 이해되게 함께 서보자..").
+#
+# 액션 노트 종결형 실측(615쌍 중): "-ㄴ다/-한다" 평서형이 압도적 다수이고
+# "-하세요/-십시오" 요청형은 "NOTE:"/"PLEASE" 같은 명시적 제작진 지시문(21건)
+# 에서만 쓰인다 — 일반 서술형 액션(예: "Hank grabs the gear shift lever.")은
+# 전부 평서형이었다. 아래 예시가 그 구분을 보여준다.
+_STYLE_EXAMPLES: list[tuple[str, str]] = [
+    # 화살표 예시(GABE01 A1 p963-964 결합) — 사용자 리포트 원본 사례.
+    # 사진 포즈 상황에 맞춘 의역("...서보자")이지 "화살표가 말이 되도록"류
+    # 축자번역이 아니다.
+    ("Let's walk around... so the arrows make sense!",
+     "화살표가 이해되게 함께 서보자.."),
+    # 화자줄: 다중 화자(/) 표기 + 큐번호 생략 (GABE01 A1 p30)
+    ("3 HANK/EMPLOYEES Propane.", "행크/직원들: 프로판."),
+    # (CONT.)로 두 패널에 쪼개진 미완성 문장 — 이웃 문맥으로 이어 완결된
+    # 두 문장으로 재구성 (GABE01 A1 p53+58)
+    (("6 HANK (CONT.) I want to say how proud I am of all of you... "
+      "for getting this showroom worthy of the fine product we sell."),
+     ("행크: 난 그냥 자네들이 얼마나 자랑스러운지 말하고 싶었어. 여러분 모두가 "
+      "우리가 판매하는 훌륭한 제품에 걸맞은 쇼룸을 만들어 준 것에 대해 정말 "
+      "감사해.")),
+    # (O.S.) 표시는 대사에 옮기지 않고 생략 + "suck" 구어체 의역
+    # (GABE01 A1 p579)
+    ("66 JIMMY (O.S.) Your pro-nuts suck!", "지미: 당신들 도너츠 완전 별로야!"),
+    # 짧은 구어체 의역 — 축자 "통과"가 아닌 자연스러운 대화체 (GABE01 A1 p130)
+    ("16 HANK Pass.", "행크: 넘어가죠."),
+    # 감탄 어미(-군) 자연스러운 구어체 (GABE01 A1 p215)
+    ("26 ENRIQUE Like Propane Jesus!", "엔리케: 프로판가스 예수님같군!"),
+    # 팝컬처 고유명사는 음역으로 유지 (GABE01 A1 p99)
+    ("10 HANK (CONT.) Lando Calrissian?", "행크: 랜도 칼리시안?"),
+    # 관용구(배 은유)는 축자번역 대신 의미로 (GABE01 A1 p64+68)
+    ("The Strickland ship has officially been righted.",
+     "행크: 스트릭랜드는 이제 완전히 제자리를 찾았어."),
+    # action: 평서형(-ㄴ다) 종결 관례 — 요청형이 아님 (GABE01 A1 p6)
+    ("Hank grabs the gear shift lever.", "행크가 기어변속 레버를 잡는다."),
+    # action: 문장 재구성(의역) + 과거 서술체. 원문 자체가 마침표 없이 끊긴
+    # 문장인데도 문맥으로 완결된 한국어 문장을 만든다 (GABE01 A1 p162)
+    ("Hank walks over to a framed picture of himself, PEGGY and BOBBY",
+     "행크는 자신과 페기, 바비가 함께 찍은 액자 사진 앞으로 걸어갔다."),
+    # action: 카메라 지시 관례 (GABE01 A1 p888)
+    ("CAM ADJUST", "카메라 조정"),
+    # action: 진짜 명령문(제작진 지시)만 요청형(-세요) — 서술형 액션과 구분
+    # (GABE01 A1 p97)
+    ("NOTE: PLEASE HOOKUP DESK TO SC13", "노트: 씬13으로 책상 훅업해주세요."),
+    # action: 고유명사(브랜드) 음역 일관성 + "sales floor"→"매장" 의역
+    # (GABE01 A1 p186)
+    ("INT. STRICKLAND PROPANE - SALES FLOOR - MORNING",
+     "스트릭랜드 프로판 내부-매장-아침"),
+    # action: 짧은 평서형(화살표 예문 바로 다음 패널) (GABE01 A1 p968)
+    ("They pose for a photo.", "그들은 포즈를 취한다."),
+]
+
+
+def _style_examples_block() -> str:
+    lines = [f"EN: {en}\nKO: {ko}" for en, ko in _STYLE_EXAMPLES]
+    return "Examples of the required style (English → Korean):\n" + "\n\n".join(lines)
+
 
 def build_pdf_prompt(texts: list[str]) -> str:
     """제작 문서(스토리보드 대사·액션 노트) 배열 → KO 번역 지시 프롬프트."""
@@ -31,8 +92,19 @@ def build_pdf_prompt(texts: list[str]) -> str:
         "Translate each English text block from an animation production "
         "document (storyboard dialog and action notes) into natural Korean "
         "for Korean animation staff.\n"
-        "Keep imperative production notes in polite 요청형 (예: '...하세요'). "
-        "Keep dialogue natural and faithful to the tone of the source.\n"
+        "Translate for MEANING in natural spoken Korean as a professional "
+        "Korean animation-script translator would — never word-for-word "
+        "literal renderings. Prefer the phrasing a Korean voice actor could "
+        "speak naturally.\n"
+        "The array items are consecutive storyboard blocks from the same "
+        "episode, in order — use neighboring items as context for pronouns, "
+        "continuations ((CONT.)), and incomplete sentences.\n"
+        "Descriptive action/stage-direction notes (e.g. \"Hank grabs the "
+        "gear shift lever.\") take plain declarative 평서형 (예: '...한다'). "
+        "Only explicit directives to the production staff (e.g. lines "
+        "starting with \"NOTE:\" or \"PLEASE\") take polite 요청형 (예: "
+        "'...하세요'). Keep dialogue natural and faithful to the tone of "
+        "the source.\n"
         "Do NOT translate asset IDs, scene/panel codes, or file-name-like "
         "tokens (e.g. TGNO_PizzaBox_CL_V01, 5LBW03_07_01) — copy them "
         "unchanged.\n"
@@ -44,6 +116,7 @@ def build_pdf_prompt(texts: list[str]) -> str:
         "name (e.g. \"3 HANK/EMPLOYEES Propane.\"), format the Korean as "
         "\"화자명: 대사\" — translate the speaker name, omit the leading "
         "cue number (e.g. \"행크/직원들: 프로판.\").\n"
+        + _style_examples_block() + "\n\n"
         "Input is a JSON array of strings; return ONLY a JSON array of the "
         "same length with the Korean translations in the same order.\n"
         "Return ONLY the JSON array. No prose, no markdown fences.\n"
