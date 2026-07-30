@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from pathlib import Path
 from uuid import UUID
 
@@ -10,6 +11,10 @@ from sqlalchemy import select
 
 from apps.server.db.models import PdfJob
 from apps.server.db.session import AsyncSessionLocal
+# 이중 기동 가드(포트 프로브)는 video 스윕의 단일 진실을 그대로 재사용한다 —
+# uvicorn lifespan이 소켓 바인딩보다 먼저 도는 문제는 도메인과 무관하게 같은
+# 증상이라, 별도 구현을 두면 한쪽만 고치는 사고가 난다.
+from apps.server.domain.video_captions.maintenance import _another_instance_is_serving
 from apps.server.domain.video_captions.translate import maybe_aclose_translator
 from apps.server.domain.video_captions.translate_cli import create_translator
 
@@ -27,10 +32,24 @@ class PdfTranslateError(RuntimeError):
     pass
 
 
+def _with_doc_lock(lock: threading.Lock, fn, *args):
+    """doc을 만지는 모든 워커 스레드 진입점의 공통 게이트.
+
+    asyncio.to_thread는 바깥 await이 취소돼도 스레드 자체를 멈추지 않는다 —
+    고아 스레드가 계속 PyMuPDF 문서를 조작할 수 있다(스레드-안전하지 않음,
+    최악=프로세스 크래시). doc을 만지는 모든 to_thread 바디와 최종 close()가
+    이 락을 공유해야, 취소 시 close()가 고아 스레드보다 먼저(또는 동시에)
+    doc을 건드리는 경쟁을 막을 수 있다.
+    """
+    with lock:
+        return fn(*args)
+
+
 async def run_pdf_job(external_id: UUID) -> None:
     await _PDF_SEMAPHORE.acquire()
     generation = _bump_generation(external_id)
     doc = None
+    doc_lock = threading.Lock()
     try:
         async with AsyncSessionLocal() as db:
             job = (await db.execute(
@@ -44,11 +63,13 @@ async def run_pdf_job(external_id: UUID) -> None:
 
         await _set_status(external_id, "extracting")
         doc = await asyncio.to_thread(open_pdf, Path(source_path))
-        profile = detect_profile(doc)
+        # detect_profile은 최대 3페이지 get_text("dict")를 훑는다(GIL 바운드) —
+        # 이벤트 루프에서 직접 돌리면 실시간 자막 WebSocket이 수십ms 멎는다.
+        profile = await asyncio.to_thread(_with_doc_lock, doc_lock, detect_profile, doc)
         if profile is None:
             raise PdfTranslateError(
                 "지원하지 않는 PDF 포맷입니다 (현재 지원: 스토리보드형)")
-        blocks = await asyncio.to_thread(profile.extract, doc)
+        blocks = await asyncio.to_thread(_with_doc_lock, doc_lock, profile.extract, doc)
         if not blocks:
             raise PdfTranslateError("번역할 텍스트 블록을 찾지 못했습니다")
         await _set_status(external_id, "translating", format=profile.name,
@@ -82,7 +103,7 @@ async def run_pdf_job(external_id: UUID) -> None:
             doc.save(dest)
             return dest
 
-        dest = await asyncio.to_thread(_overlay_and_save)
+        dest = await asyncio.to_thread(_with_doc_lock, doc_lock, _overlay_and_save)
         await _set_status(external_id, "done", translated_path=str(dest))
     except asyncio.CancelledError:
         raise
@@ -92,12 +113,25 @@ async def run_pdf_job(external_id: UUID) -> None:
             await _try_set_error(external_id, str(exc))
     finally:
         if doc is not None:
-            doc.close()
+            # 락을 쥔 채(고아 스레드가 doc을 다 쓸 때까지) 닫는다. 대기 자체도
+            # 워커 스레드에서 해야 이벤트 루프(실시간 자막 WebSocket)를 막지
+            # 않는다 — 세마포어는 이 close가 끝난 뒤에만 반납한다(취소 시에도
+            # 고아 스레드가 doc을 다 쓰기 전에 다음 작업이 시작되지 않도록).
+            await asyncio.to_thread(_with_doc_lock, doc_lock, doc.close)
         _PDF_SEMAPHORE.release()
 
 
 async def fail_inflight_pdf_jobs_at_startup() -> None:
-    """재시작 시 in-flight 작업을 error로 — 좀비 'translating' 행 방지."""
+    """재시작 시 in-flight 작업을 error로 — 좀비 'translating' 행 방지.
+
+    uvicorn은 lifespan startup을 소켓 바인딩보다 먼저 실행한다 — 이중 기동된
+    두 번째 프로세스가 살아있는 인스턴스의 진행 중 PDF 작업을 오판해 쓸어버릴
+    수 있어(video 스윕과 동일한 위험), 같은 포트-프로브 가드를 그대로 쓴다.
+    """
+    if _another_instance_is_serving():
+        logger.warning(
+            "startup pdf-job sweep skipped: another instance is already serving")
+        return
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(select(PdfJob).where(PdfJob.status.in_(
             ("queued", "extracting", "translating", "overlaying"))))

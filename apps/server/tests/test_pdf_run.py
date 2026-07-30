@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from uuid import uuid4
 
@@ -87,7 +88,8 @@ async def test_run_pdf_job_unsupported_format_sets_error(db_session, admin_user,
     assert row.status == "error" and "포맷" in (row.error or "")
 
 
-async def test_fail_inflight_at_startup(db_session, admin_user):
+async def test_fail_inflight_at_startup(db_session, admin_user, monkeypatch):
+    monkeypatch.setattr(pdf_run, "_another_instance_is_serving", lambda: False)
     job = await _seed_job(db_session, admin_user, status="translating")
     job_id = job.id  # expire_all() 뒤 job.id 접근 우회 (위 주석 참고)
     await pdf_run.fail_inflight_pdf_jobs_at_startup()
@@ -95,3 +97,52 @@ async def test_fail_inflight_at_startup(db_session, admin_user):
     row = (await db_session.execute(
         select(PdfJob).where(PdfJob.id == job_id))).scalar_one()
     assert row.status == "error"
+
+
+async def test_fail_inflight_at_startup_skipped_when_another_instance_serving(
+        db_session, admin_user, monkeypatch):
+    # 이중 기동 방지: 소켓 프로브가 '이미 서빙 중'이라 보고하면 살아있는
+    # 인스턴스의 진행 중 작업을 오판해 쓸어버리면 안 된다 (video 스윕과 동일 가드).
+    monkeypatch.setattr(pdf_run, "_another_instance_is_serving", lambda: True)
+    job = await _seed_job(db_session, admin_user, status="translating")
+    job_id = job.id
+    await pdf_run.fail_inflight_pdf_jobs_at_startup()
+    db_session.expire_all()
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.id == job_id))).scalar_one()
+    assert row.status == "translating"
+
+
+async def test_run_pdf_job_cancelled_mid_translate_releases_semaphore(
+        db_session, admin_user, monkeypatch):
+    """Finding 1 커버 테스트 — 번역 도중(제너레이션이 바뀌어) 취소가 걸리면:
+    1) CancelledError가 run_pdf_job 밖으로 전파되고
+    2) 세마포어는 (고아 스레드 유무와 무관하게) 반드시 반납되며
+    3) 제너레이션 불일치 분기라 에러 상태를 덮어쓰지 않는다(상태는 'translating'에 머문다).
+    """
+    job = await _seed_job(db_session, admin_user)
+    eid = job.external_id
+    job_id = job.id
+
+    class CancelMidFlightTranslator:
+        async def translate_batch(self, texts):
+            # 실제 취소(cancel_pdf_task)가 이 배치 처리 도중 도착한 것을 흉내:
+            # 세대를 바깥에서 올려버린다. 이 배치 자체는 정상 반환하지만,
+            # translate_texts가 그 뒤 progress_cb를 부를 때 세대 불일치를 본다.
+            _bump = pdf_run._bump_generation
+            _bump(eid)
+            return [f"KO:{t}" for t in texts]
+
+    monkeypatch.setattr(
+        pdf_run, "create_translator",
+        lambda provider, cli_model, prompt_builder: CancelMidFlightTranslator())
+
+    with pytest.raises(asyncio.CancelledError):
+        await pdf_run.run_pdf_job(eid)
+
+    assert pdf_run._PDF_SEMAPHORE._value == 1  # 반납됨(막힌 채로 남지 않음)
+    db_session.expire_all()
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.id == job_id))).scalar_one()
+    assert row.status == "translating"  # 에러로 덮어써지지 않았다
+    assert row.error is None
