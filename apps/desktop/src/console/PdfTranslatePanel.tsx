@@ -178,13 +178,20 @@ function PdfJobList({ jobs, onChanged, onError }: {
             <p style={{ color: "#f87171", fontSize: 12 }}>{j.error}</p>
           ) : null}
           <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+            {/* .catch 필수 — 취소는 409(폴링 1.5초 주기 안에서 작업이 끝나면
+                화면엔 아직 "취소" 버튼이 있다), 삭제는 404를 실제로 던진다.
+                catch가 없으면 프로미스가 reject되고 onChanged도 안 돌아
+                "눌렀는데 아무 일도 안 일어남"이 된다 — 위 downloadPdf가
+                Task 10 리뷰에서 정확히 이 이유로 고쳐진 결함 클래스다. */}
             {isActivePdfStatus(j.status) ? (
               <button type="button" onClick={() => {
-                void cancelPdfJob(j.job_id).then(onChanged);
+                void cancelPdfJob(j.job_id).then(onChanged)
+                  .catch((e) => onError(`취소 실패: ${String(e)}`));
               }}>취소</button>
             ) : (
               <button type="button" onClick={() => {
-                void deletePdfJob(j.job_id).then(onChanged);
+                void deletePdfJob(j.job_id).then(onChanged)
+                  .catch((e) => onError(`삭제 실패: ${String(e)}`));
               }}>삭제</button>
             )}
             <button type="button" onClick={() =>

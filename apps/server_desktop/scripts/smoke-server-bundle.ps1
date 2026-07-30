@@ -29,6 +29,25 @@ if (-not ($out -match "SELFTEST_RESULT=PASS")) {
 }
 Write-Host "OK bundle report smoke PASS"
 
+# Frozen-bundle PDF smoke test (Task 11): assert pymupdf survived the freeze
+# (same uv-cache materialization trap class as cv2 - see build-server.ps1).
+# build-server.ps1's import check runs in the *build venv*, which cannot catch
+# this failure mode - "works in the venv, missing from the bundle" is exactly
+# why the selftest exists. Without this gate the symptom is the whole PDF tab
+# returning runtime 500 in the Windows bundle.
+Write-Host "Frozen-bundle PDF smoke test ($($Bin.FullName))..."
+$env:YESON_PDF_SELFTEST = "1"
+$pout = & $Bin.FullName 2>&1
+Remove-Item Env:\YESON_PDF_SELFTEST -ErrorAction SilentlyContinue
+
+if ($pout -match "PDF_SELFTEST_RESULT=PASS") {
+    Write-Host "OK bundle PDF smoke PASS"
+} else {
+    $pout | ForEach-Object { Write-Error $_ }
+    Write-Error "bundle PDF smoke FAILED - pymupdf likely missing from the frozen bundle"
+    exit 1
+}
+
 # Frozen-bundle search smoke test (S4): assert FTS5 engine present in the bundled
 # sqlite AND the search index seeds (utterance/summary row counts match).
 Write-Host "Frozen-bundle search smoke test ($($Bin.FullName))..."
