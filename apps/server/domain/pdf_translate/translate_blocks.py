@@ -10,6 +10,8 @@ import asyncio
 import json
 import logging
 import os
+import re
+from collections import Counter
 from collections.abc import Awaitable, Callable
 
 from apps.server.ai.glossary import apply_ko_corrections, glossary_block
@@ -129,6 +131,9 @@ def build_pdf_prompt(texts: list[str]) -> str:
         "\"화자명: 대사\" — translate the speaker name, omit the leading "
         "cue number (e.g. \"행크/직원들: 프로판.\").\n"
         + _style_examples_block() + "\n\n"
+        "Copy every digit sequence (scene/shot references like sc103, "
+        "counts, codes) EXACTLY as in the source — never alter, swap, or "
+        "invent digits.\n"
         "Input is a JSON array of strings; return ONLY a JSON array of the "
         "same length with the Korean translations in the same order.\n"
         "Return ONLY the JSON array. No prose, no markdown fences.\n"
@@ -136,6 +141,81 @@ def build_pdf_prompt(texts: list[str]) -> str:
         + glossary_block()
         + "\n\nInput:\n" + numbered
     )
+
+
+_DIGITS_RE = re.compile(r"\d+")
+
+
+def _verify_numbers(src: str, ko: str) -> tuple[str, str]:
+    """숫자열(re.findall(r"\\d+")) 보존 검증 + 자동 교정 — Task 16(E2E 후속
+    5, 사용자 실기 오류 신고: "...sc103." → "...씬109..." 오염).
+
+    반환 (교정된 ko, verdict) — verdict ∈ {"ok", "fixed", "unresolved"}.
+
+    규칙(멀티셋 기준):
+    - 소스에 없는 숫자열이 KO에 등장하면 오염 후보(foreign).
+    - foreign마다 소스에서 누락된(KO에 없는) 숫자열 중 같은 자릿수인 후보를
+      찾는다 — 후보 정확히 1개면 그 값으로 치환(fixed, 발생 횟수 전부),
+      0개면 허용(no action — 영어 수사 "two"→"2" 같은 정당한 변환 오탐
+      방지), 2개 이상이면 모호(unresolved, 원문 그대로 반환).
+    - 소스 숫자가 KO에서 사라진 것 자체는 허용 — 화자줄 규칙이 선행 큐
+      번호를 의도적으로 생략하므로 누락 단독은 오류가 아니다.
+    """
+    src_counts = Counter(_DIGITS_RE.findall(src))
+    ko_counts = Counter(_DIGITS_RE.findall(ko))
+    foreign = ko_counts - src_counts  # KO에만 있는(초과) 숫자열
+    missing = src_counts - ko_counts  # SRC에만 있는(누락된) 숫자열
+
+    if not foreign:
+        return ko, "ok"
+
+    result = ko
+    ambiguous = False
+    for number in foreign:
+        candidates = [m for m in missing if len(m) == len(number)]
+        if not candidates:
+            continue  # 허용 — 같은 자릿수 누락 후보가 없으면 대응 실종 아님
+        if len(candidates) > 1:
+            ambiguous = True
+            continue
+        pattern = re.compile(r"(?<!\d)" + re.escape(number) + r"(?!\d)")
+        result = pattern.sub(candidates[0], result)
+
+    if ambiguous:
+        return ko, "unresolved"
+    if result != ko:
+        return result, "fixed"
+    return ko, "ok"
+
+
+async def _verify_and_fix_numbers(
+        provider: TranslationProvider, src: str, ko: str) -> str:
+    """_verify_numbers 결과에 따라 채택/재번역/원문유지 폴백을 수행한다
+    (블록당 재번역 최대 1회 — Task 16)."""
+    fixed_ko, verdict = _verify_numbers(src, ko)
+    if verdict == "ok":
+        return ko
+    if verdict == "fixed":
+        logger.info(
+            "pdf-translate: 숫자 오염 자동교정 원문=%r 오염값=%r 교정후=%r",
+            src[:80], ko[:80], fixed_ko[:80])
+        return fixed_ko
+
+    # unresolved → 블록 단건 재번역 폴백(기존 kept-as-source 경로 재사용).
+    retried = await _resilient(provider, [src])
+    retried_ko = apply_ko_corrections(retried[0].strip())
+    re_fixed, re_verdict = _verify_numbers(src, retried_ko)
+    if re_verdict != "unresolved":
+        if re_verdict == "fixed":
+            logger.info(
+                "pdf-translate: 숫자 오염 재번역 후 자동교정 원문=%r "
+                "교정후=%r", src[:80], re_fixed[:80])
+        return re_fixed
+
+    logger.warning(
+        "pdf-translate: 숫자 오염 재번역 후에도 미해결 — 원문 유지 "
+        "원문=%r 오염번역=%r", src[:80], retried_ko[:80])
+    return src
 
 
 async def _resilient(provider: TranslationProvider, texts: list[str],
@@ -202,7 +282,13 @@ async def translate_texts(
         nonlocal done_blocks
         async with sem:
             translated = await _resilient(provider, chunk)
-        results[idx] = [apply_ko_corrections(t.strip()) for t in translated]
+            corrected = [apply_ko_corrections(t.strip()) for t in translated]
+            # 숫자 보존 게이트(Task 16) — 순서·진행률 계약을 흔들지 않게
+            # 같은 청크 워커·같은 세마포어 구간 안에서 후처리한다.
+            results[idx] = [
+                await _verify_and_fix_numbers(provider, src, ko)
+                for src, ko in zip(chunk, corrected)
+            ]
         if progress_cb is not None:
             async with progress_lock:
                 done_blocks += len(chunk)

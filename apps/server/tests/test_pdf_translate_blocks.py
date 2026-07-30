@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import logging
 
 import pytest
 
 from apps.server.domain.pdf_translate.translate_blocks import (
+    _verify_numbers,
     build_pdf_prompt,
     translate_texts,
 )
@@ -83,6 +85,65 @@ def test_pdf_prompt_examples_disclose_merged_length_contract():
     p = build_pdf_prompt(["HANK walks."])
     assert "exactly one translation per input array item" in p
     assert "never merge or split items" in p
+
+
+def test_pdf_prompt_includes_digit_preservation_instruction():
+    """Task 16: 사용자 실기 오류 신고(103→109 오염) 대응 — 프롬프트가 숫자열을
+    있는 그대로 베끼라고 명시해야 한다(코드 레벨 게이트는 보완재일 뿐,
+    확률을 낮추는 프롬프트 지시가 1차 방어선)."""
+    p = build_pdf_prompt(["match sc103."])
+    assert "Copy every digit sequence" in p
+    assert "never alter, swap, or invent digits" in p
+
+
+# ── _verify_numbers 단위 테스트 (Task 16) ──────────────────────────────
+
+def test_verify_numbers_fixes_single_candidate_contamination():
+    """사용자 리포트 원본 사례: 103→109 오염이 정확히 103으로 치환된다."""
+    src = "Please hook up Bobby's screen to match sc103."
+    ko = "바비의 화면을 씬109에 맞춰 훅업해주세요."
+    fixed, verdict = _verify_numbers(src, ko)
+    assert verdict == "fixed"
+    assert "103" in fixed
+    assert "109" not in fixed
+
+
+def test_verify_numbers_allows_intentional_cue_number_drop():
+    """화자줄 관례가 선행 큐 번호를 의도적으로 생략 — 누락 단독은 오류가 아니다."""
+    src = "3 HANK/EMPLOYEES Propane."
+    ko = "행크: 프로판."
+    fixed, verdict = _verify_numbers(src, ko)
+    assert verdict == "ok"
+    assert fixed == ko
+
+
+def test_verify_numbers_allows_spelled_out_number_translation():
+    """"two trucks"→"트럭 2대"는 정당한 변환 — 같은 자릿수 소스측 누락이
+    없으므로(소스에 숫자 자체가 없음) 오탐하지 않는다."""
+    src = "two trucks"
+    ko = "트럭 2대"
+    fixed, verdict = _verify_numbers(src, ko)
+    assert verdict == "ok"
+    assert fixed == ko
+
+
+def test_verify_numbers_ambiguous_candidates_are_unresolved():
+    """같은 자릿수 누락 후보가 2개 이상이면 자동 치환하지 않고 unresolved."""
+    src = "Move sc103 near sc105 stage."
+    ko = "씬109 근처로 무대를 옮겨주세요."
+    fixed, verdict = _verify_numbers(src, ko)
+    assert verdict == "unresolved"
+    assert fixed == ko  # 자동 치환 금지 — 원문 그대로 반환
+
+
+def test_verify_numbers_replaces_all_occurrences_of_repeated_foreign():
+    """foreign 숫자열이 KO에 2회 이상 나오면 전부 동일하게 치환한다."""
+    src = "Match sc103 to sc103 again."
+    ko = "씬109에 다시 씬109를 맞춰주세요."
+    fixed, verdict = _verify_numbers(src, ko)
+    assert verdict == "fixed"
+    assert fixed == "씬103에 다시 씬103를 맞춰주세요."
+    assert "109" not in fixed
 
 
 @pytest.mark.asyncio
@@ -248,3 +309,58 @@ async def test_translate_texts_cancellation_propagates_and_leaves_no_orphan_task
             translate_texts(texts, t, chunk_size=50, progress_cb=cb), timeout=2.0)
     pending = [tk for tk in asyncio.all_tasks() if tk is not current and not tk.done()]
     assert pending == []
+
+
+# ── translate_texts × 숫자 보존 게이트 통합 (Task 16) ────────────────────
+
+@pytest.mark.asyncio
+async def test_translate_texts_number_gate_fixes_without_retranslation():
+    """단일 후보 오염은 재번역 없이 그 자리에서 치환돼 채택된다."""
+    src = "Please hook up Bobby's screen to match sc103."
+    t = FakeTranslator([["바비의 화면을 씬109에 맞춰 훅업해주세요."]])
+    out = await translate_texts([src], t)
+    assert out == ["바비의 화면을 씬103에 맞춰 훅업해주세요."]
+    assert len(t.calls) == 1  # 재번역 호출 없음
+
+
+@pytest.mark.asyncio
+async def test_translate_texts_number_gate_retranslates_once_on_unresolved():
+    """모호한 오염(unresolved)은 블록 단건 재번역을 1회 시도하고, 재번역이
+    깨끗하면 그 결과를 채택한다."""
+    src = "Move sc103 near sc105 stage."
+    t = FakeTranslator([
+        ["씬109 근처로 무대를 옮겨주세요."],  # 1차: 모호 오염(후보 2개)
+        ["씬103 근처로 무대를 옮겨주세요."],  # 재번역(단건): 정상
+    ])
+    out = await translate_texts([src], t)
+    assert out == ["씬103 근처로 무대를 옮겨주세요."]
+    assert len(t.calls) == 2
+    assert t.calls[0] == [src]
+    assert t.calls[1] == [src]
+
+
+@pytest.mark.asyncio
+async def test_translate_texts_number_gate_keeps_source_when_still_contaminated(
+        caplog):
+    """재번역도 여전히 오염되면(unresolved 재현) 원문 유지 폴백으로 합류하고
+    경고를 로그로 남긴다."""
+    src = "Move sc103 near sc105 stage."
+    t = FakeTranslator([
+        ["씬109 근처로 무대를 옮겨주세요."],  # 1차: 모호 오염
+        ["씬209 근처로 무대를 옮겨주세요."],  # 재번역도 모호 오염
+    ])
+    with caplog.at_level(logging.WARNING, logger="yeson.pdf.translate"):
+        out = await translate_texts([src], t)
+    assert out == [src]  # 원문 유지 폴백
+    assert len(t.calls) == 2
+    assert any("숫자" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_translate_texts_number_gate_logs_info_on_fix(caplog):
+    """자동 치환(fixed) 시 원문/오염/교정 값을 info 로그로 남긴다."""
+    src = "Please hook up Bobby's screen to match sc103."
+    t = FakeTranslator([["바비의 화면을 씬109에 맞춰 훅업해주세요."]])
+    with caplog.at_level(logging.INFO, logger="yeson.pdf.translate"):
+        await translate_texts([src], t)
+    assert any("109" in r.message and "103" in r.message for r in caplog.records)
