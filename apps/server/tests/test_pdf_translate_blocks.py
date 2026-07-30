@@ -408,8 +408,9 @@ async def test_translate_texts_dedupes_repeated_source_text(caplog):
     assert out == ["KO:a", "KO:b", "KO:c", "KO:a", "KO:d", "KO:a"]
     assert len(t.calls) == 1
     assert t.calls[0] == ["a", "b", "c", "d"]  # 유니크 4개만 호출
-    assert any("dedupe: 6" in r.message and "4" in r.message
-               for r in caplog.records)
+    # 리뷰 지적(Minor): "4" in r.message는 "14"에도 걸리는 느슨한 단언 —
+    # 정확한 문자열로 좁힌다.
+    assert any("dedupe: 6→4 unique" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -463,3 +464,64 @@ async def test_translate_texts_applies_house_style_before_number_gate(monkeypatc
     t = FakeTranslator([["태더튼, sc103 확인"]])
     await translate_texts(["Thatherton, confirm sc103"], t)
     assert order == ["house", "gate"]
+
+
+# ── dedupe × 원문 유지 폴백 상호작용 (리뷰 Important 1) ──────────────────
+# task-18-review.md: dedupe 정규화 키는 대소문자·구분자만 다른 서로 다른
+# 원문을 하나로 묶을 수 있다("CAM ADJ"/"Cam-Adj" → 둘 다 "cam adj"). 이때
+# 원문을 그대로 돌려주는 두 폴백 경로(_resilient 1블록 실패, 숫자 게이트
+# 미해결)가 발동하면, 고치기 전에는 유니크 대표(첫 등장) 원문이 다른
+# 위치로 새어 나갔다 — 아래 두 테스트가 각 경로를 잠근다.
+
+@pytest.mark.asyncio
+async def test_translate_texts_dedupe_collision_translation_failure_returns_own_source():
+    """dedupe 키가 뭉친 두 원문(대소문자·구분자만 다름) 중 번역이 실패해
+    원문 유지 폴백이 발동해도, 각 위치는 자기 자신의 원문을 받아야 한다 —
+    유니크 대표의 원문이 다른 위치로 새면 안 된다."""
+    texts = ["CAM ADJ", "Cam-Adj"]
+    t = FakeTranslator([TranslationError("boom")])
+    out = await translate_texts(texts, t)
+    assert len(t.calls) == 1  # dedupe로 유니크 1개만 호출
+    assert out == ["CAM ADJ", "Cam-Adj"]  # 각자 자기 원문 — 뒤섞이지 않음
+
+
+@pytest.mark.asyncio
+async def test_translate_texts_dedupe_collision_number_gate_unresolved_returns_own_source():
+    """같은 리뷰 항목, 숫자 게이트 미해결 폴백 경로: 대소문자/구분자만
+    다른 두 원문이 dedupe로 뭉쳤을 때, 숫자 오염이 재번역 후에도
+    unresolved면(원문 유지) 각 위치가 자기 원문을 받아야 한다."""
+    a = "Move sc103 near sc105 stage"
+    b = "move-sc103 near-sc105 stage"
+    t = FakeTranslator([
+        ["씬109 근처로 무대를 옮겨주세요."],  # 1차: 모호 오염
+        ["씬209 근처로 무대를 옮겨주세요."],  # 재번역도 모호 오염
+    ])
+    out = await translate_texts([a, b], t)
+    assert len(t.calls) == 2  # dedupe(유니크 1개) + 재번역 1회
+    assert out == [a, b]  # 각자 자기 원문 — 유니크 대표 원문이 새지 않음
+
+
+@pytest.mark.asyncio
+async def test_translate_texts_number_gate_retry_applies_house_style():
+    """재번역 폴백 경로(_verify_and_fix_numbers 내부)에도 apply_house_style이
+    걸려야 한다 — 정상 경로만 테스트하면 재번역으로 숫자가 해결된 블록만
+    하우스 표기가 빠지는 비일관이 생길 수 있다(리뷰 Minor)."""
+    src = "Thatherton, move sc103 near sc105"
+    t = FakeTranslator([
+        ["태더튼, 씬109 근처로."],  # 1차: 모호 오염(103/105 둘 다 길이3 후보)
+        ["태더튼, 씬103 근처로."],  # 재번역: 숫자 해결 — 여기서 하우스치환 확인
+    ])
+    out = await translate_texts([src], t)
+    assert out == ["대더튼, 씬103 근처로."]  # 재번역 결과에도 하우스 치환 적용
+    assert len(t.calls) == 2
+
+
+# ── props/prop 글로서리 모순 예외 (리뷰 Minor) ───────────────────────────
+
+def test_pdf_prompt_notes_props_house_style_overrides_glossary():
+    """리뷰 지적: _HOUSE_STYLE_BLOCK의 "props=소품" 지시 직후 glossary_block()
+    이 "prop→프롭"을 덧붙여 프롬프트가 자기모순처럼 보인다 — 하우스 표기가
+    우선한다는 예외 문장이 있어야 한다."""
+    p = build_pdf_prompt(["a prop on the table"])
+    assert "prop" in p and "소품" in p
+    assert "takes precedence" in p

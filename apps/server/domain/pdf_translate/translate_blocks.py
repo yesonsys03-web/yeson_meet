@@ -104,6 +104,9 @@ _HOUSE_STYLE_BLOCK = (
     "toward the same listener across the whole document. HANK speaks politely\n"
     "(해요체/합쇼체) to employees and customers — never 반말/하게체 to them.\n"
     "When unsure, match the register of neighboring lines by the same speaker.\n"
+    "Note: use 소품 for props/prop in this document even though the general "
+    "glossary below maps prop→프롭 for ordinary captions — the house-style "
+    "line above takes precedence here.\n"
 )
 
 
@@ -372,4 +375,24 @@ async def translate_texts(
     unique_out: list[str] = []
     for chunk_result in results:
         unique_out.extend(chunk_result)
-    return [unique_out[i] for i in index_map]
+
+    out: list[str] = []
+    for pos, uidx in enumerate(index_map):
+        value = unique_out[uidx]
+        if value.strip() == unique_texts[uidx].strip():
+            # 원문 유지 폴백 신호(번역 실패 `_resilient` 또는 숫자 게이트
+            # 미해결 `_verify_and_fix_numbers`가 소스를 그대로 돌려준 것 —
+            # 둘 다 반환값이 유니크 대표 원문과 정확히 같아진다). dedupe
+            # 정규화 키는 대소문자·구분자만 정규화하므로(`_dedupe_key`)
+            # 원문이 실제로는 다른 두 그룹이 한 키로 묶일 수 있다(리뷰
+            # Important 1, task-18-review.md — "CAM ADJ"/"Cam-Adj" 예시).
+            # 이때 유니크 대표 값을 그대로 팬아웃하면 이 위치가 자기 원문이
+            # 아닌 *남의* 영문을 받고, pdf_run의 부분실패 탐지기(ko !=
+            # group.merged_text)도 "성공"으로 오판한다 — 폴백 신호일 땐
+            # 항상 이 위치 자신의 원문으로 채운다(정상 번역이 우연히
+            # 원문과 같은 값이 되는 copy-through 케이스에서도 이 처리가
+            # 더 정확하다 — 각자 자기 표기를 그대로 지킨다).
+            out.append(texts[pos])
+        else:
+            out.append(value)
+    return out
