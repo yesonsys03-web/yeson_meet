@@ -107,6 +107,77 @@ def test_extract_empty_dialog_with_merged_action_label_produces_no_dialog_block(
         doc.close()
 
 
+def _make_storyboard_pdf_multi_block_fields(tmp_path: Path) -> Path:
+    """다중 블록 필드 병합 회귀 가드(2026-07-30 GABE01_A1 실기 E2E 후속):
+    Dialog 754페이지 중 45%가 화자 줄(`1 HANK`)과 대사가 별개 raw 블록으로
+    나뉜다 — 최근접 1블록만 집어오면 실제 대사가 통째로 누락된다."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    page.insert_text((72, 460), "Dialog", fontsize=8)
+    page.insert_text((72, 478), "1 HANK", fontsize=10)
+    page.insert_text((72, 496), "(SINGING) If you wanna cook out...", fontsize=10)
+    page.insert_text((72, 560), "Action Notes", fontsize=8)
+    page.insert_text((72, 578), "The rest join in.", fontsize=10)
+    page.insert_text((72, 596), "CAM ADJUST", fontsize=10)
+    path = tmp_path / "sb_multi_block.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def _make_storyboard_pdf_merged_label_with_extra_block(tmp_path: Path) -> Path:
+    """라벨+내용이 한 블록으로 붙어 나오는 변형에서 그 아래 추가 후보
+    블록까지 이어 병합해야 하는 실물 패턴(2026-07-30 E2E: Action Notes
+    7%가 다중 블록이고, 첫 블록 아래 KO 주석이 두 번째 원문 블록과
+    겹치는 사고 재현 — CAM ADJUST가 별개 블록으로 딸려 나온다)."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    page.insert_text((72, 460), "Dialog", fontsize=8)
+    page.insert_text((72, 478), "If you wanna go, then go.", fontsize=10)
+    page.insert_text((72, 560), "Action Notes: HANK walks to the door.",
+                     fontsize=10)
+    page.insert_text((72, 580), "CAM ADJUST", fontsize=10)
+    path = tmp_path / "sb_merged_label_extra.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_extract_merges_all_candidate_blocks_in_field_window(tmp_path):
+    """실기 E2E(2026-07-30, GABE01_A1) 후속 — 필드 창 안의 모든 후보
+    블록을 y좌표 순으로 병합해야 한다(화자 줄+대사, 액션+CAM 지시)."""
+    path = _make_storyboard_pdf_multi_block_fields(tmp_path)
+    doc = open_pdf(path)
+    try:
+        raws = doc.raw_blocks(0)
+        second_dialog_block = next(
+            b for b in raws
+            if normalize_ws(b.text) == "(SINGING) If you wanna cook out...")
+        blocks = StoryboardProfile().extract(doc)
+        dialog = next(b for b in blocks if b.kind == "dialog")
+        action = next(b for b in blocks if b.kind == "action")
+        assert dialog.text == "1 HANK (SINGING) If you wanna cook out..."
+        assert action.text == "The rest join in. CAM ADJUST"
+        # bbox는 병합된 원본 블록들의 union — y1이 두 번째 블록의 y1 이상
+        assert dialog.bbox[3] >= second_dialog_block.bbox[3]
+    finally:
+        doc.close()
+
+
+def test_extract_merged_label_block_continues_merging_lower_candidates(tmp_path):
+    """라벨+내용 병합 블록 분기도 그 아래 창 안의 추가 후보를 이어
+    병합해야 한다(현재는 remainder만 반환하던 회귀)."""
+    doc = open_pdf(_make_storyboard_pdf_merged_label_with_extra_block(tmp_path))
+    try:
+        blocks = StoryboardProfile().extract(doc)
+        action = next(b for b in blocks if b.kind == "action")
+        assert action.text == "HANK walks to the door. CAM ADJUST"
+    finally:
+        doc.close()
+
+
 def test_helpers():
     assert has_hangul("씬 내내") is True
     assert has_hangul("If you wanna") is False
@@ -170,14 +241,29 @@ SAMPLES = os.environ.get("YESON_PDF_SAMPLES")
 
 @pytest.mark.skipif(not SAMPLES, reason="실물 샘플 경로(YESON_PDF_SAMPLES) 미지정")
 def test_real_storyboard_sample():
-    """실물 검증(로컬 전용): GABE01_A1 앞 30페이지에서 감지 + 블록 추출."""
+    """실물 검증(로컬 전용): GABE01_A1 앞 30페이지에서 감지 + 블록 추출.
+
+    2026-07-30 E2E 후속(다중 블록 병합) 재측정: 병합 전 30페이지 기준
+    22블록(16d+6a, 필드당 1블록)이었으나, 병합해도 30페이지 안에서는
+    필드당 후보가 다중 블록인 페이지가 없어 블록 '개수'는 그대로
+    22(16d+6a) — 대신 병합으로 각 블록의 '내용'이 달라진다(대사 누락
+    수정). page 30의 dialog는 원래 화자 줄(`3 HANK/EMPLOYEES`)만
+    반환했으나 병합 후에는 실제 대사(`Propane.`)까지 포함해야 한다."""
     path = Path(SAMPLES) / "1601_콘티번역" / "GABE01_A1_FinalShipped.pdf"
     doc = open_pdf(path)
     try:
         profile = detect_profile(doc)
         assert profile is not None and profile.name == "storyboard"
-        blocks = [b for b in profile.extract(doc) if b.page < 30]
-        assert len(blocks) >= 1
+        all_blocks = profile.extract(doc)
+        blocks = [b for b in all_blocks if b.page < 30]
+        assert len(blocks) == 22
+        dialog = [b for b in blocks if b.kind == "dialog"]
+        action = [b for b in blocks if b.kind == "action"]
+        assert len(dialog) == 16
+        assert len(action) == 6
         assert all("\t" not in b.text for b in blocks)
+        page30_dialog = next(
+            b for b in all_blocks if b.page == 30 and b.kind == "dialog")
+        assert "Propane." in page30_dialog.text
     finally:
         doc.close()

@@ -82,14 +82,19 @@ class StoryboardProfile:
 
 def _field_content(raws: list[RawBlock], label: str,
                     next_label: str | None = None) -> RawBlock | None:
-    """라벨과 정확히 일치하는 블록의 '아래 가장 가까운' 블록을 내용으로.
-    라벨+내용이 한 블록이면 라벨 접두를 떼고 나머지를 내용으로.
+    """라벨 아래, '다음 라벨' 앞까지의 창 안에 있는 **모든** 콘텐츠 블록을
+    y좌표 오름차순으로 병합해 하나의 RawBlock으로 반환한다(2026-07-30
+    E2E 실측: Dialog 754페이지 중 45%가 화자 줄과 대사가 별개 블록으로
+    나뉜다 — 최근접 1블록만 집으면 실제 대사가 누락된다).
+    라벨+내용이 한 블록이면 라벨 접두를 뗀 나머지를 첫 조각으로 삼고,
+    그 아래 창 안의 추가 후보들도 이어 붙인다.
 
     실물(GABE01) 실측: 필드가 비어 있으면 플레이스홀더 없이 통째로
     생략된다 — 그래서 후보를 다음 필드 라벨의 y좌표 위로 제한해야 한다.
     안 그러면 Dialog가 비었을 때 그 아래 Action Notes '내용'까지
     건너뛰어 잘못 집어온다(라벨 텍스트만 걸러서는 못 막는다)."""
     label_block = None
+    first_piece: RawBlock | None = None
     for b in raws:
         t = normalize_ws(b.text)
         if t == label:
@@ -98,10 +103,12 @@ def _field_content(raws: list[RawBlock], label: str,
         if t.startswith(label) and len(t) > len(label):
             rest = t[len(label):].lstrip(" :")
             if rest:
-                return RawBlock(text=rest, bbox=b.bbox)
-    if label_block is None:
+                first_piece = RawBlock(text=rest, bbox=b.bbox)
+                break
+    anchor = label_block if label_block is not None else first_piece
+    if anchor is None:
         return None
-    lx0, _ly0, _lx1, ly1 = label_block.bbox
+    lx0, _ly0, _lx1, ly1 = anchor.bbox
     upper_bound = None
     if next_label is not None:
         for b in raws:
@@ -113,9 +120,23 @@ def _field_content(raws: list[RawBlock], label: str,
                   and (upper_bound is None or b.bbox[1] < upper_bound - 1.0)
                   and abs(b.bbox[0] - lx0) < 60.0
                   and not _looks_like_field_label(normalize_ws(b.text))]
-    if not candidates:
+    pieces = ([first_piece] if first_piece is not None else []) + \
+        sorted(candidates, key=lambda b: b.bbox[1])
+    if not pieces:
         return None
-    return min(candidates, key=lambda b: b.bbox[1])
+    return _merge_pieces(pieces)
+
+
+def _merge_pieces(pieces: list[RawBlock]) -> RawBlock:
+    """y좌표 순 후보 블록들을 공백 1개로 이어붙이고 bbox는 union으로.
+    place()가 이 union 아래에 주석을 놓으므로 원본 블록 간 겹침이
+    자연히 해소된다."""
+    text = " ".join(normalize_ws(p.text) for p in pieces)
+    x0 = min(p.bbox[0] for p in pieces)
+    y0 = min(p.bbox[1] for p in pieces)
+    x1 = max(p.bbox[2] for p in pieces)
+    y1 = max(p.bbox[3] for p in pieces)
+    return RawBlock(text=text, bbox=(x0, y0, x1, y1))
 
 
 def _estimate_height(text: str, width: float, fontsize: float) -> float:

@@ -31,6 +31,14 @@ def test_pdf_prompt_mentions_production_not_subtitles():
     assert "HANK walks." in p
 
 
+def test_pdf_prompt_mentions_speaker_line_convention():
+    """수작업본(납품 기준) 관례 실측: 화자 줄은 '화자명: 대사'로,
+    선행 큐 번호는 생략(2026-07-30 E2E 후속)."""
+    p = build_pdf_prompt(["3 HANK/EMPLOYEES Propane."])
+    assert "화자명: 대사" in p
+    assert "cue number" in p
+
+
 @pytest.mark.asyncio
 async def test_translate_texts_happy_path():
     t = FakeTranslator(["echo-ko"])
