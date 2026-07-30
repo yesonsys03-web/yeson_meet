@@ -31,10 +31,27 @@ ENV_ENABLED = "YESON_PDF_PANEL_OCR"
 
 _PREFILTER_DPI = 60
 _OCR_DPI = 200
-_RED_R_MIN = 150
-_RED_G_MAX = 100
-_RED_B_MAX = 100
-_PREFILTER_MIN_PIXELS = 50
+# 빨강 판정(프리필터·히트 비율 공용, 실측 재설계 2026-07-30): 절대 채도
+# 기준(구 R>150,G<100,B<100)은 얇은 빨간 글자의 안티에일리어싱 희석에
+# 취약하다 — p18 실측: 60dpi 프리필터 크롭은 옛 마스크로 5px뿐(문턱 50
+# 미달, 전멸), 심지어 200dpi OCR 히트 자체도 옛 마스크 기준 비율
+# 0.053~0.083(문턱 0.15 근처에도 한참 못 미침, 라벨 6종 전부). R−G/R−B
+# 차이 기준으로 바꾸면 같은 픽셀들이 안정적으로 잡힌다(같은 페이지 60dpi
+# 33px, 200dpi 히트 비율 0.237~0.348) — 검정 그림선(사인·표지판 텍스트
+# 등)은 그레이스케일이라 R≈G≈B, 두 마스크 다 항상 0에 가까워 오탐이
+# 늘지 않는다(p1·p93·p18의 검정 히트 전부 실측 0.000). 차이 기준 마스크는
+# 절대 채도 마스크의 초집합이라(R>150&G<100&B<100 ⟹ R−G>50&R−B>50) 기존에
+# 잡히던 히트는 전부 그대로 잡힌다.
+_RED_R_MIN = 120
+_RED_DIFF_MIN = 50
+# 프리필터 문턱(60dpi 픽셀 카운트): p18 실측 33px에 맞춰 50→10 완화 —
+# 오탐 페이지는 OCR 1~2초 비용뿐이라 완화 방향이 안전(전 문서 재측정으로
+# 폭주 없음 확인, task-19-report.md 참고).
+_PREFILTER_MIN_PIXELS = 10
+# 히트별 빨강 비율 문턱(200dpi 크롭): 확인된 잡음(검정 그림선, 전부
+# 0.000~0.071 — YOSEMITE 0.071은 이 태스크 범위 밖이라 손대지 않음)과
+# 확인된 유효 라벨(p1·p18·p93·p410 전부 0.219~0.391) 사이 실측 간극에
+# 여유를 두고 0.15로 설정.
 _HIT_RED_RATIO_MIN = 0.15
 
 _HANGUL = re.compile(r"[가-힣]")
@@ -71,10 +88,13 @@ def _decode_png(png_bytes: bytes) -> np.ndarray:
 
 
 def _red_mask(arr: np.ndarray) -> np.ndarray:
+    """빨강 마스크(프리필터·히트 비율 공용) — R−G/R−B 차이 기준이라
+    안티에일리어싱으로 희석된 얇은 빨간 글자도 잡고, 그레이스케일인 검정
+    그림선(R≈G≈B)은 밝기와 무관하게 걸러진다."""
     r = arr[..., 0].astype(np.int16)
     g = arr[..., 1].astype(np.int16)
     b = arr[..., 2].astype(np.int16)
-    return (r > _RED_R_MIN) & (g < _RED_G_MAX) & (b < _RED_B_MAX)
+    return (r > _RED_R_MIN) & (r - g > _RED_DIFF_MIN) & (r - b > _RED_DIFF_MIN)
 
 
 def _crop_region_px(arr: np.ndarray, region: tuple[float, float, float, float],
@@ -105,7 +125,8 @@ def find_panel_labels(
 
     low_arr = _decode_png(doc.render_png(page, dpi=_PREFILTER_DPI))
     low_crop = _crop_region_px(low_arr, region, _PREFILTER_DPI)
-    if low_crop.size == 0 or int(_red_mask(low_crop).sum()) < _PREFILTER_MIN_PIXELS:
+    if (low_crop.size == 0
+            or int(_red_mask(low_crop).sum()) < _PREFILTER_MIN_PIXELS):
         return []
 
     hi_arr = _decode_png(doc.render_png(page, dpi=_OCR_DPI))
