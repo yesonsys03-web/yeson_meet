@@ -242,6 +242,24 @@ def test_real_bobby_chain_preserves_offscreen_annotation_and_leading_pronoun():
     assert texts == [merged]
 
 
+def test_no_annotation_continuation_preserves_leading_capitalized_word():
+    """재리뷰 라운드 2 Minor #1 회귀 가드: (CONT.) 표시가 없는 조각에서
+    화자 런 뒤 곧바로 오는 대문자 단독 단어(길이 2 이상)를 화자명 일부로
+    오인해 삼키면 안 된다. `1cc55a9`(라운드 1)에서는 "12 HANK NO. I mean
+    it."의 "NO."가 정상 보존됐는데, 라운드 2의 무조건 소비 재설계가 이를
+    회귀시켰다 — 이 조각 자신에게도, 체인의 다른 멤버에게도 "NO." 뒤에
+    괄호 주석이 없으므로 화자 런에 넣을 근거가 없다."""
+    blocks = [
+        _block(0, "dialog", "12 HANK Well, listen."),
+        _block(1, "dialog", "12 HANK NO. I mean it."),
+    ]
+    groups, texts = group_utterances(blocks)
+    assert len(groups) == 1
+    merged = groups[0].merged_text
+    assert merged == "12 HANK Well, listen. NO. I mean it."
+    assert texts == [merged]
+
+
 SAMPLES = os.environ.get("YESON_PDF_SAMPLES")
 
 

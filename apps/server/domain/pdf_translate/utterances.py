@@ -27,15 +27,18 @@ _CUE_RE = re.compile(
 
 # _strip_cue_header 전용: 화자 런 소비는 이 조각 자신의 텍스트만으로
 # 판단한다 — 공백으로 토큰을 나눠 소문자가 섞이지 않은 "전부 대문자류"
-# 토큰(`_HEADER_TOKEN_RE`)을 전부 삼킨다. 다음 토큰이 본문 소문자 단어라면
+# 토큰(`_HEADER_TOKEN_RE`)을 삼킨다. 다음 토큰이 본문 소문자 단어라면
 # 자연히 거기서 멈춘다(예: "BILL/DALE/BOOMHAUER Oh..."의 "Oh"). 화자 런
 # 뒤에 곧바로 오는 연속된 괄호 토큰 구간(`_ANNOTATION_TOKEN_RE`)에서는
 # (CONT.)/(Cont.) 계속 표시(`_CONT_TOKEN_RE`)만 제거하고, (O.S.)/(V.O.)
 # 등 다른 주석은 조각 고유의 본문 정보로 보존한다. 주의: `_HEADER_TOKEN_RE`는
-# 형태(대소문자·기호)만 보고 의미를 모른다 — 첫 화자 토큰 다음 토큰부터는
-# 길이 1인 토큰("I" 등 본문 대명사와 형태가 같다)을 화자 런에서 제외해
-# 실제로 관측된 오소비(`37 BOBBY I am...`)를 막는다(길이 2 이상인 토큰은
-# 여전히 형태만으로 판단하므로 잔여 위험은 남는다 — 예: "12 HANK NO."류).
+# 형태(대소문자·기호)만 보고 의미를 모른다 — 첫 화자 토큰은 항상 포함하되,
+# 그 다음 토큰부터는 (a) 런 직후에 괄호 주석이 오거나 (b) 그 토큰이 같은
+# 체인의 다른 멤버 런에서 이미 확인된 화자 토큰일 때만 잇는다
+# (`_speaker_run_bounds`/`_confirmed_speaker_tokens`). 이 가드가 없으면
+# "(CONT.)"가 없는 조각에서 본문 선두의 대문자 단독 단어("12 HANK NO. I
+# mean it."의 "NO.", "9 DONNA OK fine."의 "OK")까지 화자 런으로 삼켜
+# 본문에서 사라진다 — 실제로 관측된 회귀였다.
 _HEADER_TOKEN_RE = re.compile(r"^[A-Z0-9'&/.\-#]+$")
 _ANNOTATION_TOKEN_RE = re.compile(r"^\([^()]*\)$")
 _CONT_TOKEN_RE = re.compile(r"^\((?:CONT|Cont)\.?\)$")
@@ -70,30 +73,62 @@ def _parse_cue(text: str) -> tuple[str, str] | None:
     return m.group(1), m.group(2)
 
 
-def _strip_cue_header(text: str, seen_text: str) -> str:
+def _speaker_run_bounds(tokens: list[str]) -> int:
+    """tokens[0]=큐번호인 토큰 리스트에서, 소문자가 섞이지 않은 "전부
+    대문자류" 토큰이 최대 몇 번째까지 이어지는지(배타적 끝 인덱스)를
+    반환한다. 첫 화자 토큰(tokens[1])은 형태가 맞으면 무조건 포함하고,
+    그 다음부터는 길이 1인 토큰("I" 등 본문 대명사와 형태가 같다)에서
+    멈춘다 — 이 함수는 "최대로 가능한" 경계만 계산할 뿐, 그 경계까지
+    실제로 신뢰할지는 호출부가 별도로 판단한다."""
+    n = len(tokens)
+    i = 1
+    if i < n and _HEADER_TOKEN_RE.match(tokens[i]):
+        i += 1
+        while i < n and len(tokens[i]) > 1 and _HEADER_TOKEN_RE.match(tokens[i]):
+            i += 1
+    return i
+
+
+def _confirmed_speaker_tokens(text: str) -> list[str]:
+    """이 텍스트 하나만으로 화자 런 전체를 신뢰할 수 있는 경우(런 직후
+    괄호 주석이 옴)에만 그 화자 토큰들(첫 토큰 제외)을 반환한다 — 체인의
+    다른 멤버가 이 토큰들을 알 수 있게 누적시키기 위함(아래
+    `_strip_cue_header`의 조건 (b))."""
+    tokens = _GLUED_PAREN_RE.sub(r" \1", text).split()
+    n = len(tokens)
+    max_end = _speaker_run_bounds(tokens)
+    if max_end < n and _ANNOTATION_TOKEN_RE.match(tokens[max_end]):
+        return tokens[2:max_end]
+    return []
+
+
+def _strip_cue_header(
+    text: str, seen_text: str, known_speaker_tokens: set[str],
+) -> str:
     """체인 후속 조각에서 큐 헤더(큐번호 + 화자 런)를 제거한 나머지에서
-    (CONT.)/(Cont.) 계속 표시를 제거한다. 화자 런과 주석 소비는 모두 이
-    조각 자신의 텍스트만으로 판단한다 — 위 정규식 주석 참고. (O.S.)/
-    (V.O.) 등 다른 주석은 원칙적으로 조각 고유의 본문 정보로 보존하되,
-    `seen_text`(체인에 지금까지 누적된 텍스트)에 이미 등장한 토큰이면
-    같은 주석의 반복이므로 함께 제거한다(예: 첫 멤버가 이미 "(O.S.)"를
-    달고 있었다면 후속 조각의 "(O.S.)" 반복은 새 정보가 아니다).
-    (CONT.)-헤더만 있는 조각(뒤에 다른 본문이 없음)은 빈 문자열을
-    반환한다."""
+    (CONT.)/(Cont.) 계속 표시를 제거한다. 화자 런 소비는 첫 화자 토큰은
+    무조건 포함하고, 그 다음 토큰부터는 (a) 런 직후에 괄호 주석이 오거나
+    (b) `known_speaker_tokens`(체인의 다른 멤버 런에서 이미 확인된 화자
+    토큰)에 있을 때만 잇는다 — 위 정규식 주석 참고. (O.S.)/(V.O.) 등 다른
+    주석은 원칙적으로 조각 고유의 본문 정보로 보존하되, `seen_text`(체인에
+    지금까지 누적된 텍스트)에 이미 등장한 토큰이면 같은 주석의 반복이므로
+    함께 제거한다(예: 첫 멤버가 이미 "(O.S.)"를 달고 있었다면 후속 조각의
+    "(O.S.)" 반복은 새 정보가 아니다). (CONT.)-헤더만 있는 조각(뒤에 다른
+    본문이 없음)은 빈 문자열을 반환한다."""
     if _CUE_RE.match(text) is None:
         return text.strip()
 
     tokens = _GLUED_PAREN_RE.sub(r" \1", text).split()
     n = len(tokens)
-    i = 1  # tokens[0] = 큐번호
-    if i < n and _HEADER_TOKEN_RE.match(tokens[i]):
-        i += 1
-        # 첫 화자 토큰 다음부터는 길이 1인 토큰("I" 등 본문 대명사와
-        # 형태가 같다)은 화자 런으로 잇지 않는다 — 실물 코퍼스에 뒤에
-        # 아무 주석도 없이 바로 본문 대명사가 오는 조각이 실재한다
-        # (예: "37 BOBBY I am..." — GABE01_A1 p335).
-        while i < n and len(tokens[i]) > 1 and _HEADER_TOKEN_RE.match(tokens[i]):
-            i += 1
+    max_end = _speaker_run_bounds(tokens)
+    if max_end < n and _ANNOTATION_TOKEN_RE.match(tokens[max_end]):
+        i = max_end
+    else:
+        i = 1
+        if i < max_end:
+            i = 2  # 첫 화자 토큰은 무조건 포함
+            while i < max_end and tokens[i] in known_speaker_tokens:
+                i += 1
 
     seen_tokens = seen_text.split()
     kept: list[str] = []
@@ -159,9 +194,10 @@ def group_utterances(
     chain_slot = -1
     chain_indices: list[int] = []
     chain_merged = ""
+    chain_speaker_tokens: set[str] = set()
 
     def flush_chain() -> None:
-        nonlocal chain_key, chain_slot, chain_merged
+        nonlocal chain_key, chain_slot, chain_merged, chain_speaker_tokens
         if chain_slot >= 0:
             groups[chain_slot] = UtteranceGroup(
                 member_indices=list(chain_indices),
@@ -170,6 +206,7 @@ def group_utterances(
         chain_slot = -1
         chain_indices.clear()
         chain_merged = ""
+        chain_speaker_tokens = set()
 
     for i, block in enumerate(blocks):
         if block.kind != "dialog":
@@ -182,7 +219,8 @@ def group_utterances(
             continue
         if chain_slot >= 0 and key == chain_key:
             chain_indices.append(i)
-            piece = _strip_cue_header(block.text, chain_merged)
+            piece = _strip_cue_header(block.text, chain_merged, chain_speaker_tokens)
+            chain_speaker_tokens.update(_confirmed_speaker_tokens(block.text))
             if piece:
                 contribution = _overlap_trim(chain_merged, piece)
                 if contribution:
@@ -194,6 +232,7 @@ def group_utterances(
             groups.append(None)  # 체인이 닫힐 때 채워짐(flush_chain)
             chain_indices.append(i)
             chain_merged = block.text
+            chain_speaker_tokens = set(_confirmed_speaker_tokens(block.text))
 
     flush_chain()
 
