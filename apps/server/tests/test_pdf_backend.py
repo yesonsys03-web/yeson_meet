@@ -140,11 +140,17 @@ def test_corrupt_words_groups_by_whitespace_word(synthetic_pdf, monkeypatch):
 
 def test_page_rects_returns_drawn_rectangles(tmp_path):
     """필드 박스 판정의 원재료 — 페이지의 벡터 도형 경계 사각형.
-    좌표는 실물(GABE01) Action Notes 박스와 같은 값을 쓴다."""
+    중복 제거 + (y0, x0) 오름차순 정렬을 검증한다."""
     import fitz
     doc = fitz.open()
     page = doc.new_page(width=1008, height=612)
-    page.draw_rect(fitz.Rect(24.0, 525.7, 985.1, 588.0),
+    # 두 개의 서로 다른 사각형 (y0가 다르고 x0도 다름 — 정렬 키 검증용)
+    page.draw_rect(fitz.Rect(50.0, 100.0, 200.0, 150.0),
+                   color=(0, 0, 0), width=1)
+    page.draw_rect(fitz.Rect(300.0, 50.0, 400.0, 80.0),
+                   color=(0, 0, 0), width=1)
+    # 정확한 중복 — 첫 번째 사각형과 동일
+    page.draw_rect(fitz.Rect(50.0, 100.0, 200.0, 150.0),
                    color=(0, 0, 0), width=1)
     path = tmp_path / "boxes.pdf"
     doc.save(path)
@@ -153,9 +159,21 @@ def test_page_rects_returns_drawn_rectangles(tmp_path):
     pdf = open_pdf(path)
     try:
         rects = pdf.page_rects(0)
-        assert any(abs(r[0] - 24.0) < 1.0 and abs(r[1] - 525.7) < 1.0
-                   and abs(r[2] - 985.1) < 1.0 and abs(r[3] - 588.0) < 1.0
-                   for r in rects)
+        # 중복 제거: 3개 그렸지만 2개만 반환되어야 함
+        assert len(rects) == 2, f"expected 2 unique rects, got {len(rects)}"
+        # (y0, x0) 오름차순: y0=50인 것이 먼저, y0=100인 것이 나중
+        # y0=50, x0=300 인 사각형이 [0]
+        # y0=100, x0=50 인 사각형이 [1]
+        expected_order = [
+            (300.0, 50.0, 400.0, 80.0),   # y0=50, x0=300
+            (50.0, 100.0, 200.0, 150.0),  # y0=100, x0=50
+        ]
+        for i, expected in enumerate(expected_order):
+            assert len(rects[i]) == 4
+            # 좌표 비교는 tolerance 포함 (MuPDF 반올림)
+            for j, exp_val in enumerate(expected):
+                assert abs(rects[i][j] - exp_val) < 1.0, \
+                    f"rects[{i}][{j}]: expected {exp_val}, got {rects[i][j]}"
     finally:
         pdf.close()
 
