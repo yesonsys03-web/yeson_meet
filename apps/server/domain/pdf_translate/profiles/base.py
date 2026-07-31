@@ -33,6 +33,13 @@ class PdfBlock:
     kind: str   # 프로파일 정의 값 (storyboard: "dialog" | "action")
     text: str   # 정규화된 원문
     bbox: tuple[float, float, float, float]
+    # 이 블록이 속한 필드 박스의 하단 y(pt). 배치가 "원문 아래"를 쓸 수
+    # 있는지 판정하는 상한이다. 모르면 None — 그때는 기존 배치 규칙 그대로
+    # (상한 없이 아래로 놓으면 박스를 넘어 다음 필드를 침범한다).
+    limit_y: float | None = None
+    # 같은 박스의 우측 x(pt). 아래 배치의 전폭 계산에 쓴다. 모르면 None →
+    # page_w - 8(기존 아래 경로와 동일한 값).
+    limit_x1: float | None = None
 
 
 @dataclass(frozen=True)

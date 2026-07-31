@@ -22,6 +22,7 @@ _GAP = 4.0                # 원문 블록과 주석 사이 여백(pt)
 _MIN_WIDTH = 280.0        # 주석 박스 최소 폭(아래 배치 폴백)
 _MIN_RIGHT_WIDTH = 180.0  # 오른쪽 배치가 성립하려면 필요한 최소 여유폭
 _FONT_SIZES = (12.0, 10.0, 9.0, 8.0)  # 축소 폴백 사다리(최후 8pt로 확정)
+_BELOW_FONT_SIZES = (12.0, 10.0)  # 아래 배치 사다리 — 10pt에서 끊는다
 _DETECT_PAGES = 3
 
 # 패널 콜아웃 라벨(빨강 리더라인) — 패널 래스터 이미지는 헤더/씬 테이블
@@ -38,6 +39,11 @@ _PANEL_TOP_MARGIN = 24.0  # 이보다 위로 올라가면(페이지 상단 근�
 # 되어버린다("Action Notes" 문자열이 대사로 오인식). 라벨 텍스트는
 # 후보에서 항상 제외한다.
 _LABEL_TEXTS = frozenset(label for label, _kind in _FIELDS)
+
+# 필드 박스로 인정할 사각형의 최소 크기 — 패널 테두리·표 셀 같은 작은
+# 도형을 후보에서 뺀다(GABE01 실측: 필드 박스는 폭 961pt·높이 62pt).
+_FIELD_BOX_MIN_WIDTH = 300.0
+_FIELD_BOX_MIN_HEIGHT = 15.0
 
 
 def _has_field_label(raws: list[RawBlock]) -> bool:
@@ -87,6 +93,7 @@ class StoryboardProfile:
             # 애초에 생기지 않는다. 깨진 단어가 없는 페이지는 원본 리스트를
             # 그대로 돌려받는다(대다수 페이지 비용 0).
             raws = repair_corrupt_words(doc, page, doc.raw_blocks(page))
+            rects = doc.page_rects(page)
             for i, (label, kind) in enumerate(_FIELDS):
                 next_label = _FIELDS[i + 1][0] if i + 1 < len(_FIELDS) else None
                 content = _field_content(raws, label, next_label,
@@ -101,8 +108,31 @@ class StoryboardProfile:
                     normalize_ws(line) for line in content.text.split("\n"))
                 if not text or has_hangul(text):
                     continue
+                box = _field_box(rects, content.bbox)
+                # 다음 필드 라벨 상한은 박스 유무와 무관하게 필드당 한 번만
+                # 계산해 둘을 min으로 합친다(리뷰 후속, Important 1(b)) —
+                # 예전엔 "박스 있으면 박스만, 없으면 라벨만" 상호배타였는데,
+                # 그러면 박스가 너무 낙낙해 다음 필드를 침범해도 그대로
+                # 상한이 돼버린다. 더 좁은 쪽이 항상 이기게 한다.
+                next_y0 = _next_label_y0(raws, next_label)
+                next_limit = None if next_y0 is None else next_y0 - _GAP
+                if box is not None:
+                    # 실측(GABE01, 매 7페이지 표본): dialog 필드에서
+                    # next_label_y0 - _GAP는 박스 하단보다 언제나 정확히
+                    # 2.0pt 아래다 — 즉 이 min은 실물에서는 사실상 no-op이고
+                    # (박스가 항상 이김), 박스가 지나치게 낙낙해 다음 필드를
+                    # 침범할 수 있는 병리적 케이스에서만 실제로 작동한다.
+                    limit_y = (box[3] if next_limit is None
+                              else min(box[3], next_limit))
+                    limit_x1 = box[2]
+                else:
+                    # 도형이 없으면 다음 필드 라벨을 상한으로. 마지막 필드는
+                    # 뒤에 라벨이 없어 None으로 남는다 = 기존 우측 배치 그대로.
+                    limit_y = next_limit
+                    limit_x1 = None
                 out.append(PdfBlock(page=page, kind=kind, text=text,
-                                    bbox=content.bbox))
+                                    bbox=content.bbox,
+                                    limit_y=limit_y, limit_x1=limit_x1))
             # 표지/타이틀 페이지(리뷰 후속, 2026-07-30): Dialog/Action Notes
             # 라벨이 아예 없으면 실제 패널 템플릿 페이지가 아니다 —
             # _panel_region이 이때 기본값(y_bottom=460)으로 열리는데, 표지의
@@ -121,15 +151,20 @@ class StoryboardProfile:
 
     def place(self, block: PdfBlock, ko_text: str,
               page_size: tuple[float, float]) -> Overlay:
-        """필드(dialog/action)는 오른쪽 우선 배치, 패널 콜아웃 라벨은
-        라벨 바로 위 우선 배치로 분기한다.
+        """필드(dialog/action)는 **필드 박스 안 원문 아래**를 우선하고, 자리가
+        없으면 오른쪽, 패널 콜아웃 라벨은 라벨 바로 위 우선으로 분기한다.
 
-        오른쪽 우선(2026-07-30 실기 피드백): 필드 박스는 페이지 전폭이고
-        원문은 좌측 절반만 차지하는 실물 관례를 따라, 원문 오른쪽 빈 공간에
-        y 정렬로 나란히 배치한다. 오른쪽 여유가 부족하면 기존처럼 블록
-        아래에 배치(자세한 이유는 _place_right_or_below 참고)."""
+        아래 우선(2026-07-31): 사람 납품본은 아래 여유가 있으면 원문 바로
+        아래 전폭 12pt로 쓴다(GABE01 전 1037페이지 실측) — 좁은 우측 칸에
+        여러 줄로 접히는 것보다 읽기 쉽다. 2026-07-30에 우측을 우선으로 둔
+        이유였던 '원문 가림'은 아래 경로의 시프트업을 제거하면서(fd7b1cd,
+        allow_shift=False) 이미 해소됐다 — 지금의 아래 경로는 원문을 덮지
+        않는다. 아래가 안 되면 기존 우측 경로 그대로."""
         if block.kind == _PANEL_LABEL_KIND:
             return self._place_panel_label(block, ko_text, page_size)
+        below = _place_below_in_box(block, ko_text, page_size)
+        if below is not None:
+            return below
         return _place_right_or_below(block, ko_text, page_size,
                                      min_right_width=_MIN_RIGHT_WIDTH)
 
@@ -157,6 +192,48 @@ class StoryboardProfile:
         rect = _clamp_nondegenerate(x0, y0, x1, y1, page_h)
         return Overlay(page=block.page, rect=rect, text=ko_text,
                        fontsize=_PANEL_FONTSIZE)
+
+
+def _place_below_in_box(block: PdfBlock, ko_text: str,
+                        page_size: tuple[float, float]) -> Overlay | None:
+    """필드 박스 안 원문 **아래**에 전폭으로 놓을 수 있으면 그 Overlay를,
+    자리가 없으면 None(호출부가 기존 우측 경로로 폴백)을 돌려준다.
+
+    상한(block.limit_y)을 모르면 None — 상한 없이 아래로 놓으면 박스를 넘어
+    다음 필드를 침범한다. 폭은 설계 §6.1대로 **필드 박스 우측까지 전폭**을
+    쓴다 — 원문 자체의 x1로 좁히면(레거시 `_place_right_or_below`의 아래
+    폴백처럼 `max(bx1, bx0 + _MIN_WIDTH)`로 캡) 짧은 원문 한 줄 뒤에 긴
+    번역이 와도 폭이 넓어지지 않아 12pt 한 줄에 들어갈 수 있는 문장이
+    불필요하게 2줄로 접혀 10pt까지 축소된다(실물 GABE01 373p 실측: 사람은
+    같은 자리에 12pt 한 줄로 썼는데 이 폭 캡 탓에 10pt가 나오던 버그,
+    2026-07-31 리뷰로 발견). `_place_right_or_below`는 이 문제와 무관—
+    그쪽은 원문과 겹치지 않으려고 일부러 원문 폭 기준을 쓰는 것이라 손대지
+    않는다."""
+    if block.limit_y is None:
+        return None
+    page_w, page_h = page_size
+    bx0, _by0, _bx1, by1 = block.bbox
+    y0 = by1 + _GAP
+    limit = min(block.limit_y, page_h - 4.0)
+    room = limit - y0
+    if room <= 0:
+        return None
+    # 필드 박스가 보고하는 limit_x1과 무관하게 페이지 폭 한도는 항상
+    # 지켜야 한다 — min으로 감싸 되살린다(단순 대체였다면 limit_x1이
+    # 페이지 밖/경계에 걸릴 때 주석이 페이지 밖으로 나갈 수 있었다).
+    right = min(page_w - 8.0,
+                block.limit_x1 - 8.0 if block.limit_x1 is not None
+                else page_w - 8.0)
+    x1 = right  # 설계 §6.1: 박스 우측까지 전폭 — 원문 x1로 좁히지 않는다.
+    if x1 <= bx0:
+        return None
+    for fontsize in _BELOW_FONT_SIZES:
+        height = _estimate_height(ko_text, x1 - bx0, fontsize)
+        if height <= room:
+            rect = _clamp_nondegenerate(bx0, y0, x1, y0 + height, page_h)
+            return Overlay(page=block.page, rect=rect, text=ko_text,
+                           fontsize=fontsize)
+    return None
 
 
 def _place_right_or_below(
@@ -212,6 +289,44 @@ def _panel_region(raws: list[RawBlock], page_w: float
     return (0.0, _PANEL_Y_TOP, page_w, y_bottom)
 
 
+def _next_label_y0(raws: list[RawBlock], next_label: str | None) -> float | None:
+    """다음 필드 라벨의 y0 — 라벨+내용이 한 블록으로 붙어 나오는 변형도
+    경계로 인정한다. _field_content의 창 상한과 배치 상한이 **같은 규칙**을
+    쓰도록 한 곳에 모은 것이다(규칙이 갈라지면 내용 창과 배치 상한이 어긋난다).
+
+    x열은 보지 않는다 — y만으로 매칭한다(의도적으로 열 무관). 현재
+    템플릿은 모든 필드 라벨이 같은 x열에 있어 무해하지만, 장차 라벨이
+    여러 열에 걸친 템플릿을 만나면 엉뚱한 열의 라벨을 상한으로 잘못
+    고를 수 있다."""
+    if next_label is None:
+        return None
+    for b in raws:
+        t = normalize_ws(b.text)
+        if t == next_label or (t.startswith(next_label)
+                               and len(t) > len(next_label)):
+            return b.bbox[1]
+    return None
+
+
+def _field_box(rects: list[tuple[float, float, float, float]],
+               bbox: tuple[float, float, float, float],
+               ) -> tuple[float, float, float, float] | None:
+    """원문 bbox를 감싸는 **가장 작은** 필드 박스 사각형 — 없으면 None.
+    가장 작은 것을 고르는 이유: 페이지 테두리처럼 전체를 감싸는 큰 사각형이
+    같이 잡히면 상한이 페이지 하단까지 열려 다음 필드를 침범한다."""
+    x0, y0, x1, y1 = bbox
+    best = None
+    for r in rects:
+        if (r[2] - r[0] < _FIELD_BOX_MIN_WIDTH
+                or r[3] - r[1] < _FIELD_BOX_MIN_HEIGHT):
+            continue
+        if (r[0] <= x0 + 1.0 and r[1] <= y0 + 1.0
+                and x1 <= r[2] + 1.0 and y1 <= r[3] + 1.0
+                and (best is None or (r[3] - r[1]) < (best[3] - best[1]))):
+            best = r
+    return best
+
+
 def _field_content(raws: list[RawBlock], label: str,
                     next_label: str | None = None, *,
                     is_action: bool = False) -> RawBlock | None:
@@ -242,19 +357,7 @@ def _field_content(raws: list[RawBlock], label: str,
     if anchor is None:
         return None
     lx0, _ly0, _lx1, ly1 = anchor.bbox
-    upper_bound = None
-    if next_label is not None:
-        for b in raws:
-            t = normalize_ws(b.text)
-            # 다음 라벨이 내용과 한 블록으로 붙어 나오는 변형도 경계로
-            # 인정해야 한다 — 안 그러면 upper_bound가 None으로 남아
-            # 현재 필드의 창이 무한정 열려서 다음 필드 아래쪽 블록까지
-            # 잘못 병합해온다(리뷰어 실측 재현: 병합 라벨형 다음-필드
-            # 경계 인식 실패로 인한 크로스필드 누수).
-            if t == next_label or (t.startswith(next_label)
-                                    and len(t) > len(next_label)):
-                upper_bound = b.bbox[1]
-                break
+    upper_bound = _next_label_y0(raws, next_label)
     candidates = [b for b in raws
                   if b.bbox[1] >= ly1 - 1.0
                   and (upper_bound is None or b.bbox[1] < upper_bound - 1.0)

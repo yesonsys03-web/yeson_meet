@@ -97,6 +97,16 @@ class MuPdfDocument:
                     origins.add(_origin_key(char[2]))
         return origins
 
+    def page_rects(self, page: int) -> list[tuple[float, float, float, float]]:
+        """페이지 벡터 도형의 경계 사각형들 — 프로파일이 '필드 박스'를 찾는
+        원재료다. 어떤 것이 필드 박스인지(폭·높이 문턱, 포함 관계)는 포맷별
+        관례라 프로파일이 판단한다. 중복은 제거하고 (y0, x0) 오름차순."""
+        seen: set[tuple[float, float, float, float]] = set()
+        for d in self._doc[page].get_drawings():
+            r = d["rect"]
+            seen.add((r.x0, r.y0, r.x1, r.y1))
+        return sorted(seen, key=lambda r: (r[1], r[0]))
+
     def producer(self) -> str:
         return str(self._doc.metadata.get("producer") or "")
 
