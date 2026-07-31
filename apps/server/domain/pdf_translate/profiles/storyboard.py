@@ -22,6 +22,7 @@ _GAP = 4.0                # 원문 블록과 주석 사이 여백(pt)
 _MIN_WIDTH = 280.0        # 주석 박스 최소 폭(아래 배치 폴백)
 _MIN_RIGHT_WIDTH = 180.0  # 오른쪽 배치가 성립하려면 필요한 최소 여유폭
 _FONT_SIZES = (12.0, 10.0, 9.0, 8.0)  # 축소 폴백 사다리(최후 8pt로 확정)
+_BELOW_FONT_SIZES = (12.0, 10.0)  # 아래 배치 사다리 — 10pt에서 끊는다
 _DETECT_PAGES = 3
 
 # 패널 콜아웃 라벨(빨강 리더라인) — 패널 래스터 이미지는 헤더/씬 테이블
@@ -121,15 +122,20 @@ class StoryboardProfile:
 
     def place(self, block: PdfBlock, ko_text: str,
               page_size: tuple[float, float]) -> Overlay:
-        """필드(dialog/action)는 오른쪽 우선 배치, 패널 콜아웃 라벨은
-        라벨 바로 위 우선 배치로 분기한다.
+        """필드(dialog/action)는 **필드 박스 안 원문 아래**를 우선하고, 자리가
+        없으면 오른쪽, 패널 콜아웃 라벨은 라벨 바로 위 우선으로 분기한다.
 
-        오른쪽 우선(2026-07-30 실기 피드백): 필드 박스는 페이지 전폭이고
-        원문은 좌측 절반만 차지하는 실물 관례를 따라, 원문 오른쪽 빈 공간에
-        y 정렬로 나란히 배치한다. 오른쪽 여유가 부족하면 기존처럼 블록
-        아래에 배치(자세한 이유는 _place_right_or_below 참고)."""
+        아래 우선(2026-07-31): 사람 납품본은 아래 여유가 있으면 원문 바로
+        아래 전폭 12pt로 쓴다(GABE01 전 1037페이지 실측) — 좁은 우측 칸에
+        여러 줄로 접히는 것보다 읽기 쉽다. 2026-07-30에 우측을 우선으로 둔
+        이유였던 '원문 가림'은 아래 경로의 시프트업을 제거하면서(fd7b1cd,
+        allow_shift=False) 이미 해소됐다 — 지금의 아래 경로는 원문을 덮지
+        않는다. 아래가 안 되면 기존 우측 경로 그대로."""
         if block.kind == _PANEL_LABEL_KIND:
             return self._place_panel_label(block, ko_text, page_size)
+        below = _place_below_in_box(block, ko_text, page_size)
+        if below is not None:
+            return below
         return _place_right_or_below(block, ko_text, page_size,
                                      min_right_width=_MIN_RIGHT_WIDTH)
 
@@ -157,6 +163,37 @@ class StoryboardProfile:
         rect = _clamp_nondegenerate(x0, y0, x1, y1, page_h)
         return Overlay(page=block.page, rect=rect, text=ko_text,
                        fontsize=_PANEL_FONTSIZE)
+
+
+def _place_below_in_box(block: PdfBlock, ko_text: str,
+                        page_size: tuple[float, float]) -> Overlay | None:
+    """필드 박스 안 원문 **아래**에 전폭으로 놓을 수 있으면 그 Overlay를,
+    자리가 없으면 None(호출부가 기존 우측 경로로 폴백)을 돌려준다.
+
+    상한(block.limit_y)을 모르면 None — 상한 없이 아래로 놓으면 박스를 넘어
+    다음 필드를 침범한다. 폭 규칙(_MIN_WIDTH 하한, 원문 우측 상한)은 기존
+    아래 경로와 같은 것을 쓴다."""
+    if block.limit_y is None:
+        return None
+    page_w, page_h = page_size
+    bx0, _by0, bx1, by1 = block.bbox
+    y0 = by1 + _GAP
+    limit = min(block.limit_y, page_h - 4.0)
+    room = limit - y0
+    if room <= 0:
+        return None
+    right = (block.limit_x1 - 8.0) if block.limit_x1 is not None \
+        else (page_w - 8.0)
+    x1 = min(right, max(bx1, bx0 + _MIN_WIDTH))
+    if x1 <= bx0:
+        return None
+    for fontsize in _BELOW_FONT_SIZES:
+        height = _estimate_height(ko_text, x1 - bx0, fontsize)
+        if height <= room:
+            rect = _clamp_nondegenerate(bx0, y0, x1, y0 + height, page_h)
+            return Overlay(page=block.page, rect=rect, text=ko_text,
+                           fontsize=fontsize)
+    return None
 
 
 def _place_right_or_below(

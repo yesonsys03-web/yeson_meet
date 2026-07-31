@@ -416,6 +416,64 @@ def test_place_bottom_edge_block_returns_nondegenerate_onpage_rect():
     assert 0.0 <= y0 and y1 <= page_size[1]  # 페이지 안
 
 
+def test_place_below_when_field_box_has_room():
+    """필드 박스 안 원문 아래에 여유가 있으면 좁은 우측 칸 대신 아래 전폭
+    12pt로 놓는다(사람 납품본 관례 — GABE01 373p 실측: 원문
+    (27.0, 546.7, 790.3, 557.8), 박스 하단 588.0, 사람은 (27.4, 557.1)).
+    원문 오른쪽 여유가 _MIN_RIGHT_WIDTH를 넘어도 아래가 우선이다."""
+    block = PdfBlock(page=0, kind="action",
+                     text="Bobby does the Three Amigos Salute.",
+                     bbox=(27.0, 546.7, 790.3, 557.8),
+                     limit_y=588.0, limit_x1=985.1)
+    ov = StoryboardProfile().place(block, "바비는 오른손을 가슴에 얹는다.",
+                                   (1008.0, 612.0))
+    assert ov.rect[1] >= block.bbox[3]      # 원문 아래
+    assert ov.rect[0] == block.bbox[0]      # 원문과 같은 좌측 정렬
+    assert ov.rect[2] > 700.0               # 좁은 우측 칸이 아니라 전폭
+    assert ov.rect[3] <= 588.0              # 필드 박스 안
+    assert ov.fontsize == 12.0
+    assert not _rects_intersect(ov.rect, block.bbox)
+
+
+def test_place_below_shrinks_to_10pt_when_12pt_does_not_fit():
+    """아래 여유가 12pt엔 모자라고 10pt엔 충분하면 아래 배치를 유지하되
+    10pt로 줄인다(사다리는 10pt에서 끊는다)."""
+    block = PdfBlock(page=0, kind="action", text="a" * 60,
+                     bbox=(27.0, 500.0, 790.3, 512.0),
+                     limit_y=560.0, limit_x1=985.1)
+    ov = StoryboardProfile().place(block, "가" * 130, (1008.0, 612.0))
+    assert ov.fontsize == 10.0
+    assert ov.rect[1] >= block.bbox[3]
+    assert ov.rect[3] <= 560.0
+
+
+def test_place_falls_back_to_right_when_box_has_no_room_below():
+    """박스 아래 여유가 10pt로도 부족하면 기존 우측 경로로 폴백한다
+    (실물 Dialog 필드처럼 원문이 박스를 꽉 채운 경우 — 21p 실측:
+    원문 하단 516.5, 박스 하단 522.7 → 여유 2.2pt)."""
+    block = PdfBlock(page=0, kind="dialog", text="a" * 40,
+                     bbox=(27.0, 481.3, 300.0, 516.5),
+                     limit_y=522.7, limit_x1=985.1)
+    ov = StoryboardProfile().place(
+        block, "행크:(노래하며) 밖에서 요리를 하고 싶다면", (1008.0, 612.0))
+    assert ov.rect[0] >= block.bbox[2]      # 원문 오른쪽
+    assert ov.rect[1] == block.bbox[1]      # 우측 경로의 y 정렬
+    assert not _rects_intersect(ov.rect, block.bbox)
+
+
+def test_place_without_limit_y_keeps_legacy_right_placement():
+    """limit_y를 모르면(도형도 다음 라벨도 없는 PDF) 판단 근거가 없으므로
+    기존 배치 규칙 그대로 — 상한 없이 아래로 놓으면 박스를 넘어 다음 필드를
+    침범한다. 하위호환 회귀 잠금."""
+    block = PdfBlock(page=0, kind="dialog", text="If you wanna go, then go.",
+                     bbox=(72.0, 400.0, 300.0, 420.0))
+    assert block.limit_y is None
+    ov = StoryboardProfile().place(block, "가고 싶다면 가세요", (1008.0, 612.0))
+    assert ov.rect[0] >= block.bbox[2]      # 우측(기존 규칙)
+    assert ov.rect[1] == block.bbox[1]
+    assert ov.fontsize == 12.0
+
+
 def _make_storyboard_pdf_with_panel_label(tmp_path: Path) -> Path:
     """필드(Dialog/Action Notes) + 패널 영역(y 95~455) 안의 빨간 콜아웃
     라벨(사각 테두리 + 빨간 글자, panel_ocr.py 프로토타입 실증과 동일
