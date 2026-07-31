@@ -17,6 +17,15 @@ name: Server console Windows installer
 # 0.5GB included pool) while a multi-hundred-MB frozen-server installer needs
 # room; release assets live in a separate, effectively-unlimited pool. Download
 # it from the repo's Releases.
+#
+# 2026-07-31 (v1.8.0 재실행 트리거): 이 워크플로만 실패했다 — 동결·PDF/리포트/
+# 검색 스모크·cloudflared까지 전부 통과한 뒤 ffmpeg 벤더링에서 죽었다. 고정해 둔
+# BtbN autobuild 태그(2026-07-15)가 업스트림에서 삭제돼 URL이 404가 됐기 때문이다
+# (BtbN은 autobuild를 약 11일치만 보관한다). ffmpeg.lock.json을 살아 있는 태그로
+# 재핀했고, 이 주석이 **이 워크플로 하나만** 다시 돌리는 트리거다 — paths 필터가
+# 자기 파일만 보므로 이미 업로드된 나머지 3개 빌드의 자산은 건드려지지 않는다.
+# (릴리스가 이미 존재하는 상태의 workflow_dispatch는 자산·노트를 덮어쓸 수 있어
+#  금지 — 복구는 항상 '해당 워크플로 파일을 고치는 후속 PR 머지'로 한다.)
 on:
   workflow_dispatch:
   # Release-only auto-run: every release commit edits this workflow's body, so
