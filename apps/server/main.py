@@ -25,8 +25,13 @@ from apps.server.api.v1.audio_stats import router as audio_stats_router
 from apps.server.api.v1.video_models import router as video_models_router
 from apps.server.api.v1.translate_models import router as translate_models_router
 from apps.server.api.v1.video_jobs import router as video_jobs_router
+from apps.server.api.v1.pdf_jobs import router as pdf_jobs_router
 from apps.server.api.v1.reports import router as reports_router
 from apps.server.ai.gemini_live import gemini_config_health
+from apps.server.domain.pdf_translate.pdf_run import (
+    fail_inflight_pdf_jobs_at_startup,
+    prune_old_pdf_jobs_at_startup,
+)
 from apps.server.domain.video_captions.pipeline import (
     clear_stale_scan_flags_at_startup,
     fail_inflight_video_jobs_at_startup,
@@ -138,6 +143,13 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Startup video-job sweep failed")
 
+    # PDF 번역 작업도 in-process asyncio 태스크로 재개 경로가 없어 재시작 중
+    # in-flight 상태가 좀비로 남는다 — 위 자막 스윕과 동일한 이유.
+    try:
+        await fail_inflight_pdf_jobs_at_startup()
+    except Exception:
+        logger.exception("Startup pdf-job sweep failed")
+
     # 위 스윕은 DB의 job 상태만 본다. 씬 분할의 진행 플래그는 작업 폴더 JSON에
     # 있어 재시작 뒤에도 '실행중'으로 남는다(뒤에 도는 작업은 없는데도) — 같은
     # 이유로 함께 내린다.
@@ -154,6 +166,13 @@ async def lifespan(app: FastAPI):
         await prune_old_video_jobs_at_startup()
     except Exception:
         logger.exception("Startup video-job retention prune failed")
+
+    # PDF 번역 작업 폴더(원본 + 번역본, 실측 건당 ~300MB)도 같은 이유로 상한을
+    # 둔다 — 사용자가 UI에서 일일이 삭제하지 않는 한 회수되는 경로가 없었다.
+    try:
+        await prune_old_pdf_jobs_at_startup()
+    except Exception:
+        logger.exception("Startup pdf-job retention prune failed")
 
     interval = safety_poll_interval()
     if interval > 0:
@@ -207,6 +226,7 @@ app.include_router(operator_alerts_router, prefix="/api/v1")
 app.include_router(video_models_router, prefix="/api/v1")
 app.include_router(translate_models_router, prefix="/api/v1")
 app.include_router(video_jobs_router, prefix="/api/v1")
+app.include_router(pdf_jobs_router, prefix="/api/v1")
 app.include_router(reports_router, prefix="/api/v1")
 app.include_router(ws_operator_router)
 app.include_router(ws_sidecar_router)

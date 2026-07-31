@@ -185,6 +185,47 @@ def _report_selftest_mode() -> int:
     return 0
 
 
+def _pdf_selftest_mode() -> int:
+    """Frozen-bundle PDF smoke test (Task 11): verify pymupdf survived the freeze.
+
+    Triggered by ``YESON_PDF_SELFTEST=1``. RapidOCR/cv2 have a documented uv-cache
+    materialization trap where a transitively-installed native dep ends up with
+    only a ``.dist-info`` and no actual package on disk (2026-07-20) — pymupdf's
+    native libmupdf is exposed to the same class of failure. Instead of starting
+    uvicorn this creates a synthetic 1-page PDF via ``fitz`` directly (test-only
+    dependency, mirrors ``open_pdf``'s own backend), round-trips it through the
+    ``pdf_translate.backend.open_pdf`` interface (add a Korean FreeText annotation,
+    save, reopen, rasterize), and asserts a valid PNG comes back. Needs no DB,
+    network, or auth.
+    """
+    import tempfile
+    from pathlib import Path
+
+    import fitz
+
+    from apps.server.domain.pdf_translate.backend import open_pdf
+
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "t.pdf"
+            d = fitz.open()
+            d.new_page(width=100, height=100)
+            d.save(p)
+            d.close()
+            doc = open_pdf(p)
+            doc.add_freetext(0, (10, 10, 90, 40), "한글 셀프테스트")
+            out = Path(td) / "o.pdf"
+            doc.save(out)
+            doc.close()
+            png = open_pdf(out).render_png(0, dpi=36)
+            assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    except Exception as exc:  # noqa: BLE001
+        print(f"PDF_SELFTEST_RESULT=FAIL {exc}", file=sys.stderr, flush=True)
+        return 1
+    print("PDF_SELFTEST_RESULT=PASS", flush=True)
+    return 0
+
+
 def _search_selftest_mode() -> int:
     """Frozen-bundle search smoke test (S4): verify FTS5 + index seeding.
 
@@ -449,6 +490,10 @@ def main() -> int:
     # Frozen-bundle search smoke test (S4): assert FTS5 + index seeding and exit.
     if os.environ.get("YESON_SEARCH_SELFTEST") == "1":
         return _search_selftest_mode()
+
+    # Frozen-bundle PDF smoke test (Task 11): assert pymupdf survived the freeze.
+    if os.environ.get("YESON_PDF_SELFTEST") == "1":
+        return _pdf_selftest_mode()
 
     # One-shot backup inspect mode: read a snapshot's metadata and exit (no uvicorn).
     if os.environ.get("YESON_INSPECT_BACKUP") == "1":

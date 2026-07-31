@@ -361,6 +361,50 @@ Slice 5 통과 시점에 다음을 결정한 뒤 β로 진입:
 - [x] T14: `fetch-ffmpeg.sh`(cloudflared 패턴 복제, evermeet/BtbN/johnvansickle 정적 바이너리 벤더링) + `build-server.sh`/`build-server.ps1` PyInstaller `--collect-all faster_whisper/ctranslate2/av/onnxruntime/yt_dlp` + `tauri.conf.json` `binaries/ffmpeg-*` 리소스 glob + `server_process.rs::locate_bundled_ffmpeg()` → `YESON_FFMPEG_BIN` 주입 + 프로즌 재동결·자동화 스모크(curl 인증 게이트) 완료
 - [ ] T14 수동 E2E (자동화 세션 불가 — 운영자 확인 필요): 클라 "영상 자막" 탭 로그인→모델 목록, tiny 모델 실다운로드, 로컬 mp4 업로드→전사/번역/검수 진행, 검수 뷰 플레이어+오버레이+세킹+텍스트 수정, 스타일 조정→burn→MP4 다운로드 자막 위치 일치, 유튜브 URL 실입수 1건, 서버 pytest 전체 + 클라 vitest 전체 재확인
 
+### 스토리보드 PDF 번역 (Storyboard PDF Translate)
+
+> (2026-07-29) `feat/pdf-translate-slice1` 브랜치. 영문 납품 문서(대본/스토리보드/컬러노트/리드시트 PDF) → 포맷 프로파일 자동 감지 → Dialog/Action Notes 블록 번역(자막메이커 번역 엔진 스택 재사용) → 원본 위 한국어 FreeText 주석 오버레이 → 프리뷰(페이지 PNG)·번역 PDF 다운로드. 설계 근거: `docs/pdf-translation-feasibility-2026-07-29.md`(확정 결정 섹션 포함), 계획: `docs/superpowers/plans/2026-07-29-pdf-translate-slice1.md`.
+
+- [x] Task 1~9: PDF 백엔드 격리(`domain/pdf_translate/backend.py` 인터페이스 + `backend_mupdf.py` PyMuPDF 구현, AGPL 교체점 1파일) + 포맷 프로파일 플러그인(`profiles/`, Storyboard Pro 1종 구현) + 번역 프로바이더 `prompt_builder` 주입(기본값=기존 자막 프롬프트, 잠금 테스트로 무변경 보장) + PDF 전용 프롬프트·리질리언트 배치 번역(`translate_blocks.py`) + `PdfJob` 모델 + alembic `0007_pdf_jobs` + 잡 러너(`pdf_tasks.py`/`pdf_run.py`, video_captions 패턴 미러) + API `/pdf-jobs` 라우트(업로드/상태/취소/삭제) + Tauri 업로드 커맨드(Rust) + 프런트 최상위 "스토리보드 번역" 탭(A안) + `PdfTranslatePanel`(업로드·목록·진행률·취소·삭제) 구현
+- [x] Task 10: 프리뷰(원본/번역 페이지 PNG 토글, 페이지 이동) + 번역 PDF 다운로드 UI
+- [x] Task 11: 동결 번들 반영 — `build-server.sh`/`build-server.ps1` `--collect-all pymupdf --hidden-import fitz`(+ cv2 전례와 동형의 uv 캐시 미실체화 가드) + PDF 셀프테스트(`YESON_PDF_SELFTEST=1`, 1페이지 한글 FreeText 주석 왕복+PNG 래스터 검증) + `smoke-server-bundle.sh` 통합 + 문서 갱신. 로컬(Intel Mac) 재동결+스모크 PASS 확인
+- [ ] Task 11 남은 실물 E2E (수동, 사람 확인 필요): `GABE01_A3_FinalShipped.pdf`(129MB) 업로드→추출→번역→프리뷰→"번역 PDF 저장" 왕복 + macOS 미리보기/Acrobat에서 한글 주석 렌더 확인(어피어런스 폰트 이식성) + 수작업 번역본과 배치 비교 + 번역 중 취소→재업로드 + `EASA04_ColorNotes_V04.pdf`로 "지원하지 않는 PDF 포맷" 오류 확인 + Windows 왕복
+- [x] Task 12: 실기 E2E 1차 후속 — 필드 다중 블록 병합(대사 누락 45% 수정) + 화자줄 관례("화자명:대사", 선행 큐 번호 생략) + 병합 라벨형 다음-필드 경계 인식(크로스필드 누수 수정)
+- [x] Task 13: 주석을 원문 **오른쪽**에 배치(원문 가림 제거, 하단 경계 rect 수정 포함) + 청크 병렬 번역(`YESON_PDF_TRANSLATE_WORKERS`, 기본 3 — 사용자 "번역 50분 너무 느림" 피드백 대응) + 부분 실패 경고
+- [x] Task 14: 패널 콜아웃 라벨 OCR 번역 (빨강 프리필터 + RapidOCR) + 템플릿 페이지 게이트(표지 오탐 제거). 킬스위치 `YESON_PDF_PANEL_OCR=0`
+- [x] Task 15: 수작업 납품본 few-shot 14쌍 큐레이션 + 의역·문맥 지시(직역 개선) + 대표 예시 화자 복원·병합 예시 길이 계약 명시
+- [x] Task 16: 숫자 보존 게이트 — 숫자열 멀티셋 검증 + 오염 자동교정, 모호하면 블록 단건 재번역 폴백(사용자 실기 신고 "sc103 → 씬109" 오염 대응)
+- [x] Task 17: 발화 단위 병합 번역 — (CONT.)로 여러 페이지에 걸친 한 발화를 그룹으로 번역하고 전문을 멤버 블록 전체에 반복 기재(사람 납품본 관례 재현). 화자 헤더 스트립 조각별 재설계 + 재인쇄 대사 중복 해소
+- [x] Task 18: 하우스 표기 강제 치환(`house_style.py`, 사람 납품본 1090쌍 전수 비교 근거) + FX 규칙 정규식 일반화 + **동일 원문 번역 캐시**(dedupe — LLM 호출 감소 + 같은 원문이 페이지마다 다르게 번역되는 비결정성 제거)
+- [x] Task 19: 출력 하우스 정규화(홑→쌍따옴표, 화자 콜론 공백 제거, 슬러그라인 개행, 약어 예외) + 개행 높이 반영 + 패널 OCR 빨강 마스크 재설계(p18/p410 실물 진단)
+- [x] Task 20: `sc<숫자>` → `씬 <숫자>` 표기 규칙(사람 납품본 14/14 만장일치) + **추출 문자 깨짐 OCR 복구** — 글리프→유니코드 매핑이 깨진 페이지에서 `sc49`가 `sc4B`로 추출되던 근본 문제 수정(이전에 "LLM 숫자 드리프트"로 오진돼 Task 16이 만들어진 그 버그의 진짜 원인). 탐지는 PDF 자신의 매핑 불가 표식(`get_texttrace()` U+FFFD), 복구는 깨진 **단어만** 300dpi 렌더 후 RapidOCR 재판독 + **깨진 문자 위치만** 치환. 깨진 큐 헤더가 복구되며 끊겼던 발화 체인도 이어짐(`행크:(계속)` 잔존 3건 소멸). 킬스위치 `YESON_PDF_TEXT_REPAIR=0`
+- [x] 전브랜치 리뷰 수정 웨이브 (2026-07-30): 후처리 체인 전체에 한글 가드(번역 실패 폴백의 "영문 불변" 계약을 코드로 강제 — 운영자 용어집 오버라이드로 안전망이 깨지던 경로 차단) + 취소·삭제 오류 표면화 + `smoke-server-bundle.ps1` PDF 게이트 + CLI 자막 프롬프트 행위 잠금(M-8) + `pdf_job` 리텐션 프루닝(아래 "디스크 사용량" 참조 — 리뷰는 이 항목을 머지 후 후속으로 분류했다) + 린트·테스트 품질 정리
+
+**⚠ 디스크 사용량 (운영자용)**
+
+작업 1건이 **약 300MB**를 차지한다 — 원본 `source.pdf`(기준 문서 실측 129MB) +
+번역본 `translated.pdf`(~180MB)가 작업 폴더(`{STORAGE_ROOT}/pdf_jobs/{job_id}/`)에
+그대로 남는다. 번역이 끝난 작업을 **사용자가 UI에서 "삭제"로 지우지 않으면 계속
+쌓인다** — 같은 문서를 여러 번 돌리면 그만큼 배로 쌓인다. 자가호스팅 데스크톱
+앱이라 이 디스크는 사용자의 개인 디스크다.
+
+> **현재 상태(2026-07-30)**: 자동 리텐션이 `pdf_run.prune_old_pdf_jobs`
+> (`RETENTION_KEEP=10`, 영상 잡 리텐션 미러)로 들어와 있어, 서버 기동 시와 새
+> 작업 생성 직후 최근 10건만 남기고 오래된 작업을 회수한다 — 상한이 약 3GB로
+> 잡힌다는 뜻이지 "안 쌓인다"는 뜻이 아니다. 진행 중 작업은 절대 지우지 않는다.
+> ⚠ 이 프루닝은 **사용자 산출물을 지운다** — 이미 10건을 넘겨 쌓아둔 사용자는
+> 다음 서버 기동 때 오래된 것이 조용히 정리되므로 릴리스 노트에 명시할 것.
+
+**런타임 환경변수 (운영자용)**
+
+| 변수 | 기본값 | 효과 |
+|---|---|---|
+| `YESON_PDF_TRANSLATE_WORKERS` | `3` | 번역 CLI 동시 호출 수. 올리면 빨라지지만 비용·레이트리밋이 함께 오른다. `1`이면 사실상 직렬(청크 제출 순서대로). 사용자 성능 피드백에 대응하는 유일한 다이얼 |
+| `YESON_PDF_PANEL_OCR` | `1` | 패널 콜아웃 라벨 OCR 킬스위치. `0`이면 빨간 라벨이 있어도 OCR을 아예 돌리지 않는다 — 오탐이 났을 때 운영자가 당길 수 있는 손잡이 |
+| `YESON_PDF_TEXT_REPAIR` | `1` | 깨진 추출 문자 OCR 복구 킬스위치(Task 20). `0`이면 탐지조차 하지 않는다 — 복구가 오히려 텍스트를 악화시키는 문서를 만났을 때 운영자가 당길 수 있는 손잡이. 켜 둬도 깨진 글리프가 없는 페이지는 렌더·OCR을 하지 않는다(기준 문서 실측: 1037페이지 중 21페이지만 복구 대상) |
+| `YESON_PDF_SELFTEST` | (미설정) | `1`이면 동결 번들 PDF 셀프테스트만 수행하고 uvicorn을 띄우지 않고 종료(빌드 스모크 전용) |
+- [ ] 슬라이스 1 범위 밖(후속): 대본형(Final Draft)·컬러노트·리드시트 프로파일 추가(구조는 `profiles/`에 준비됨), 컬러노트·리드시트 한국어 배치 방식 결정(본문 삽입 vs 주석 통일), 기존 수작업 번역본에서 원문-번역 쌍 추출 → few-shot/용어집 보강
+
 ---
 
 ## 위험 / 미해결 항목

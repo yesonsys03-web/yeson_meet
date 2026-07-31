@@ -38,6 +38,23 @@ else
     exit 1
 fi
 
+# Frozen-bundle PDF smoke test (Task 11): assert pymupdf survived the freeze
+# (same uv-cache materialization trap class as cv2 — see build-server.sh).
+echo "Frozen-bundle PDF smoke test (${BIN})…"
+if pout="$(YESON_PDF_SELFTEST=1 "${BIN}" 2>&1)"; then
+    if echo "${pout}" | grep -q "PDF_SELFTEST_RESULT=PASS"; then
+        echo "✓ bundle PDF smoke PASS"
+    else
+        echo "${pout}" >&2
+        echo "✗ bundle PDF smoke FAILED — pymupdf likely missing from the frozen bundle" >&2
+        exit 1
+    fi
+else
+    echo "${pout:-}" >&2
+    echo "✗ bundle PDF smoke FAILED — pymupdf likely missing from the frozen bundle" >&2
+    exit 1
+fi
+
 # Frozen-bundle search smoke test (S4): assert FTS5 engine present in the
 # bundled sqlite AND the search index seeds (utterance/summary row counts match).
 echo "Frozen-bundle search smoke test (${BIN})…"

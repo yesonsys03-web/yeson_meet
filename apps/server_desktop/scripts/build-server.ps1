@@ -48,6 +48,17 @@ uv pip install --python $VenvPython --reinstall --no-cache opencv-python
 & $VenvPython -c "import cv2; print('build-venv cv2 OK', cv2.__version__)"
 if ($LASTEXITCODE -ne 0) { throw "opencv/cv2 not importable in build venv" }
 
+# PDF 번역(Task 1~11)이 쓰는 pymupdf(fitz)도 cv2와 같은 uv 캐시 미실체화 함정에
+# 노출된다 — 실패 시에만 강제 재설치해 정상 케이스의 빌드 시간을 늘리지 않는다.
+& $VenvPython -c "import pymupdf, fitz" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "pymupdf/fitz import failed -- reinstalling and re-verifying..."
+    uv pip install --python $VenvPython --reinstall --no-cache pymupdf
+    & $VenvPython -c "import pymupdf, fitz"
+    if ($LASTEXITCODE -ne 0) { throw "pymupdf/fitz not importable in build venv" }
+}
+& $VenvPython -c "import pymupdf; print('build-venv pymupdf OK', pymupdf.__doc__)"
+
 # Build the viewer SPA so the frozen server serves it under the same :8000 origin
 # as /api + /ws (replacing the old Docker-path Caddy). Staged via --add-data.
 Write-Host "Building viewer SPA (apps/web -> dist)..."
@@ -83,6 +94,8 @@ $WebDist = (Resolve-Path "apps/web/dist").Path
     --collect-all cv2 `
     --collect-all PIL `
     --collect-all yt_dlp `
+    --collect-all pymupdf `
+    --hidden-import fitz `
     --add-data "$WebDist;web_dist" `
     --distpath $Dist `
     --workpath $Work `

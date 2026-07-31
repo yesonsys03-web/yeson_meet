@@ -54,6 +54,17 @@ fi
 # cv2 실체화 검증 — 여기서 실패하면 번들에 cv2가 빠져 스캔이 즉사하므로 빌드를 멈춘다.
 "${BUILD_VENV}/bin/python" -c "import cv2; print('build-venv cv2 OK', cv2.__version__)"
 
+# PDF 번역(Task 1~11)이 쓰는 pymupdf(fitz)도 cv2와 같은 uv 캐시 미실체화 함정에
+# 노출된다(2026-07-20 cv2 실측과 동일 클래스 이슈) — 실패 시에만 강제 재설치해
+# 정상 케이스의 빌드 시간을 늘리지 않는다.
+if ! "${BUILD_VENV}/bin/python" -c "import pymupdf, fitz" 2>/dev/null; then
+    echo "pymupdf/fitz import 실패 — 강제 재설치 후 재검증…" >&2
+    VIRTUAL_ENV="${BUILD_VENV}" uv pip install --python "${BUILD_VENV}/bin/python" \
+        --reinstall --no-cache pymupdf
+    "${BUILD_VENV}/bin/python" -c "import pymupdf, fitz"
+fi
+"${BUILD_VENV}/bin/python" -c "import pymupdf; print('build-venv pymupdf OK', pymupdf.__doc__)"
+
 # 하이브리드 B: 실리콘맥 번들에만 mlx-lm 포함 (인텔맥 회귀 방지 — 510741b 방침).
 # macOS bash 3.2 + set -u에서 빈 배열 확장이 unbound variable 처리 → 아래 pyinstaller 호출에서 ${arr[@]+...} 가드 필수.
 MLX_COLLECT_FLAGS=()
@@ -106,6 +117,8 @@ echo "Building yeson-server (PyInstaller --onedir, Gemini-only)…"
     --collect-all cv2 \
     --collect-all PIL \
     --collect-all yt_dlp \
+    --collect-all pymupdf \
+    --hidden-import fitz \
     ${MLX_COLLECT_FLAGS[@]+"${MLX_COLLECT_FLAGS[@]}"} \
     --add-data "$(pwd)/apps/web/dist:web_dist" \
     --distpath "${DIST}" \

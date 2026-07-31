@@ -16,6 +16,7 @@ const navItems: Array<{ view: ConsoleView; label: string; disabled?: boolean }> 
   { view: "help", label: "Help Manual" },
   { view: "history", label: "회의 기록" },
   { view: "video", label: "자막 메이커" },
+  { view: "pdf", label: "스토리보드 번역" },
 ];
 
 export function ConsoleNav({ activeView, onChange, appVersion, updateBanner }: ConsoleNavProps) {

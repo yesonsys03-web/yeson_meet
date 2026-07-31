@@ -377,6 +377,7 @@ Session.visibility 값:
 | **Slice 2 — 오디오 청크 바이너리 포맷** | **🔒 Slice 2 락 (2026-05-15)**: 16 kHz / mono / **PCM signed int16 little-endian** / 20 ms 프레임 = **320 samples = 640 bytes per chunk**. 모든 오디오는 WebSocket **binary frame** (`ws.send_bytes`)으로 송신. 입력 디바이스의 native sample-rate/채널은 sidecar에서 16kHz mono로 강제 리샘플 후 송신 |
 | **Slice 2 — Sidecar 모드 스위치** | **🔒 Slice 2 락 (2026-05-15)**: 환경변수 `YESON_SIDECAR_MODE=fixture\|audio` (default `audio`부터 S2). `fixture`는 S1 PRD 부록 B 5종 round-robin 유지 (β-1 모의 회의 모드 토대). `audio`는 sounddevice 캡처. **모드 mid-session 전환 금지** (재시작 필요) |
 | **Slice 2 — Sidecar↔Server WS 프로토콜 확장** | **🔒 Slice 2 락 (2026-05-15)**: 동일 `/ws/sidecar` connection에서 **binary frame = 오디오 청크**, **text frame = JSON 제어 메시지**. 제어 메시지 type 락 (S2 진입시): `audio.started` (sample_rate, channels, format, started_at) / `chunk_meta` (선택, seq + started_at, S3에서 본격 사용) / `audio.stopped`. S2 서버는 binary 청크 카운트/바이트만 로깅 (Gemini 호출 X, DB save X — S3). 시간 동기는 server 도착 시각 기준 (sidecar 시계 신뢰 X) |
+| **스토리보드 PDF 번역 기능** (2026-07-29) | 코어 회의 스코프 밖 사이드 기능(영상 자막 스튜디오와 동급, ROADMAP Phase 5+ 참조). 아키텍처=**"포맷별 추출 프로파일 + 공통 번역/오버레이 엔진 + 교체 가능 PDF 백엔드"**: PyMuPDF(AGPL) 단일 스택이되 `backend.py` 인터페이스 뒤로 격리(외부 배포 시 `backend_mupdf.py`만 pypdfium2+pypdf로 교체). UI=최상위 신규 탭(A안, 자막메이커 내부 서브탭 아님). **슬라이스 1(스토리보드형) 구현 완료 — `feat/pdf-translate-slice1`**. 설계 근거: `docs/pdf-translation-feasibility-2026-07-29.md` |
 
 ---
 
