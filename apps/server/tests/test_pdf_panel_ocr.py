@@ -95,6 +95,57 @@ def test_hit_red_ratio_filter_drops_black_text_that_ocr_actually_read(
         doc.close()
 
 
+def _make_black_cam_guide_pdf(tmp_path):
+    """FL102 관례 — 제작 지시어가 **검정 글자**로 적힌 판넬. 빨강은 판넬
+    테두리뿐이라(글자가 아니라) 히트 빨강 비율은 0에 가깝다. 그림 속 간판
+    미끼("OPEN 24 HOURS")도 같은 검정으로 함께 둔다 — 색으로는 둘이 구분되지
+    않으므로, 하나만 통과하면 판별 근거가 색이 아니라 '확인된 지시어 이름'
+    임이 증명된다."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    page.draw_rect(fitz.Rect(80, 110, 900, 280), color=(1, 0, 0), width=3)
+    page.insert_text((360, 200), "CAM GUIDE", fontsize=20, color=(0, 0, 0))
+    page.insert_text((120, 180), "OPEN 24 HOURS", fontsize=16, color=(0, 0, 0))
+    path = tmp_path / "cam_guide.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_find_panel_labels_accepts_black_production_label(tmp_path, monkeypatch):
+    """검정 제작 지시어(CAM GUIDE)는 빨강 비율 문턱을 우회해 통과한다 —
+    같은 검정인 그림 속 간판(OPEN 24 HOURS)은 계속 걸러진다.
+
+    실물 근거(2026-07-31, 사용자 신고 "카메라 가이드 번역 누락"): FL102 p27·
+    p30에서 OCR은 `CAM GUIDE`를 신뢰도 0.99~1.00으로 정확히 읽는데 히트
+    빨강 비율이 0.000이라 버려졌다. 사람 납품본은 이 문서에서 `카메라 가이드`
+    6건·`필드가이드…` 5건을 단다. 문턱을 낮추는 대신 이름으로 통과시키는
+    이유가 이 테스트의 두 번째 단언이다(간판은 여전히 배제)."""
+    monkeypatch.delenv(panel_ocr.ENV_ENABLED, raising=False)
+    doc = open_pdf(_make_black_cam_guide_pdf(tmp_path))
+    try:
+        labels = panel_ocr.find_panel_labels(doc, 0, _REGION)
+        texts = " ".join(b.text.upper().replace(" ", "") for b in labels)
+        assert "CAMGUIDE" in texts
+        assert "HOURS" not in texts
+    finally:
+        doc.close()
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("CAM GUIDE", True), ("CAMGUIDE", True), ("cam guide", True),
+    ("FIELD GUIDE 1-2", True), ("FIELDGUIDE A LOUIS ONLY", True),
+    ("REFERENCE", True),
+    ("OPEN 24 HOURS", False), ("REHAB CENTER", False), ("1000SB", False),
+    ("HANK'S TRUCK", False),
+])
+def test_is_production_label_matches_only_known_terms(text, expected):
+    """공백·대소문자 무시 + 접두 매칭(뒤에 식별자가 붙는 실물 변형) —
+    그림 속 간판이나 자산 코드는 통과시키지 않는다."""
+    assert panel_ocr._is_production_label(text) is expected
+
+
 def test_find_panel_labels_no_red_returns_empty_without_ocr(tmp_path, monkeypatch):
     """빨강이 없는 페이지는 프리필터에서 즉시 []를 반환하고, 비싼 OCR
     엔진(RapidOCR)은 아예 호출되지 않아야 한다(엔진 생성 스파이로 확인)."""

@@ -63,15 +63,33 @@ _STYLE_EXAMPLES: list[tuple[str, str]] = [
      ("행크:난 그냥 자네들이 얼마나 자랑스러운지 말하고 싶었어. 여러분 모두가 "
       "우리가 판매하는 훌륭한 제품에 걸맞은 쇼룸을 만들어 준 것에 대해 정말 "
       "감사해.")),
-    # (O.S.) 표시는 대사에 옮기지 않고 생략 + "suck" 구어체 의역
-    # (GABE01 A1 p579)
-    ("66 JIMMY (O.S.) Your pro-nuts suck!", "지미:당신들 도너츠 완전 별로야!"),
+    # (O.S.)/(OS)는 화자명 뒤 "(씬밖)"으로 옮긴다 + "suck" 구어체 의역
+    # (GABE01 A1 p342 `바비(신밖):…` / FL102 p1 `아나운서(씬밖):…`)
+    #
+    # ⚠2026-07-31 정정: 이 예시는 원래 "(O.S.)는 생략"을 시연했고 근거는
+    # GABE01 p579(`66 JIMMY (O.S.)` → `지미:…`) 하나였다. 전수 재측정 결과
+    # 그게 소수였다 — GABE01의 (O.S.) 발화는 사실상 2개뿐인데(p579 JIMMY는
+    # p580~583에 같은 발화가 반복된 것) 나머지 하나인 p342 BOBBY는 사람이
+    # `바비(신밖):`으로 **표기했다**. FL102에서는 (OS) 7건 중 5건을 `(씬밖)`
+    # 으로 표기한다. 즉 표기하는 쪽이 다수다.
+    #
+    # 표기 위치는 사람도 갈린다(`화자(씬밖):` 3건 vs `화자:(씬밖)` 3건) —
+    # 동수라 화자 귀속이 콜론 앞에 모이는 `화자(씬밖):대사`로 통일한다.
+    # 철자도 `씬밖`으로 통일한다(FL102 9건 + GABE01 1건 vs `신밖` GABE01 1건).
+    ("66 JIMMY (O.S.) Your pro-nuts suck!",
+     "지미(씬밖):당신들 도너츠 완전 별로야!"),
     # 짧은 구어체 의역 — 축자 "통과"가 아닌 자연스러운 대화체 (GABE01 A1 p130)
     ("16 HANK Pass.", "행크:넘어가죠."),
     # 감탄 어미(-군) 자연스러운 구어체 (GABE01 A1 p215)
     ("26 ENRIQUE Like Propane Jesus!", "엔리케:프로판가스 예수님같군!"),
     # 팝컬처 고유명사는 음역으로 유지 (GABE01 A1 p99)
     ("10 HANK (CONT.) Lando Calrissian?", "행크:랜도 칼리시안?"),
+    # 브랜드/스폰서명은 **평범한 영어 단어처럼 보여도** 음역한다 —
+    # 뜻으로 옮기면 상호가 사라진다 (FL102 p11 실측: 사람은 소문자
+    # "bad choices"를 `배드초이스`로 음역했다. 우리 출력은 `잘못된
+    # 선택들`로 뜻번역해 사람과 어긋났던 실제 사례).
+    ("1 ANNOUNCER --sponsored by Dunlap and bad choices.",
+     "아나운서(씬밖):던랩과 배드초이스가 후원합니다."),
     # 관용구(배 은유)는 축자번역 대신 의미로 (GABE01 A1 p64+68)
     ("The Strickland ship has officially been righted.",
      "행크:스트릭랜드는 이제 완전히 제자리를 찾았어."),
@@ -103,7 +121,14 @@ _HOUSE_STYLE_BLOCK = (
     "House-style renderings (use EXACTLY these Korean forms):\n"
     "Joseph=죠셉, Boomhauer=붐하우어, Thatherton=대더튼, Ray Roy=레이로이,\n"
     "Char King Especiale=챠 킹 에스페시알레, FX=효과, props=소품, ANGLE ON:=구도:,\n"
-    "ESTABLISHING=설정, Camera move=카메라 무브, Cam Pos.=카메라 포즈, NEW ART=뉴 아트.\n"
+    "ESTABLISHING=설정, Camera move=카메라 무브, Cam Pos.=카메라 포즈, NEW ART=뉴 아트,\n"
+    # FL102 사람 납품본 실측(2026-07-31): 싸이클 14건(사이클 0), 참고 2건
+    # (레퍼런스 0), 배드초이스 3건(잘못된 선택 0). GABE01에는 이 세 단어가
+    # 아예 등장하지 않아 문서 간 충돌이 없다.
+    "cycle=싸이클, REFERENCE=참고, bad choices(스폰서명)=배드초이스,\n"
+    # 판넬 안 제작 지시어(FL102 실측: 카메라 가이드 6건, 필드 가이드 5건).
+    # OCR이 같은 라벨을 CAM GUIDE / CAMGUIDE 둘 다로 돌려주므로 둘 다 적는다.
+    "CAM GUIDE=카메라 가이드 (CAMGUIDE도 같음), FIELD GUIDE=필드 가이드.\n"
     "Register (화계) consistency: keep each character's politeness level consistent\n"
     "toward the same listener across the whole document. HANK speaks politely\n"
     "(해요체/합쇼체) to employees and customers — never 반말/하게체 to them.\n"
@@ -158,6 +183,15 @@ def build_pdf_prompt(texts: list[str]) -> str:
         "name (e.g. \"3 HANK/EMPLOYEES Propane.\"), format the Korean as "
         "\"화자명:대사\" (no space after the colon) — translate the speaker "
         "name, omit the leading cue number (e.g. \"행크/직원들:프로판.\").\n"
+        "Off-screen markers on the speaker line — \"(O.S.)\", \"(OS)\", "
+        "\"(V.O.)\" — are KEPT as \"(씬밖)\" attached right after the "
+        "speaker name, before the colon (e.g. \"3 LOUIS (OS) ...\" → "
+        "\"루이스(씬밖):...\"). Do not drop them and do not move them into "
+        "the dialogue body.\n"
+        "Brand, sponsor and company names are transliterated (음역), never "
+        "translated for meaning — even when they are made of ordinary "
+        "English words (e.g. a sponsor called \"bad choices\" → "
+        "\"배드초이스\", not \"잘못된 선택들\").\n"
         + _style_examples_block() + "\n\n"
         "Copy every digit sequence (scene/shot references like sc103, "
         "counts, codes) EXACTLY as in the source — never alter, swap, or "

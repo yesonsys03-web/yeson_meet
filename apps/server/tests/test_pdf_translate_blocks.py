@@ -59,6 +59,31 @@ def test_pdf_prompt_mentions_speaker_line_convention():
     assert "cue number" in p
 
 
+def test_pdf_prompt_keeps_offscreen_marker_as_ssinbak():
+    """(O.S.)/(OS)는 생략이 아니라 `화자(씬밖):대사`로 보존한다(2026-07-31).
+
+    ⚠이 지시는 예전과 **반대**다. 원래 few-shot은 "(O.S.) 생략"을 시연했고
+    근거는 GABE01 p579 하나였는데, 전수 재측정에서 그게 소수로 드러났다:
+    GABE01의 (O.S.) 발화는 실질 2개이고 나머지 하나(p342 BOBBY)는 사람이
+    `바비(신밖):`으로 표기했으며, FL102는 (OS) 7건 중 5건을 `(씬밖)`으로
+    표기한다. 되돌리려면 그 실측부터 반박해야 한다."""
+    p = build_pdf_prompt(["3 LOUIS (OS) --specialist and a Buddhist Monk."])
+    assert "(씬밖)" in p
+    assert "루이스(씬밖):" in p
+    # few-shot도 같은 규칙을 시연해야 한다(지시문과 예시가 엇갈리면 모델이
+    # 예시를 따른다 — 예전 버전이 정확히 그 상태였다).
+    assert "지미(씬밖):" in p
+
+
+def test_pdf_prompt_requires_brand_transliteration():
+    """브랜드·스폰서명은 평범한 영어 단어로 보여도 음역한다 — FL102 실측에서
+    사람은 스폰서 `bad choices`를 `배드초이스`로 음역했는데 우리는 `잘못된
+    선택들`로 뜻번역해 어긋났다(2026-07-31 사용자 신고)."""
+    p = build_pdf_prompt(["1 ANNOUNCER --sponsored by Dunlap and bad choices."])
+    assert "배드초이스" in p
+    assert "잘못된 선택들" in p  # 하지 말아야 할 형태를 명시적으로 보여준다
+
+
 def test_pdf_prompt_forbids_word_for_word_literalism():
     """Task 15 E2E 후속: 직역 금지 지시 실측(사용자 리포트 — "그래야 화살표가
     말이 되지!" 같은 축자번역 대신 의역을 요구)."""
