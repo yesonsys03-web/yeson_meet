@@ -173,8 +173,11 @@ for fs in (12.0, 10.0):
 **정정(2026-07-31 리뷰)**: 아래 표는 최초 버전에서 세 곳이 틀렸었다 —
 `base.py` 행이 `limit_x1`을 누락, `storyboard.py` 행이 실제 함수명이 아닌
 `_place_below`를 명시, `test_pdf_profiles.py`의 "신규 7건"이 실제로는
-8건(23→31, `git log`로 확인). `test_pdf_backend.py`도 이 변경으로 2건이
-추가됐는데(`page_rects` 계약 테스트) 표에 행 자체가 없었다.
+9건(23→32, `git diff 53b81f3..HEAD`로 실측). `test_pdf_backend.py`도 이
+변경으로 2건이 추가됐는데(`page_rects` 계약 테스트) 표에 행 자체가 없었다.
+(정정 커밋 자신이 `test_place_below_clamps_limit_y_to_page_height`를 하나 더
+추가하면서 "8건"으로 적어 다시 어긋났던 것을 재정정 — 기능 전체 신규는 11건:
+`test_pdf_profiles.py` 9 + `test_pdf_backend.py` 2.)
 
 | 파일 | 변경 |
 |---|---|
@@ -182,7 +185,7 @@ for fs in (12.0, 10.0):
 | `apps/server/domain/pdf_translate/backend.py` | `PdfDocument.page_rects` Protocol 추가 |
 | `apps/server/domain/pdf_translate/backend_mupdf.py` | `page_rects` = `get_drawings()` rect(중복 제거 + (y0,x0) 정렬) |
 | `apps/server/domain/pdf_translate/profiles/storyboard.py` | `_field_box`(상한 산출) + `place()` 아래 우선 분기 + `_place_below_in_box` |
-| `apps/server/tests/test_pdf_profiles.py` | 신규 8건 + 기존 테스트 docstring 정정 |
+| `apps/server/tests/test_pdf_profiles.py` | 신규 9건 + 기존 테스트 docstring 정정 — 총 32건 |
 | `apps/server/tests/test_pdf_backend.py` | 신규 2건(`page_rects` 중복 제거·정렬, 도형 없음 시 빈 리스트) — 총 7건 |
 
 ## 9. 검증
