@@ -66,6 +66,27 @@ def _make_storyboard_pdf_empty_dialog(tmp_path: Path) -> Path:
     return path
 
 
+def _make_storyboard_pdf_with_field_boxes(tmp_path: Path) -> Path:
+    """실물(GABE01) 템플릿을 흉내 낸 합성 페이지 — 필드 박스 사각형까지
+    그린다(좌표도 실물과 동일). 기존 _make_storyboard_pdf는 도형이 없어
+    (get_drawings() == []) limit_y가 라벨 폴백으로만 정해진다."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    page.draw_rect(fitz.Rect(24.0, 460.3, 985.1, 522.7),
+                   color=(0, 0, 0), width=1)   # Dialog 박스
+    page.draw_rect(fitz.Rect(24.0, 525.7, 985.1, 588.0),
+                   color=(0, 0, 0), width=1)   # Action Notes 박스
+    page.insert_text((27, 474), "Dialog", fontsize=12)
+    page.insert_text((27, 492), "HANK walks in.", fontsize=10)
+    page.insert_text((27, 540), "Action Notes", fontsize=12)
+    page.insert_text((27, 556), "Bobby does the Salute.", fontsize=10)
+    path = tmp_path / "sb_boxes.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
 def _make_storyboard_pdf_empty_dialog_merged_action(tmp_path: Path) -> Path:
     """리뷰어 실측 재현: Dialog 필드가 비어 있고 Action Notes가 라벨+내용이
     한 블록으로 붙어 나오는 변형(같은 x열) — Bug A 재발 가드."""
@@ -296,10 +317,9 @@ def test_extract_skips_hangul_blocks(tmp_path):
 
 
 def test_place_returns_rect_within_page_and_not_intersecting_source(tmp_path):
-    """이 fixture의 Dialog 블록은 페이지가 넓어(1008pt) 오른쪽 여유가
-    충분(right_w ≈ 200pt >= _MIN_RIGHT_WIDTH)하므로 2026-07-30 배치 규칙상
-    오른쪽 배치가 선택된다 — 'below'는 더 이상 이 fixture에 대한 정확한
-    가정이 아니다(경로 무관 불변식만 검증: 원문 비교차 + 페이지 안)."""
+    """이 fixture의 Dialog 블록은 다음 라벨(Action Notes)이 상한이 되어
+    아래 여유가 충분하므로 2026-07-31 배치 규칙상 **아래** 배치가 선택된다.
+    경로와 무관한 불변식만 검증한다(원문 비교차 + 페이지 안 + 12pt)."""
     doc = open_pdf(_make_storyboard_pdf(tmp_path))
     try:
         profile = StoryboardProfile()
@@ -447,6 +467,19 @@ def test_place_below_shrinks_to_10pt_when_12pt_does_not_fit():
     assert ov.rect[3] <= 560.0
 
 
+def test_place_below_clamps_right_edge_to_page_width_even_with_wide_limit_x1():
+    """필드 박스가 보고하는 limit_x1이 페이지 폭을 넘어서도(예: OCR/도형
+    오차) 아래 배치 rect는 반드시 페이지 폭 한도(page_w - 8) 안에 있어야
+    한다 — limit_x1을 그대로 우측 경계로 쓰면 페이지 밖으로 나갈 수 있다
+    (Task 1 리뷰 후속: page_w 클램프가 살아있는지 잠그는 회귀 가드)."""
+    block = PdfBlock(page=0, kind="action", text="a" * 20,
+                     bbox=(900.0, 400.0, 990.0, 412.0),
+                     limit_y=440.0, limit_x1=1200.0)  # limit_x1 > page_w
+    ov = StoryboardProfile().place(block, "안녕하세요", (1008.0, 612.0))
+    assert ov.rect[2] <= 1008.0 - 8.0
+    assert not _rects_intersect(ov.rect, block.bbox)
+
+
 def test_place_falls_back_to_right_when_box_has_no_room_below():
     """박스 아래 여유가 10pt로도 부족하면 기존 우측 경로로 폴백한다
     (실물 Dialog 필드처럼 원문이 박스를 꽉 채운 경우 — 21p 실측:
@@ -472,6 +505,37 @@ def test_place_without_limit_y_keeps_legacy_right_placement():
     assert ov.rect[0] >= block.bbox[2]      # 우측(기존 규칙)
     assert ov.rect[1] == block.bbox[1]
     assert ov.fontsize == 12.0
+
+
+def test_extract_sets_limit_from_field_box_rectangle(tmp_path):
+    """도형이 있는 페이지: 필드 블록의 limit_y/limit_x1이 그 블록을 감싸는
+    필드 박스에서 온다(Dialog 박스 하단 522.7 / Action Notes 588.0)."""
+    doc = open_pdf(_make_storyboard_pdf_with_field_boxes(tmp_path))
+    try:
+        blocks = StoryboardProfile().extract(doc)
+        dialog = next(b for b in blocks if b.kind == "dialog")
+        action = next(b for b in blocks if b.kind == "action")
+        assert dialog.limit_y == pytest.approx(522.7, abs=1.0)
+        assert action.limit_y == pytest.approx(588.0, abs=1.0)
+        assert dialog.limit_x1 == pytest.approx(985.1, abs=1.0)
+    finally:
+        doc.close()
+
+
+def test_extract_falls_back_to_next_label_when_no_drawings(tmp_path):
+    """도형이 없는 PDF: Dialog는 다음 라벨(Action Notes) y0 - _GAP를 상한으로
+    받고, 마지막 필드(Action Notes)는 근거가 없어 None으로 남는다
+    (= 그 필드는 기존 우측 배치 그대로)."""
+    doc = open_pdf(_make_storyboard_pdf(tmp_path))
+    try:
+        blocks = StoryboardProfile().extract(doc)
+        dialog = next(b for b in blocks if b.kind == "dialog")
+        action = next(b for b in blocks if b.kind == "action")
+        assert dialog.limit_y is not None and dialog.limit_y < 551.4
+        assert dialog.limit_x1 is None
+        assert action.limit_y is None
+    finally:
+        doc.close()
 
 
 def _make_storyboard_pdf_with_panel_label(tmp_path: Path) -> Path:

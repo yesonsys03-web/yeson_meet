@@ -40,6 +40,11 @@ _PANEL_TOP_MARGIN = 24.0  # 이보다 위로 올라가면(페이지 상단 근�
 # 후보에서 항상 제외한다.
 _LABEL_TEXTS = frozenset(label for label, _kind in _FIELDS)
 
+# 필드 박스로 인정할 사각형의 최소 크기 — 패널 테두리·표 셀 같은 작은
+# 도형을 후보에서 뺀다(GABE01 실측: 필드 박스는 폭 961pt·높이 62pt).
+_FIELD_BOX_MIN_WIDTH = 300.0
+_FIELD_BOX_MIN_HEIGHT = 15.0
+
 
 def _has_field_label(raws: list[RawBlock]) -> bool:
     """페이지가 실제 스토리보드 템플릿 페이지인지 판정(Dialog/Action Notes
@@ -88,6 +93,7 @@ class StoryboardProfile:
             # 애초에 생기지 않는다. 깨진 단어가 없는 페이지는 원본 리스트를
             # 그대로 돌려받는다(대다수 페이지 비용 0).
             raws = repair_corrupt_words(doc, page, doc.raw_blocks(page))
+            rects = doc.page_rects(page)
             for i, (label, kind) in enumerate(_FIELDS):
                 next_label = _FIELDS[i + 1][0] if i + 1 < len(_FIELDS) else None
                 content = _field_content(raws, label, next_label,
@@ -102,8 +108,18 @@ class StoryboardProfile:
                     normalize_ws(line) for line in content.text.split("\n"))
                 if not text or has_hangul(text):
                     continue
+                box = _field_box(rects, content.bbox)
+                if box is not None:
+                    limit_y, limit_x1 = box[3], box[2]
+                else:
+                    # 도형이 없으면 다음 필드 라벨을 상한으로. 마지막 필드는
+                    # 뒤에 라벨이 없어 None으로 남는다 = 기존 우측 배치 그대로.
+                    next_y0 = _next_label_y0(raws, next_label)
+                    limit_y = None if next_y0 is None else next_y0 - _GAP
+                    limit_x1 = None
                 out.append(PdfBlock(page=page, kind=kind, text=text,
-                                    bbox=content.bbox))
+                                    bbox=content.bbox,
+                                    limit_y=limit_y, limit_x1=limit_x1))
             # 표지/타이틀 페이지(리뷰 후속, 2026-07-30): Dialog/Action Notes
             # 라벨이 아예 없으면 실제 패널 템플릿 페이지가 아니다 —
             # _panel_region이 이때 기본값(y_bottom=460)으로 열리는데, 표지의
@@ -182,8 +198,12 @@ def _place_below_in_box(block: PdfBlock, ko_text: str,
     room = limit - y0
     if room <= 0:
         return None
-    right = (block.limit_x1 - 8.0) if block.limit_x1 is not None \
-        else (page_w - 8.0)
+    # 필드 박스가 보고하는 limit_x1과 무관하게 페이지 폭 한도는 항상
+    # 지켜야 한다 — min으로 감싸 되살린다(단순 대체였다면 limit_x1이
+    # 페이지 밖/경계에 걸릴 때 주석이 페이지 밖으로 나갈 수 있었다).
+    right = min(page_w - 8.0,
+                block.limit_x1 - 8.0 if block.limit_x1 is not None
+                else page_w - 8.0)
     x1 = min(right, max(bx1, bx0 + _MIN_WIDTH))
     if x1 <= bx0:
         return None
@@ -249,6 +269,39 @@ def _panel_region(raws: list[RawBlock], page_w: float
     return (0.0, _PANEL_Y_TOP, page_w, y_bottom)
 
 
+def _next_label_y0(raws: list[RawBlock], next_label: str | None) -> float | None:
+    """다음 필드 라벨의 y0 — 라벨+내용이 한 블록으로 붙어 나오는 변형도
+    경계로 인정한다. _field_content의 창 상한과 배치 상한이 **같은 규칙**을
+    쓰도록 한 곳에 모은 것이다(규칙이 갈라지면 내용 창과 배치 상한이 어긋난다)."""
+    if next_label is None:
+        return None
+    for b in raws:
+        t = normalize_ws(b.text)
+        if t == next_label or (t.startswith(next_label)
+                               and len(t) > len(next_label)):
+            return b.bbox[1]
+    return None
+
+
+def _field_box(rects: list[tuple[float, float, float, float]],
+               bbox: tuple[float, float, float, float],
+               ) -> tuple[float, float, float, float] | None:
+    """원문 bbox를 감싸는 **가장 작은** 필드 박스 사각형 — 없으면 None.
+    가장 작은 것을 고르는 이유: 페이지 테두리처럼 전체를 감싸는 큰 사각형이
+    같이 잡히면 상한이 페이지 하단까지 열려 다음 필드를 침범한다."""
+    x0, y0, x1, y1 = bbox
+    best = None
+    for r in rects:
+        if (r[2] - r[0] < _FIELD_BOX_MIN_WIDTH
+                or r[3] - r[1] < _FIELD_BOX_MIN_HEIGHT):
+            continue
+        if (r[0] <= x0 + 1.0 and r[1] <= y0 + 1.0
+                and x1 <= r[2] + 1.0 and y1 <= r[3] + 1.0
+                and (best is None or (r[3] - r[1]) < (best[3] - best[1]))):
+            best = r
+    return best
+
+
 def _field_content(raws: list[RawBlock], label: str,
                     next_label: str | None = None, *,
                     is_action: bool = False) -> RawBlock | None:
@@ -279,19 +332,7 @@ def _field_content(raws: list[RawBlock], label: str,
     if anchor is None:
         return None
     lx0, _ly0, _lx1, ly1 = anchor.bbox
-    upper_bound = None
-    if next_label is not None:
-        for b in raws:
-            t = normalize_ws(b.text)
-            # 다음 라벨이 내용과 한 블록으로 붙어 나오는 변형도 경계로
-            # 인정해야 한다 — 안 그러면 upper_bound가 None으로 남아
-            # 현재 필드의 창이 무한정 열려서 다음 필드 아래쪽 블록까지
-            # 잘못 병합해온다(리뷰어 실측 재현: 병합 라벨형 다음-필드
-            # 경계 인식 실패로 인한 크로스필드 누수).
-            if t == next_label or (t.startswith(next_label)
-                                    and len(t) > len(next_label)):
-                upper_bound = b.bbox[1]
-                break
+    upper_bound = _next_label_y0(raws, next_label)
     candidates = [b for b in raws
                   if b.bbox[1] >= ly1 - 1.0
                   and (upper_bound is None or b.bbox[1] < upper_bound - 1.0)
