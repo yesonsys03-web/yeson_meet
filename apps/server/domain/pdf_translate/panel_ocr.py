@@ -1,4 +1,10 @@
-"""패널 콜아웃 라벨(빨강 리더라인 주석) OCR 추출 — 빨강 프리필터 + RapidOCR.
+"""패널 OCR — 빨강 콜아웃 라벨 추출(Task 19) + 깨진 추출 문자 복구(Task 20).
+
+두 기능 모두 "화면에는 제대로 그려져 있는데 텍스트 추출로는 못 읽는" 같은
+문제를 같은 도구(렌더 + RapidOCR)로 푼다 — 엔진 싱글턴·PNG 디코딩·픽셀
+크롭을 공유하려고 한 모듈에 둔다(별도 OCR 경로 신설 금지).
+
+--- 1) 패널 콜아웃 라벨(빨강 리더라인 주석) 추출 — 빨강 프리필터 + RapidOCR.
 
 Storyboard Pro 패널은 페이지당 단일 래스터 이미지로 구워져 있어(텍스트/주석/
 벡터 전무) 일반 텍스트 추출로는 콜아웃 라벨("HANK'S TRUCK", "CAR006A",
@@ -7,6 +13,14 @@ Storyboard Pro 패널은 페이지당 단일 래스터 이미지로 구워져 �
 대다수 페이지를 값싸게 걸러내고(프리필터), 통과한 페이지만 dpi 200으로
 재렌더해 RapidOCR을 전체 실행한 뒤 히트별 빨강 비율로 검정 그림선 오탐을
 배제한다.
+
+--- 2) 깨진 추출 문자 복구(Task 20).
+
+이 문서군은 일부 페이지에서 글리프→유니코드 매핑이 깨져 있다 — 화면에는
+`sc49`가 제대로 그려지는데 텍스트 추출은 `sc4B`를 준다(페이지마다 매핑이
+다르고 고정 오프셋 공식이 없다). 백엔드가 PDF 자신의 "이 글리프 유니코드를
+모른다" 표식으로 깨진 단어를 짚어 주면(backend.CorruptWord), 여기서 그
+단어만 렌더·재판독해 **깨진 문자 위치만** 고친다.
 
 RapidOCR 엔진 지연 싱글턴은 video_captions/slate_ocr.py의 초기화 패턴을
 미러한다(프로세스당 1회 로드, 스레드 로컬).
@@ -18,10 +32,11 @@ import logging
 import os
 import re
 import threading
+from difflib import SequenceMatcher
 
 import numpy as np
 
-from .backend import PdfDocument, RawBlock
+from .backend import CorruptWord, PdfDocument, RawBlock
 
 logger = logging.getLogger("yeson.pdf.panel_ocr")
 
@@ -168,4 +183,170 @@ def find_panel_labels(
             bbox=(bx0 / scale + region_x0, by0 / scale + region_y0,
                   bx1 / scale + region_x0, by1 / scale + region_y0),
         ))
+    return out
+
+
+# ── 깨진 추출 문자 복구 (Task 20) ────────────────────────────────────────
+
+ENV_TEXT_REPAIR = "YESON_PDF_TEXT_REPAIR"
+
+# 단어 크롭 렌더 해상도. 200dpi(라벨 OCR)보다 높인 건 본문 글자가 라벨보다
+# 작아서다 — 실측(GABE01 A1 깨진 21페이지 전수)에서 300dpi가 이 문서의
+# 본문 크기에 안정적이었다.
+_REPAIR_DPI = 300
+# 크롭 여백(pt) — 가로/세로를 따로 둔다. 실측 스윕에서 가로 여백을 4pt로
+# 키우면 옆 글자 일부가 딸려 들어와 없던 문자가 생겼고(`7Cont.8` →
+# `((Cont.)`), 2pt로 좁히되 세로를 3pt 두면 글자 위아래가 잘리지 않아
+# 얇은 괄호까지 정확히 읽혔다(`(Cont.)` 신뢰도 1.000).
+_REPAIR_PAD_X = 2.0
+_REPAIR_PAD_Y = 3.0
+# 채택 최소 신뢰도(히트들 중 최솟값 기준). 실측에서 실제 복구 케이스는
+# 전부 0.90 이상이었고, 글자 하나짜리 크롭처럼 근거가 약한 판독은 0.58까지
+# 떨어졌다 — 그 사이에 문턱을 둔다. 미달이면 원래 추출값을 유지한다.
+_REPAIR_MIN_SCORE = 0.80
+
+_DIGITS = re.compile(r"\d+")
+
+
+def _text_repair_enabled() -> bool:
+    return os.environ.get(ENV_TEXT_REPAIR, "1") != "0"
+
+
+def _align_repair(extracted: str, ocr_text: str,
+                  bad_indices: tuple[int, ...]) -> str:
+    """OCR 판독을 추출 문자열에 정렬해 **깨진 위치의 문자만** 갈아끼운다.
+
+    계약(테스트로 잠금):
+      1. 반환 길이 == `extracted` 길이. 언제나.
+      2. `bad_indices`에 없는 위치의 문자는 절대 바뀌지 않는다.
+
+    이 두 성질이 "조용한 악화 금지"를 코드로 강제한다. PDF가 옳다고 말한
+    문자(=깨지지 않은 문자)는 OCR이 뭐라 하든 그대로 두므로, OCR 오독이
+    멀쩡한 텍스트를 망칠 수 없다 — 실측 사례: `sc4B.`의 OCR 판독은
+    `SC49.`(대문자)지만 대소문자는 깨진 위치가 아니라 추출값 `sc`가
+    남고 깨진 숫자만 `9`로 바뀌어 `sc49.`가 된다.
+
+    길이가 같은 replace 구간만 채택한다. 길이가 다른 replace는 어느 문자가
+    어느 문자에 대응하는지 알 수 없어, 없던 문자를 끼워 넣을 수 있다
+    (실측: 여백을 넓혔을 때 `7Cont.8` → `((Cont.)`처럼 괄호가 하나 늘었다).
+    OCR이 문자를 더 봤으면(insert) 무시하고, 덜 봤으면(delete) 추출값을
+    남긴다 — 둘 다 "고치지 못했다"로 수렴할 뿐 손상되지 않는다.
+    """
+    bad = set(bad_indices)
+    out: list[str] = []
+    for tag, i1, i2, j1, j2 in SequenceMatcher(
+            None, extracted, ocr_text, autojunk=False).get_opcodes():
+        if tag == "insert":
+            continue  # OCR이 본 여분 문자는 버린다(추출 길이 보존)
+        if tag == "replace" and i2 - i1 == j2 - j1:
+            out.append("".join(
+                ocr_text[j1 + k] if (i1 + k) in bad else extracted[i1 + k]
+                for k in range(i2 - i1)))
+        else:  # equal / delete / 길이가 다른 replace → 추출값 유지
+            out.append(extracted[i1:i2])
+    return "".join(out)
+
+
+def _ocr_word(arr: np.ndarray, word: CorruptWord) -> tuple[str, float]:
+    """단어 bbox를 여백만큼 넓혀 크롭·판독한다 → (판독 텍스트, 최저 신뢰도).
+    판독이 없으면 ("", 0.0)."""
+    region = (word.bbox[0] - _REPAIR_PAD_X, word.bbox[1] - _REPAIR_PAD_Y,
+              word.bbox[2] + _REPAIR_PAD_X, word.bbox[3] + _REPAIR_PAD_Y)
+    crop = _crop_region_px(arr, region, _REPAIR_DPI)
+    if crop.size == 0:
+        return "", 0.0
+    try:
+        result, _elapse = _get_engine()(crop)
+    except Exception:  # 단어 하나의 OCR 실패가 추출 전체를 막지 않게
+        logger.exception("text-repair OCR failed for %r", word.text)
+        return "", 0.0
+    if not result:
+        return "", 0.0
+    return (" ".join(str(text).strip() for _box, text, _score in result),
+            min(float(score) for _box, _text, score in result))
+
+
+def repair_corrupt_words(doc: PdfDocument, page: int,
+                         blocks: list[RawBlock]) -> list[RawBlock]:
+    """깨진 추출 문자를 OCR로 복구한 블록 목록을 돌려준다(Task 20).
+
+    깨진 단어가 없으면 `blocks`를 그대로 돌려준다 — 실물 1037페이지 중
+    깨진 페이지는 21개뿐이라 절대다수 페이지는 탐지(0.7초/전 문서) 외에
+    비용이 없고 렌더조차 하지 않는다.
+
+    킬스위치 YESON_PDF_TEXT_REPAIR=0이면 탐지도 하지 않는다. 백엔드가
+    `corrupt_words`를 제공하지 않으면(다른 구현으로 교체된 경우) 조용히
+    현행 동작으로 내려간다 — 복구는 부가 기능이지 추출의 전제가 아니다.
+
+    복구는 항상 "고치거나, 그대로 두거나" 둘 중 하나다. OCR이 실패하든
+    신뢰도가 낮든 한글/CJK가 섞여 나오든, 최악의 결과는 원래 추출값이
+    남는 것이다(사용자 요구: 조용한 악화 금지).
+    """
+    if not _text_repair_enabled():
+        return blocks
+    finder = getattr(doc, "corrupt_words", None)
+    if finder is None:
+        return blocks
+    words = finder(page)
+    if not words:
+        return blocks
+
+    arr = _decode_png(doc.render_png(page, dpi=_REPAIR_DPI))
+    # 블록별 (offset, 원본단어, 복구단어) — 오프셋 내림차순으로 적용해
+    # 앞쪽 치환이 뒤쪽 오프셋을 흔들 가능성을 원천 차단한다(현 계약상
+    # 길이가 보존되므로 실제로 흔들리지 않지만, 계약에 기대지 않는다).
+    edits: dict[int, list[tuple[int, str, str]]] = {}
+    for word in words:
+        if not 0 <= word.block_index < len(blocks):
+            logger.warning("text-repair: page %d block_index %d 범위 밖 — 건너뜀",
+                           page, word.block_index)
+            continue
+        block_text = blocks[word.block_index].text
+        end = word.offset + len(word.text)
+        if block_text[word.offset:end] != word.text:
+            # 백엔드의 좌표계와 raw_blocks()가 어긋났다는 뜻 — 엉뚱한
+            # 자리를 덮느니 아무것도 하지 않는다.
+            logger.warning(
+                "text-repair: page %d 오프셋 불일치(기대 %r, 실제 %r) — 건너뜀",
+                page, word.text, block_text[word.offset:end])
+            continue
+        ocr_text, score = _ocr_word(arr, word)
+        if not ocr_text:
+            logger.info("text-repair: page %d %r 판독 실패 — 원문 유지",
+                        page, word.text)
+            continue
+        if score < _REPAIR_MIN_SCORE:
+            logger.info("text-repair: page %d %r 신뢰도 미달(%.2f) — 원문 유지",
+                        page, word.text, score)
+            continue
+        if not ocr_text.isascii():
+            # 이 문서군의 원문은 영문이다 — 판독에 한글/CJK가 섞였다면
+            # 글자가 아닌 것을 글자로 본 것이다(실측: 패널 그림 일부를
+            # 전각 문장부호로 판독). 그런 판독은 통째로 버린다.
+            logger.info("text-repair: page %d %r 판독에 비ASCII 포함(%r) — 원문 유지",
+                        page, word.text, ocr_text)
+            continue
+        fixed = _align_repair(word.text, ocr_text, word.bad_indices)
+        if fixed == word.text:
+            continue
+        if _DIGITS.findall(fixed) != _DIGITS.findall(word.text):
+            # 사용자 요구가 "특히 숫자는 틀리면 안 된다"이고, 숫자가 바뀌는
+            # 복구야말로 이 기능의 존재 이유다(`sc109` → `sc103`). 눈에
+            # 보이게 남긴다 — 나중에 오복구가 의심될 때 추적 근거가 된다.
+            logger.info(
+                "text-repair: page %d 숫자 복구 %r → %r (OCR %r, 신뢰도 %.2f)",
+                page, word.text, fixed, ocr_text, score)
+        else:
+            logger.info("text-repair: page %d 복구 %r → %r", page, word.text, fixed)
+        edits.setdefault(word.block_index, []).append(
+            (word.offset, word.text, fixed))
+
+    if not edits:
+        return blocks
+    out = list(blocks)
+    for block_index, block_edits in edits.items():
+        text = out[block_index].text
+        for offset, old, new in sorted(block_edits, reverse=True):
+            text = text[:offset] + new + text[offset + len(old):]
+        out[block_index] = RawBlock(text=text, bbox=out[block_index].bbox)
     return out

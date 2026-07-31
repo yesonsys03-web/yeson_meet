@@ -8,7 +8,11 @@ import numpy as np
 import pytest
 
 from apps.server.domain.pdf_translate import panel_ocr
-from apps.server.domain.pdf_translate.backend import open_pdf
+from apps.server.domain.pdf_translate.backend import (
+    CorruptWord,
+    RawBlock,
+    open_pdf,
+)
 from apps.server.domain.pdf_translate.profiles.storyboard import _panel_region
 
 _REGION = (0.0, 95.0, 1008.0, 460.0)
@@ -268,5 +272,350 @@ def test_real_sample_p410_finds_hanks_truck_label():
         texts = [b.text.upper() for b in labels]
         print(f"\np410 labels={texts}")
         assert any("HANK" in t for t in texts)
+    finally:
+        doc.close()
+
+
+# ══ 깨진 추출 문자 복구 (Task 20) ═══════════════════════════════════════
+
+
+def _png_bytes(width_px: int, height_px: int) -> bytes:
+    import io as _io
+
+    from PIL import Image
+    buf = _io.BytesIO()
+    Image.new("RGB", (width_px, height_px), (255, 255, 255)).save(buf, "PNG")
+    return buf.getvalue()
+
+
+class _StubDoc:
+    """복구 경로 단위 테스트용 최소 문서 — 깨진 단어 목록과 렌더만 제공한다.
+
+    복구는 "백엔드가 짚어 준 단어를 렌더해 OCR로 재판독"이 전부라, 실제
+    깨진 폰트를 가진 PDF 없이도 그 계약을 전부 검증할 수 있다(합성 PDF로는
+    깨진 cmap을 만들 수 없다 — 실물 검증은 아래 env 게이트 테스트가 한다)."""
+
+    def __init__(self, words, *, page_w=200.0, page_h=100.0):
+        self._words = words
+        self.page_w = page_w
+        self.page_h = page_h
+        self.render_calls: list[int] = []
+
+    def corrupt_words(self, page: int):
+        return list(self._words)
+
+    def render_png(self, page: int, *, dpi: int = 120) -> bytes:
+        self.render_calls.append(dpi)
+        scale = dpi / 72.0
+        return _png_bytes(int(self.page_w * scale), int(self.page_h * scale))
+
+
+class _FakeEngine:
+    """RapidOCR 대역 — 호출 순서대로 미리 정한 결과를 돌려준다."""
+
+    def __init__(self, results):
+        self._results = list(results)
+        self.calls = 0
+
+    def __call__(self, _crop):
+        self.calls += 1
+        hits = self._results.pop(0) if self._results else []
+        return ([([[0, 0], [1, 0], [1, 1], [0, 1]], text, score)
+                 for text, score in hits], 0.0)
+
+
+def _use_engine(monkeypatch, engine):
+    monkeypatch.setattr(panel_ocr, "_new_engine", lambda **kw: engine)
+    panel_ocr._reset_engines()
+
+
+def _word(text, bad_indices, *, block_index=0, offset=0,
+          bbox=(10.0, 10.0, 60.0, 22.0)):
+    return CorruptWord(block_index=block_index, offset=offset, text=text,
+                       bad_indices=bad_indices, bbox=bbox)
+
+
+# ── _align_repair: 복구의 안전 계약 ──────────────────────────────────────
+
+def test_align_repair_substitutes_only_flagged_positions():
+    """실물 사례 — `sc4B.`의 OCR 판독은 대문자 `SC49.`지만, 깨진 위치는
+    숫자 하나뿐이라 `sc` 대소문자는 추출값이 남고 숫자만 바뀐다. 이것이
+    "OCR을 믿되 깨진 자리에서만 믿는다"의 실체다."""
+    assert panel_ocr._align_repair("sc4B.", "SC49.", (3,)) == "sc49."
+
+
+def test_align_repair_preserves_length_and_unflagged_chars():
+    """★계약 두 가지: (1) 길이 불변 (2) 깨지지 않은 위치 불변.
+    이 둘이 "조용한 악화 금지"를 코드로 강제한다."""
+    cases = [
+        ("sc4B.", "SC49.", (3,)),
+        ("9= HANK 7Cont.8", "56 HANK (Cont.)", (0, 1, 8, 14)),
+        (";oah...", "Woah..", (0,)),
+        ("taDle", "table", (2,)),
+        ("CIndows", "Windows", (0,)),
+        ("Bobb7Ds", "Bobby's", (4, 5)),
+        ("정상", "완전히 다른 판독", ()),
+    ]
+    for extracted, ocr, bad in cases:
+        out = panel_ocr._align_repair(extracted, ocr, bad)
+        assert len(out) == len(extracted), (extracted, out)
+        for i, ch in enumerate(extracted):
+            if i not in bad:
+                assert out[i] == ch, (extracted, out, i)
+
+
+def test_align_repair_without_flags_is_identity():
+    """깨진 위치가 없으면 OCR이 뭐라 하든 원문 그대로 — 복구 대상이
+    아닌 텍스트에 이 함수가 잘못 불려도 손상이 없다."""
+    assert panel_ocr._align_repair("table", "TABLE!!", ()) == "table"
+
+
+def test_align_repair_ignores_ocr_inserted_characters():
+    """길이가 다른 replace는 채택하지 않는다 — 실측: 크롭 여백을 넓혔을 때
+    `7Cont.8`의 판독이 `((Cont.)`로 나와 괄호가 하나 늘었다. 어느 문자가
+    어느 문자에 대응하는지 알 수 없는 구간은 고치지 않는 쪽을 택한다."""
+    assert panel_ocr._align_repair("7Cont.8", "((Cont.)", (0, 6)) == "7Cont.)"
+
+
+def test_align_repair_keeps_chars_ocr_did_not_see():
+    """OCR이 덜 본 문자(delete)는 추출값을 남긴다 — `;oah...`의 판독은
+    마침표를 하나 덜 본 `Woah..`지만 결과는 `Woah...`로 온전하다."""
+    assert panel_ocr._align_repair(";oah...", "Woah..", (0,)) == "Woah..."
+
+
+# ── repair_corrupt_words: 복구·유지 판정 ────────────────────────────────
+
+def test_repair_replaces_flagged_word_in_block(monkeypatch):
+    monkeypatch.delenv(panel_ocr.ENV_TEXT_REPAIR, raising=False)
+    engine = _FakeEngine([[("SC49.", 0.97)]])
+    _use_engine(monkeypatch, engine)
+    try:
+        blocks = [RawBlock(text="match sc4B.", bbox=(0, 0, 100, 20))]
+        doc = _StubDoc([_word("sc4B.", (3,), offset=6)])
+        out = panel_ocr.repair_corrupt_words(doc, 0, blocks)
+        assert out[0].text == "match sc49."
+        assert out[0].bbox == blocks[0].bbox
+        assert engine.calls == 1
+    finally:
+        panel_ocr._reset_engines()
+
+
+def test_repair_applies_multiple_words_in_one_block(monkeypatch):
+    """한 블록에 깨진 단어가 여럿이어도 각 자리가 정확히 갱신돼야 한다."""
+    monkeypatch.delenv(panel_ocr.ENV_TEXT_REPAIR, raising=False)
+    engine = _FakeEngine([[("table", 0.99)], [("SC49.", 0.97)]])
+    _use_engine(monkeypatch, engine)
+    try:
+        text = "hook up taDle to sc4B."
+        blocks = [RawBlock(text=text, bbox=(0, 0, 100, 20))]
+        doc = _StubDoc([
+            _word("taDle", (2,), offset=text.index("taDle")),
+            _word("sc4B.", (3,), offset=text.index("sc4B.")),
+        ])
+        out = panel_ocr.repair_corrupt_words(doc, 0, blocks)
+        assert out[0].text == "hook up table to sc49."
+    finally:
+        panel_ocr._reset_engines()
+
+
+@pytest.mark.parametrize("hits,why", [
+    ([], "판독 없음"),
+    ([("SC49.", 0.42)], "신뢰도 미달"),
+    ([("씬49.", 0.99)], "비ASCII 판독"),
+])
+def test_repair_keeps_original_when_ocr_is_not_trustworthy(
+        monkeypatch, hits, why):
+    """★조용한 악화 금지 — 판독이 없거나, 신뢰도가 낮거나, 글자가 아닌
+    것을 글자로 본 판독(한글/CJK 혼입)이면 원래 추출값을 그대로 남긴다.
+    최악의 결과가 "못 고침"이지 "더 나빠짐"이 아니어야 한다."""
+    monkeypatch.delenv(panel_ocr.ENV_TEXT_REPAIR, raising=False)
+    _use_engine(monkeypatch, _FakeEngine([hits]))
+    try:
+        blocks = [RawBlock(text="match sc4B.", bbox=(0, 0, 100, 20))]
+        doc = _StubDoc([_word("sc4B.", (3,), offset=6)])
+        out = panel_ocr.repair_corrupt_words(doc, 0, blocks)
+        assert out[0].text == "match sc4B.", why
+    finally:
+        panel_ocr._reset_engines()
+
+
+def test_repair_keeps_original_when_ocr_engine_raises(monkeypatch):
+    """엔진이 터져도 단어 하나 때문에 추출 전체가 실패하면 안 된다."""
+    monkeypatch.delenv(panel_ocr.ENV_TEXT_REPAIR, raising=False)
+
+    class _Boom:
+        def __call__(self, _crop):
+            raise RuntimeError("onnx exploded")
+
+    _use_engine(monkeypatch, _Boom())
+    try:
+        blocks = [RawBlock(text="match sc4B.", bbox=(0, 0, 100, 20))]
+        doc = _StubDoc([_word("sc4B.", (3,), offset=6)])
+        out = panel_ocr.repair_corrupt_words(doc, 0, blocks)
+        assert out[0].text == "match sc4B."
+    finally:
+        panel_ocr._reset_engines()
+
+
+def test_repair_skips_word_whose_offset_does_not_match(monkeypatch):
+    """백엔드 좌표계와 raw_blocks()가 어긋나면(오프셋의 문자열이 다르면)
+    엉뚱한 자리를 덮느니 아무것도 하지 않는다."""
+    monkeypatch.delenv(panel_ocr.ENV_TEXT_REPAIR, raising=False)
+    engine = _FakeEngine([[("SC49.", 0.97)]])
+    _use_engine(monkeypatch, engine)
+    try:
+        blocks = [RawBlock(text="match sc4B.", bbox=(0, 0, 100, 20))]
+        doc = _StubDoc([_word("sc4B.", (3,), offset=0)])  # 실제 위치는 6
+        out = panel_ocr.repair_corrupt_words(doc, 0, blocks)
+        assert out[0].text == "match sc4B."
+        assert engine.calls == 0  # 판독조차 시도하지 않는다
+    finally:
+        panel_ocr._reset_engines()
+
+
+def test_repair_skips_out_of_range_block_index(monkeypatch):
+    monkeypatch.delenv(panel_ocr.ENV_TEXT_REPAIR, raising=False)
+    engine = _FakeEngine([[("SC49.", 0.97)]])
+    _use_engine(monkeypatch, engine)
+    try:
+        blocks = [RawBlock(text="match sc4B.", bbox=(0, 0, 100, 20))]
+        doc = _StubDoc([_word("sc4B.", (3,), block_index=7, offset=6)])
+        out = panel_ocr.repair_corrupt_words(doc, 0, blocks)
+        assert out[0].text == "match sc4B."
+        assert engine.calls == 0
+    finally:
+        panel_ocr._reset_engines()
+
+
+def test_repair_without_corrupt_words_renders_nothing(monkeypatch):
+    """깨진 단어가 없는 페이지(=절대다수)는 렌더도 OCR도 하지 않는다 —
+    전 문서 비용이 탐지분으로만 유지되는 근거."""
+    monkeypatch.delenv(panel_ocr.ENV_TEXT_REPAIR, raising=False)
+    engine = _FakeEngine([])
+    _use_engine(monkeypatch, engine)
+    try:
+        blocks = [RawBlock(text="clean text", bbox=(0, 0, 100, 20))]
+        doc = _StubDoc([])
+        out = panel_ocr.repair_corrupt_words(doc, 0, blocks)
+        assert out is blocks
+        assert doc.render_calls == []
+        assert engine.calls == 0
+    finally:
+        panel_ocr._reset_engines()
+
+
+def test_repair_kill_switch_skips_detection(monkeypatch):
+    """YESON_PDF_TEXT_REPAIR=0이면 탐지조차 하지 않는다."""
+    monkeypatch.setenv(panel_ocr.ENV_TEXT_REPAIR, "0")
+    engine = _FakeEngine([[("SC49.", 0.97)]])
+    _use_engine(monkeypatch, engine)
+    try:
+        blocks = [RawBlock(text="match sc4B.", bbox=(0, 0, 100, 20))]
+        doc = _StubDoc([_word("sc4B.", (3,), offset=6)])
+        out = panel_ocr.repair_corrupt_words(doc, 0, blocks)
+        assert out is blocks
+        assert doc.render_calls == []
+        assert engine.calls == 0
+    finally:
+        panel_ocr._reset_engines()
+
+
+def test_repair_degrades_gracefully_without_backend_support(monkeypatch):
+    """corrupt_words를 제공하지 않는 백엔드(교체 구현)에서는 현행 동작으로
+    조용히 내려간다 — 복구는 부가 기능이지 추출의 전제가 아니다."""
+    monkeypatch.delenv(panel_ocr.ENV_TEXT_REPAIR, raising=False)
+
+    class _OldDoc:
+        def render_png(self, page, *, dpi=120):
+            raise AssertionError("렌더까지 가면 안 된다")
+
+    blocks = [RawBlock(text="match sc4B.", bbox=(0, 0, 100, 20))]
+    assert panel_ocr.repair_corrupt_words(_OldDoc(), 0, blocks) is blocks
+
+
+# ── 실물 복구 검증 (Task 20, 페이지 번호는 0-based) ──────────────────────
+#
+# 브리프 표의 페이지 번호는 1-based였다(p483 등) — 여기서는 이 리포지터리의
+# 다른 실물 테스트와 같은 0-based로 적는다(브리프 p483 = 아래 482).
+
+def _repaired_text(doc, page: int) -> str:
+    raws = panel_ocr.repair_corrupt_words(doc, page, doc.raw_blocks(page))
+    return "\n".join(b.text for b in raws)
+
+
+@pytest.mark.skipif(not SAMPLES, reason="실물 샘플 경로(YESON_PDF_SAMPLES) 미지정")
+@pytest.mark.parametrize("page,broken,expected", [
+    # 브리프 표 7건(1-based p431·p483×2·p515×2·p542×2·p975) 전부.
+    (430, "sc4=", "previous sc46."),          # 씬 번호
+    (430, ":>001", "incidental #2001"),       # 인시덴털 자산 번호
+    (430, "Dack your Dusiness", "back your business"),
+    (482, "9= HANK 7Cont.8", "56 HANK (Cont.)"),   # 깨진 큐 헤더
+    (482, "sc4B", "previous sc49."),          # ★사용자가 지적한 그 씬 번호
+    (482, "taDle", "hook up table"),
+    (514, "=0 THATHERTON", "60 THATHERTON"),
+    (514, "Dlame", "You can blame"),
+    (514, "Cindows", "DX Propane Truck Windows"),
+    (541, "=@ THATHERTON 7Cont.8", "63 THATHERTON (Cont.)"),
+    (541, "CaDin Cindows", "DX Party Bus Cabin Windows"),
+    (974, "sc109", "match sc103."),           # ★"LLM 드리프트"로 오진됐던 그 값
+    (974, "Bobb7Ds", "Bobby's screen"),
+    (974, "12> B*BB. 5C*NT.6", "124 BOBBY (CONT.)"),
+    # 브리프 휴리스틱이 놓쳤던 추가 실물 케이스: `J`와 `H`가 **제어문자**로
+    # 매핑돼 화면상 아무것도 아닌 것처럼 보였다(`JOSEPH`이 `OSEP`으로
+    # 읽히던 정체). 깨진 문자열을 제어문자까지 그대로 적어야 판별력이
+    # 있다 — "OSEP"으로 적으면 복구 결과 "JOSEPH"에도 들어 있어 잔존
+    # 검사가 헛돈다.
+    (796, "\x15OSEP\x16", "97 JOSEPH (Cont.)"),
+    (853, "\x15OSEP\x16", "110 JOSEPH"),
+])
+def test_real_sample_repairs_corrupted_extraction(page, broken, expected):
+    """추출이 깨진 실물 페이지를 렌더·재판독으로 복구한다.
+
+    이 표가 이 태스크의 핵심 회귀 가드다 — `sc49`/`sc103`은 사용자가 직접
+    지적한 값이고("특히 숫자는 틀리면 안 돼"), 이전에 "LLM 숫자 드리프트"로
+    오진돼 엉뚱한 계층(숫자 보존 게이트)에 수정이 들어갔던 바로 그 값이다."""
+    path = Path(SAMPLES) / "1601_콘티번역" / "GABE01_A1_FinalShipped.pdf"
+    doc = open_pdf(path)
+    try:
+        before = "\n".join(b.text for b in doc.raw_blocks(page))
+        assert broken in before, "전제 확인: 추출이 실제로 깨져 있어야 한다"
+        after = _repaired_text(doc, page)
+        assert expected in after
+        assert broken not in after
+    finally:
+        doc.close()
+
+
+@pytest.mark.skipif(not SAMPLES, reason="실물 샘플 경로(YESON_PDF_SAMPLES) 미지정")
+@pytest.mark.parametrize("page", [97, 343, 483, 975])
+def test_real_sample_clean_pages_unchanged(page):
+    """무회귀 — 멀쩡한 페이지는 블록 리스트 객체까지 그대로 돌아온다
+    (렌더도 OCR도 하지 않는 빠른 경로)."""
+    path = Path(SAMPLES) / "1601_콘티번역" / "GABE01_A1_FinalShipped.pdf"
+    doc = open_pdf(path)
+    try:
+        raws = doc.raw_blocks(page)
+        assert doc.corrupt_words(page) == []
+        assert panel_ocr.repair_corrupt_words(doc, page, raws) is raws
+    finally:
+        doc.close()
+
+
+@pytest.mark.skipif(not SAMPLES, reason="실물 샘플 경로(YESON_PDF_SAMPLES) 미지정")
+def test_real_sample_detection_cost_is_bounded():
+    """비용 상한 — 탐지는 전 페이지에서 돌지만 매핑 불가 글리프가 있는
+    페이지에서만 복구가 열린다. 실측(2026-07-31): 1037페이지 중 21페이지,
+    탐지 전체 1.3초. 이 비율이 크게 늘면(예: 10%) OCR 비용이 폭증하므로
+    회귀 신호로 잠근다."""
+    path = Path(SAMPLES) / "1601_콘티번역" / "GABE01_A1_FinalShipped.pdf"
+    doc = open_pdf(path)
+    try:
+        t0 = time.time()
+        flagged = [p for p in range(doc.page_count) if doc.corrupt_words(p)]
+        elapsed = time.time() - t0
+        print(f"\ncorrupt-page detection: {len(flagged)}/{doc.page_count} "
+              f"pages in {elapsed:.1f}s -> {flagged}")
+        assert len(flagged) == 21
+        assert len(flagged) < doc.page_count * 0.05
     finally:
         doc.close()

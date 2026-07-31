@@ -263,8 +263,24 @@ def test_no_annotation_continuation_preserves_leading_capitalized_word():
 SAMPLES = os.environ.get("YESON_PDF_SAMPLES")
 
 
+@pytest.fixture(scope="module")
+def real_blocks():
+    """GABE01_A1(1037페이지) 전체 추출 — 실물 테스트끼리 공유한다.
+
+    추출은 전 페이지 순회 + 깨진 페이지의 OCR 복구(Task 20)까지 포함해
+    수 분이 걸린다. 모듈 스코프로 한 번만 돌린다."""
+    path = Path(SAMPLES) / "1601_콘티번역" / "GABE01_A1_FinalShipped.pdf"
+    doc = open_pdf(path)
+    try:
+        profile = detect_profile(doc)
+        assert profile is not None and profile.name == "storyboard"
+        return profile.extract(doc)
+    finally:
+        doc.close()
+
+
 @pytest.mark.skipif(not SAMPLES, reason="실물 샘플 경로(YESON_PDF_SAMPLES) 미지정")
-def test_real_storyboard_utterance_grouping():
+def test_real_storyboard_utterance_grouping(real_blocks):
     """실물 검증(로컬 전용, 2026-07-30): GABE01_A1(1037페이지) 전체 추출 →
     발화 단위 병합. 실측(이 환경, 1회 런): blocks=1305 → groups=725(브리프
     추정 "1027블록 → ~650±100그룹"과 대체로 부합 — 실제 블록 수는 1305로
@@ -276,15 +292,7 @@ def test_real_storyboard_utterance_grouping():
     구조적 사실만 단언한다(브리프 리뷰 후속 지시, 2026-07-30): 전체 대사
     문단을 그대로 문자열 비교하면 향후 OCR/추출 미세 변동에 깨지기 쉬우니,
     체인 존재·멤버 수·화자명·확인된 본문 일부(부분 문자열)만 확인한다."""
-    path = Path(SAMPLES) / "1601_콘티번역" / "GABE01_A1_FinalShipped.pdf"
-    doc = open_pdf(path)
-    try:
-        profile = detect_profile(doc)
-        assert profile is not None and profile.name == "storyboard"
-        blocks = profile.extract(doc)
-    finally:
-        doc.close()
-
+    blocks = real_blocks
     groups, _texts = group_utterances(blocks)
     print(f"pdf-translate utterances (real sample): "
           f"blocks={len(blocks)} groups={len(groups)}")
@@ -304,3 +312,42 @@ def test_real_storyboard_utterance_grouping():
     assert "DONNA" in donna_chain.merged_text.upper()
     # 실측 확인된 본문 일부(전문 문자열 비교는 하지 않는다 — 위 docstring 참고)
     assert "accounting was a mess" in donna_chain.merged_text
+
+
+@pytest.mark.skipif(not SAMPLES, reason="실물 샘플 경로(YESON_PDF_SAMPLES) 미지정")
+@pytest.mark.parametrize("broken_page,orphan_pages,speaker,body", [
+    # 0-based. 브리프의 p483/p542(1-based)에서 큐 헤더가 깨져 있었다:
+    # `9= HANK 7Cont.8` / `=@ THATHERTON 7Cont.8` — 큐 파싱을 통과하지
+    # 못해 체인이 끊기고, 뒤따르는 페이지가 헤더-only 그룹으로 남아
+    # 재검증 산출물에서 `행크:(계속)` / `대더튼:(계속)`을 낳았다.
+    (482, (483, 484), "HANK", "What are you doing here?"),
+    (541, (542,), "THATHERTON", "I can’t hear you over the party bus"),
+])
+def test_real_corrupted_cue_no_longer_orphans_following_pages(
+        real_blocks, broken_page, orphan_pages, speaker, body):
+    """★Task 20의 연쇄 효과 — 깨진 큐 헤더를 복구하면 끊겼던 발화 체인이
+    이어지고, 뒤따르던 헤더-only 그룹(`화자:(계속)`)이 사라진다.
+
+    재검증에 남아 있던 진짜 결함 3건이 전부 이 형태였다. 여기서는 (1)
+    깨진 페이지가 뒤 페이지들과 한 그룹으로 묶이고 (2) 그 그룹의 번역
+    입력에 실제 대사 본문이 담기는지를 확인한다 — 헤더-only 그룹이었다면
+    본문이 없었을 것이다."""
+    dialog_pages = {b.page for b in real_blocks if b.kind == "dialog"}
+    assert dialog_pages >= {broken_page, *orphan_pages}
+
+    groups, _texts = group_utterances(real_blocks)
+    owner = next(
+        g for g in groups
+        if any(real_blocks[i].page == broken_page
+               and real_blocks[i].kind == "dialog" for i in g.member_indices))
+    pages = {real_blocks[i].page for i in owner.member_indices}
+    assert pages >= {broken_page, *orphan_pages}
+    assert speaker in owner.merged_text.upper()
+    assert body in owner.merged_text
+
+    # 고아 페이지가 자기만의 헤더-only 그룹으로 따로 남아 있지 않아야 한다.
+    for page in orphan_pages:
+        solo = [g for g in groups
+                if {real_blocks[i].page for i in g.member_indices} == {page}
+                and real_blocks[g.member_indices[0]].kind == "dialog"]
+        assert not solo, f"p{page}가 여전히 단독 dialog 그룹으로 남아 있다"

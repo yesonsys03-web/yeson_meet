@@ -11,7 +11,7 @@ import math
 import re
 
 from ..backend import PdfDocument, RawBlock
-from ..panel_ocr import find_panel_labels
+from ..panel_ocr import find_panel_labels, repair_corrupt_words
 from .base import Overlay, PdfBlock, has_hangul, normalize_ws
 
 logger = logging.getLogger("yeson.pdf.profiles.storyboard")
@@ -80,7 +80,13 @@ class StoryboardProfile:
     def extract(self, doc: PdfDocument) -> list[PdfBlock]:
         out: list[PdfBlock] = []
         for page in range(doc.page_count):
-            raws = doc.raw_blocks(page)
+            # 깨진 추출 문자 복구(Task 20) — 필드 선택보다 **먼저** 돌려야
+            # 한다. 깨진 큐 헤더(`9= HANK 7Cont.8`)는 utterances의 큐 파싱을
+            # 통과하지 못해 발화 체인을 끊고, 뒤따르는 페이지를 헤더-only
+            # 그룹(`행크:(계속)`)으로 만든다 — 복구가 선행돼야 그 연쇄가
+            # 애초에 생기지 않는다. 깨진 단어가 없는 페이지는 원본 리스트를
+            # 그대로 돌려받는다(대다수 페이지 비용 0).
+            raws = repair_corrupt_words(doc, page, doc.raw_blocks(page))
             for i, (label, kind) in enumerate(_FIELDS):
                 next_label = _FIELDS[i + 1][0] if i + 1 < len(_FIELDS) else None
                 content = _field_content(raws, label, next_label,
