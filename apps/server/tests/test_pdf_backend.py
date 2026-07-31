@@ -136,3 +136,42 @@ def test_corrupt_words_groups_by_whitespace_word(synthetic_pdf, monkeypatch):
                 w.offset:w.offset + len(w.text)] == w.text
     finally:
         doc.close()
+
+
+def test_page_rects_returns_drawn_rectangles(tmp_path):
+    """필드 박스 판정의 원재료 — 페이지의 벡터 도형 경계 사각형.
+    좌표는 실물(GABE01) Action Notes 박스와 같은 값을 쓴다."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    page.draw_rect(fitz.Rect(24.0, 525.7, 985.1, 588.0),
+                   color=(0, 0, 0), width=1)
+    path = tmp_path / "boxes.pdf"
+    doc.save(path)
+    doc.close()
+
+    pdf = open_pdf(path)
+    try:
+        rects = pdf.page_rects(0)
+        assert any(abs(r[0] - 24.0) < 1.0 and abs(r[1] - 525.7) < 1.0
+                   and abs(r[2] - 985.1) < 1.0 and abs(r[3] - 588.0) < 1.0
+                   for r in rects)
+    finally:
+        pdf.close()
+
+
+def test_page_rects_empty_without_drawings(tmp_path):
+    """도형이 없는 텍스트-only 페이지 → 빈 리스트(프로파일이 폴백을 타야 함)."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    page.insert_text((72, 500), "Dialog", fontsize=8)
+    path = tmp_path / "notext.pdf"
+    doc.save(path)
+    doc.close()
+
+    pdf = open_pdf(path)
+    try:
+        assert pdf.page_rects(0) == []
+    finally:
+        pdf.close()
