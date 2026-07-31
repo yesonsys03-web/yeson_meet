@@ -187,12 +187,19 @@ def _place_below_in_box(block: PdfBlock, ko_text: str,
     자리가 없으면 None(호출부가 기존 우측 경로로 폴백)을 돌려준다.
 
     상한(block.limit_y)을 모르면 None — 상한 없이 아래로 놓으면 박스를 넘어
-    다음 필드를 침범한다. 폭 규칙(_MIN_WIDTH 하한, 원문 우측 상한)은 기존
-    아래 경로와 같은 것을 쓴다."""
+    다음 필드를 침범한다. 폭은 설계 §6.1대로 **필드 박스 우측까지 전폭**을
+    쓴다 — 원문 자체의 x1로 좁히면(레거시 `_place_right_or_below`의 아래
+    폴백처럼 `max(bx1, bx0 + _MIN_WIDTH)`로 캡) 짧은 원문 한 줄 뒤에 긴
+    번역이 와도 폭이 넓어지지 않아 12pt 한 줄에 들어갈 수 있는 문장이
+    불필요하게 2줄로 접혀 10pt까지 축소된다(실물 GABE01 373p 실측: 사람은
+    같은 자리에 12pt 한 줄로 썼는데 이 폭 캡 탓에 10pt가 나오던 버그,
+    2026-07-31 리뷰로 발견). `_place_right_or_below`는 이 문제와 무관—
+    그쪽은 원문과 겹치지 않으려고 일부러 원문 폭 기준을 쓰는 것이라 손대지
+    않는다."""
     if block.limit_y is None:
         return None
     page_w, page_h = page_size
-    bx0, _by0, bx1, by1 = block.bbox
+    bx0, _by0, _bx1, by1 = block.bbox
     y0 = by1 + _GAP
     limit = min(block.limit_y, page_h - 4.0)
     room = limit - y0
@@ -204,7 +211,7 @@ def _place_below_in_box(block: PdfBlock, ko_text: str,
     right = min(page_w - 8.0,
                 block.limit_x1 - 8.0 if block.limit_x1 is not None
                 else page_w - 8.0)
-    x1 = min(right, max(bx1, bx0 + _MIN_WIDTH))
+    x1 = right  # 설계 §6.1: 박스 우측까지 전폭 — 원문 x1로 좁히지 않는다.
     if x1 <= bx0:
         return None
     for fontsize in _BELOW_FONT_SIZES:

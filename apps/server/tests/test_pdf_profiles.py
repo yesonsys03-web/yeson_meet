@@ -440,7 +440,11 @@ def test_place_below_when_field_box_has_room():
     """필드 박스 안 원문 아래에 여유가 있으면 좁은 우측 칸 대신 아래 전폭
     12pt로 놓는다(사람 납품본 관례 — GABE01 373p 실측: 원문
     (27.0, 546.7, 790.3, 557.8), 박스 하단 588.0, 사람은 (27.4, 557.1)).
-    원문 오른쪽 여유가 _MIN_RIGHT_WIDTH를 넘어도 아래가 우선이다."""
+    원문 오른쪽 여유가 _MIN_RIGHT_WIDTH를 넘어도 아래가 우선이다.
+
+    폭은 원문 자체의 x1이 아니라 **필드 박스 우측**까지 전폭이어야 한다
+    (설계 §6.1, 2026-07-31 리뷰 Finding — 원문 x1로 좁히면 원문이 짧아도
+    번역 폭이 넓어지지 않아 불필요하게 줄바꿈/축소가 일어난다)."""
     block = PdfBlock(page=0, kind="action",
                      text="Bobby does the Three Amigos Salute.",
                      bbox=(27.0, 546.7, 790.3, 557.8),
@@ -449,22 +453,46 @@ def test_place_below_when_field_box_has_room():
                                    (1008.0, 612.0))
     assert ov.rect[1] >= block.bbox[3]      # 원문 아래
     assert ov.rect[0] == block.bbox[0]      # 원문과 같은 좌측 정렬
-    assert ov.rect[2] > 700.0               # 좁은 우측 칸이 아니라 전폭
+    assert ov.rect[2] == pytest.approx(block.limit_x1 - 8.0)  # 박스 우측까지 전폭
     assert ov.rect[3] <= 588.0              # 필드 박스 안
     assert ov.fontsize == 12.0
     assert not _rects_intersect(ov.rect, block.bbox)
 
 
+def test_place_below_uses_full_box_width_so_12pt_fits_real_sentence():
+    """실물 GABE01 373p 회귀 가드(2026-07-31 리뷰 Finding): 아래 배치 폭을
+    원문 자체의 x1(763.3pt)로 좁히면 이 실제 문장이 12pt에서 2줄(37.5pt)이
+    필요해 여유(26.2pt)를 넘기고 10pt로 축소됐다 — 사람은 같은 자리에
+    12pt 한 줄로 썼다. 폭을 필드 박스 우측까지(950.1pt) 쓰면 1줄(22.5pt)에
+    들어가 12pt를 유지한다."""
+    block = PdfBlock(page=0, kind="action",
+                     text="Bobby does the Three Amigos Salute. Joseph does too.",
+                     bbox=(27.0, 546.7, 790.3, 557.8),
+                     limit_y=588.0, limit_x1=985.1)
+    ko = ("바비는 오른손을 가슴에 얹고 왼손을 반대쪽 가슴에 댄 다음 "
+          "엉덩이를 앞으로 튕겨\"삼총사 경례\"를 한다.죠셉도 그와 같이 한다.")
+    ov = StoryboardProfile().place(block, ko, (1008.0, 612.0))
+    assert ov.fontsize == 12.0
+    assert ov.rect[1] >= block.bbox[3]      # 원문 아래
+    assert ov.rect[3] <= 588.0              # 필드 박스 안
+    assert not _rects_intersect(ov.rect, block.bbox)
+
+
 def test_place_below_shrinks_to_10pt_when_12pt_does_not_fit():
     """아래 여유가 12pt엔 모자라고 10pt엔 충분하면 아래 배치를 유지하되
-    10pt로 줄인다(사다리는 10pt에서 끊는다)."""
+    10pt로 줄인다(사다리는 10pt에서 끊는다).
+
+    폭이 박스 우측까지(950.1pt) 넓어졌으므로(위 회귀 가드와 동일 이유),
+    `limit_y`를 좁혀 12pt 2줄(37.5pt)은 못 들어가고 10pt 2줄(31.25pt)만
+    들어가는 여유(35.0pt)로 맞췄다 — 넓어진 폭 때문에 이전 값(여유 44.0pt)은
+    12pt로도 통과해버려 이 테스트가 더 이상 10pt 단을 검증하지 못했다."""
     block = PdfBlock(page=0, kind="action", text="a" * 60,
                      bbox=(27.0, 500.0, 790.3, 512.0),
-                     limit_y=560.0, limit_x1=985.1)
+                     limit_y=551.0, limit_x1=985.1)
     ov = StoryboardProfile().place(block, "가" * 130, (1008.0, 612.0))
     assert ov.fontsize == 10.0
     assert ov.rect[1] >= block.bbox[3]
-    assert ov.rect[3] <= 560.0
+    assert ov.rect[3] <= 551.0
 
 
 def test_place_below_clamps_right_edge_to_page_width_even_with_wide_limit_x1():
