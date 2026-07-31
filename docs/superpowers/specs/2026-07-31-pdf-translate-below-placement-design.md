@@ -2,7 +2,7 @@
 
 - 날짜: 2026-07-31
 - 대상 기능: 스토리보드 프로파일이 번역 주석을 놓는 위치
-- 상태: 설계 승인 완료(2026-07-31) · 구현 전
+- 상태: 설계 승인 완료(2026-07-31) · 구현 완료
 - 관련 커밋: `d3a86c5`(우측 배치 도입) · `fd7b1cd`(시프트업 제거)
 
 ## 1. 목적
@@ -122,7 +122,7 @@ for fs in (12.0, 10.0):
 | `apps/server/domain/pdf_translate/backend.py` | `PdfDocument.page_rects` Protocol 추가 |
 | `apps/server/domain/pdf_translate/backend_mupdf.py` | `page_rects` = `get_drawings()` rect |
 | `apps/server/domain/pdf_translate/profiles/storyboard.py` | `_field_box`(상한 산출) + `place()` 아래 우선 분기 + `_place_below` |
-| `apps/server/tests/test_pdf_profiles.py` | 신규 4건 + 기존 우측 테스트 fixture 조정 |
+| `apps/server/tests/test_pdf_profiles.py` | 신규 7건 + 기존 테스트 docstring 정정 |
 
 ## 9. 검증
 
@@ -132,14 +132,23 @@ for fs in (12.0, 10.0):
   - 여유 없음(`room < 10pt 1줄`) → **우측**(현행 경로) 선택
   - `limit_y=None` → 현행과 **완전 동일한** rect (하위호환 회귀 잠금)
   - 전 경로 공통: 원문 bbox 비교차 + `y1 > y0`(퇴화 아님) + 온페이지
-  - 기존 `test_place_prefers_right_side_when_room_available`은 fixture가 이제 아래로 가므로
-    `limit_y`를 좁게 준 "아래 불가" 조건으로 바꿔 우측 경로 커버리지를 유지한다
+  - 기존 `place()` 테스트는 모두 `PdfBlock`을 직접 만들어 `limit_y`가 `None`이므로 경로가
+    바뀌지 않는다 — 조정이 필요한 것은 `extract()`를 거치는
+    `test_place_returns_rect_within_page_and_not_intersecting_source`의 docstring뿐이다.
+    실제 상한이 있는 우측 경로는 신규 `test_place_falls_back_to_right_when_box_has_no_room_below`가
+    덮는다
 - **주의**: `apps/server` 테스트는 `conftest.py`가 Postgres DSN을 하드코딩해 수집 시점에 접속한다.
   프로파일 테스트는 DB를 쓰지 않으므로 `pytest apps/server/tests/test_pdf_profiles.py`를 직접 경로로
   지정해 돌린다(root `pyproject`의 `testpaths` 함정도 같이 회피).
-- **실물**: `GABE01_A1_FinalShipped.pdf` 373페이지를 다시 배치해 rect가
-  사람 납품본 `(27.4, 557.1, 747.4, 569.3)`과 근사 일치(x0·y0 ±3pt, 12pt)하는지 확인.
-  추가로 2p(다중행 → 우측 유지)와 21p(Dialog 꽉 참 → 우측 유지)가 회귀하지 않는지 확인.
+- **실물** (2026-07-31 검증 완료, `verify_below.py`로 373p·2p·21p 3페이지 재배치):
+  373페이지 Action Notes가 원문 아래로 이동함을 확인 —
+  `rect=(27.0, 561.8, 790.3, 580.6)`, `10.0pt`. x0·y0는 사람 납품본
+  `(27.4, 557.1, 747.4, 569.3)`과 근사(±5pt, `_GAP` 4pt 포함)하나 폰트는 다르다 —
+  아래 경로의 폭은 박스 우측이 아니라 원문 자체의 x1까지로 잡히므로(`_place_below_in_box`의
+  `x1 = min(right, max(bx1, bx0 + _MIN_WIDTH))`), 검증용 한국어 문구(70자)가 그 폭에서
+  12pt 1줄에 들어가지 않아 사다리(§6.2)가 10pt로 한 단 내린다 — 설계대로 동작한 것이며
+  아래/우측 경로 선택 자체는 틀리지 않았다. 2p(다중행 → 우측 유지, 12pt)와
+  21p(Dialog 꽉 참 → 우측 유지, 12pt) 회귀 없음 확인.
 
 ## 10. 남은 것 (이번 범위 밖)
 
