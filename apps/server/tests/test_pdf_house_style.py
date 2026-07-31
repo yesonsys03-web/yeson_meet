@@ -156,13 +156,18 @@ def test_house_style_fx_rule_embedded_with_slash_delimiter():
     블록에서도 규칙이 발동해야 한다 — 전체 문자열 시작/끝에만 앵커링하면
     (팀 리드가 제시한 `^이펙트 (.+)$`/`(.+) 이펙트$` 그대로는) 이 경우를
     놓친다(실측으로 확인, apply_house_style은 " / "도 세그먼트 경계로
-    인정해 잡는다)."""
+    인정해 잡는다).
+
+    Task 20 후속: 기대값의 "sc47"이 "씬 47"로 바뀌었다 — 같은 함수에 씬 번호
+    표기 규칙이 추가됐기 때문이고, 사람 납품본 관례(14/14 `씬`)에 맞는
+    방향의 변화다. FX 규칙 자체의 검증(슬래시 구분자 세그먼트 경계)은
+    "불 이펙트" → "불 효과" 부분이 그대로 담당한다."""
     before = ("예전 고객들이 돌아다니며 제품을 살펴본다. 품질에 진심으로 "
               "감탄한 모습이다. / 불 이펙트 / 팔 위치가 일치하도록 인시덴털 "
               "#2000을 이전 sc47에 훅업해 주세요.")
     after = ("예전 고객들이 돌아다니며 제품을 살펴본다. 품질에 진심으로 "
              "감탄한 모습이다. / 불 효과 / 팔 위치가 일치하도록 인시덴털 "
-             "#2000을 이전 sc47에 훅업해 주세요.")
+             "#2000을 이전 씬 47에 훅업해 주세요.")
     assert apply_house_style(before) == after
 
 
@@ -280,3 +285,70 @@ def test_house_style_fx_rule_order_is_fixed_and_locked():
     테스트가 보증"하는 실수를 반복하지 않기 위해, "순서 무관"이 아니라
     "이 순서에서는 이 값"이라고 명시적으로 단언한다)."""
     assert apply_house_style("이펙트 연기 이펙트") == "연기 이펙트 효과"
+
+
+# ── 씬 번호 표기 규칙 (Task 20, 사용자 지적 2026-07-31) ──────────────────
+#
+# 애니메이션 스토리보드에서 `sc<숫자>`는 씬 번호다. 전수 실측(1095쌍)에서
+# 사람은 14/14 전부 `씬`으로 옮겼고, 우리는 9/14만 맞았다 — 결정적 치환으로
+# 고정한 규칙의 동작·오폭 가드·숫자 불변을 잠근다.
+
+SCENE_CASES = [
+    ("이전 sc49와 맞춰주세요.", "이전 씬 49와 맞춰주세요."),
+    ("책상을 SC13에 훅업.", "책상을 씬 13에 훅업."),
+    ("sc 7 참고", "씬 7 참고"),
+    ("Sc103 화면", "씬 103 화면"),
+    ("sc1과 sc2를 잇는다.", "씬 1과 씬 2를 잇는다."),
+]
+
+
+@pytest.mark.parametrize("before,after", SCENE_CASES)
+def test_house_style_scene_ref(before, after):
+    assert apply_house_style(before) == after
+
+
+# 오폭 가드 — `sc`가 단어 일부이거나 숫자가 따라오지 않으면 불변이어야 한다.
+SCENE_NON_CASES = [
+    "scene 12를 확인",      # 뒤에 숫자가 있지만 sc가 단어 일부(scene)
+    "score 100점",          # 같은 형태(score)
+    "discuss 3가지",        # 앞이 단어 문자라 \b 불성립
+    "sc 없이 진행",          # sc 뒤에 숫자 없음
+    "disc03 파일",          # 파일명 안의 sc + 숫자 (앞이 단어 문자)
+    "HANKSC12 코드",        # 자산 코드 안의 SC + 숫자
+]
+
+
+@pytest.mark.parametrize("text", SCENE_NON_CASES)
+def test_house_style_scene_ref_does_not_overreach(text):
+    assert apply_house_style(text) == text
+
+
+def test_house_style_scene_ref_preserves_digits_exactly():
+    """사용자 요구의 핵심 — "특히 숫자는 틀리면 안 된다". 이 치환은 캡처
+    그룹을 그대로 옮길 뿐이므로 숫자열이 완전히 보존돼야 한다(자릿수·값
+    모두). 숫자 보존 게이트(Task 16)가 이 뒤에 또 한 겹 있지만, 이
+    규칙 자체가 숫자를 건드리지 않는다는 성질을 여기서 직접 잠근다."""
+    import re
+    for src in ["sc49", "sc0103", "sc 7", "SC13", "sc999999"]:
+        out = apply_house_style(f"{src} 확인")
+        assert re.findall(r"\d+", out) == re.findall(r"\d+", src)
+
+
+def test_house_style_scene_ref_never_crosses_newline():
+    """공백 클래스가 `[ \\t]`인 이유 — `\\s`였다면 "sc\\n49"에서 **다음 줄의
+    숫자**를 씬 번호로 끌어와 줄 구조와 의미를 함께 망가뜨린다. Task 19가
+    액션 블록에 실제 줄바꿈을 도입했으므로 실물에서 가능한 형태다."""
+    assert apply_house_style("sc\n49 확인") == "sc\n49 확인"
+    assert apply_house_style("sc\r\n49 확인") == "sc\r\n49 확인"
+
+
+def test_house_style_scene_ref_is_idempotent():
+    once = apply_house_style("이전 sc49와 sc 7 참고")
+    assert apply_house_style(once) == once
+
+
+def test_house_style_scene_ref_runs_after_fx_rule():
+    """적용 순서 고정(리터럴 → FX 정규식 → 씬 규칙) — 한 문자열에 둘 다
+    있을 때 두 규칙이 서로를 막지 않고 모두 발동하는지 확인한다."""
+    assert (apply_house_style("이펙트 연기. 이전 sc49와 맞춤.")
+            == "연기 효과. 이전 씬 49와 맞춤.")

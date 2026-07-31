@@ -105,12 +105,36 @@ HOUSE_KO_PATTERN_CORRECTIONS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(_SEG_START + r"([^\r\n]+?) 이펙트" + _SEG_END), r"\1 효과"),
 ]
 
+# 씬 번호 표기(Task 20, 사용자 지적 2026-07-31) — 애니메이션 스토리보드에서
+# `sc` 뒤에 숫자가 붙은 토큰은 **씬 번호**다. 전수 실측(pairs_all.jsonl
+# 1095쌍): 원문에 `sc+숫자`가 있는 블록 14건 중 사람은 14/14 전부 `씬`으로
+# 옮겼다(예외 0건) — LLM 문맥 추론에 맡기면 9/14만 맞았으므로(나머지 5건은
+# `sc`를 그대로 뒀다) 결정적 치환으로 고정한다.
+#
+# 숫자는 캡처 그룹을 그대로 옮긴다 — 이 규칙 자체는 숫자를 절대 만들거나
+# 바꾸지 않는다(테스트로 잠금). 사용자 요구가 "특히 숫자는 틀리면 안 된다"라
+# 숫자 불변은 이 규칙의 계약이다.
+#
+# ⚠ 단어 경계(`\b`) 필수 — 없으면 `scene`·`score`·`discuss` 같은 평범한
+# 단어의 `sc`에 오폭한다. `\b`는 `discuss`처럼 앞이 단어 문자인 경우를
+# 막고, 뒤의 `\d+` 요구가 `scene`·`score`처럼 숫자가 따라오지 않는 경우를
+# 막는다(두 가드가 함께 있어야 한다).
+#
+# ⚠ 공백은 `\s`가 아니라 `[ \t]`다 — `\s`는 개행도 삼켜서 "…sc\n49…"처럼
+# 줄이 갈린 곳에서 **다음 줄의 숫자**를 씬 번호로 끌어온다. Task 19가 액션
+# 블록에 실제 줄바꿈을 도입했으므로(슬러그라인 join) 이건 이론이 아니라
+# 실물에서 가능한 형태다. 줄을 넘는 결합은 하지 않는다.
+_SCENE_REF_RE = re.compile(r"\bsc[ \t]*(\d+)", re.IGNORECASE)
+
 
 def apply_house_style(ko: str) -> str:
-    """HOUSE_KO_CORRECTIONS(리터럴)를 순서대로 적용한 뒤,
-    HOUSE_KO_PATTERN_CORRECTIONS(정규식, FX 규칙)를 순서대로 적용한다.
-    멱등 — 두 치환 모두 치환 결과 쪽에 자신의 좌변 문자열("이펙트" 포함)을
-    재도입하지 않는다."""
+    """HOUSE_KO_CORRECTIONS(리터럴) → HOUSE_KO_PATTERN_CORRECTIONS(정규식,
+    FX 규칙) → 씬 번호 표기(_SCENE_REF_RE) 순으로 적용한다.
+
+    멱등 — 세 치환 모두 결과 쪽에 자신의 좌변("이펙트", `sc<숫자>`)을
+    재도입하지 않는다. 씬 규칙을 마지막에 두는 건 앞 규칙들의 치환 결과에
+    새 `sc<숫자>`가 생길 수 없기 때문이라 순서 의존은 아니지만, 회귀
+    감지를 위해 테스트로 고정한다."""
     if not ko:
         return ko
     for wrong, right in HOUSE_KO_CORRECTIONS:
@@ -118,4 +142,4 @@ def apply_house_style(ko: str) -> str:
             ko = ko.replace(wrong, right)
     for pattern, replacement in HOUSE_KO_PATTERN_CORRECTIONS:
         ko = pattern.sub(replacement, ko)
-    return ko
+    return _SCENE_REF_RE.sub(r"씬 \1", ko)
