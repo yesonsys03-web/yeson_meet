@@ -299,6 +299,12 @@ SCENE_CASES = [
     ("sc 7 참고", "씬 7 참고"),
     ("Sc103 화면", "씬 103 화면"),
     ("sc1과 sc2를 잇는다.", "씬 1과 씬 2를 잇는다."),
+    # 리뷰 지적(2026-07-31): 한글이 공백 없이 바로 앞에 오는 형태. 파이썬
+    # `\b`는 한글을 단어 문자로 취급해 여기서 경계가 성립하지 않으므로,
+    # 옛 `\bsc` 가드로는 이 실물 형태를 통째로 놓쳤다(사람 납품본이
+    # `이전씬49`처럼 붙여 쓴다).
+    ("이전sc49와 맞춰주세요.", "이전씬 49와 맞춰주세요."),
+    ("씬sc103", "씬씬 103"),
 ]
 
 
@@ -311,10 +317,12 @@ def test_house_style_scene_ref(before, after):
 SCENE_NON_CASES = [
     "scene 12를 확인",      # 뒤에 숫자가 있지만 sc가 단어 일부(scene)
     "score 100점",          # 같은 형태(score)
-    "discuss 3가지",        # 앞이 단어 문자라 \b 불성립
+    "discuss 3가지",        # 앞이 라틴 문자(i)
     "sc 없이 진행",          # sc 뒤에 숫자 없음
-    "disc03 파일",          # 파일명 안의 sc + 숫자 (앞이 단어 문자)
-    "HANKSC12 코드",        # 자산 코드 안의 SC + 숫자
+    "disc03 파일",          # 파일명 안의 sc + 숫자 (앞이 라틴 문자 i)
+    "HANKSC12 코드",        # 자산 코드 안의 SC + 숫자 (앞이 K)
+    "BG_sc12 레이어",       # 앞이 `_` — 자산 코드 관례 보호(아래 테스트 참고)
+    "5LBW03sc01",           # 앞이 숫자
 ]
 
 
@@ -332,6 +340,20 @@ def test_house_style_scene_ref_preserves_digits_exactly():
     for src in ["sc49", "sc0103", "sc 7", "SC13", "sc999999"]:
         out = apply_house_style(f"{src} 확인")
         assert re.findall(r"\d+", out) == re.findall(r"\d+", src)
+
+
+def test_house_style_scene_ref_left_guard_excludes_latin_digit_underscore_only():
+    """왼쪽 가드가 `\\b`가 아니라 `(?<![0-9A-Za-z_])`인 이유를 양방향으로
+    잠근다 — 한글 인접은 **잡히고**(옛 `\\b`가 놓치던 실물 형태), 라틴
+    문자·숫자·`_` 인접은 **막힌다**(자산 코드 오폭 방지).
+
+    `_`를 배제 집합에 남긴 건 `\\b` 시절 동작 보존이다: 파이썬 정규식에서
+    `_`는 단어 문자라 `\\b`가 이미 `_sc12`를 막고 있었고, 리뷰가 제안한
+    `(?<![0-9A-Za-z])`만 쓰면 그 보호가 조용히 풀린다."""
+    assert apply_house_style("이전sc49") == "이전씬 49"      # 한글 인접: 잡힘
+    assert apply_house_style("BG_sc12") == "BG_sc12"        # `_` 인접: 막힘
+    assert apply_house_style("V01sc12") == "V01sc12"        # 숫자 인접: 막힘
+    assert apply_house_style("Xsc12") == "Xsc12"            # 라틴 인접: 막힘
 
 
 def test_house_style_scene_ref_never_crosses_newline():
