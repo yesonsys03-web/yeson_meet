@@ -553,6 +553,31 @@ def test_place_falls_back_to_right_when_box_has_no_room_below():
     assert not _rects_intersect(ov.rect, block.bbox)
 
 
+def test_place_right_path_stops_at_field_box_right_edge():
+    """아래 자리가 없어 **우측 경로**로 떨어져도 오른쪽 끝은 필드 박스
+    우측(limit_x1 - 8)이지 페이지 끝이 아니다.
+
+    실물(FL102 3단 p36) 재현: 2열 대사가 박스를 꽉 채워 아래가 막히자
+    주석이 `page_w - 8`(=1000.0)까지 뻗어 3열 판넬을 가로질렀다 — 사람은
+    같은 자리를 열 안(x1=535.8)에 뒀다. GABE01(1단) 표본 실측으로 이
+    상한이 폰트/클리핑에 주는 영향은 0건임을 확인했다."""
+    block = PdfBlock(page=0, kind="dialog", text="A tall block.",
+                     bbox=(354.4, 294.3, 415.6, 416.4),
+                     limit_y=422.1, limit_x1=657.8)
+    ov = StoryboardProfile().place(block, "파티마:루이스 화이팅!", (1008.0, 612.0))
+    assert ov.rect[0] >= block.bbox[2]        # 우측 경로를 탔다
+    assert ov.rect[2] <= 657.8 - 8.0 + 0.01   # 열 밖으로 안 나간다
+
+
+def test_place_right_path_still_reaches_page_edge_without_limit_x1():
+    """limit_x1이 없으면(도형 없는 문서) 우측 끝은 예전대로 page_w - 8 —
+    상한 도입이 기존 경로를 조용히 좁히지 않는다는 하위호환 잠금."""
+    block = PdfBlock(page=0, kind="dialog", text="A tall block.",
+                     bbox=(354.4, 294.3, 415.6, 416.4))
+    ov = StoryboardProfile().place(block, "파티마:루이스 화이팅!", (1008.0, 612.0))
+    assert ov.rect[2] == pytest.approx(1000.0, abs=0.01)
+
+
 def test_place_without_limit_y_keeps_legacy_right_placement():
     """limit_y를 모르면(도형도 다음 라벨도 없는 PDF) 판단 근거가 없으므로
     기존 배치 규칙 그대로 — 상한 없이 아래로 놓으면 박스를 넘어 다음 필드를
@@ -710,7 +735,11 @@ def test_place_panel_label_switches_to_right_when_near_top():
     assert ov.rect[0] >= block.bbox[2]  # 오른쪽 경로로 전환됨
 
 
-def test_detect_rejects_portrait(tmp_path):
+def test_detect_rejects_page_without_field_labels(tmp_path):
+    """필드 라벨이 없는 PDF는 감지하지 않는다 — 판정 근거는 방향이 아니라
+    'Dialog'+'Action Notes' 라벨의 존재다(2026-07-31 정정: 예전 이름은
+    `test_detect_rejects_portrait`였는데, 이 fixture는 텍스트가 아예 없어
+    방향 게이트를 지워도 통과한다 = 방향을 검증한 적이 없다)."""
     import fitz
     doc = fitz.open()
     doc.new_page(width=612, height=792)
@@ -722,6 +751,213 @@ def test_detect_rejects_portrait(tmp_path):
         assert detect_profile(d) is None
     finally:
         d.close()
+
+
+def _make_portrait_storyboard_pdf(tmp_path: Path) -> Path:
+    """세로형(612x792) 스토리보드 — 실물 FL102 `1_PANEL` 익스포트가 이
+    크기다. 라벨 규약은 가로형과 같다."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((39, 410), "Dialog", fontsize=12)
+    page.insert_text((39, 430), "If you wanna go, then go.", fontsize=10)
+    page.insert_text((39, 575), "Action Notes", fontsize=12)
+    page.insert_text((39, 595), "HANK walks to the door.", fontsize=10)
+    path = tmp_path / "sb_portrait.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_detect_accepts_portrait_storyboard(tmp_path):
+    """세로형 스토리보드도 감지한다(2026-07-31).
+
+    예전 `detect()`는 `w <= h`면 즉시 False였다 — GABE01(1008x612)에 맞춘
+    가드였는데, 실물 FL102의 `1_PANEL` 익스포트가 **612x792 세로형**이라
+    정당한 스토리보드가 "지원하지 않는 PDF 포맷입니다"로 거부됐다.
+    방향은 애초에 판별력도 없었다: 타당성 문서가 조사한 4개 포맷(스토리
+    보드·대본·컬러노트·리드시트)이 전부 가로형이라, 가로/세로는 스토리
+    보드를 다른 포맷과 구분해주지 않는다. 실제 판별자는 라벨 2종이다."""
+    doc = open_pdf(_make_portrait_storyboard_pdf(tmp_path))
+    try:
+        profile = detect_profile(doc)
+        assert profile is not None and profile.name == "storyboard"
+        blocks = profile.extract(doc)
+        dialog = next(b for b in blocks if b.kind == "dialog")
+        assert dialog.text == "If you wanna go, then go."
+    finally:
+        doc.close()
+
+
+# 3단(3열) 템플릿 실측 좌표 — FL102_FNL_A_3_PANEL.pdf, 1008x612
+_COL_X = (39.0, 354.4, 669.8)
+_DIALOG_BOX_X = ((36.0, 342.4), (351.4, 657.8), (666.8, 973.1))
+_DIALOG_BOX_Y = (291.3, 422.1)
+_ACTION_BOX_Y = (425.1, 556.0)
+
+
+def _make_storyboard_pdf_three_panel(tmp_path: Path) -> Path:
+    """3단 스토리보드 한 페이지 — 실물 FL102_FNL_A_3_PANEL 좌표 그대로.
+
+    한 페이지에 Scene/Panel + Dialog + Action Notes가 **열마다 한 벌씩**
+    총 3벌 있다. 열 간격은 315.4pt로 `_field_content`의 x 허용폭(60pt)보다
+    훨씬 넓다 — 즉 열끼리 내용이 섞일 일은 없고, 문제는 오직 "2·3열을
+    아예 안 본다"였다.
+
+    페이지 푸터(`Property of ...`)도 실물 좌표(x0=405.8, y0≈563.5)에 둔다:
+    2열 x0(354.4)과 51.4pt 차이라 x 허용폭 60pt 안에 들어오고, 마지막
+    필드(Action Notes)는 '다음 라벨'이 없어 창 상한이 없다 — 그래서 창을
+    필드 박스 하단으로 막지 않으면 푸터가 2열 Action Notes 내용으로
+    빨려 들어간다(실물 79페이지에서 77건 발생)."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    for i, x in enumerate(_COL_X):
+        bx0, bx1 = _DIALOG_BOX_X[i]
+        page.draw_rect(fitz.Rect(bx0, _DIALOG_BOX_Y[0], bx1, _DIALOG_BOX_Y[1]),
+                       color=(0, 0, 0), width=1)
+        page.draw_rect(fitz.Rect(bx0, _ACTION_BOX_Y[0], bx1, _ACTION_BOX_Y[1]),
+                       color=(0, 0, 0), width=1)
+        page.insert_text((x, 305), "Dialog", fontsize=12)
+        page.insert_text((x, 340), f"ANNOUNCER {i + 1} speaks now.", fontsize=10)
+        page.insert_text((x, 439), "Action Notes", fontsize=12)
+        page.insert_text((x, 470), f"Panel {i + 1} action beat.", fontsize=10)
+    page.insert_text((405.8, 570),
+                     "FL102_FNL_A Property of Netflix & Robin Red Breast", fontsize=6)
+    path = tmp_path / "sb_three_panel.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_extract_finds_every_column_on_three_panel_page(tmp_path):
+    """3단 페이지에서 필드를 **열마다** 뽑는다 — 6건(대사 3 + 액션 3).
+
+    회귀 근거(2026-07-31 실측, FL102_FNL_A_3_PANEL 79페이지): 예전
+    `_field_content`는 라벨을 찾는 즉시 `break`하고 `extract`도 `_FIELDS`를
+    페이지당 한 번만 돌아서, 뽑히는 블록 48건이 **전부 1열**이었다
+    (열별 분포 {39.0: 48}). 사람 납품본이 필드에 단 한글 주석 59건 중
+    2·3열 34건이 통째로 누락됐다."""
+    doc = open_pdf(_make_storyboard_pdf_three_panel(tmp_path))
+    try:
+        blocks = [b for b in StoryboardProfile().extract(doc)
+                  if b.kind in ("dialog", "action")]
+        assert len(blocks) == 6
+        assert sum(1 for b in blocks if b.kind == "dialog") == 3
+        assert sum(1 for b in blocks if b.kind == "action") == 3
+        # 각 열이 자기 내용을 갖는다 — 열이 섞이거나 누락되면 실패
+        for i, x in enumerate(_COL_X):
+            col = [b for b in blocks if abs(b.bbox[0] - x) < 5.0]
+            assert len(col) == 2, f"열 x0={x}에서 2건이 아니라 {len(col)}건"
+            dialog = next(b for b in col if b.kind == "dialog")
+            action = next(b for b in col if b.kind == "action")
+            assert dialog.text == f"ANNOUNCER {i + 1} speaks now."
+            assert action.text == f"Panel {i + 1} action beat."
+    finally:
+        doc.close()
+
+
+def test_extract_limits_come_from_the_blocks_own_column_box(tmp_path):
+    """3단에서 limit_y/limit_x1은 **그 블록이 속한 열의** 박스에서 온다.
+
+    열 무관으로 고르면 1열 블록이 3열 박스의 우측(973.1)을 상한으로 받아
+    주석이 옆 열을 가로지른다."""
+    doc = open_pdf(_make_storyboard_pdf_three_panel(tmp_path))
+    try:
+        blocks = [b for b in StoryboardProfile().extract(doc)
+                  if b.kind in ("dialog", "action")]
+        # 먼저 6건을 못 박는다 — 2·3열이 없으면 아래 루프가 공허하게
+        # 통과해버려(검사할 블록이 0건) 판별력이 사라진다.
+        assert len(blocks) == 6
+        for i, x in enumerate(_COL_X):
+            _bx0, bx1 = _DIALOG_BOX_X[i]
+            for b in (b for b in blocks if abs(b.bbox[0] - x) < 5.0):
+                expect_y = (_DIALOG_BOX_Y[1] if b.kind == "dialog"
+                            else _ACTION_BOX_Y[1])
+                assert b.limit_y == pytest.approx(expect_y, abs=1.0)
+                assert b.limit_x1 == pytest.approx(bx1, abs=1.0)
+    finally:
+        doc.close()
+
+
+def test_extract_last_field_window_stops_at_field_box_bottom(tmp_path):
+    """마지막 필드(Action Notes)의 내용 창은 필드 박스 하단에서 끊긴다 —
+    페이지 푸터가 내용으로 빨려 들어가면 안 된다.
+
+    실측: 이 상한이 없으면 FL102 79페이지에서 푸터가 2열 Action Notes로
+    77건 유입된다. GABE01(1단, 표본 149페이지)에서는 이 상한으로 잃는
+    블록이 **0건**이라 기존 코퍼스에는 무해하다(회귀 아님)."""
+    doc = open_pdf(_make_storyboard_pdf_three_panel(tmp_path))
+    try:
+        blocks = StoryboardProfile().extract(doc)
+        # 푸터를 빨아들이는 건 **2열** Action Notes다(x0 51.4pt 차이). 2열이
+        # 추출되지 않으면 아래 단언이 공허하게 통과하므로 먼저 못 박는다.
+        action_cols = sorted(round(b.bbox[0], 1) for b in blocks
+                             if b.kind == "action")
+        assert len(action_cols) == 3, f"열별 action 3건이 아님: {action_cols}"
+        for b in blocks:
+            assert "Property of" not in b.text, (
+                f"푸터가 {b.kind} 내용으로 유입됨: {b.text!r}")
+    finally:
+        doc.close()
+
+
+def _make_storyboard_pdf_offset_columns(tmp_path: Path) -> Path:
+    """다음 라벨을 '같은 열 우선'으로 고르는지 가르는 fixture — 2열의
+    Action Notes 라벨(y≈349)이 1열 것(y≈417)보다 **위에** 있다. 도형은
+    일부러 없다(창 상한이 오직 다음 라벨에서만 오게).
+
+    ⚠2열 라벨을 **먼저** 삽입하는 것이 이 fixture의 핵심이다. 옛 규칙은
+    y가 아니라 `raws` 순서의 첫 매치를 골랐으므로, 1열 라벨을 먼저 넣으면
+    옛 규칙도 우연히 정답을 맞혀 판별력이 사라진다(뮤테이션 실측으로
+    확인: 삽입 순서를 뒤집으면 옛 규칙도 통과해버렸다)."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    page.insert_text((354.4, 362), "Action Notes", fontsize=12)   # 2열, 더 위
+    page.insert_text((39.0, 305), "Dialog", fontsize=12)
+    page.insert_text((39.0, 400), "ANNOUNCER speaks now.", fontsize=10)
+    page.insert_text((39.0, 430), "Action Notes", fontsize=12)
+    path = tmp_path / "sb_offset_cols.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_next_label_prefers_same_column_over_a_nearer_other_column(tmp_path):
+    """1열 Dialog의 창 상한은 **1열의** Action Notes(y≈417)여야 한다 —
+    더 가까운 2열 라벨(y≈349)을 고르면 1열 대사(y≈389)가 창 밖으로
+    밀려나 통째로 사라진다.
+
+    '열 무관으로 먼저 찾기'로 되돌리면 이 테스트가 실패한다."""
+    doc = open_pdf(_make_storyboard_pdf_offset_columns(tmp_path))
+    try:
+        blocks = StoryboardProfile().extract(doc)
+        dialog = next(b for b in blocks if b.kind == "dialog")
+        assert dialog.text == "ANNOUNCER speaks now."
+    finally:
+        doc.close()
+
+
+def test_place_keeps_annotation_inside_its_own_column(tmp_path):
+    """3단에서 어떤 배치 경로를 타든 주석 rect가 **자기 열의 박스 우측**을
+    넘지 않는다 — 넘으면 옆 열 판넬을 침범한다."""
+    doc = open_pdf(_make_storyboard_pdf_three_panel(tmp_path))
+    try:
+        profile = StoryboardProfile()
+        blocks = [b for b in profile.extract(doc)
+                  if b.kind in ("dialog", "action")]
+        assert len(blocks) == 6
+        for b in blocks:
+            i = min(range(3), key=lambda k: abs(_COL_X[k] - b.bbox[0]))
+            _bx0, bx1 = _DIALOG_BOX_X[i]
+            ov = profile.place(b, "아나운서가 지금 말한다. " * 3,
+                               doc.page_size(b.page))
+            assert ov.rect[2] <= bx1 + 1.0, (
+                f"열 {i} 주석이 박스 우측({bx1})을 넘음: {ov.rect}")
+            assert not _rects_intersect(ov.rect, b.bbox)
+    finally:
+        doc.close()
 
 
 SAMPLES = os.environ.get("YESON_PDF_SAMPLES")

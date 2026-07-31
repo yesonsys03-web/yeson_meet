@@ -69,6 +69,35 @@ _PREFILTER_MIN_PIXELS = 10
 # 여유를 두고 0.15로 설정.
 _HIT_RED_RATIO_MIN = 0.15
 
+# 색과 무관하게 통과시키는 제작 지시어(2026-07-31, FL102 실측).
+#
+# 왜 필요한가: 위 빨강 비율 문턱은 "패널 라벨은 빨간 글자"라는 GABE01 관례를
+# 전제한다. FL102는 같은 성격의 제작 지시어를 **검정 글자**로 적는다 —
+# 계측 결과 OCR은 `CAM GUIDE`를 신뢰도 1.00으로 정확히 읽는데 빨강 비율이
+# 0.000이라 이 문턱에서 버려졌다(사용자 신고: p27 "카메라 가이드 번역 누락").
+# 사람 납품본은 이 문서에서 `카메라 가이드` 6건·`필드가이드…` 5건을 단다.
+#
+# 왜 문턱을 낮추지 않는가: 같은 문턱이 그림 속 간판(p6 `REHABCENTER`)과
+# 씬/판넬 숫자도 버리는데 **그건 버리는 게 맞다**(사람도 번역하지 않는다).
+# 판별 기준은 색이 아니라 "제작 지시어냐 그림 속 사물이냐"이므로, 색 문턱은
+# 그대로 두고 확인된 지시어만 이름으로 통과시킨다.
+#
+# 공백 무시로 매칭한다 — RapidOCR이 같은 라벨을 `CAM GUIDE`로도
+# `CAMGUIDE`로도 돌려준다(실측: p30 vs p27).
+_PRODUCTION_LABEL_TERMS = ("CAMGUIDE", "FIELDGUIDE", "REFERENCE")
+_NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
+
+
+def _is_production_label(text: str) -> bool:
+    """확인된 제작 지시어로 시작하면 True — 빨강 비율 검사를 우회한다.
+
+    접두 매칭인 이유: 실물 라벨이 뒤에 식별자를 달고 나온다
+    (`FIELD GUIDE 1-2`, `FIELD GUIDE A LOUIS ONLY`). 접두를 안 쓰면
+    이 변형들을 전부 열거해야 한다."""
+    squashed = _NON_ALNUM.sub("", text).upper()
+    return any(squashed.startswith(t) for t in _PRODUCTION_LABEL_TERMS)
+
+
 _HANGUL = re.compile(r"[가-힣]")
 
 
@@ -176,7 +205,10 @@ def find_panel_labels(
             continue
         # 히트 bbox 내 빨강 픽셀 비율 — 패널 라벨은 빨간 글자이므로 검정
         # 그림선(사인·표지판 텍스트 등)이 우연히 OCR 히트가 돼도 여기서 걸러진다.
-        if float(_red_mask(sub).mean()) < _HIT_RED_RATIO_MIN:
+        # 단 확인된 제작 지시어(CAM GUIDE 등)는 검정으로 적히는 문서가 있어
+        # 색 검사를 우회한다(_PRODUCTION_LABEL_TERMS 주석 참고).
+        if (float(_red_mask(sub).mean()) < _HIT_RED_RATIO_MIN
+                and not _is_production_label(text)):
             continue
         out.append(RawBlock(
             text=text,
