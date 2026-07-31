@@ -1,8 +1,14 @@
-"""Storyboard Pro 익스포트 프로파일 (King of the Hill GABE01 실측 기반).
+"""Storyboard Pro 익스포트 프로파일 (GABE01 1단 / FL102 1·3단 실측 기반).
 
-페이지당 판넬 1장 + 고정 위치 'Dialog'/'Action Notes' 라벨. 템플릿 익스포트라
-라벨 x좌표가 전 페이지 동일 — 라벨 블록을 찾고 그 아래 가장 가까운 블록을
-내용으로 본다(라벨과 내용이 한 블록으로 붙어 나오는 변형도 처리).
+판넬마다 'Dialog'/'Action Notes' 라벨 한 벌. **페이지당 판넬 수는 1장일 수도
+3장일 수도 있다** — 라벨 앵커를 페이지에서 전부 열거하고(`_field_anchors`)
+앵커마다 자기 열(x 근접) 안에서 아래쪽 블록을 내용으로 본다(라벨과 내용이
+한 블록으로 붙어 나오는 변형도 처리).
+
+⚠2026-07-31 이전에는 "페이지당 판넬 1장"을 전제해 첫 라벨에서 멈췄고, 그
+탓에 3단 문서에서 2·3열이 통째로 누락됐다(FL102 실측: 사람 납품본 기준 필드
+59건 중 34건). 새 템플릿을 붙일 때 이 전제를 되살리지 말 것.
+페이지 방향(가로/세로)도 판정에 쓰지 않는다 — `detect()` docstring 참조.
 """
 from __future__ import annotations
 
@@ -45,6 +51,10 @@ _LABEL_TEXTS = frozenset(label for label, _kind in _FIELDS)
 _FIELD_BOX_MIN_WIDTH = 300.0
 _FIELD_BOX_MIN_HEIGHT = 15.0
 
+# 같은 열로 볼 x 허용폭 — 라벨 x0과 이만큼 안이면 그 필드의 내용으로 본다.
+# 실물 3단(FL102) 열 간격은 315.4pt라 열끼리 섞이지 않는다.
+_COL_TOL = 60.0
+
 
 def _has_field_label(raws: list[RawBlock]) -> bool:
     """페이지가 실제 스토리보드 템플릿 페이지인지 판정(Dialog/Action Notes
@@ -71,9 +81,14 @@ class StoryboardProfile:
     label = "스토리보드 (Storyboard Pro)"
 
     def detect(self, doc: PdfDocument) -> bool:
-        w, h = doc.page_size(0)
-        if w <= h:  # 가로형이 아니면 아님
-            return False
+        """판정 근거는 'Dialog'+'Action Notes' 라벨 2종의 존재뿐이다.
+
+        2026-07-31: 예전엔 `w <= h`면(세로형) 즉시 False였다 — GABE01
+        (1008x612)에 맞춘 가드였는데 실물 FL102의 `1_PANEL` 익스포트가
+        **612x792 세로형**이라 정당한 스토리보드가 "지원하지 않는 PDF
+        포맷입니다"로 거부됐다. 게다가 방향은 판별력도 없다: 타당성 문서가
+        조사한 4개 포맷(스토리보드·대본·컬러노트·리드시트)이 전부 가로형
+        이라 가로/세로로는 서로 구분되지 않는다."""
         found: set[str] = set()
         for page in range(min(_DETECT_PAGES, doc.page_count)):
             for b in doc.raw_blocks(page):
@@ -96,43 +111,52 @@ class StoryboardProfile:
             rects = doc.page_rects(page)
             for i, (label, kind) in enumerate(_FIELDS):
                 next_label = _FIELDS[i + 1][0] if i + 1 < len(_FIELDS) else None
-                content = _field_content(raws, label, next_label,
-                                         is_action=(kind == "action"))
-                if content is None:
-                    continue
-                # normalize_ws는 \n도 공백으로 접어버려 _merge_pieces가
-                # 슬러그라인 뒤에 넣은 개행(Task 19)을 지운다 — 줄 단위로
-                # 정규화하고 \n 구분자는 그대로 둔다(개행이 없으면 기존과
-                # 동일한 단일 정규화).
-                text = "\n".join(
-                    normalize_ws(line) for line in content.text.split("\n"))
-                if not text or has_hangul(text):
-                    continue
-                box = _field_box(rects, content.bbox)
-                # 다음 필드 라벨 상한은 박스 유무와 무관하게 필드당 한 번만
-                # 계산해 둘을 min으로 합친다(리뷰 후속, Important 1(b)) —
-                # 예전엔 "박스 있으면 박스만, 없으면 라벨만" 상호배타였는데,
-                # 그러면 박스가 너무 낙낙해 다음 필드를 침범해도 그대로
-                # 상한이 돼버린다. 더 좁은 쪽이 항상 이기게 한다.
-                next_y0 = _next_label_y0(raws, next_label)
-                next_limit = None if next_y0 is None else next_y0 - _GAP
-                if box is not None:
-                    # 실측(GABE01, 매 7페이지 표본): dialog 필드에서
-                    # next_label_y0 - _GAP는 박스 하단보다 언제나 정확히
-                    # 2.0pt 아래다 — 즉 이 min은 실물에서는 사실상 no-op이고
-                    # (박스가 항상 이김), 박스가 지나치게 낙낙해 다음 필드를
-                    # 침범할 수 있는 병리적 케이스에서만 실제로 작동한다.
-                    limit_y = (box[3] if next_limit is None
-                              else min(box[3], next_limit))
-                    limit_x1 = box[2]
-                else:
-                    # 도형이 없으면 다음 필드 라벨을 상한으로. 마지막 필드는
-                    # 뒤에 라벨이 없어 None으로 남는다 = 기존 우측 배치 그대로.
-                    limit_y = next_limit
-                    limit_x1 = None
-                out.append(PdfBlock(page=page, kind=kind, text=text,
-                                    bbox=content.bbox,
-                                    limit_y=limit_y, limit_x1=limit_x1))
+                # 라벨 앵커는 페이지당 **여러 개**일 수 있다 — 1단 템플릿은
+                # 1개, 3단(FL102)은 열마다 1개씩 3개다. 예전엔 첫 앵커에서
+                # 멈춰 2·3열이 통째로 누락됐다(실측: 뽑힌 48블록이 전부 1열).
+                for anchor, rest in _field_anchors(raws, label):
+                    box = _field_box(rects, anchor.bbox)
+                    col_x0 = anchor.bbox[0]
+                    # 다음 라벨은 **같은 열에서** 찾는다 — 열 무관으로 찾으면
+                    # 엉뚱한 열의 라벨이 상한이 된다(이 함수의 예전 docstring이
+                    # 예고했던 실패다).
+                    next_y0 = _next_label_y0(raws, next_label, col_x0=col_x0)
+                    content = _field_content(
+                        raws, anchor, rest, is_action=(kind == "action"),
+                        window_y1=_content_window(next_y0, box))
+                    if content is None:
+                        continue
+                    # normalize_ws는 \n도 공백으로 접어버려 _merge_pieces가
+                    # 슬러그라인 뒤에 넣은 개행(Task 19)을 지운다 — 줄 단위로
+                    # 정규화하고 \n 구분자는 그대로 둔다(개행이 없으면 기존과
+                    # 동일한 단일 정규화).
+                    text = "\n".join(
+                        normalize_ws(line) for line in content.text.split("\n"))
+                    if not text or has_hangul(text):
+                        continue
+                    # 다음 필드 라벨 상한은 박스 유무와 무관하게 필드당 한 번만
+                    # 계산해 둘을 min으로 합친다(리뷰 후속, Important 1(b)) —
+                    # 예전엔 "박스 있으면 박스만, 없으면 라벨만" 상호배타였는데,
+                    # 그러면 박스가 너무 낙낙해 다음 필드를 침범해도 그대로
+                    # 상한이 돼버린다. 더 좁은 쪽이 항상 이기게 한다.
+                    next_limit = None if next_y0 is None else next_y0 - _GAP
+                    if box is not None:
+                        # 실측(GABE01, 매 7페이지 표본): dialog 필드에서
+                        # next_label_y0 - _GAP는 박스 하단보다 언제나 정확히
+                        # 2.0pt 아래다 — 즉 이 min은 실물에서는 사실상 no-op이고
+                        # (박스가 항상 이김), 박스가 지나치게 낙낙해 다음 필드를
+                        # 침범할 수 있는 병리적 케이스에서만 실제로 작동한다.
+                        limit_y = (box[3] if next_limit is None
+                                   else min(box[3], next_limit))
+                        limit_x1 = box[2]
+                    else:
+                        # 도형이 없으면 다음 필드 라벨을 상한으로. 마지막 필드는
+                        # 뒤에 라벨이 없어 None으로 남는다 = 기존 우측 배치 그대로.
+                        limit_y = next_limit
+                        limit_x1 = None
+                    out.append(PdfBlock(page=page, kind=kind, text=text,
+                                        bbox=content.bbox,
+                                        limit_y=limit_y, limit_x1=limit_x1))
             # 표지/타이틀 페이지(리뷰 후속, 2026-07-30): Dialog/Action Notes
             # 라벨이 아예 없으면 실제 패널 템플릿 페이지가 아니다 —
             # _panel_region이 이때 기본값(y_bottom=460)으로 열리는데, 표지의
@@ -206,9 +230,10 @@ def _place_below_in_box(block: PdfBlock, ko_text: str,
     번역이 와도 폭이 넓어지지 않아 12pt 한 줄에 들어갈 수 있는 문장이
     불필요하게 2줄로 접혀 10pt까지 축소된다(실물 GABE01 373p 실측: 사람은
     같은 자리에 12pt 한 줄로 썼는데 이 폭 캡 탓에 10pt가 나오던 버그,
-    2026-07-31 리뷰로 발견). `_place_right_or_below`는 이 문제와 무관—
-    그쪽은 원문과 겹치지 않으려고 일부러 원문 폭 기준을 쓰는 것이라 손대지
-    않는다."""
+    2026-07-31 리뷰로 발견). `_place_right_or_below`의 **폭 캡**은 이 문제와
+    무관—그쪽은 원문과 겹치지 않으려고 일부러 원문 폭 기준을 쓰는 것이라
+    손대지 않는다(단 오른쪽 **끝**은 그쪽도 이제 같은 `limit_x1` 상한을
+    쓴다 — 열 경계를 넘지 않기 위해서다)."""
     if block.limit_y is None:
         return None
     page_w, page_h = page_size
@@ -249,18 +274,34 @@ def _place_right_or_below(
     얼마든 움직여도 교차 위험이 없다 — 8pt에서도 안 맞으면 페이지 상단
     쪽으로 밀어 올려 실제 텍스트가 다 보이게 한다. 아래 경로는 밀지
     않는다 — 그게 원문을 덮는 원래 버그였다(잘리더라도 원문 비침범이
-    우선)."""
+    우선).
+
+    오른쪽 끝은 페이지가 아니라 **필드 박스 우측**이다(2026-07-31,
+    `_place_below_in_box`와 같은 규칙). 3단(FL102) 문서에서 이 상한이 없으면
+    아래 배치가 실패한 블록의 주석이 `page_w`까지 뻗어 **옆 열 판넬을
+    가로지른다**(p36 2열 대사에서 실측: rect x1=1000.0 ≫ 열 우측 657.8,
+    사람은 같은 자리를 열 안 535.8에 뒀다).
+
+    설계 §6.5는 "우측도 같이 조이면 클리핑이 늘어난다"고 이연했으나,
+    GABE01(1단) 표본 80페이지 실측 결과 우측 경로 27건에서 **폰트 변화
+    0건·새 클리핑 0건**이었고 오히려 그 27건 전부가 지금 박스 우측
+    (985.1)을 넘어 1000.0까지 뻗고 있었다 — 조이는 쪽이 순수 이득이다."""
     page_w, page_h = page_size
     bx0, by0, bx1, by1 = block.bbox
-    right_w = page_w - 8.0 - (bx1 + 8.0)
+    # 필드 박스가 보고하는 limit_x1과 무관하게 페이지 폭 한도는 항상
+    # 지킨다(limit_x1이 페이지 밖에 걸려도 주석은 페이지 안에 남는다).
+    right = min(page_w - 8.0,
+                block.limit_x1 - 8.0 if block.limit_x1 is not None
+                else page_w - 8.0)
+    right_w = right - (bx1 + 8.0)
     if right_w >= min_right_width:
         x0 = bx1 + 8.0
-        x1 = page_w - 8.0
+        x1 = right
         y0 = by0  # 원문 첫 줄과 y 정렬
         allow_shift = True
     else:
         x0 = bx0
-        x1 = min(page_w - 8.0, max(bx1, x0 + _MIN_WIDTH))
+        x1 = min(right, max(bx1, x0 + _MIN_WIDTH))
         y0 = by1 + _GAP
         allow_shift = False
     rect, fontsize = _fit_rect(x0, y0, x1, page_h, ko_text,
@@ -289,23 +330,79 @@ def _panel_region(raws: list[RawBlock], page_w: float
     return (0.0, _PANEL_Y_TOP, page_w, y_bottom)
 
 
-def _next_label_y0(raws: list[RawBlock], next_label: str | None) -> float | None:
+def _next_label_y0(raws: list[RawBlock], next_label: str | None,
+                   *, col_x0: float | None = None) -> float | None:
     """다음 필드 라벨의 y0 — 라벨+내용이 한 블록으로 붙어 나오는 변형도
     경계로 인정한다. _field_content의 창 상한과 배치 상한이 **같은 규칙**을
     쓰도록 한 곳에 모은 것이다(규칙이 갈라지면 내용 창과 배치 상한이 어긋난다).
 
-    x열은 보지 않는다 — y만으로 매칭한다(의도적으로 열 무관). 현재
-    템플릿은 모든 필드 라벨이 같은 x열에 있어 무해하지만, 장차 라벨이
-    여러 열에 걸친 템플릿을 만나면 엉뚱한 열의 라벨을 상한으로 잘못
-    고를 수 있다."""
+    `col_x0`을 주면 **그 열을 먼저** 찾고, 그 열에 다음 라벨이 없을 때만
+    열 무관으로 되돌아간다(2026-07-31).
+
+    - 열 우선인 이유: 예전엔 x를 아예 보지 않아서, 3단(FL102) 템플릿에서
+      1열 Dialog의 상한으로 2·3열의 Action Notes 라벨이 잡힐 수 있었다 —
+      이 함수의 예전 docstring이 정확히 그 실패("장차 라벨이 여러 열에
+      걸친 템플릿을 만나면")를 예고해 뒀다.
+    - 그래도 폴백을 남기는 이유: 상한이 아예 없어지면 Dialog 필드의 창이
+      아래로 열려 **다음 필드의 내용을 삼킨다**(빈 Dialog 회귀, Bug A/B).
+      라벨 x가 열 허용폭 밖으로 흔들리는 템플릿에서 그 안전성질을 잃지
+      않도록, 같은 열에서 못 찾으면 예전 규칙 그대로 되돌아간다. 실물
+      3단에서는 열마다 두 라벨이 다 있어 폴백이 발동하지 않는다."""
     if next_label is None:
         return None
+    fallback: float | None = None
     for b in raws:
         t = normalize_ws(b.text)
         if t == next_label or (t.startswith(next_label)
                                and len(t) > len(next_label)):
-            return b.bbox[1]
-    return None
+            if col_x0 is None or abs(b.bbox[0] - col_x0) < _COL_TOL:
+                return b.bbox[1]
+            if fallback is None:
+                fallback = b.bbox[1]
+    return fallback
+
+
+def _content_window(next_y0: float | None,
+                    box: tuple[float, float, float, float] | None,
+                    ) -> float | None:
+    """내용 후보를 모을 창의 하한(y) — 다음 라벨과 필드 박스 하단 중 **더
+    위쪽**(작은 값). 둘 다 없으면 None(창 무제한).
+
+    박스 하단을 창에 넣는 이유(2026-07-31): 마지막 필드(Action Notes)는
+    뒤에 라벨이 없어 창이 페이지 끝까지 열려 있었다. 3단 문서에서는 페이지
+    푸터(`... Property of Netflix ...`, x0=405.8)가 2열 x0(354.4)과 51.4pt
+    차이라 x 허용폭 60pt 안에 들어와 **푸터가 대사 내용으로 빨려 들어갔다**
+    (FL102 79페이지에서 77건 실측). 박스 하단으로 막으면 사라진다.
+
+    기존 코퍼스에는 무해함을 실측으로 확인했다 — GABE01(1단) 표본 149
+    페이지의 Action Notes 148건에서 이 상한으로 잃는 블록은 **0건**이다."""
+    bounds = [v for v in (next_y0, box[3] if box is not None else None)
+              if v is not None]
+    return min(bounds) if bounds else None
+
+
+def _field_anchors(raws: list[RawBlock], label: str
+                   ) -> list[tuple[RawBlock, str | None]]:
+    """페이지 안의 `label` 앵커를 **전부** 돌려준다 — (앵커 블록, 붙어 나온
+    내용 조각). 1단 템플릿은 1개, 3단(FL102)은 열마다 1개씩 3개다.
+
+    2026-07-31: 예전 `_field_content`는 첫 앵커를 찾는 즉시 `break`했고
+    `extract()`도 `_FIELDS`를 페이지당 한 번만 돌아서, 3단 문서에서 뽑히는
+    블록이 **전부 1열**이었다(FL102_FNL_A 실측: 48블록의 열별 분포가
+    `{39.0: 48}`, 사람 납품본 기준 필드 59건 중 2·3열 34건 누락).
+
+    반환 순서는 `raws` 순서 그대로다 — 열 순서를 가정하지 않는다(호출부는
+    앵커마다 독립적으로 자기 열을 처리한다)."""
+    out: list[tuple[RawBlock, str | None]] = []
+    for b in raws:
+        t = normalize_ws(b.text)
+        if t == label:
+            out.append((b, None))
+        elif t.startswith(label) and len(t) > len(label):
+            rest = t[len(label):].lstrip(" :")
+            if rest:
+                out.append((b, rest))
+    return out
 
 
 def _field_box(rects: list[tuple[float, float, float, float]],
@@ -327,43 +424,31 @@ def _field_box(rects: list[tuple[float, float, float, float]],
     return best
 
 
-def _field_content(raws: list[RawBlock], label: str,
-                    next_label: str | None = None, *,
-                    is_action: bool = False) -> RawBlock | None:
-    """라벨 아래, '다음 라벨' 앞까지의 창 안에 있는 **모든** 콘텐츠 블록을
-    y좌표 오름차순으로 병합해 하나의 RawBlock으로 반환한다(2026-07-30
-    E2E 실측: Dialog 754페이지 중 45%가 화자 줄과 대사가 별개 블록으로
-    나뉜다 — 최근접 1블록만 집으면 실제 대사가 누락된다).
-    라벨+내용이 한 블록이면 라벨 접두를 뗀 나머지를 첫 조각으로 삼고,
-    그 아래 창 안의 추가 후보들도 이어 붙인다.
+def _field_content(raws: list[RawBlock], anchor: RawBlock, rest: str | None, *,
+                   is_action: bool = False,
+                   window_y1: float | None = None) -> RawBlock | None:
+    """**주어진 앵커**의 아래, 창(`window_y1`) 앞까지, 그리고 **같은 열**에
+    있는 모든 콘텐츠 블록을 y좌표 오름차순으로 병합해 하나의 RawBlock으로
+    반환한다(2026-07-30 E2E 실측: Dialog 754페이지 중 45%가 화자 줄과 대사가
+    별개 블록으로 나뉜다 — 최근접 1블록만 집으면 실제 대사가 누락된다).
+    라벨+내용이 한 블록이면 그 나머지(`rest`)가 첫 조각이 되고, 그 아래 창
+    안의 추가 후보들도 이어 붙인다.
+
+    2026-07-31: 앵커를 스스로 찾지 않고 **인자로 받는다**. 예전엔 페이지에서
+    첫 라벨을 찾자마자 `break`해 3단 템플릿의 2·3열을 볼 수 없었다 —
+    앵커 열거는 `_field_anchors`가, 창 계산은 `_content_window`가 맡는다.
 
     실물(GABE01) 실측: 필드가 비어 있으면 플레이스홀더 없이 통째로
-    생략된다 — 그래서 후보를 다음 필드 라벨의 y좌표 위로 제한해야 한다.
-    안 그러면 Dialog가 비었을 때 그 아래 Action Notes '내용'까지
-    건너뛰어 잘못 집어온다(라벨 텍스트만 걸러서는 못 막는다)."""
-    label_block = None
-    first_piece: RawBlock | None = None
-    for b in raws:
-        t = normalize_ws(b.text)
-        if t == label:
-            label_block = b
-            break
-        if t.startswith(label) and len(t) > len(label):
-            rest = t[len(label):].lstrip(" :")
-            if rest:
-                first_piece = RawBlock(text=rest, bbox=b.bbox)
-                break
-    anchor = label_block if label_block is not None else first_piece
-    if anchor is None:
-        return None
+    생략된다 — 그래서 후보를 창 위로 제한해야 한다. 안 그러면 Dialog가
+    비었을 때 그 아래 Action Notes '내용'까지 건너뛰어 잘못 집어온다
+    (라벨 텍스트만 걸러서는 못 막는다)."""
     lx0, _ly0, _lx1, ly1 = anchor.bbox
-    upper_bound = _next_label_y0(raws, next_label)
     candidates = [b for b in raws
                   if b.bbox[1] >= ly1 - 1.0
-                  and (upper_bound is None or b.bbox[1] < upper_bound - 1.0)
-                  and abs(b.bbox[0] - lx0) < 60.0
+                  and (window_y1 is None or b.bbox[1] < window_y1 - 1.0)
+                  and abs(b.bbox[0] - lx0) < _COL_TOL
                   and not _looks_like_field_label(normalize_ws(b.text))]
-    pieces = ([first_piece] if first_piece is not None else []) + \
+    pieces = ([RawBlock(text=rest, bbox=anchor.bbox)] if rest else []) + \
         sorted(candidates, key=lambda b: b.bbox[1])
     if not pieces:
         return None
