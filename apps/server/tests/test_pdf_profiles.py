@@ -69,18 +69,32 @@ def _make_storyboard_pdf_empty_dialog(tmp_path: Path) -> Path:
 def _make_storyboard_pdf_with_field_boxes(tmp_path: Path) -> Path:
     """실물(GABE01) 템플릿을 흉내 낸 합성 페이지 — 필드 박스 사각형까지
     그린다(좌표도 실물과 동일). 기존 _make_storyboard_pdf는 도형이 없어
-    (get_drawings() == []) limit_y가 라벨 폴백으로만 정해진다."""
+    (get_drawings() == []) limit_y가 라벨 폴백으로만 정해진다.
+
+    페이지 전체를 감싸는 테두리 사각형도 함께 그린다(리뷰 후속, Important
+    1(a)) — `_field_box`의 "가장 작은 사각형이 이긴다" 규칙을 잠그는
+    유일한 장치다. `page_rects`는 도형을 (y0, x0) 오름차순으로 정렬해
+    돌려주므로(그리는 순서와 무관), y0가 가장 작은(=10.0) 이 테두리가
+    항상 리스트 맨 앞에 온다 — "가장 작은 것이 이긴다"가 "첫 번째가
+    이긴다"로 퇴화하면 이 테두리가 먼저 매치돼 상한이 잘못 나온다.
+    Action Notes 라벨은 박스 안에서 Dialog 박스 하단(522.7)과 충분히
+    떨어뜨려(y=550) 뒀다 — 붙여두면 "다음 라벨 y0 - GAP" 폴백값이 우연히
+    522.7 근처로 나와(리뷰 시 뮤테이션 테스트로 발견: 원래 y=540에서는
+    차이가 0.4pt뿐이라 관용 오차 안에 들어와 이 회귀를 못 잡았다)
+    Important 1(b)의 min() 결합과 뒤섞여 이 테스트의 판별력을 가린다."""
     import fitz
     doc = fitz.open()
     page = doc.new_page(width=1008, height=612)
+    page.draw_rect(fitz.Rect(10.0, 10.0, 998.0, 602.0),
+                   color=(0, 0, 0), width=1)   # 페이지 테두리(가장 큼)
     page.draw_rect(fitz.Rect(24.0, 460.3, 985.1, 522.7),
                    color=(0, 0, 0), width=1)   # Dialog 박스
     page.draw_rect(fitz.Rect(24.0, 525.7, 985.1, 588.0),
                    color=(0, 0, 0), width=1)   # Action Notes 박스
     page.insert_text((27, 474), "Dialog", fontsize=12)
     page.insert_text((27, 492), "HANK walks in.", fontsize=10)
-    page.insert_text((27, 540), "Action Notes", fontsize=12)
-    page.insert_text((27, 556), "Bobby does the Salute.", fontsize=10)
+    page.insert_text((27, 550), "Action Notes", fontsize=12)
+    page.insert_text((27, 568), "Bobby does the Salute.", fontsize=10)
     path = tmp_path / "sb_boxes.pdf"
     doc.save(path)
     doc.close()
@@ -461,10 +475,10 @@ def test_place_below_when_field_box_has_room():
 
 def test_place_below_uses_full_box_width_so_12pt_fits_real_sentence():
     """실물 GABE01 373p 회귀 가드(2026-07-31 리뷰 Finding): 아래 배치 폭을
-    원문 자체의 x1(763.3pt)로 좁히면 이 실제 문장이 12pt에서 2줄(37.5pt)이
-    필요해 여유(26.2pt)를 넘기고 10pt로 축소됐다 — 사람은 같은 자리에
-    12pt 한 줄로 썼다. 폭을 필드 박스 우측까지(950.1pt) 쓰면 1줄(22.5pt)에
-    들어가 12pt를 유지한다."""
+    원문 자체의 폭 763.3pt(= 790.3 − 27.0)로 좁히면 이 실제 문장이 12pt에서
+    2줄(37.5pt)이 필요해 여유(26.2pt)를 넘기고 10pt로 축소됐다 — 사람은
+    같은 자리에 12pt 한 줄로 썼다. 폭을 필드 박스까지의 폭 950.1pt
+    (= 977.1 − 27.0)로 쓰면 1줄(22.5pt)에 들어가 12pt를 유지한다."""
     block = PdfBlock(page=0, kind="action",
                      text="Bobby does the Three Amigos Salute. Joseph does too.",
                      bbox=(27.0, 546.7, 790.3, 557.8),
@@ -482,7 +496,7 @@ def test_place_below_shrinks_to_10pt_when_12pt_does_not_fit():
     """아래 여유가 12pt엔 모자라고 10pt엔 충분하면 아래 배치를 유지하되
     10pt로 줄인다(사다리는 10pt에서 끊는다).
 
-    폭이 박스 우측까지(950.1pt) 넓어졌으므로(위 회귀 가드와 동일 이유),
+    폭이 박스까지의 폭 950.1pt(= 977.1 − 27.0)로 넓어졌으므로(위 회귀 가드와 동일 이유),
     `limit_y`를 좁혀 12pt 2줄(37.5pt)은 못 들어가고 10pt 2줄(31.25pt)만
     들어가는 여유(35.0pt)로 맞췄다 — 넓어진 폭 때문에 이전 값(여유 44.0pt)은
     12pt로도 통과해버려 이 테스트가 더 이상 10pt 단을 검증하지 못했다."""
@@ -505,6 +519,23 @@ def test_place_below_clamps_right_edge_to_page_width_even_with_wide_limit_x1():
                      limit_y=440.0, limit_x1=1200.0)  # limit_x1 > page_w
     ov = StoryboardProfile().place(block, "안녕하세요", (1008.0, 612.0))
     assert ov.rect[2] <= 1008.0 - 8.0
+    assert not _rects_intersect(ov.rect, block.bbox)
+
+
+def test_place_below_clamps_limit_y_to_page_height():
+    """`_place_below_in_box`의 `min(block.limit_y, page_h - 4.0)` 클램프
+    잠금(리뷰 후속, Minor 2) — 이 클램프를 지워도 기존 테스트는 하나도
+    실패하지 않아 무방비 상태였다. limit_y(700.0)가 페이지 높이(612)를
+    넘는 도형 오차 케이스에서, 클램프가 살아있으면 여유(192pt)가 부족해
+    10pt로 내려가 페이지 안(597.25 ≤ 608)에 들어가지만, 클램프를 지우면
+    여유가 284pt로 늘어나 12pt가 통과해버려(247.5pt) rect 하단이 페이지
+    하단 안전 마진(page_h - 4 = 608)을 넘는다."""
+    block = PdfBlock(page=0, kind="action", text="a" * 40,
+                     bbox=(72.0, 400.0, 300.0, 412.0),
+                     limit_y=700.0, limit_x1=985.1)
+    ov = StoryboardProfile().place(block, "가" * 1200, (1008.0, 612.0))
+    assert ov.rect[1] >= block.bbox[3]          # 아래 배치 유지
+    assert ov.rect[3] <= 612.0 - 4.0            # 페이지 하단 안전 마진 안
     assert not _rects_intersect(ov.rect, block.bbox)
 
 
@@ -537,7 +568,14 @@ def test_place_without_limit_y_keeps_legacy_right_placement():
 
 def test_extract_sets_limit_from_field_box_rectangle(tmp_path):
     """도형이 있는 페이지: 필드 블록의 limit_y/limit_x1이 그 블록을 감싸는
-    필드 박스에서 온다(Dialog 박스 하단 522.7 / Action Notes 588.0)."""
+    필드 박스에서 온다(Dialog 박스 하단 522.7 / Action Notes 588.0).
+
+    이 fixture는 필드 박스 둘을 감싸는 페이지 테두리 사각형도 갖고 있다
+    (`_field_box`의 "가장 작은 것이 이긴다" 규칙 잠금, 리뷰 후속 Important
+    1(a)) — dialog.limit_y가 여전히 522.7(Dialog 박스 하단)이어야
+    테두리(가장 큰 사각형)를 잘못 고르지 않았다는 뜻이다. "첫 번째가
+    이긴다"로 되돌리면 이 단언이 실패한다(뮤테이션 테스트로 확인, 아래
+    커밋 보고서 참조)."""
     doc = open_pdf(_make_storyboard_pdf_with_field_boxes(tmp_path))
     try:
         blocks = StoryboardProfile().extract(doc)

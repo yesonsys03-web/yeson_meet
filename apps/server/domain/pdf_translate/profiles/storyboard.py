@@ -109,13 +109,26 @@ class StoryboardProfile:
                 if not text or has_hangul(text):
                     continue
                 box = _field_box(rects, content.bbox)
+                # 다음 필드 라벨 상한은 박스 유무와 무관하게 필드당 한 번만
+                # 계산해 둘을 min으로 합친다(리뷰 후속, Important 1(b)) —
+                # 예전엔 "박스 있으면 박스만, 없으면 라벨만" 상호배타였는데,
+                # 그러면 박스가 너무 낙낙해 다음 필드를 침범해도 그대로
+                # 상한이 돼버린다. 더 좁은 쪽이 항상 이기게 한다.
+                next_y0 = _next_label_y0(raws, next_label)
+                next_limit = None if next_y0 is None else next_y0 - _GAP
                 if box is not None:
-                    limit_y, limit_x1 = box[3], box[2]
+                    # 실측(GABE01, 매 7페이지 표본): dialog 필드에서
+                    # next_label_y0 - _GAP는 박스 하단보다 언제나 정확히
+                    # 2.0pt 아래다 — 즉 이 min은 실물에서는 사실상 no-op이고
+                    # (박스가 항상 이김), 박스가 지나치게 낙낙해 다음 필드를
+                    # 침범할 수 있는 병리적 케이스에서만 실제로 작동한다.
+                    limit_y = (box[3] if next_limit is None
+                              else min(box[3], next_limit))
+                    limit_x1 = box[2]
                 else:
                     # 도형이 없으면 다음 필드 라벨을 상한으로. 마지막 필드는
                     # 뒤에 라벨이 없어 None으로 남는다 = 기존 우측 배치 그대로.
-                    next_y0 = _next_label_y0(raws, next_label)
-                    limit_y = None if next_y0 is None else next_y0 - _GAP
+                    limit_y = next_limit
                     limit_x1 = None
                 out.append(PdfBlock(page=page, kind=kind, text=text,
                                     bbox=content.bbox,
@@ -279,7 +292,12 @@ def _panel_region(raws: list[RawBlock], page_w: float
 def _next_label_y0(raws: list[RawBlock], next_label: str | None) -> float | None:
     """다음 필드 라벨의 y0 — 라벨+내용이 한 블록으로 붙어 나오는 변형도
     경계로 인정한다. _field_content의 창 상한과 배치 상한이 **같은 규칙**을
-    쓰도록 한 곳에 모은 것이다(규칙이 갈라지면 내용 창과 배치 상한이 어긋난다)."""
+    쓰도록 한 곳에 모은 것이다(규칙이 갈라지면 내용 창과 배치 상한이 어긋난다).
+
+    x열은 보지 않는다 — y만으로 매칭한다(의도적으로 열 무관). 현재
+    템플릿은 모든 필드 라벨이 같은 x열에 있어 무해하지만, 장차 라벨이
+    여러 열에 걸친 템플릿을 만나면 엉뚱한 열의 라벨을 상한으로 잘못
+    고를 수 있다."""
     if next_label is None:
         return None
     for b in raws:
