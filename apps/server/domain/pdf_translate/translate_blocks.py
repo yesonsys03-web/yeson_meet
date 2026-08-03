@@ -316,6 +316,10 @@ def _post_process(ko: str) -> str:
 
 
 _DIGITS_RE = re.compile(r"\d+")
+# 화자줄 선두의 큐 번호("3 HANK/EMPLOYEES …"의 3) — 누락 면제는 이 한 토큰
+# 뿐이다. 뒤에 공백을 요구해 `1/2`·`1a-2a` 같은 액션노트 코드가 선두에 와도
+# (그런 블록은 애초에 숫자로 시작하지 않지만) 통째로 면제되지 않게 한다.
+_LEADING_CUE_RE = re.compile(r"^\s*\d+(?=\s)")
 
 
 def _verify_numbers(src: str, ko: str) -> tuple[str, str]:
@@ -330,8 +334,15 @@ def _verify_numbers(src: str, ko: str) -> tuple[str, str]:
       찾는다 — 후보 정확히 1개면 그 값으로 치환(fixed, 발생 횟수 전부),
       0개면 허용(no action — 영어 수사 "two"→"2" 같은 정당한 변환 오탐
       방지), 2개 이상이면 모호(unresolved, 원문 그대로 반환).
-    - 소스 숫자가 KO에서 사라진 것 자체는 허용 — 화자줄 규칙이 선행 큐
-      번호를 의도적으로 생략하므로 누락 단독은 오류가 아니다.
+    - 소스 숫자가 KO에서 사라진 것 자체는 **선행 큐 번호에 한해** 허용 —
+      화자줄 규칙이 그 번호만 의도적으로 생략한다. 그 외의 누락은
+      "incomplete"(내용 유실)다. ⚠2026-08-03 이전에는 누락을 무조건
+      허용했는데, 그 면제가 화자줄 전용이라는 근거를 넘어 액션노트까지
+      덮고 있었다: FL104 실측에서 `walk cycle B 1/2`→`워크 싸이클`,
+      `CAM FIELD GUIDE 1a-2a, 2a-3a, 3a-4a`→`카메라 필드 가이드 1`처럼
+      **판넬 번호가 통째로 사라진 번역 45건**이 전부 "ok"로 통과했다
+      (사람 납품본은 `걷는 싸이클 B 1/2`로 전부 보존). 액션노트에서 이
+      숫자들은 장식이 아니라 내용이다.
     """
     src_counts = Counter(_DIGITS_RE.findall(src))
     ko_counts = Counter(_DIGITS_RE.findall(ko))
@@ -339,6 +350,11 @@ def _verify_numbers(src: str, ko: str) -> tuple[str, str]:
     missing = src_counts - ko_counts  # SRC에만 있는(누락된) 숫자열
 
     if not foreign:
+        # 선행 큐 번호(화자줄 "3 HANK/EMPLOYEES …"의 3)만 면제한다 —
+        # 면제 범위를 정확히 그 한 토큰으로 좁히면 액션노트의 `1/2`·`1a-2a`는
+        # 누락으로 잡히고, 기존 화자줄 관례는 그대로 통과한다.
+        if Counter(_DIGITS_RE.findall(_LEADING_CUE_RE.sub("", src, count=1))) - ko_counts:
+            return ko, "incomplete"
         return ko, "ok"
 
     result = ko
@@ -372,6 +388,27 @@ async def _verify_and_fix_numbers(
             "pdf-translate: 숫자 오염 자동교정 원문=%r 오염값=%r 교정후=%r",
             src[:80], ko[:80], fixed_ko[:80])
         return fixed_ko
+
+    if verdict == "incomplete":
+        # 내용(판넬 번호 등)이 유실된 번역 — 단건으로 다시 시켜 본다. 50블록
+        # 배치보다 단건 쪽이 세부를 보존하는 경향이 있어 한 번은 값어치가 있다.
+        #
+        # ⚠오염(unresolved)과 달리 **영어 원문으로 폴백하지 않는다.** 오염은
+        # 틀린 숫자를 화면에 박아 적극적으로 해로우니 영어가 차라리 낫지만,
+        # 누락은 "덜 옮겨졌을 뿐 틀리지는 않은" 번역이다 — 그걸 영어로
+        # 되돌리면 멀쩡한 페이지가 통째로 미번역이 된다(더 큰 퇴행).
+        retried = await _resilient(provider, [src])
+        retried_ko = _post_process(retried[0].strip())
+        re_fixed, re_verdict = _verify_numbers(src, retried_ko)
+        # has_hangul 확인 필수 — _resilient는 실패 시 **원문(영어)을 그대로**
+        # 돌려주는데, 영어 원문은 소스와 숫자가 같으니 숫자 검증만으로는
+        # "ok"로 통과해 영어가 그대로 채택된다.
+        if re_verdict in ("ok", "fixed") and has_hangul(re_fixed):
+            return re_fixed
+        logger.info(
+            "pdf-translate: 숫자 누락 재번역 실패 — 1차 번역 유지 "
+            "원문=%r 번역=%r", src[:80], ko[:80])
+        return ko
 
     # unresolved → 블록 단건 재번역 폴백(기존 kept-as-source 경로 재사용).
     retried = await _resilient(provider, [src])

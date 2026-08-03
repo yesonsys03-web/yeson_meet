@@ -715,6 +715,73 @@ def test_extract_skips_panel_ocr_on_pages_without_field_labels(tmp_path, monkeyp
         panel_ocr._reset_engines()
 
 
+def _make_storyboard_artwork_only_page_pdf(tmp_path: Path) -> Path:
+    """대사도 액션노트도 없는 **순수 그림 페이지** — 씬 테이블 헤더는 있고
+    Dialog/Action Notes 라벨은 없다(Storyboard Pro가 빈 필드를 통째로
+    생략하기 때문). FL104_FNL_Nrev 실측에서 209페이지 중 34장이 이 모양이고,
+    사람은 그 34장 전부에 판넬 안 콜아웃을 달았다."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    # 씬 테이블 헤더(실물 y≈73 — _PANEL_Y_TOP=95 위)
+    page.insert_text((39, 80), "Scene", fontsize=12)
+    page.insert_text((192, 80), "Panel", fontsize=12)
+    page.insert_text((172, 96), "17", fontsize=12)
+    # 판넬 영역의 빨간 콜아웃(사람이 번역하는 대상)
+    page.insert_text((300, 250), "ZOMBIE", fontsize=10, color=(1, 0, 0))
+    path = tmp_path / "sb_artwork_only.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_extract_runs_panel_ocr_on_artwork_only_pages_with_scene_header(
+        tmp_path, monkeypatch):
+    """FL104 실측 회귀(2026-08-03): 필드 라벨이 없어도 씬 테이블 헤더가 있는
+    판넬 페이지는 패널 OCR을 **돌려야** 한다.
+
+    예전 게이트(_has_field_label)는 이런 순수 그림 페이지를 표지로 오인해
+    OCR을 통째로 건너뛰었고, FL104 209페이지에서 34장이 한 글자도 번역되지
+    않았다(사람이 단 주석 97개 누락 = 전체 격차 246개의 39%).
+
+    OCR 결과 자체가 아니라 **게이트가 열렸는지**(엔진 생성)를 본다 — 위
+    표지 테스트와 같은 기법이고, 합성 PDF에 대한 RapidOCR 판독 결과에
+    의존하지 않아 결정적이다."""
+    from apps.server.domain.pdf_translate import panel_ocr
+
+    calls: list[dict] = []
+    monkeypatch.setattr(panel_ocr, "_new_engine", lambda **kw: calls.append(kw))
+    panel_ocr._reset_engines()
+    doc = open_pdf(_make_storyboard_artwork_only_page_pdf(tmp_path))
+    try:
+        StoryboardProfile().extract(doc)
+        assert calls, ("씬 테이블 헤더가 있는 순수 그림 페이지에서 패널 OCR "
+                       "게이트가 열리지 않았다 (FL104 34페이지 누락 회귀)")
+    finally:
+        doc.close()
+        panel_ocr._reset_engines()
+
+
+def test_place_below_fallback_never_crosses_field_box_bottom():
+    """FL104 p2 실물 회귀(사용자 스크린샷, 2026-08-03): 대사 주석이 자기 필드
+    박스를 넘어 **다음 필드(Action Notes) 박스 위에 겹쳐 찍히던** 문제.
+
+    `_place_below_in_box`가 limit_y 안에 못 넣어 폴백하면, 폴백 경로가
+    페이지 하단만 보고 상한 없이 아래로 뻗었다. 잘리는 건 허용하되(이 파일의
+    '잘리더라도 원문 비침범이 우선' 원칙) 박스는 넘지 않아야 한다."""
+    limit_y = 410.7
+    block = PdfBlock(page=0, kind="dialog",
+                     text="238 FEMALE SPRING BREAKER #1/FEMALE SPRING BREAKER #2",
+                     bbox=(354.4, 285.7, 642.4, 376.3),
+                     limit_y=limit_y, limit_x1=657.8)
+    long_ko = ("여자 파티광 #1/여자 파티광 #2/여자 파티광 #3/남자 파티광(연호):"
+               "화끈하게 놀자. 화끈하게 놀자... " * 4)
+    ov = StoryboardProfile().place(block, long_ko, (1008.0, 612.0))
+    assert ov.rect[3] <= limit_y + 0.5, (
+        f"주석이 필드 박스 하단({limit_y})을 넘어 {ov.rect[3]}까지 뻗었다 — "
+        "다음 필드 박스를 덮는다")
+
+
 def test_place_panel_label_above_when_room():
     """패널 라벨 배치 기본 경로: 라벨 바로 위, fontsize 10.0 고정."""
     block = PdfBlock(page=0, kind="panel_label", text="HANK'S TRUCK",

@@ -68,6 +68,53 @@ def _has_field_label(raws: list[RawBlock]) -> bool:
     return False
 
 
+# 씬 테이블 헤더(y<95의 "Scene"/"Panel" 한 벌) — 판넬 템플릿 페이지의
+# 표지가 아님을 보이는 두 번째 신호. _has_field_label만으로는 부족하다:
+# Storyboard Pro는 **빈 필드를 통째로 생략**하므로(이 파일 43~46행 실측),
+# 대사도 액션노트도 없는 순수 그림 페이지에는 Dialog/Action Notes 라벨이
+# 아예 없다. 그런 페이지야말로 판넬 안 콜아웃 라벨이 사는 곳인데
+# _has_field_label 게이트가 OCR을 통째로 막고 있었다.
+#
+# FL104_FNL_Nrev(3단 209p) 실측 2026-08-03: 사람이 주석을 단 페이지 중
+# 우리 출력이 **한 글자도 없는** 페이지가 34장이었고, 그 34장 전부
+# (34/34) 원문에 추출 가능한 본문 텍스트가 0이었다 — 전부 이 게이트에
+# 걸린 순수 그림 페이지다(누락 주석 97개 = 전체 격차 246개의 39%).
+# 같은 34장 전부가 이 씬 테이블 헤더를 갖고 있어 이 신호로 되살아난다.
+#
+# 표지 회귀(아래 게이트 주석 참조)는 그대로 막힌다 — 실측한 표지 페이지의
+# 전체 텍스트는 `FL104_FNL_Nrev` + `Date: June 08 2026`뿐이라 이 헤더가
+# 없다. 즉 이 신호는 "판넬 템플릿 페이지"만 통과시킨다.
+#
+# y<_PANEL_Y_TOP으로 밴드를 제한하는 게 핵심이다 — 판넬 그림 안이나 필드
+# 본문에 우연히 "Scene"/"Panel"이라는 낱말이 있어도 헤더로 오인하지
+# 않는다(헤더는 항상 씬 테이블 행에 있다).
+#
+# ⚠필드 라벨 관례(정확 일치 또는 startswith)를 여기 그대로 쓰면 안 된다 —
+# 실물(FL104) 추출에서 헤더는 낱말별로 깔끔히 쪼개지지 않는다: `Scene`은
+# 자기 블록이지만 `Panel`은 **씬 번호와 한 블록으로 묶여** `'17\nPanel'`로
+# 나온다(즉 라벨이 블록 선두가 아니다). 그래서 토큰 소속으로 본다.
+_HEADER_TOKENS = frozenset({"Scene", "Panel"})
+
+
+def _has_scene_table_header(raws: list[RawBlock]) -> bool:
+    seen: set[str] = set()
+    for b in raws:
+        if b.bbox[1] >= _PANEL_Y_TOP:
+            continue
+        seen |= _HEADER_TOKENS.intersection(normalize_ws(b.text).split())
+        if seen == _HEADER_TOKENS:
+            return True
+    return False
+
+
+def _is_panel_page(raws: list[RawBlock]) -> bool:
+    """판넬 템플릿 페이지인가(= 판넬 콜아웃 OCR을 돌려도 되는 페이지인가).
+
+    필드 라벨이 있으면 당연히 템플릿 페이지고, 없더라도 씬 테이블 헤더가
+    있으면 대사·액션노트가 비어 있을 뿐인 판넬 페이지다."""
+    return _has_field_label(raws) or _has_scene_table_header(raws)
+
+
 def _looks_like_field_label(text: str) -> bool:
     """라벨 그대로이거나(빈 필드 다음 라벨) 라벨로 시작하면(다음 필드가
     라벨+내용 한 블록으로 붙어 나온 변형) 후보에서 제외 — 안 그러면 Dialog가
@@ -157,12 +204,18 @@ class StoryboardProfile:
                     out.append(PdfBlock(page=page, kind=kind, text=text,
                                         bbox=content.bbox,
                                         limit_y=limit_y, limit_x1=limit_x1))
-            # 표지/타이틀 페이지(리뷰 후속, 2026-07-30): Dialog/Action Notes
-            # 라벨이 아예 없으면 실제 패널 템플릿 페이지가 아니다 —
-            # _panel_region이 이때 기본값(y_bottom=460)으로 열리는데, 표지의
-            # 빨간 로고/타이틀 텍스트("KING"/"HILL")가 그 안에서 라벨로
-            # 오인식되던 회귀(page 0 실물 확인)를 막는다.
-            if _has_field_label(raws):
+            # 표지/타이틀 페이지(리뷰 후속, 2026-07-30): 실제 패널 템플릿
+            # 페이지가 아니면 _panel_region이 기본값(y_bottom=460)으로 열리고,
+            # 표지의 빨간 로고/타이틀 텍스트("KING"/"HILL")가 그 안에서
+            # 라벨로 오인식되던 회귀(page 0 실물 확인)를 막아야 한다.
+            #
+            # ⚠판정을 _has_field_label에서 _is_panel_page로 넓혔다
+            # (2026-08-03, FL104 실측) — 필드 라벨만 보면 **대사도 액션노트도
+            # 없는 순수 그림 페이지**까지 표지로 오인해 OCR을 건너뛴다.
+            # FL104 209p에서 그런 페이지가 34장이었고 사람이 단 주석 97개를
+            # 통째로 놓치고 있었다. 씬 테이블 헤더를 두 번째 신호로 인정하면
+            # 그 34장이 되살아나고 표지는 여전히 걸러진다(_is_panel_page 주석).
+            if _is_panel_page(raws):
                 page_w, _page_h = doc.page_size(page)
                 region = _panel_region(raws, page_w)
                 for raw in find_panel_labels(doc, page, region):
@@ -304,8 +357,24 @@ def _place_right_or_below(
         x1 = min(right, max(bx1, x0 + _MIN_WIDTH))
         y0 = by1 + _GAP
         allow_shift = False
+    # 아래 경로는 **필드 박스 하단(limit_y)** 을 넘지 않는다.
+    #
+    # ⚠2026-08-03 이전에는 이 경로가 페이지 하단만 봤다. `_place_below_in_box`가
+    # limit_y 안에 못 넣어 None을 돌려주면 그 폴백인 여기가 같은 자리에
+    # 다시 놓으면서 상한 없이 아래로 뻗어, 대사 주석이 자기 필드 박스를
+    # 넘어 **다음 필드(Action Notes) 박스 위에 겹쳐 찍혔다**(FL104 p2 실물
+    # 스크린샷 확인 — 사용자 신고). 겹친 두 글자는 서로를 못 읽게 만든다.
+    #
+    # 상한을 주면 대신 잘릴 수 있는데, 이 파일이 이미 세워 둔 원칙이 그쪽이다:
+    # "잘리더라도 원문 비침범이 우선"(_place_right_or_below docstring).
+    # 다음 필드 박스를 덮는 것도 같은 종류의 침범이다. 잘리는 경우는 아래
+    # 경고 로그(clip)가 이미 남긴다.
+    #
+    # 오른쪽 경로에는 적용하지 않는다 — 그쪽은 x축이 원문과 분리돼 있고
+    # GABE01 27건 실측으로 굳어진 경로라, 근거 없이 조이지 않는다.
     rect, fontsize = _fit_rect(x0, y0, x1, page_h, ko_text,
-                               allow_shift=allow_shift)
+                               allow_shift=allow_shift,
+                               bottom_limit=None if allow_shift else block.limit_y)
     needed = _estimate_height(ko_text, rect[2] - rect[0], fontsize)
     available = rect[3] - rect[1]
     if needed - available > 0.5:  # 부동소수 오차 여유
@@ -503,10 +572,13 @@ def _merge_pieces(pieces: list[RawBlock], *, is_action: bool = False) -> RawBloc
 
 
 def _fit_rect(x0: float, y0: float, x1: float, page_h: float, ko_text: str,
-             *, allow_shift: bool
+             *, allow_shift: bool, bottom_limit: float | None = None
              ) -> tuple[tuple[float, float, float, float], float]:
-    """x0/x1 고정 상태에서 페이지 하단(page_h - 4) 안에 들어오도록 폰트를
-    12→10→9→8pt로 줄여가며 재추정한다.
+    """x0/x1 고정 상태에서 하단 한계 안에 들어오도록 폰트를 12→10→9→8pt로
+    줄여가며 재추정한다.
+
+    `bottom_limit`은 페이지 하단보다 **더 위**에 있는 한계(= 이 블록이 속한
+    필드 박스의 하단)다. 주지 않으면 종전대로 페이지 하단만 본다.
 
     allow_shift=True(오른쪽 경로): x축이 이미 원문과 분리돼 있어(호출부
     보장) y를 얼마든 움직여도 교차 위험이 없다 — 8pt에서도 안 맞으면
@@ -521,6 +593,8 @@ def _fit_rect(x0: float, y0: float, x1: float, page_h: float, ko_text: str,
     전체가 날아간다(2026-07-30 리뷰 Finding 1). 이건 "위로 밀어 가독성
     확보"가 아니라 순수 크래시 방지 안전망이라 최소 1줄만 확보한다."""
     max_y1 = page_h - 4.0
+    if bottom_limit is not None:
+        max_y1 = min(max_y1, bottom_limit)
     width = x1 - x0
     fontsize = _FONT_SIZES[-1]
     height = 0.0

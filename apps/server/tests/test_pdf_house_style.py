@@ -40,7 +40,25 @@ CASES = [
     ("사이클 1/3", "싸이클 1/3"),
     ("레퍼런스 패널", "참고 패널"),
     ("바비(신밖):이 생활환경이", "바비(씬밖):이 생활환경이"),
+    # FL104 실측 추가분(2026-08-03) — 사람 납품본 전수 대조에서 한쪽이 정확히
+    # 0인 항목만: 파티광 57/0, 걷는 싸이클 6/0, 눈 흘깃보는 4/0.
+    ("여자 스프링 브레이커 #1", "여자 파티광 #1"),
+    ("워크 싸이클 B 1/2", "걷는 싸이클 B 1/2"),
+    ("눈동자 움직임 싸이클 1/2", "눈 흘깃보는 싸이클 1/2"),
 ]
+
+
+def test_house_style_keeps_spring_break_event_term():
+    """`봄방학`(SPRING BREAK, 행사)은 사람도 쓰는 정상 번역이라 건드리지
+    않는다 — 역할명 `스프링 브레이커`만 `파티광`으로 고친다."""
+    assert apply_house_style("봄방학 시즌이다") == "봄방학 시즌이다"
+
+
+def test_house_style_leaves_agreed_cycle_terms_untouched():
+    """사람과 우리가 이미 일치하는 용어(불/가스/군중 싸이클)는 표에 없다 —
+    FL104 대조의 대조군이라 회귀로 잡아 둔다."""
+    for text in ("불 싸이클 1/3", "가스 싸이클 2/3", "군중 싸이클 1/2"):
+        assert apply_house_style(text) == text
 
 
 @pytest.mark.parametrize("before,after", CASES)
