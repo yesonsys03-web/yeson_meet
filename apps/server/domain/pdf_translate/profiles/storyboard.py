@@ -391,11 +391,25 @@ def _panel_region(raws: list[RawBlock], page_w: float
     """패널 OCR 영역 — 헤더/씬 테이블(y<95) 아래부터 Dialog 라벨 위(5pt
     여유) 또는 없으면 460pt 고정까지, x는 페이지 전폭(실물 GABE01 실측
     기반 템플릿 고정 상수)."""
+    # 라벨 매칭은 이 파일의 관례(정확 일치 **또는** 라벨로 시작하는 병합형)를
+    # 따른다 — `_has_field_label`/`_looks_like_field_label`과 같은 규칙이다.
+    #
+    # ⚠2026-08-03 이전에는 `== "Dialog"` 정확 일치만 봤다. 그런데 라벨과 내용이
+    # 한 블록으로 붙어 나오는 변형이 실물에 흔하다(FL104 p16: 블록 텍스트가
+    # `'Dialog 240 BELLE Keep moving, Manny! …'`). 그런 페이지에서는 매칭이
+    # 실패해 기본값 460으로 열렸고, **OCR 영역이 필드 박스까지 삼켰다** —
+    # 실측으로 `Dialog`·`240 BELLE`·`walk cycle A 1/2`·대사 본문까지 OCR
+    # 히트로 잡히고 있었다(지금은 검정이라 색 문턱에서 버려질 뿐이라, 색
+    # 문턱을 완화하는 순간 필드 텍스트가 판넬 라벨로 중복 주석된다).
+    #
+    # Dialog뿐 아니라 Action Notes도 본다 — 대사가 없는 페이지는 Dialog 필드가
+    # 통째로 생략되므로(Storyboard Pro), Dialog만 찾으면 그 페이지도 460으로
+    # 열린다. 필드 라벨 중 **가장 위**를 상한으로 삼아야 판넬 그림만 남는다.
     y_bottom = _PANEL_Y_BOTTOM_DEFAULT
     for b in raws:
-        if normalize_ws(b.text) == "Dialog":
-            y_bottom = b.bbox[1] - 5.0
-            break
+        t = normalize_ws(b.text)
+        if any(t == label or t.startswith(label) for label, _kind in _FIELDS):
+            y_bottom = min(y_bottom, b.bbox[1] - 5.0)
     return (0.0, _PANEL_Y_TOP, page_w, y_bottom)
 
 
@@ -593,7 +607,20 @@ def _fit_rect(x0: float, y0: float, x1: float, page_h: float, ko_text: str,
     전체가 날아간다(2026-07-30 리뷰 Finding 1). 이건 "위로 밀어 가독성
     확보"가 아니라 순수 크래시 방지 안전망이라 최소 1줄만 확보한다."""
     max_y1 = page_h - 4.0
-    if bottom_limit is not None:
+    # ⚠`bottom_limit > y0`일 때만 적용한다 — 시작점보다 **위**에 있는 하한은
+    # 아무것도 못 가두는 모순된 값이라 무시하는 게 맞다.
+    #
+    # 그냥 min으로 접으면 max_y1 < y0가 되고, 아래의 크래시 방지 안전망이
+    # `y0 = max_y1 - min_height`로 **주석을 원문 위로 밀어 올린다** — 실제로
+    # FL104 p16 대사 주석이 필드 박스를 벗어나 판넬 그림 위에 찍히는 회귀가
+    # 났다(사용자 신고 "Dialog 번역 누락"). 그 페이지의 limit_y(281.7)는 자기
+    # 블록 bbox(285.7~361.3)보다도 위였다 — 1열 Dialog의 다음 라벨을 못 찾아
+    # 열 무관 폴백이 **다른 열의** Action Notes 라벨 y를 집어온 값이다.
+    #
+    # 이 경로의 원칙은 "위로 밀지 않는다"(allow_shift=False)이므로, 모순된
+    # 하한 때문에 그 원칙이 깨지는 일은 없어야 한다. 하한을 무시하면 종전처럼
+    # 원문 아래에 놓이고, 넘칠 땐 페이지 하단에서 잘린다.
+    if bottom_limit is not None and bottom_limit > y0:
         max_y1 = min(max_y1, bottom_limit)
     width = x1 - x0
     fontsize = _FONT_SIZES[-1]

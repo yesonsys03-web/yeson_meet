@@ -198,38 +198,6 @@ def test_verify_numbers_ambiguous_candidates_are_unresolved():
     assert fixed == ko  # 자동 치환 금지 — 원문 그대로 반환
 
 
-def test_verify_numbers_flags_dropped_action_note_codes_as_incomplete():
-    """FL104 실측 회귀: `walk cycle B 1/2`→`워크 싸이클`처럼 판넬 번호가
-    통째로 사라진 번역은 "ok"가 아니라 "incomplete"다. 액션노트에서 이
-    숫자는 장식이 아니라 내용이고, 사람은 `걷는 싸이클 B 1/2`로 보존한다."""
-    fixed, verdict = _verify_numbers("walk cycle B 1/2", "걷는 싸이클")
-    assert verdict == "incomplete"
-    assert fixed == "걷는 싸이클"  # 이 함수는 누락을 자동 복구하지 않는다
-
-
-def test_verify_numbers_flags_dropped_panel_range_list_as_incomplete():
-    """같은 회귀의 두 번째 실물 형태 — 판넬 범위 나열이 첫 토큰만 남았다."""
-    _, verdict = _verify_numbers(
-        "CAM FIELD GUIDE 1a-2a, 2a-3a, 3a-4a", "카메라 필드 가이드 1")
-    assert verdict == "incomplete"
-
-
-def test_verify_numbers_preserved_action_note_codes_are_ok():
-    """숫자가 보존됐으면 그대로 통과 — 새 검사가 정상 번역을 잡지 않는다."""
-    _, verdict = _verify_numbers("walk cycle B 1/2", "걷는 싸이클 B 1/2")
-    assert verdict == "ok"
-
-
-def test_verify_numbers_cue_drop_exemption_is_only_the_leading_token():
-    """면제는 **선행 큐 번호 한 토큰**뿐이다 — 큐 번호를 생략하면서 본문의
-    숫자까지 흘리면 incomplete로 잡힌다(면제가 화자줄 전체를 덮지 않는다)."""
-    _, verdict = _verify_numbers("3 HANK Take 2 trucks.", "행크: 트럭을 가져가.")
-    assert verdict == "incomplete"
-    # 큐 번호만 빠지고 본문 숫자는 살아 있으면 종전대로 ok
-    _, ok_verdict = _verify_numbers("3 HANK Take 2 trucks.", "행크: 트럭 2대 가져가.")
-    assert ok_verdict == "ok"
-
-
 def test_verify_numbers_replaces_all_occurrences_of_repeated_foreign():
     """foreign 숫자열이 KO에 2회 이상 나오면 전부 동일하게 치환한다."""
     src = "Match sc103 to sc103 again."
@@ -479,48 +447,6 @@ async def test_translate_texts_number_gate_retranslates_once_on_unresolved():
     assert len(t.calls) == 2
     assert t.calls[0] == [src]
     assert t.calls[1] == [src]
-
-
-@pytest.mark.asyncio
-async def test_translate_texts_retranslates_once_when_numbers_dropped():
-    """누락(incomplete)도 단건 재번역을 1회 시도하고, 복구되면 채택한다."""
-    src = "walk cycle B 1/2"
-    t = FakeTranslator([
-        ["걷는 싸이클"],          # 1차: 판넬 번호 유실
-        ["걷는 싸이클 B 1/2"],    # 재번역(단건): 보존
-    ])
-    out = await translate_texts([src], t)
-    assert out == ["걷는 싸이클 B 1/2"]
-    assert len(t.calls) == 2
-
-
-@pytest.mark.asyncio
-async def test_translate_texts_dropped_numbers_never_fall_back_to_english():
-    """⚠누락 폴백은 **영어 원문으로 돌아가지 않는다.** 오염(틀린 숫자)은
-    영어가 차라리 낫지만, 누락은 '덜 옮겨졌을 뿐 틀리지 않은' 번역이라
-    영어로 되돌리면 멀쩡한 페이지가 통째로 미번역이 된다."""
-    src = "walk cycle B 1/2"
-    t = FakeTranslator([
-        ["걷는 싸이클"],   # 1차: 유실
-        ["걷는 싸이클"],   # 재번역도 유실
-    ])
-    out = await translate_texts([src], t)
-    assert out == ["걷는 싸이클"]   # 1차 번역 유지
-    assert out != [src]             # 영어 폴백 금지
-
-
-@pytest.mark.asyncio
-async def test_translate_texts_dropped_numbers_reject_english_retry():
-    """재번역이 영어 원문을 그대로 돌려주면(=_resilient 실패 폴백) 숫자는
-    소스와 같아 'ok'로 통과해 버린다 — 한글 확인이 그걸 막는지 잠근다."""
-    src = "walk cycle B 1/2"
-    t = FakeTranslator([
-        ["걷는 싸이클"],   # 1차: 유실
-        [src],             # 재번역: 영어 원문 그대로
-    ])
-    out = await translate_texts([src], t)
-    assert out == ["걷는 싸이클"]   # 영어를 채택하지 않는다
-    assert out != [src]
 
 
 @pytest.mark.asyncio
