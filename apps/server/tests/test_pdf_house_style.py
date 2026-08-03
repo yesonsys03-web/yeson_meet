@@ -51,7 +51,8 @@ CASES = [
     # 재재실행 실측(2026-08-03, FL104_FNL_Nrev 209페이지): 리터럴을 막자
     # 이번엔 **띄어쓰기를 없애고** 새 접미사로 샜다 — 붙여쓴
     # `스프링브레이커` 8건·`스프링브레이크` 9건·`봄방학객` 8건(사람 0건).
-    ("여성 스프링브레이커 #1", "여성 파티광 #1"),
+    ("여성 스프링브레이커 #1", "여자파티광 #1"),
+    ("남성 스프링브레이커:우우우우!", "남자파티광:우우우우!"),
     ("여자 봄방학객 #2:첼시, 기다려!", "여자 파티광 #2:첼시, 기다려!"),
     # 행사(SPRING BREAK)는 `봄방학` — 사람 표기(`봄방학 좀비군중1`)와 맞춘다.
     ("스프링브레이크", "봄방학"),
@@ -88,8 +89,15 @@ def test_house_style_is_idempotent_for_spring_break():
     뒤따르지 않는다(실측). 조사 일치는 이 파일의 다른 KO→KO 치환과 마찬가지로
     다루지 않는다."""
     once = apply_house_style("여성 스프링브레이커 #1 / 스프링브레이크좀비군중1")
-    assert once == "여성 파티광 #1 / 봄방학좀비군중1"
+    assert once == "여자파티광 #1 / 봄방학좀비군중1"
     assert apply_house_style(once) == once
+
+
+def test_house_style_gender_rule_needs_the_role_token():
+    """`여성`·`남성`은 `파티광` 옆에서만 고친다 — 평범한 대사의 `여성`은
+    사람도 쓰는 정상 표기라 덮으면 안 된다(사람 0건은 **역할명 자리**의 수치)."""
+    assert apply_house_style("그 여성분이 먼저 오셨어") == "그 여성분이 먼저 오셨어"
+    assert apply_house_style("남성 화장실은 저쪽") == "남성 화장실은 저쪽"
 
 
 def test_house_style_leaves_agreed_cycle_terms_untouched():
