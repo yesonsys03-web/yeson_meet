@@ -168,6 +168,27 @@ def _overlap_trim(acc: str, piece: str) -> str:
     return piece.strip()
 
 
+def _is_multi_panel(blocks: list[PdfBlock]) -> bool:
+    """페이지당 판넬이 2장 이상인 문서인가(3단 등).
+
+    같은 페이지에 **같은 kind**의 필드 블록이 2개 이상 나오면 그 페이지에
+    판넬이 여러 장이다. kind별로 세는 게 핵심 — 1단 페이지도 dialog 1 +
+    action 1로 블록은 2개라, kind를 섞어 세면 전부 다단으로 오판한다.
+
+    실측(2026-08-03, 같은 에피소드의 두 판): 3단 FL104_FNL_Nrev는 페이지당
+    action 최대 3·dialog 최대 2, 1단 판은 둘 다 최대 1이다.
+    """
+    per_page_kind: dict[tuple[int, str], int] = {}
+    for b in blocks:
+        if b.kind not in ("dialog", "action"):
+            continue
+        key = (b.page, b.kind)
+        per_page_kind[key] = per_page_kind.get(key, 0) + 1
+        if per_page_kind[key] >= 2:
+            return True
+    return False
+
+
 def group_utterances(
     blocks: list[PdfBlock],
 ) -> tuple[list[UtteranceGroup], list[str]]:
@@ -189,6 +210,22 @@ def group_utterances(
     인덱스) 기준 — 사이에 낀 action/panel 그룹이 아직 열려 있는 체인보다
     먼저 등장했다면 그 순서 그대로 나온다.
     """
+    # 3단(다단) 문서는 발화를 잇지 않는다 — 조각별로 그 페이지 몫만 옮긴다.
+    #
+    # 이 모듈 서두가 적어 둔 "사람은 발화 전문을 걸친 모든 페이지에 동일하게
+    # 반복 기재한다(예외 없음)"는 GABE01·FL102 **1단** 실측이다. 3단
+    # 납품본(FL104_FNL_Nrev)에서는 정반대였다(2026-08-03 실측, 사용자 확인):
+    #   p141 `매니(씬밖):아 이런-`  /  p144 `매니:-세상에,우리 살았다!`
+    # 사람은 각 페이지에 **그 페이지 조각만** 적었다. 전문 반복을 그대로
+    # 적용하면 두 페이지가 서로의 대사까지 보여준다(실물 확인).
+    #
+    # 같은 계열의 사고가 이미 한 번 있었다 — 1단에서 측정한 관례를 3단에
+    # 그대로 적용했다가 되돌린 적이 있다. 1단 경로는 건드리지 않는다.
+    if _is_multi_panel(blocks):
+        resolved = [UtteranceGroup(member_indices=[i], merged_text=b.text)
+                    for i, b in enumerate(blocks)]
+        return resolved, [g.merged_text for g in resolved]
+
     groups: list[UtteranceGroup | None] = []
     chain_key: tuple[str, str] | None = None
     chain_slot = -1

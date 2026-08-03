@@ -14,6 +14,10 @@ description: Use when cutting a yeson-meet release (vX.Y.Z) — bumping the app 
 
 1. **선행 확인**: 로컬 main이 origin/main 최신이고 릴리스 대상 변경 전부 머지됨(`git log`로 확인).
    `apps/server` 소스가 바뀐 릴리스라면 재동결(`apps/server_desktop/scripts/build-server.sh`) 후 E2E가 이미 끝났는지 확인 — 동결 안 된 번들은 새 라우트가 404/405.
+   **ffmpeg 핀 확인**: `./apps/server_desktop/scripts/verify-ffmpeg-pins.sh --quick` (수 초). v1.8.0은 이 확인이 없어서 동결·스모크를 전부 통과한 뒤 ffmpeg 벤더링에서 죽었다. 3중으로 막아 뒀으니 어느 층에서 걸리든 릴리스 전에 드러난다:
+   - `ffmpeg pin freshness` 워크플로가 주 1회 4개 핀 전부를 검증하고(도달성+sha256+member 추출), 실패하면 이슈로 경보한다. 재핀 PR도 이 워크플로가 자동 검증한다.
+   - 두 빌드 스크립트가 ffmpeg를 **PyInstaller 동결보다 먼저** 받는다(전엔 맨 끝이었다). 썩은 핀은 40분이 아니라 몇 초 만에 빌드를 세운다 — 이 순서 자체가 게이트다.
+   - Win/Linux 핀은 자체 미러를 가리키므로 상류 보관 기간에 더는 매이지 않는다.
 2. **릴리스 브랜치** `release/vX.Y.Z` 생성. main 직접 push 금지 — **차단 장치는 없음(정책)**, 실수로 push하면 그대로 워크플로가 발화하므로 반드시 브랜치+PR.
 3. **버전 범프 — 반드시 2곳 모두** (두 앱은 항상 같은 버전으로 함께 릴리스 — 한쪽만 변경돼도 둘 다 범프, v1.2.3 클라가 그 사례):
    - `apps/desktop/src-tauri/tauri.conf.json` → `.version`
@@ -97,3 +101,5 @@ build --debug --bundles app`(= 인텔 경로, 기본 `tauri.conf.json`의 3개
 | Intel dmg를 일반 `tauri build --bundles dmg`로 시도 | Kaspersky가 bundle_dmg.sh를 "Resource busy"로 실패시킴 — 스크립트가 쓰는 makehybrid 경로 유지 |
 | `~/.tauri/yeson_meet_updater.key` 분실 | 자동 업데이트 체인 영구 단절 — CI 시크릿과 동일 키 |
 | 릴리스를 prerelease로 전환 | 워크플로 기본이 full release(어디에도 prerelease 플래그 없음). 수동으로 prerelease로 바꾸면 자동 업데이트 대상에서 빠짐 |
+| ffmpeg 핀 만료 | BtbN autobuild 태그는 11~15일치만 보관 — v1.8.0에서 404로 Windows 서버 빌드 사망(PR#104로 복구). Win/Linux는 자체 미러로 옮겨 해소했고, mac 2개는 상류 URL 유지라 여전히 감시 대상(특히 osxexperts는 같은 자리에서 재빌드해서 404가 아니라 **sha256 불일치**로 나타남) |
+| `ffmpeg-vendor-*` 릴리스를 prerelease에서 해제 | 그 순간 GitHub `latest`가 그쪽으로 옮겨가고, 미러에는 업데이트 매니페스트가 없으므로 `releases/latest/download/latest-*.json`이 404 → **설치된 모든 빌드의 자동업데이트 즉사**. 절대 해제 금지(`mirror-ffmpeg.sh`가 prerelease가 아닌 미러 릴리스를 만나면 거부한다) |

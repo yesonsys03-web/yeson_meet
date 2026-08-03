@@ -13,6 +13,32 @@
     "automatically when this file changes (the .pinned stamp beside the binary is",
     "compared against version+sha256), and abort on a hash mismatch.",
     "",
+    "MIRRORED TRIPLES (windows, linux): their `url` points at THIS repo's own",
+    "release assets, not at the upstream builder. BtbN prunes its autobuild tags",
+    "after roughly 11-15 days, which 404'd the pin mid-release on v1.8.0 and took",
+    "the Windows server build down after the freeze had already succeeded.",
+    "Re-pinning only bought another ~11 days, so the artifacts are now served by",
+    "us. The mirrored assets are BYTE-IDENTICAL copies: `sha256`, `archive`,",
+    "`member` and `bin` are unchanged from the upstream pin, which is exactly why",
+    "both fetchers needed no modification — and it makes the pre-existing sha256",
+    "double as proof that the mirror is a faithful copy rather than a re-roll.",
+    "Re-mirror with scripts/mirror-ffmpeg.sh (it refuses to upload anything whose",
+    "hash does not already match the pin), then move `url` onto the new asset.",
+    "",
+    "The mirror release MUST stay a prerelease. GitHub resolves `releases/latest`",
+    "to the newest non-prerelease release, and that is the endpoint the in-app",
+    "updater polls for latest-server.json / latest-client.json. A mirror release",
+    "promoted to a normal release would become `latest`, 404 that endpoint, and",
+    "break auto-update for every already-installed build.",
+    "",
+    "Rot is watched for, not just hoped against: scripts/verify-ffmpeg-pins.sh",
+    "checks every triple (reachable + sha256 + member extracts) and is run weekly",
+    "by .github/workflows/ffmpeg-pin-freshness.yml, which files an issue when a",
+    "pin breaks. Separately, both build scripts now vendor ffmpeg BEFORE the",
+    "PyInstaller freeze rather than after it, so a rotted pin fails the build in",
+    "seconds instead of 40 minutes — that ordering is the fail-fast gate, and it",
+    "is why the vendoring block sits near the top of build-server.{sh,ps1}.",
+    "",
     "Requirements every entry must keep:",
     "  - libass + libfreetype + fontconfig  -> subtitle burn-in ('subtitles' filter)",
     "  - NO --enable-nonfree                -> nonfree builds are not redistributable",
@@ -71,7 +97,7 @@
     },
     "x86_64-pc-windows-msvc": {
       "version": "n8.1.2-32-gcfa62de001",
-      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-30-13-32/ffmpeg-n8.1.2-32-gcfa62de001-win64-gpl-8.1.zip",
+      "url": "https://github.com/yesonsys03-web/yeson_meet/releases/download/ffmpeg-vendor-n8.1.2-32-gcfa62de001/ffmpeg-n8.1.2-32-gcfa62de001-win64-gpl-8.1.zip",
       "sha256": "81e60b0badb897a9a222840ad4b8421b140a93805ee24c43ef5895d55389d746",
       "archive": "zip",
       "member": "ffmpeg-n8.1.2-32-gcfa62de001-win64-gpl-8.1/bin/ffmpeg.exe",
@@ -80,17 +106,21 @@
       "provenance": "upstream-checksums",
       "_notes": [
         "Was ffmpeg-master-latest-win64-gpl.zip from the rolling 'latest' tag —",
-        "FFmpeg git TRUNK, rebuilt daily, shipped to users. Now pinned to a dated",
-        "autobuild tag serving the 8.1.2 RELEASE branch (+22 commits).",
-        "provenance=upstream-checksums: matches BtbN's published checksums.sha256",
-        "for this tag, so it is not a trust-on-first-use value.",
-        "BtbN prunes old autobuild tags eventually; a 404 here means re-pin to a",
-        "current tag rather than a hash problem."
+        "FFmpeg git TRUNK, rebuilt daily, shipped to users. Then pinned to a dated",
+        "BtbN autobuild tag serving the 8.1.2 RELEASE branch (+32 commits).",
+        "provenance=upstream-checksums: the sha256 is BtbN's own published",
+        "checksums.sha256 value for that tag, so it is not a trust-on-first-use",
+        "value — and it still holds, because the mirror copies those exact bytes.",
+        "MIRRORED: url now serves from this repo (see the mirror section in",
+        "_readme). It was BtbN autobuild-2026-07-30-13-32; BtbN prunes autobuild",
+        "tags after ~11-15 days, and that pruning is what broke the v1.8.0 release.",
+        "A 404 here would now mean the mirror asset itself went missing, which is",
+        "a much louder and more fixable problem than an upstream retention window."
       ]
     },
     "x86_64-unknown-linux-gnu": {
       "version": "n8.1.2-32-gcfa62de001",
-      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-30-13-32/ffmpeg-n8.1.2-32-gcfa62de001-linux64-gpl-8.1.tar.xz",
+      "url": "https://github.com/yesonsys03-web/yeson_meet/releases/download/ffmpeg-vendor-n8.1.2-32-gcfa62de001/ffmpeg-n8.1.2-32-gcfa62de001-linux64-gpl-8.1.tar.xz",
       "sha256": "cd00d35281f0f37c4d1727f9ec58417e11f2d6931b530c53d8ae7be8f6dd11e9",
       "archive": "tar.xz",
       "member": "ffmpeg-n8.1.2-32-gcfa62de001-linux64-gpl-8.1/bin/ffmpeg",
@@ -100,7 +130,10 @@
       "_notes": [
         "Dev-convenience triple — no Linux installer ships. Moved off johnvansickle",
         "(which deletes older versioned tarballs, so a pinned URL there would 404)",
-        "onto the same BtbN tag as Windows, keeping both on one version."
+        "onto the same BtbN tag as Windows, keeping both on one version.",
+        "MIRRORED alongside Windows, from the same BtbN tag, for the same reason",
+        "(see the mirror section in _readme). Keeping the two on one mirror release",
+        "preserves the single-version property that motivated the original move."
       ]
     }
   }

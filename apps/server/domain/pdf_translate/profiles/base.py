@@ -40,6 +40,12 @@ class PdfBlock:
     # 같은 박스의 우측 x(pt). 아래 배치의 전폭 계산에 쓴다. 모르면 None →
     # page_w - 8(기존 아래 경로와 동일한 값).
     limit_x1: float | None = None
+    # 번역기를 거치지 않고 **이미 확정된** 한국어. 판넬 약어(`SPCZMB`,
+    # `TTINCA`, `IN`)처럼 영어 문장이 아니라 제작 코드라서 LLM이 옮길 게
+    # 없는 블록에만 채운다 — 그대로 넘기면 LLM이 원문을 되돌려주고,
+    # pdf_run이 그걸 "번역 실패"로 보아 주석을 아예 만들지 않는다.
+    # 채워져 있으면 pdf_run이 번역 결과 대신 이 값을 쓴다.
+    ko: str | None = None
 
 
 @dataclass(frozen=True)

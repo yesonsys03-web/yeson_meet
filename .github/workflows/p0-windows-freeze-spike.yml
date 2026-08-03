@@ -4,16 +4,34 @@ name: P0 Windows freeze spike
 # teardown unknown can be retired WITHOUT a local Windows machine. The job
 # passes iff every P0 AC passes (win-freeze-spike.ps1 exits non-zero on any
 # FAIL). Trigger manually from the Actions tab (workflow_dispatch) on any
-# branch; it also runs when the spike scripts themselves change.
+# branch; it also runs when the code this spike actually guards changes.
+#
+# 트리거 정정(2026-07-31): 예전 paths는 `apps/server/**`와 `sidecar/**`까지
+# 넓게 잡아, 이 스파이크와 무관한 파이썬 변경마다 돌았다(하루 6회·누적 100회+,
+# 최근 전부 success = 아무것도 못 잡는 실행). 그런데 정작 이 스파이크가
+# 검증하는 대상인 `server_process.rs::terminate_group`(Windows에서 top PID만
+# kill하는 그 분기)은 **paths에 없어서** 바뀌어도 안 돌았다 — 동시에 너무
+# 넓고 정작 표적은 빠진 상태였다.
+#
+# 이제는 이 스파이크의 고유 관심사(프로세스 종료 시 고아 subtree)를 실제로
+# 좌우하는 파일만 본다. 동결·부팅 자체는 릴리스 워크플로
+# (server-desktop-windows.yml)가 build-server.ps1 + 스모크 3종으로 이미
+# 매 릴리스 검증하므로 여기서 중복 감시하지 않는다.
 on:
   workflow_dispatch:
   push:
+    # branches 필터가 없으면 **태그 push 도 매치**한다. 2026-08-03에 ffmpeg 미러
+    # 릴리스 태그(ffmpeg-vendor-*)를 만들었더니 이 스파이크가 그 태그로 한 번
+    # 돌았다 — Windows 러너(2배 과금) ~20분을 이 스파이크와 아무 상관 없는 일에
+    # 태운 것이고, 재미러링할 때마다 반복될 참이었다. 바로 위 트리거 정정의
+    # 취지("고유 관심사만 본다")와 정면으로 어긋나므로 브랜치 push 로 한정한다.
+    # '**' 는 슬래시 포함 모든 브랜치를 매치하므로 기존 브랜치 동작은 그대로다.
+    branches: ["**"]
     paths:
       - ".github/workflows/p0-windows-freeze-spike.yml"
       - "apps/server_desktop/scripts/build-server.ps1"
       - "apps/server_desktop/scripts/win-freeze-spike.ps1"
-      - "apps/server_desktop/sidecar/**"
-      - "apps/server/**"
+      - "apps/server_desktop/src-tauri/src/server_process.rs"
 
 permissions:
   contents: read

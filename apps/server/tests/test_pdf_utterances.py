@@ -17,6 +17,34 @@ def _block(page: int, kind: str, text: str) -> PdfBlock:
     return PdfBlock(page=page, kind=kind, text=text, bbox=_BBOX)
 
 
+def test_multi_panel_document_keeps_each_fragment_on_its_own_page():
+    """3단(다단) 문서는 발화를 잇지 않는다 — FL104 납품본 관례(2026-08-03,
+    사용자 확인). 같은 페이지에 같은 kind 필드가 2개 이상이면 다단이다.
+
+    1단 실측에서 온 '전문을 걸친 모든 페이지에 반복 기재' 관례를 3단에
+    그대로 쓰면 두 페이지가 서로의 대사까지 보여준다(p18↔p20 실물)."""
+    blocks = [
+        _block(0, "action", "cycle 1/2"),
+        _block(0, "action", "cycle 2/2"),   # 같은 페이지 2번째 action = 다단 신호
+        _block(0, "dialog", "241 BELLE Wait, no-- no, no, no, no."),
+        _block(1, "dialog", "241 BELLE What's happening? Is this--"),
+    ]
+    groups, _ = group_utterances(blocks)
+    assert all(len(g.member_indices) == 1 for g in groups), (
+        "3단 문서에서 발화가 병합됐다 — 각 페이지는 자기 조각만 가져야 한다")
+
+
+def test_single_panel_document_still_chains_across_pages():
+    """대조군 — 1단 경로의 기존 관례는 그대로다(회귀 가드)."""
+    blocks = [
+        _block(0, "action", "cycle 1/2"),
+        _block(0, "dialog", "241 BELLE Wait, no-- no, no, no, no."),
+        _block(1, "dialog", "241 BELLE What's happening? Is this--"),
+    ]
+    groups, _ = group_utterances(blocks)
+    assert any(len(g.member_indices) == 2 for g in groups)
+
+
 def test_three_page_chain_merges_into_one_group():
     blocks = [
         _block(0, "dialog", "97 JOSEPH You know,"),

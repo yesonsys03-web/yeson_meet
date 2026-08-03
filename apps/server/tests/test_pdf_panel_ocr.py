@@ -13,7 +13,10 @@ from apps.server.domain.pdf_translate.backend import (
     RawBlock,
     open_pdf,
 )
-from apps.server.domain.pdf_translate.profiles.storyboard import _panel_region
+from apps.server.domain.pdf_translate.profiles.storyboard import (
+    _panel_region,
+    _panel_subregions,
+)
 
 _REGION = (0.0, 95.0, 1008.0, 460.0)
 
@@ -229,6 +232,89 @@ def test_find_panel_labels_prefilter_passes_diluted_red_below_old_thresholds(
         doc.close()
 
 
+# ── 판넬 칸 단위 재판독 (2026-08-03, FL104 3단 실측) ──────────────────────
+# 3단 전폭 크롭은 짧은 변이 1014px이라 RapidOCR 검출기의 확대(limit_type=min,
+# limit_side_len=736)가 **걸리지 않는다** — 그 배율에서 `IN`·`OUT` 같은 작은
+# 콜아웃은 검출 단계에서 통째로 사라졌다(라벨이 그것뿐인 9페이지가 히트 0).
+# 칸 하나(짧은 변 467px)만 자르면 1.58배로 커져 같은 글자가 잡힌다.
+
+def _hit(text, bbox, score, red=0.5):
+    return panel_ocr._Hit(text=text, bbox=bbox, score=score, red=red)
+
+
+@pytest.mark.parametrize("region,expected,why", [
+    ((0.0, 95.0, 1008.0, 460.0), False, "3단 전폭(짧은 변 365pt=1014px)"),
+    ((38.1, 110.9, 340.3, 279.2), True, "3단 칸(168.3pt=467px)"),
+    ((38.1, 119.3, 574.2, 394.1), False, "1단 칸(274.7pt=763px)"),
+])
+def test_crop_gains_upscale_only_below_detector_target(region, expected, why):
+    """실물 세 기하가 각각 어느 쪽인지 잠근다.
+
+    1단 칸이 False인 게 핵심이다 — 1단 문서(GABE01 1037페이지)에서는 칸을
+    따로 읽어도 전폭과 해상도가 같아 같은 것을 두 번 읽는 값만 든다."""
+    assert panel_ocr._crop_gains_upscale(region) is expected, why
+
+
+def test_merge_hits_prefers_decodable_read_over_higher_score():
+    """같은 자리를 두 크롭이 다르게 읽으면 **해독되는 쪽**이 남는다.
+
+    실물 FL104 p133: 전폭이 `MALESB1`(0.99), 판넬 칸이 `MALESB`(1.00) —
+    신뢰도만 보면 숫자를 잃은 쪽이 이겨 `남자파티광1` 주석이 통째로
+    사라진다. 이 문서군의 라벨은 정해진 약어 집합이라, 그 집합에 맞는
+    판독이 더 믿을 만하다."""
+    whole = [_hit("MALESB1", (100.0, 100.0, 140.0, 110.0), 0.99)]
+    panel = [_hit("MALESB", (100.5, 100.2, 138.0, 110.1), 1.00)]
+    assert [h.text for h in panel_ocr._merge_hits(whole, panel)] == ["MALESB1"]
+
+
+def test_merge_hits_takes_panel_read_when_it_is_the_decodable_one():
+    """반대 방향도 같은 규칙이다 — 실물 FL104 p168: 전폭 `TEN`(해독 불가),
+    판넬 칸 `EN`(→ 들어온다)."""
+    whole = [_hit("TEN", (200.0, 190.0, 216.0, 199.0), 0.81)]
+    panel = [_hit("EN", (200.4, 190.1, 214.0, 199.2), 0.75)]
+    assert [h.text for h in panel_ocr._merge_hits(whole, panel)] == ["EN"]
+
+
+def test_merge_hits_is_a_union_not_a_replacement():
+    """겹치지 않는 자리는 더한다 — 전폭에서만 읽힌 라벨을 판넬 재판독이
+    밀어내면 안 된다(합집합이라 회귀가 생길 수 없다는 성질)."""
+    whole = [_hit("SPCZMB", (100.0, 100.0, 140.0, 110.0), 0.99)]
+    panel = [_hit("OUT", (700.0, 160.0, 720.0, 170.0), 0.66)]
+    merged = panel_ocr._merge_hits(whole, panel)
+    assert sorted(h.text for h in merged) == ["OUT", "SPCZMB"]
+
+
+def test_same_spot_does_not_merge_neighbouring_labels():
+    """나란히 선 다른 캐릭터의 라벨(실물 최소 간격 ~36pt)은 같은 자리가
+    아니다 — 합쳐지면 한쪽 주석이 사라진다."""
+    assert not panel_ocr._same_spot((100.0, 100.0, 140.0, 110.0),
+                                    (176.0, 100.0, 216.0, 110.0))
+
+
+def test_find_panel_labels_ignores_panels_that_gain_nothing(
+        tmp_path, monkeypatch):
+    """확대 이득이 없는 칸(문턱 이상)은 추가 판독을 돌리지 않는다 —
+    비용 게이트가 실제로 하중을 받는지 OCR 호출 수로 잠근다."""
+    monkeypatch.delenv(panel_ocr.ENV_ENABLED, raising=False)
+    doc = open_pdf(_make_panel_pdf(tmp_path))
+    calls = []
+    real = panel_ocr._ocr_crop
+
+    def spy(arr, region):
+        calls.append(region)
+        return real(arr, region)
+
+    monkeypatch.setattr(panel_ocr, "_ocr_crop", spy)
+    try:
+        # 첫 칸은 짧은 변 300pt(=833px)로 문턱 이상, 둘째는 100pt(=278px).
+        panel_ocr.find_panel_labels(
+            doc, 0, _REGION,
+            panels=((0.0, 100.0, 400.0, 400.0), (0.0, 100.0, 400.0, 200.0)))
+        assert calls == [_REGION, (0.0, 100.0, 400.0, 200.0)]
+    finally:
+        doc.close()
+
+
 # ── 실물 진단 (Task 19, 2026-07-30, 페이지 번호는 0-based) ────────────────
 
 SAMPLES = os.environ.get("YESON_PDF_SAMPLES")
@@ -323,6 +409,39 @@ def test_real_sample_p410_finds_hanks_truck_label():
         texts = [b.text.upper() for b in labels]
         print(f"\np410 labels={texts}")
         assert any("HANK" in t for t in texts)
+    finally:
+        doc.close()
+
+
+# 3단 실물(FL104_FNL_Nrev_3_PANEL.pdf) 경로 — 1단 샘플과 뿌리가 달라 따로 둔다.
+SAMPLE_3PANEL = os.environ.get("YESON_PDF_SAMPLE_3PANEL")
+
+
+@pytest.mark.skipif(not SAMPLE_3PANEL,
+                    reason="3단 실물 경로(YESON_PDF_SAMPLE_3PANEL) 미지정")
+def test_real_3panel_page49_out_callouts_need_panel_crops():
+    """실물 회귀(2026-08-03): 3단 p49(1-based)는 사람이 `나간다`를 두 개 다는
+    페이지인데 전폭 1회 판독으로는 히트가 `bo`·`bo`(빨강 비율 0.000·0.026)뿐
+    이라 라벨이 통째로 사라졌다 — 칸을 따로 읽으면 `OVT`·`OUT`으로 잡힌다.
+
+    두 단언이 함께 있어야 의미가 있다: 아래(전폭 0건)가 이 테스트의 대조군이라,
+    빠지면 "원래도 됐던 것"과 구분되지 않는다."""
+    doc = open_pdf(Path(SAMPLE_3PANEL))
+    try:
+        page = 48
+        region = _real_region(doc, page)
+        panels = _panel_subregions(doc, page, region)
+        assert len(panels) == 3, panels
+
+        with_panels = panel_ocr.find_panel_labels(doc, page, region,
+                                                  panels=panels)
+        whole_only = panel_ocr.find_panel_labels(doc, page, region)
+        decoded = [panel_ocr.decode_panel_label(b.text) for b in with_panels]
+        print(f"\np49 with_panels={[b.text for b in with_panels]} "
+              f"whole_only={[b.text for b in whole_only]}")
+        assert decoded.count("나간다") >= 2
+        assert not [b for b in whole_only
+                    if panel_ocr.decode_panel_label(b.text) == "나간다"]
     finally:
         doc.close()
 
@@ -670,3 +789,91 @@ def test_real_sample_detection_cost_is_bounded():
         assert len(flagged) < doc.page_count * 0.05
     finally:
         doc.close()
+
+
+# ── 제작 지시어 매칭 (FL104 실측, 2026-08-03) ────────────────────────────
+
+def test_production_label_matches_leading_qualifier():
+    """FL104 p16 회귀(사용자 신고 "카메라 필드 가이드 번역 누락"): 실물 라벨은
+    앞에도 수식어를 단다 — `CAMERA FIELD GUIDE (MANNY and BELLE ONLY)`.
+    접두 매칭이면 `CAMERAFIELDGUIDE…`가 `CAMGUIDE`로도 `FIELDGUIDE`로도
+    시작하지 않아 통째로 버려진다(OCR은 신뢰도 1.00으로 정확히 읽고 있었다)."""
+    assert panel_ocr._is_production_label("CAMERA FIELD GUIDE (MANNY and BELLE ONLY)")
+    assert panel_ocr._is_production_label("CAMERAFIELDGUIDE")
+
+
+def test_production_label_still_matches_known_prefix_forms():
+    """기존에 잡히던 형태는 그대로 잡힌다(회귀 가드)."""
+    assert panel_ocr._is_production_label("CAM GUIDE")
+    assert panel_ocr._is_production_label("CAMGUIDE")
+    assert panel_ocr._is_production_label("FIELD GUIDE 1-2")
+    assert panel_ocr._is_production_label("REFERENCE")
+
+
+def test_production_label_rejects_scene_objects():
+    """그림 속 간판·숫자는 여전히 통과시키지 않는다 — 사람도 번역하지 않는다."""
+    assert not panel_ocr._is_production_label("REHABCENTER")
+    assert not panel_ocr._is_production_label("YOSEMITE")
+    assert not panel_ocr._is_production_label("68")
+
+
+# ── 판넬 약어 해독 (FL104 실측 + 사용자 확인, 2026-08-03) ────────────────
+
+@pytest.mark.parametrize("raw,expected", [
+    ("SPCZMB", "좀비"), ("SPC ZMB", "좀비"),
+    ("SPCINCB", "좀비"), ("SPINCB", "좀비"),      # OCR 오독 변형
+    ("TTINCA", "테킬라걸A"), ("TT INC C", "테킬라걸C"),
+    ("FEMSB3", "여자파티광3"), ("FEMSB2B", "여자파티광2B"),
+    ("MALESB6", "남자파티광6"),
+    ("SBINC14", "파티광14"), ("SBINC8", "파티광8"),
+    ("IN", "들어온다"), ("EN", "들어온다"), ("HN", "들어온다"),
+    ("OUT", "나간다"), ("OVT", "나간다"), ("Ov1", "나간다"), ("ou", "나간다"),
+])
+def test_decode_panel_label(raw, expected):
+    """제작 코드는 LLM에 맡기지 않고 결정적으로 해독한다 — 넘기면 LLM이 옮길
+    게 없어 원문을 돌려주고, pdf_run이 '번역 실패'로 보아 주석을 안 만든다."""
+    assert panel_ocr.decode_panel_label(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [
+    "CAMERAFIELDGUIDE",        # 영어 문장 — 평소대로 LLM이 옮긴다
+    "(MANNYandBELLEONLY)",
+    "REHABCENTER",             # 그림 속 간판 — 사람도 번역하지 않는다
+    "YOSEMITE", "68", "",
+])
+def test_decode_panel_label_passes_through_non_codes(raw):
+    """해독 대상이 아니면 None — 평소 번역 경로를 타야지, 억지로 한글을
+    만들어 붙이면 안 된다."""
+    assert panel_ocr.decode_panel_label(raw) is None
+
+
+def test_decode_panel_label_character_rules_win_over_zombie_shape():
+    """FEMSB2B·MALESB6는 B로 끝나 좀비 규칙(^SP..B$)과 형태가 겹칠 수 있다 —
+    구체적인 캐릭터 규칙이 먼저 걸려야 한다(순서 회귀 가드)."""
+    assert panel_ocr.decode_panel_label("FEMSB2B") == "여자파티광2B"
+    assert panel_ocr.decode_panel_label("MALESB6") == "남자파티광6"
+
+
+# ── 묶음 해독: 세로로 붙은 두 줄을 사람 관례대로 나눈다 ──────────────────
+
+@pytest.mark.parametrize("group,expected", [
+    (["SBINC3", "SPCZMB"], ["좀비", "파티광3"]),        # p20 사람: 좀비/파티광3
+    (["MALESB7", "SPCZMB"], ["남자좀비", "파티광7"]),   # p133 사람: 남자좀비/파티광1
+    (["FEMSB3", "SPCZMB"], ["여자좀비", "파티광3"]),    # p133 사람과 동일
+    (["TTINCA", "SPCZMB"], ["좀비", "테킬라걸A"]),
+    (["MALESB6"], ["남자", "파티광6"]),
+    (["SPCZMB"], ["좀비"]),
+    (["IN"], ["들어온다"]),
+])
+def test_decode_panel_label_lines(group, expected):
+    """수식어는 윗줄, 번호가 붙은 역할은 아랫줄 — FL104 p20 5쌍이 5/5 이
+    순서다. 이렇게 나눠야 각 줄이 짧아 옆 라벨을 침범하지 않는다."""
+    assert panel_ocr.decode_panel_label_lines(group) == expected
+
+
+def test_decode_panel_label_lines_returns_none_for_english_group():
+    """묶음에 해독 못 하는 게 섞이면 None — 묶음 전체가 평소대로 번역기를
+    탄다(`CAMERA FIELD GUIDE` + `(BG ONLY)`는 영어 문장이라 LLM이 옮긴다)."""
+    assert panel_ocr.decode_panel_label_lines(
+        ["CAMERA FIELD GUIDE", "(BG ONLY)"]) is None
+    assert panel_ocr.decode_panel_label_lines(["SPCZMB", "REHABCENTER"]) is None
