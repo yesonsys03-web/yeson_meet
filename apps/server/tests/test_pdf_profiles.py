@@ -677,6 +677,53 @@ def test_extract_includes_panel_label_and_place_avoids_intersection(tmp_path):
         doc.close()
 
 
+def _make_three_panel_pdf(tmp_path: Path) -> Path:
+    """3단 템플릿의 기하 그대로 — 판넬 칸 3개(래스터 이미지)와 그림 속 작은
+    로고 이미지 하나. 좌표는 실물 실측값이다(FL102·FL104 3단이 전 페이지
+    동일: 302.1×168.3pt 3칸)."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 629, 354), False)
+    pix.clear_with(220)
+    for x0 in (38.1, 353.5, 668.9):
+        page.insert_image(fitz.Rect(x0, 110.9, x0 + 302.1, 279.2), pixmap=pix)
+    logo = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 40, 40), False)
+    logo.clear_with(120)
+    page.insert_image(fitz.Rect(120.0, 130.0, 160.0, 170.0), pixmap=logo)
+    page.insert_text((72, 460), "Dialog", fontsize=8)
+    page.insert_text((72, 478), "If you wanna go, then go.", fontsize=10)
+    path = tmp_path / "sb_three_panel.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_panel_subregions_reads_panel_boxes_from_the_document(tmp_path):
+    """판넬 칸 좌표는 상수로 박지 않고 **문서에서** 읽는다 — Storyboard Pro가
+    칸 하나를 이미지 하나로 굽는 관례를 그대로 쓴다. 그림 속 작은 로고
+    이미지는 넓이 문턱에서 제외돼 OCR 호출을 늘리지 않는다."""
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        _panel_region,
+        _panel_subregions,
+    )
+    doc = open_pdf(_make_three_panel_pdf(tmp_path))
+    try:
+        raws = doc.raw_blocks(0)
+        page_w, _page_h = doc.page_size(0)
+        region = _panel_region(raws, page_w)
+        subs = _panel_subregions(doc, 0, region)
+        assert len(subs) == 3, subs
+        # 여유 2pt: MuPDF가 이미지 원본 종횡비를 지켜 배치하느라 지정 사각형
+        # 안에서 폭을 조금 줄인다(실물 익스포트는 종횡비가 맞아 그대로 들어간다).
+        assert subs[0] == pytest.approx((38.1, 110.9, 340.2, 279.2), abs=2.0)
+        # 영역 밖으로 나가는 부분은 잘린다(칸이 필드 박스를 삼키지 않게).
+        tight = _panel_subregions(doc, 0, (0.0, 95.0, page_w, 200.0))
+        assert all(s[3] == pytest.approx(200.0) for s in tight), tight
+    finally:
+        doc.close()
+
+
 def _make_storyboard_title_page_pdf(tmp_path: Path) -> Path:
     """표지/타이틀 페이지 흉내 — 빨간 큰 로고/타이틀 텍스트만 있고
     Dialog/Action Notes 필드 라벨은 전혀 없다(리뷰 후속 회귀 가드: 실물

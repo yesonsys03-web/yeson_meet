@@ -32,6 +32,7 @@ import logging
 import os
 import re
 import threading
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 import numpy as np
@@ -112,9 +113,12 @@ _HANGUL = re.compile(r"[가-힣]")
 # 제작 지시어 다음 줄에 오는 괄호 한정구(`(MANNY and BELLE ONLY)`) — 위 줄이
 # 통과된 제작 지시어일 때만 함께 살린다(find_panel_labels의 2차 통과).
 _PARENTHETICAL_RE = re.compile(r"^\(.*\)$")
-# 두 줄 사이 허용 간격(200dpi 픽셀). 12pt 한 줄이 약 33px이라 그보다 좁게 잡아
+# 두 줄 사이 허용 간격(pt). 12pt 한 줄이 약 12pt이라 그보다 좁게 잡아
 # **바로 다음 줄**만 인정한다 — 멀리 떨어진 그림 속 괄호까지 끌어오지 않는다.
-_QUALIFIER_MAX_GAP_PX = 25
+# 원래 200dpi 픽셀(25px·겹침 2px)로 재던 값을 pt로 환산한 것이다(× 72/200) —
+# 히트를 여러 크롭에서 모으면서 좌표계를 pt로 통일했다(_Hit 참고).
+_QUALIFIER_MAX_GAP = 25 * 72.0 / _OCR_DPI   # 9.0pt
+_QUALIFIER_OVERLAP = 2 * 72.0 / _OCR_DPI    # 0.72pt
 
 
 def _new_engine(**kwargs):  # test seam(slate_ocr 미러)
@@ -170,16 +174,146 @@ def _crop_region_px(arr: np.ndarray, region: tuple[float, float, float, float],
     return arr[y0:y1, x0:x1]
 
 
+@dataclass(frozen=True)
+class _Hit:
+    """OCR 히트 하나 — 좌표는 **페이지 pt**.
+
+    크롭마다 다른 픽셀 좌표계를 쓰면 여러 크롭의 히트를 견줄 수 없다.
+    나오는 즉시 pt로 환산해 두면 판넬별 크롭과 전폭 크롭의 결과를 같은
+    자로 합칠 수 있다(_merge_hits)."""
+    text: str
+    bbox: tuple[float, float, float, float]
+    score: float
+    red: float
+
+
+def _ocr_crop(hi_arr: np.ndarray,
+              region: tuple[float, float, float, float]) -> list[_Hit]:
+    """region(pt)만큼 잘라 OCR — 히트를 페이지 pt 좌표로 돌려준다.
+
+    빨강 비율은 **여기서** 잰다. 히트 bbox 안의 픽셀이 필요한데 그건 이
+    크롭에만 있기 때문이다(뒤에서 다른 크롭의 히트와 섞이면 못 잰다)."""
+    crop = _crop_region_px(hi_arr, region, _OCR_DPI)
+    if crop.size == 0:
+        return []
+    try:
+        result, _elapse = _get_engine()(crop)
+    except Exception:  # 한 크롭의 OCR 실패가 추출 전체를 막지 않게
+        logger.exception("panel OCR failed for region %r", region)
+        return []
+    if not result:
+        return []
+
+    scale = _OCR_DPI / 72.0
+    crop_h, crop_w = crop.shape[:2]
+    out: list[_Hit] = []
+    for box, text, score in result:
+        text = text.strip()
+        if not text or _HANGUL.search(text):
+            continue
+        xs = [p[0] for p in box]
+        ys = [p[1] for p in box]
+        bx0 = max(0, min(crop_w, int(min(xs))))
+        bx1 = max(bx0, min(crop_w, int(max(xs))))
+        by0 = max(0, min(crop_h, int(min(ys))))
+        by1 = max(by0, min(crop_h, int(max(ys))))
+        sub = crop[by0:by1, bx0:bx1]
+        if sub.size == 0:
+            continue
+        out.append(_Hit(
+            text=text,
+            bbox=(bx0 / scale + region[0], by0 / scale + region[1],
+                  bx1 / scale + region[0], by1 / scale + region[1]),
+            score=float(score),
+            # 히트 bbox 내 빨강 픽셀 비율 — 패널 라벨은 빨간 글자이므로 검정
+            # 그림선(사인·표지판 텍스트 등)이 우연히 OCR 히트가 돼도 이 값으로
+            # 걸러진다.
+            red=float(_red_mask(sub).mean()),
+        ))
+    return out
+
+
+# RapidOCR 검출기가 입력의 **짧은 변**을 맞추는 크기(rapidocr_onnxruntime
+# config.yaml: Det.limit_side_len=736, limit_type=min). 짧은 변이 이보다
+# 작으면 그만큼 **키워서** 보고, 이미 크면 원본 그대로 본다.
+_DET_UPSCALE_TARGET_PX = 736
+
+
+def _crop_gains_upscale(region: tuple[float, float, float, float]) -> bool:
+    """이 크롭을 따로 읽으면 검출 해상도가 오르는가.
+
+    전폭 크롭은 짧은 변이 이미 문턱을 넘어(3단 1014px) 확대가 없다 — 그래서
+    작은 콜아웃이 검출 단계에서 사라진다. 칸 하나(467px)는 1.58배로 커진다.
+    반대로 1단 문서의 칸은 763px이라 전폭과 해상도가 같아, 따로 읽어 봐야
+    같은 것을 두 번 읽는 값만 든다(1037페이지 문서에서 그 값이 크다)."""
+    short_side_px = (min(region[2] - region[0], region[3] - region[1])
+                     * _OCR_DPI / 72.0)
+    return 0 < short_side_px < _DET_UPSCALE_TARGET_PX
+
+
+def _same_spot(a: tuple[float, float, float, float],
+               b: tuple[float, float, float, float]) -> bool:
+    """두 히트가 **같은 글자**를 읽은 것인가 — 좁은 쪽 넓이의 절반 이상이
+    겹치면 같다고 본다. 같은 글자를 두 크롭에서 읽으면 좌표가 1~2pt 안에서만
+    흔들리므로(실측) 이 문턱은 넉넉하고, 나란히 선 다른 라벨(최소 간격 ~36pt)은
+    스치지도 않는다."""
+    ix = min(a[2], b[2]) - max(a[0], b[0])
+    iy = min(a[3], b[3]) - max(a[1], b[1])
+    if ix <= 0 or iy <= 0:
+        return False
+    smaller = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return smaller > 0 and (ix * iy) / smaller >= 0.5
+
+
+def _better(a: _Hit, b: _Hit) -> bool:
+    """같은 자리를 읽은 두 판독 중 어느 쪽을 남길까.
+
+    **해독되는 쪽이 이긴다.** 실측(FL104 p133): 전폭 크롭은 `MALESB1`,
+    판넬 크롭은 `MALESB`를 신뢰도 1.00으로 준다 — 신뢰도만 보면 숫자를
+    잃은 쪽이 이겨 `남자파티광1`이 통째로 사라진다. 이 문서군의 라벨은
+    정해진 약어 집합이라, 그 집합에 맞아떨어지는 판독이 더 믿을 만하다.
+    둘 다 해독되거나 둘 다 아니면 신뢰도로 가른다."""
+    return ((decode_panel_label(a.text) is not None, a.score)
+            > (decode_panel_label(b.text) is not None, b.score))
+
+
+def _merge_hits(base: list[_Hit], extra: list[_Hit]) -> list[_Hit]:
+    """같은 자리 히트는 좋은 쪽만 남기고, 새 자리 히트는 더한다(합집합).
+
+    합집합인 것이 핵심이다 — 판넬별 크롭이 대개 더 잘 읽지만 항상은
+    아니어서(위 _better 사례), 어느 한쪽으로 갈아치우면 멀쩡하던 라벨을
+    잃는다."""
+    out = list(base)
+    for hit in extra:
+        for i, kept in enumerate(out):
+            if _same_spot(kept.bbox, hit.bbox):
+                if _better(hit, kept):
+                    out[i] = hit
+                break
+        else:
+            out.append(hit)
+    return out
+
+
 def find_panel_labels(
     doc: PdfDocument, page: int,
     region: tuple[float, float, float, float],
+    *, panels: tuple[tuple[float, float, float, float], ...] = (),
 ) -> list[RawBlock]:
     """region(pdf pt, (x0,y0,x1,y1)) 안에서 빨강 콜아웃 라벨을 OCR로 찾는다.
 
     킬스위치 YESON_PDF_PANEL_OCR=0이면 렌더조차 하지 않고 즉시 []. 프리필터
     (dpi 60 저해상도 렌더 + 빨강 픽셀 카운트)를 통과 못 하면 비싼 dpi 200
     렌더·OCR을 아예 건너뛴다 — 대다수 페이지(라벨 없음)의 비용을 없앤다.
-    """
+
+    `panels`(판넬 그림 칸의 사각형들)를 주면 **전폭 한 번 + 칸마다 한 번**
+    읽어 합친다. 왜 굳이 또 읽는가: RapidOCR 검출기는 입력의 짧은 변을
+    736px에 맞춰 키우는데(limit_type=min), 3단 전폭 크롭은 짧은 변이 이미
+    1014px이라 **확대가 걸리지 않는다** — 그 배율에서 `IN`·`OUT` 같은 작은
+    콜아웃은 검출 단계에서 통째로 사라진다(FL104 실측: 라벨이 그것뿐인
+    9페이지가 히트 0). 칸 하나만 자르면 짧은 변이 467px이라 1.58배로 커져
+    같은 글자가 잡힌다. 부르는 쪽이 어느 칸인지 알려 주는 이유는 좌표를
+    추측하지 않기 위해서다(profiles/storyboard._panel_subregions)."""
     if not _panel_ocr_enabled():
         return []
 
@@ -190,56 +324,30 @@ def find_panel_labels(
         return []
 
     hi_arr = _decode_png(doc.render_png(page, dpi=_OCR_DPI))
-    hi_crop = _crop_region_px(hi_arr, region, _OCR_DPI)
-    if hi_crop.size == 0:
+    hits = _ocr_crop(hi_arr, region)
+    for sub in panels:
+        if not _crop_gains_upscale(sub):
+            continue
+        hits = _merge_hits(hits, _ocr_crop(hi_arr, sub))
+    if not hits:
         return []
 
-    try:
-        result, _elapse = _get_engine()(hi_crop)
-    except Exception:  # 한 페이지 OCR 실패가 추출 전체를 막지 않게
-        logger.exception("panel OCR failed for page %d", page)
-        return []
-    if not result:
-        return []
-
-    scale = _OCR_DPI / 72.0
-    region_x0, region_y0, _rx1, _ry1 = region
-    crop_h, crop_w = hi_crop.shape[:2]
     out: list[RawBlock] = []
     # 제작 지시어의 괄호 한정구(둘째 줄)를 살리기 위한 기록 — 아래 2차 통과 참고.
-    kept_production_px: list[tuple[int, int, int]] = []  # (x0, x1, y1)
-    deferred: list[tuple[str, tuple[int, int, int, int]]] = []
-    for box, text, _score in result:
-        text = text.strip()
-        if not text or _HANGUL.search(text):
-            continue
-        xs = [p[0] for p in box]
-        ys = [p[1] for p in box]
-        bx0 = max(0, min(crop_w, int(min(xs))))
-        bx1 = max(bx0, min(crop_w, int(max(xs))))
-        by0 = max(0, min(crop_h, int(min(ys))))
-        by1 = max(by0, min(crop_h, int(max(ys))))
-        sub = hi_crop[by0:by1, bx0:bx1]
-        if sub.size == 0:
-            continue
-        # 히트 bbox 내 빨강 픽셀 비율 — 패널 라벨은 빨간 글자이므로 검정
-        # 그림선(사인·표지판 텍스트 등)이 우연히 OCR 히트가 돼도 여기서 걸러진다.
-        # 단 확인된 제작 지시어(CAM GUIDE 등)는 검정으로 적히는 문서가 있어
+    kept_production: list[_Hit] = []
+    deferred: list[_Hit] = []
+    for hit in hits:
+        # 확인된 제작 지시어(CAM GUIDE 등)는 검정으로 적히는 문서가 있어
         # 색 검사를 우회한다(_PRODUCTION_LABEL_TERMS 주석 참고).
-        is_production = _is_production_label(text)
-        if (float(_red_mask(sub).mean()) < _HIT_RED_RATIO_MIN
-                and not is_production):
+        is_production = _is_production_label(hit.text)
+        if hit.red < _HIT_RED_RATIO_MIN and not is_production:
             # 지금 버리되, 제작 지시어의 괄호 한정구일 수 있으니 후보로 남긴다.
-            if _PARENTHETICAL_RE.match(text):
-                deferred.append((text, (bx0, by0, bx1, by1)))
+            if _PARENTHETICAL_RE.match(hit.text):
+                deferred.append(hit)
             continue
         if is_production:
-            kept_production_px.append((bx0, bx1, by1))
-        out.append(RawBlock(
-            text=text,
-            bbox=(bx0 / scale + region_x0, by0 / scale + region_y0,
-                  bx1 / scale + region_x0, by1 / scale + region_y0),
-        ))
+            kept_production.append(hit)
+        out.append(RawBlock(text=hit.text, bbox=hit.bbox))
 
     # 2차 통과: 제작 지시어 **바로 아래**에 붙은 괄호 한정구를 되살린다.
     #
@@ -248,15 +356,13 @@ def find_panel_labels(
     # 이름을 갖고 있지 않아 _is_production_label로는 못 잡고, 검정이라 색 문턱에도
     # 걸린다 — 그렇다고 괄호를 무조건 통과시키면 그림 속 괄호 텍스트까지 들어온다.
     # 그래서 "바로 위에 통과된 제작 지시어가 있고 x가 겹칠 때"로만 한정한다.
-    for text, (bx0, by0, bx1, by1) in deferred:
-        for kx0, kx1, ky1 in kept_production_px:
-            if by0 - ky1 <= _QUALIFIER_MAX_GAP_PX and by0 >= ky1 - 2 \
-                    and min(bx1, kx1) - max(bx0, kx0) > 0:
-                out.append(RawBlock(
-                    text=text,
-                    bbox=(bx0 / scale + region_x0, by0 / scale + region_y0,
-                          bx1 / scale + region_x0, by1 / scale + region_y0),
-                ))
+    for hit in deferred:
+        for keep in kept_production:
+            if (hit.bbox[1] - keep.bbox[3] <= _QUALIFIER_MAX_GAP
+                    and hit.bbox[1] >= keep.bbox[3] - _QUALIFIER_OVERLAP
+                    and min(hit.bbox[2], keep.bbox[2])
+                    - max(hit.bbox[0], keep.bbox[0]) > 0):
+                out.append(RawBlock(text=hit.text, bbox=hit.bbox))
                 break
     return out
 

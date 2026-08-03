@@ -266,7 +266,9 @@ class StoryboardProfile:
             if _is_panel_page(raws):
                 page_w, _page_h = doc.page_size(page)
                 region = _panel_region(raws, page_w)
-                labels = [r for r in find_panel_labels(doc, page, region)
+                labels = [r for r in find_panel_labels(
+                              doc, page, region,
+                              panels=_panel_subregions(doc, page, region))
                           if normalize_ws(r.text) and not has_hangul(r.text)]
                 for group in _group_stacked_labels(labels):
                     texts = [normalize_ws(r.text) for r in group]
@@ -476,6 +478,48 @@ def _panel_region(raws: list[RawBlock], page_w: float
         if any(t == label or t.startswith(label) for label, _kind in _FIELDS):
             y_bottom = min(y_bottom, b.bbox[1] - 5.0)
     return (0.0, _PANEL_Y_TOP, page_w, y_bottom)
+
+
+# 판넬 칸으로 인정할 최소 넓이(OCR 영역 대비). 그림 속 아이콘·로고 이미지가
+# 칸으로 둔갑해 OCR 호출만 늘리는 것을 막는다(3단 칸 = 영역의 약 27%).
+_PANEL_MIN_AREA_RATIO = 0.05
+# 한 페이지에서 따로 읽을 칸의 최대 개수 — 비용 상한(3단=3, 1단=1이 실물).
+_PANEL_MAX_SUBREGIONS = 8
+
+
+def _panel_subregions(doc: PdfDocument, page: int,
+                      region: tuple[float, float, float, float]
+                      ) -> tuple[tuple[float, float, float, float], ...]:
+    """판넬 그림 칸 ∩ OCR 영역 — 칸을 따로 읽게 할 후보들.
+
+    Storyboard Pro 익스포트는 칸 하나를 래스터 이미지 하나로 굽는다(실측:
+    FL102·FL104 3단이 전 페이지 동일하게 302.1×168.3pt 3칸, 1단은
+    536×274.7pt 1칸). 그래서 칸 좌표를 상수로 박지 않고 **문서에서 읽는다** —
+    템플릿이 바뀌어도 따라간다.
+
+    "따로 읽어서 이득이 있는 크기냐"는 여기서 판단하지 않는다 — 그건 OCR
+    엔진의 성질이라 panel_ocr가 가린다(find_panel_labels). 이 함수는 포맷
+    지식("무엇이 판넬 칸인가")만 맡는다.
+
+    백엔드가 `image_rects`를 제공하지 않으면(다른 구현으로 교체된 경우)
+    조용히 빈 튜플 = 현행 전폭 1회 판독으로 내려간다."""
+    finder = getattr(doc, "image_rects", None)
+    if finder is None:
+        return ()
+    region_area = max(0.0, (region[2] - region[0]) * (region[3] - region[1]))
+    if region_area <= 0:
+        return ()
+    out: list[tuple[float, float, float, float]] = []
+    for rect in finder(page):
+        sub = (max(rect[0], region[0]), max(rect[1], region[1]),
+               min(rect[2], region[2]), min(rect[3], region[3]))
+        w, h = sub[2] - sub[0], sub[3] - sub[1]
+        if w <= 0 or h <= 0:
+            continue
+        if w * h < region_area * _PANEL_MIN_AREA_RATIO:
+            continue
+        out.append(sub)
+    return tuple(out[:_PANEL_MAX_SUBREGIONS])
 
 
 def _next_label_y0(raws: list[RawBlock], next_label: str | None,

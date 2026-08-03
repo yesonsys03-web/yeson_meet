@@ -107,6 +107,22 @@ class MuPdfDocument:
             seen.add((r.x0, r.y0, r.x1, r.y1))
         return sorted(seen, key=lambda r: (r[1], r[0]))
 
+    def image_rects(self, page: int) -> list[tuple[float, float, float, float]]:
+        """페이지에 배치된 **래스터 이미지**의 사각형들 — 스토리보드에서는
+        판넬 그림 한 칸이 이미지 하나다(Storyboard Pro 익스포트 관례).
+
+        판넬 그림은 벡터 도형이 아니라 이미지라 `page_rects`로는 잡히지
+        않는다(실측: 3단 페이지의 벡터 사각형은 전부 하단 필드 박스와 씬
+        테이블). 판넬 칸 자체의 좌표가 필요한 곳은 OCR 크롭이다 —
+        panel_ocr.find_panel_labels 참고. (y0, x0) 오름차순."""
+        out: list[tuple[float, float, float, float]] = []
+        for b in self._doc[page].get_text("dict")["blocks"]:
+            if b.get("type") != 1:
+                continue
+            x0, y0, x1, y1 = b["bbox"]
+            out.append((x0, y0, x1, y1))
+        return sorted(out, key=lambda r: (r[1], r[0]))
+
     def producer(self) -> str:
         return str(self._doc.metadata.get("producer") or "")
 
