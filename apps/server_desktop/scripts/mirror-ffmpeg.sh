@@ -52,7 +52,8 @@ MIRROR_REPO="${MIRROR_REPO:-yesonsys03-web/yeson_meet}"
 # triples are left on their upstream URLs: evermeet serves version-exact URLs
 # and osxexperts' risk is an in-place rebuild (a hash change), which mirroring
 # would not prevent — the freshness check covers that instead.
-DEFAULT_TRIPLES=(x86_64-pc-windows-msvc x86_64-unknown-linux-gnu)
+# (2026-08-03) Linux dropped — nothing builds or ships for it.
+DEFAULT_TRIPLES=(x86_64-pc-windows-msvc)
 
 [[ -f "${MANIFEST}" ]] || { echo "ERROR: manifest not found: ${MANIFEST}" >&2; exit 1; }
 for tool in gh jq curl; do
