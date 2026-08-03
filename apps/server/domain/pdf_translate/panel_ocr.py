@@ -89,16 +89,32 @@ _NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
 
 
 def _is_production_label(text: str) -> bool:
-    """확인된 제작 지시어로 시작하면 True — 빨강 비율 검사를 우회한다.
+    """확인된 제작 지시어를 포함하면 True — 빨강 비율 검사를 우회한다.
 
-    접두 매칭인 이유: 실물 라벨이 뒤에 식별자를 달고 나온다
-    (`FIELD GUIDE 1-2`, `FIELD GUIDE A LOUIS ONLY`). 접두를 안 쓰면
-    이 변형들을 전부 열거해야 한다."""
+    뒤에 식별자가 붙는 변형(`FIELD GUIDE 1-2`, `FIELD GUIDE A LOUIS ONLY`)을
+    일일이 열거하지 않으려고 원래 **접두** 매칭이었다. 그런데 실물은 앞에도
+    수식어를 단다 — FL104 p16의 `CAMERA FIELD GUIDE (MANNY and BELLE ONLY)`는
+    squash하면 `CAMERAFIELDGUIDE…`라 `CAMGUIDE`로도 `FIELDGUIDE`로도 시작하지
+    않아 통째로 버려졌다(사용자 신고 "카메라 필드 가이드 번역 누락").
+    OCR은 이 라벨을 신뢰도 1.00으로 정확히 읽고 있었는데 색 문턱에서 죽은
+    것이다(검정 지시어, 빨강 비율 0.000).
+
+    그래서 포함(substring) 매칭으로 넓힌다. 접두→포함으로 넓히면 필드 본문의
+    `CAM FIELD GUIDE 1-2` 같은 텍스트까지 통과할 수 있는데, 그건
+    `_panel_region`이 이제 필드 박스를 OCR 영역에서 제외하므로(같은 날 수정)
+    애초에 히트로 들어오지 않는다 — 두 수정은 함께 가야 한다."""
     squashed = _NON_ALNUM.sub("", text).upper()
-    return any(squashed.startswith(t) for t in _PRODUCTION_LABEL_TERMS)
+    return any(t in squashed for t in _PRODUCTION_LABEL_TERMS)
 
 
 _HANGUL = re.compile(r"[가-힣]")
+
+# 제작 지시어 다음 줄에 오는 괄호 한정구(`(MANNY and BELLE ONLY)`) — 위 줄이
+# 통과된 제작 지시어일 때만 함께 살린다(find_panel_labels의 2차 통과).
+_PARENTHETICAL_RE = re.compile(r"^\(.*\)$")
+# 두 줄 사이 허용 간격(200dpi 픽셀). 12pt 한 줄이 약 33px이라 그보다 좁게 잡아
+# **바로 다음 줄**만 인정한다 — 멀리 떨어진 그림 속 괄호까지 끌어오지 않는다.
+_QUALIFIER_MAX_GAP_PX = 25
 
 
 def _new_engine(**kwargs):  # test seam(slate_ocr 미러)
@@ -190,6 +206,9 @@ def find_panel_labels(
     region_x0, region_y0, _rx1, _ry1 = region
     crop_h, crop_w = hi_crop.shape[:2]
     out: list[RawBlock] = []
+    # 제작 지시어의 괄호 한정구(둘째 줄)를 살리기 위한 기록 — 아래 2차 통과 참고.
+    kept_production_px: list[tuple[int, int, int]] = []  # (x0, x1, y1)
+    deferred: list[tuple[str, tuple[int, int, int, int]]] = []
     for box, text, _score in result:
         text = text.strip()
         if not text or _HANGUL.search(text):
@@ -207,14 +226,38 @@ def find_panel_labels(
         # 그림선(사인·표지판 텍스트 등)이 우연히 OCR 히트가 돼도 여기서 걸러진다.
         # 단 확인된 제작 지시어(CAM GUIDE 등)는 검정으로 적히는 문서가 있어
         # 색 검사를 우회한다(_PRODUCTION_LABEL_TERMS 주석 참고).
+        is_production = _is_production_label(text)
         if (float(_red_mask(sub).mean()) < _HIT_RED_RATIO_MIN
-                and not _is_production_label(text)):
+                and not is_production):
+            # 지금 버리되, 제작 지시어의 괄호 한정구일 수 있으니 후보로 남긴다.
+            if _PARENTHETICAL_RE.match(text):
+                deferred.append((text, (bx0, by0, bx1, by1)))
             continue
+        if is_production:
+            kept_production_px.append((bx0, bx1, by1))
         out.append(RawBlock(
             text=text,
             bbox=(bx0 / scale + region_x0, by0 / scale + region_y0,
                   bx1 / scale + region_x0, by1 / scale + region_y0),
         ))
+
+    # 2차 통과: 제작 지시어 **바로 아래**에 붙은 괄호 한정구를 되살린다.
+    #
+    # 실물(FL104 p16): `CAMERA FIELD GUIDE` 다음 줄이 `(MANNY and BELLE ONLY)`이고
+    # 사람은 두 줄 다 옮긴다(`카메라 필드 가이드` / `(매니&벨만)`). 이 줄은 지시어
+    # 이름을 갖고 있지 않아 _is_production_label로는 못 잡고, 검정이라 색 문턱에도
+    # 걸린다 — 그렇다고 괄호를 무조건 통과시키면 그림 속 괄호 텍스트까지 들어온다.
+    # 그래서 "바로 위에 통과된 제작 지시어가 있고 x가 겹칠 때"로만 한정한다.
+    for text, (bx0, by0, bx1, by1) in deferred:
+        for kx0, kx1, ky1 in kept_production_px:
+            if by0 - ky1 <= _QUALIFIER_MAX_GAP_PX and by0 >= ky1 - 2 \
+                    and min(bx1, kx1) - max(bx0, kx0) > 0:
+                out.append(RawBlock(
+                    text=text,
+                    bbox=(bx0 / scale + region_x0, by0 / scale + region_y0,
+                          bx1 / scale + region_x0, by1 / scale + region_y0),
+                ))
+                break
     return out
 
 

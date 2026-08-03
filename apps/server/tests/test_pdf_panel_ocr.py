@@ -670,3 +670,29 @@ def test_real_sample_detection_cost_is_bounded():
         assert len(flagged) < doc.page_count * 0.05
     finally:
         doc.close()
+
+
+# ── 제작 지시어 매칭 (FL104 실측, 2026-08-03) ────────────────────────────
+
+def test_production_label_matches_leading_qualifier():
+    """FL104 p16 회귀(사용자 신고 "카메라 필드 가이드 번역 누락"): 실물 라벨은
+    앞에도 수식어를 단다 — `CAMERA FIELD GUIDE (MANNY and BELLE ONLY)`.
+    접두 매칭이면 `CAMERAFIELDGUIDE…`가 `CAMGUIDE`로도 `FIELDGUIDE`로도
+    시작하지 않아 통째로 버려진다(OCR은 신뢰도 1.00으로 정확히 읽고 있었다)."""
+    assert panel_ocr._is_production_label("CAMERA FIELD GUIDE (MANNY and BELLE ONLY)")
+    assert panel_ocr._is_production_label("CAMERAFIELDGUIDE")
+
+
+def test_production_label_still_matches_known_prefix_forms():
+    """기존에 잡히던 형태는 그대로 잡힌다(회귀 가드)."""
+    assert panel_ocr._is_production_label("CAM GUIDE")
+    assert panel_ocr._is_production_label("CAMGUIDE")
+    assert panel_ocr._is_production_label("FIELD GUIDE 1-2")
+    assert panel_ocr._is_production_label("REFERENCE")
+
+
+def test_production_label_rejects_scene_objects():
+    """그림 속 간판·숫자는 여전히 통과시키지 않는다 — 사람도 번역하지 않는다."""
+    assert not panel_ocr._is_production_label("REHABCENTER")
+    assert not panel_ocr._is_production_label("YOSEMITE")
+    assert not panel_ocr._is_production_label("68")
