@@ -48,13 +48,48 @@ CASES = [
     # 재실행 실측 추가분 — 음역을 막자 의역으로 샜다(봄방학생 12·봄방학족 4).
     ("여자 봄방학생 #2:첼시, 기다려!", "여자 파티광 #2:첼시, 기다려!"),
     ("봄방학족이 몰려온다", "파티광이 몰려온다"),
+    # 재재실행 실측(2026-08-03, FL104_FNL_Nrev 209페이지): 리터럴을 막자
+    # 이번엔 **띄어쓰기를 없애고** 새 접미사로 샜다 — 붙여쓴
+    # `스프링브레이커` 8건·`스프링브레이크` 9건·`봄방학객` 8건(사람 0건).
+    ("여성 스프링브레이커 #1", "여성 파티광 #1"),
+    ("여자 봄방학객 #2:첼시, 기다려!", "여자 파티광 #2:첼시, 기다려!"),
+    # 행사(SPRING BREAK)는 `봄방학` — 사람 표기(`봄방학 좀비군중1`)와 맞춘다.
+    ("스프링브레이크", "봄방학"),
+    ("스프링 브레이크 좀비군중1", "봄방학 좀비군중1"),
 ]
 
 
 def test_house_style_keeps_spring_break_event_term():
     """`봄방학`(SPRING BREAK, 행사)은 사람도 쓰는 정상 번역이라 건드리지
-    않는다 — 역할명 `스프링 브레이커`만 `파티광`으로 고친다."""
+    않는다 — 역할명(`스프링브레이커`·`봄방학객` 등)만 `파티광`으로 고친다.
+
+    접미사를 요구하는 좌변이라 단독 `봄방학`은 어느 규칙에도 걸리지 않는다."""
     assert apply_house_style("봄방학 시즌이다") == "봄방학 시즌이다"
+    assert apply_house_style("봄방학 좀비군중1") == "봄방학 좀비군중1"
+
+
+def test_house_style_role_rule_runs_before_event_rule():
+    """순서 계약: `스프링브레이크`는 `스프링브레이커`의 접두라, 행사 규칙이
+    먼저 돌면 `봄방학어`가 된다. 역할 규칙이 앞에 있어야 한다."""
+    assert apply_house_style("스프링브레이커") == "파티광"
+    assert "봄방학어" not in apply_house_style("여성 스프링브레이커 #3")
+
+
+def test_house_style_spring_break_rules_do_not_join_lines():
+    """`\\s*`가 아니라 `[ \\t]*`인 이유 — 줄이 갈린 자리를 한 줄로 합치지
+    않는다(같은 이유로 씬 번호 규칙도 개행을 피한다)."""
+    assert apply_house_style("스프링\n브레이커") == "스프링\n브레이커"
+
+
+def test_house_style_is_idempotent_for_spring_break():
+    """치환 결과(`파티광`·`봄방학`)가 다시 어느 좌변에도 맞지 않는다.
+
+    실물 형태로 확인한다 — 이 문서군의 17건은 전부 라벨/역할명이라 조사가
+    뒤따르지 않는다(실측). 조사 일치는 이 파일의 다른 KO→KO 치환과 마찬가지로
+    다루지 않는다."""
+    once = apply_house_style("여성 스프링브레이커 #1 / 스프링브레이크좀비군중1")
+    assert once == "여성 파티광 #1 / 봄방학좀비군중1"
+    assert apply_house_style(once) == once
 
 
 def test_house_style_leaves_agreed_cycle_terms_untouched():
