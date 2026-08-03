@@ -696,3 +696,40 @@ def test_production_label_rejects_scene_objects():
     assert not panel_ocr._is_production_label("REHABCENTER")
     assert not panel_ocr._is_production_label("YOSEMITE")
     assert not panel_ocr._is_production_label("68")
+
+
+# ── 판넬 약어 해독 (FL104 실측 + 사용자 확인, 2026-08-03) ────────────────
+
+@pytest.mark.parametrize("raw,expected", [
+    ("SPCZMB", "좀비"), ("SPC ZMB", "좀비"),
+    ("SPCINCB", "좀비"), ("SPINCB", "좀비"),      # OCR 오독 변형
+    ("TTINCA", "테킬라걸A"), ("TT INC C", "테킬라걸C"),
+    ("FEMSB3", "여자파티광3"), ("FEMSB2B", "여자파티광2B"),
+    ("MALESB6", "남자파티광6"),
+    ("SBINC14", "파티광14"), ("SBINC8", "파티광8"),
+    ("IN", "들어온다"), ("EN", "들어온다"), ("HN", "들어온다"),
+    ("OUT", "나간다"), ("OVT", "나간다"), ("Ov1", "나간다"), ("ou", "나간다"),
+])
+def test_decode_panel_label(raw, expected):
+    """제작 코드는 LLM에 맡기지 않고 결정적으로 해독한다 — 넘기면 LLM이 옮길
+    게 없어 원문을 돌려주고, pdf_run이 '번역 실패'로 보아 주석을 안 만든다."""
+    assert panel_ocr.decode_panel_label(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [
+    "CAMERAFIELDGUIDE",        # 영어 문장 — 평소대로 LLM이 옮긴다
+    "(MANNYandBELLEONLY)",
+    "REHABCENTER",             # 그림 속 간판 — 사람도 번역하지 않는다
+    "YOSEMITE", "68", "",
+])
+def test_decode_panel_label_passes_through_non_codes(raw):
+    """해독 대상이 아니면 None — 평소 번역 경로를 타야지, 억지로 한글을
+    만들어 붙이면 안 된다."""
+    assert panel_ocr.decode_panel_label(raw) is None
+
+
+def test_decode_panel_label_character_rules_win_over_zombie_shape():
+    """FEMSB2B·MALESB6는 B로 끝나 좀비 규칙(^SP..B$)과 형태가 겹칠 수 있다 —
+    구체적인 캐릭터 규칙이 먼저 걸려야 한다(순서 회귀 가드)."""
+    assert panel_ocr.decode_panel_label("FEMSB2B") == "여자파티광2B"
+    assert panel_ocr.decode_panel_label("MALESB6") == "남자파티광6"

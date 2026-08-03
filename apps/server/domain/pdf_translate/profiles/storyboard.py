@@ -17,7 +17,7 @@ import math
 import re
 
 from ..backend import PdfDocument, RawBlock
-from ..panel_ocr import find_panel_labels, repair_corrupt_words
+from ..panel_ocr import decode_panel_label, find_panel_labels, repair_corrupt_words
 from .base import Overlay, PdfBlock, has_hangul, normalize_ws
 
 logger = logging.getLogger("yeson.pdf.profiles.storyboard")
@@ -222,8 +222,12 @@ class StoryboardProfile:
                     text = normalize_ws(raw.text)
                     if not text or has_hangul(text):
                         continue
+                    # 판넬 약어(SPCZMB·TTINCA·IN…)는 결정적으로 해독한다 —
+                    # 해독 대상이 아니면 ko=None이라 평소대로 번역기를 탄다
+                    # (예: `CAMERA FIELD GUIDE`는 영어 문장이라 LLM이 옮긴다).
                     out.append(PdfBlock(page=page, kind=_PANEL_LABEL_KIND,
-                                        text=text, bbox=raw.bbox))
+                                        text=text, bbox=raw.bbox,
+                                        ko=decode_panel_label(text)))
         return out
 
     def place(self, block: PdfBlock, ko_text: str,

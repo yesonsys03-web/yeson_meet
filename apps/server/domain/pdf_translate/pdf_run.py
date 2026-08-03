@@ -154,7 +154,21 @@ async def run_pdf_job(external_id: UUID) -> None:
                     ko_by_block[idx] = ko_stripped
             else:
                 kept_as_source += 1
-        effective = len(groups) - kept_as_source
+        # 판넬 약어는 번역기 결과 대신 **결정적 해독값**을 쓴다.
+        #
+        # `SPCZMB`·`TTINCA`·`IN` 같은 제작 코드는 LLM이 옮길 게 없어 원문을
+        # 그대로 돌려주고, 그러면 위 루프가 "번역 실패"로 보아 주석을 아예
+        # 만들지 않는다 — 재실행 실측에서 판넬 라벨이 되살아난 7페이지가 전부
+        # `아웃`(OUT 음역) 하나뿐이고 나머지 27페이지가 비어 있던 이유다.
+        # 해독된 블록은 실패 집계에서도 빼야 한다(번역을 안 한 게 아니라
+        # 번역이 필요 없는 블록이다).
+        predecoded = 0
+        for i, block in enumerate(blocks):
+            if block.ko:
+                if ko_by_block[i] is None:
+                    predecoded += 1
+                ko_by_block[i] = block.ko
+        effective = len(groups) - kept_as_source + predecoded
         if kept_as_source > 0:
             # 부분 실패(청크 병렬화로 CLI 콜 수가 늘어난 뒤 특히 조용히
             # 묻히기 쉽다) — 몇 그룹이 원문 그대로 남았는지 남겨야 다음

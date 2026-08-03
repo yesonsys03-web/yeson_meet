@@ -425,3 +425,59 @@ def repair_corrupt_words(doc: PdfDocument, page: int,
             text = text[:offset] + new + text[offset + len(old):]
         out[block_index] = RawBlock(text=text, bbox=out[block_index].bbox)
     return out
+
+
+# ── 판넬 약어 해독 (FL104 실측 + 사용자 확인, 2026-08-03) ─────────────────
+#
+# 판넬 콜아웃은 영어 문장이 아니라 **제작 약어**다(`SPCZMB`, `TTINCA`, `IN`).
+# 그대로 번역기에 넘기면 LLM이 옮길 게 없어 원문을 되돌려주고, pdf_run은 그걸
+# "번역 실패"로 보고 주석을 아예 만들지 않는다 — 재실행 실측에서 되살아난 7
+# 페이지가 전부 `아웃`(OUT 음역) 하나뿐이었고 나머지 27페이지가 비어 있던
+# 이유다. 그래서 LLM에 맡기지 않고 **결정적으로** 해독한다(사람 납품본과
+# 글자 그대로 맞출 수 있고, 같은 코드가 매번 같은 말로 나온다).
+#
+# 매핑 근거: 되살아난 27페이지에서 OCR 히트를 사람 주석과 **위치로** 짝지어
+# 뽑았다(각 히트의 최근접 한글 주석, 40pt 이내). SPCZMB↔좀비가 18건으로
+# 가장 강하고, TTINC*↔테킬라걸*, FEMSB/MALESB/SBINC↔파티광 계열, OUT↔나간다,
+# IN↔들어온다가 뒤를 잇는다. 2026-08-03 사용자 확인 완료.
+#
+# OCR 오독도 함께 받는다 — 같은 라벨이 판마다 다르게 읽힌다(실측:
+# OUT/OVT/Ov1/ou, IN/EN/HN, SPCZMB/SPC ZMB/SPCINCB/SPINCB). 약어는 짧아서
+# 한 글자만 틀려도 매칭이 깨지므로, 관측된 변형을 명시적으로 수용한다.
+_DIRECTION_IN = frozenset({"IN", "EN", "HN"})
+_DIRECTION_OUT = frozenset({"OUT", "OVT", "OV1", "OU"})
+# 좀비 표기 흔들림: 앞이 SP로 시작하고 뒤가 B로 끝나는 짧은 토큰
+# (SPCZMB·SPCINCB·SPINCB). 길이를 4~8로 묶어 그림 속 단어까지 삼키지 않는다.
+_ZOMBIE_RE = re.compile(r"^SP[A-Z]{1,5}B$")
+_TEQUILA_RE = re.compile(r"^TTINC?([A-C])$")
+_FEMALE_SB_RE = re.compile(r"^FEM(?:ALE)?SB(\d+[A-Z]?)$")
+_MALE_SB_RE = re.compile(r"^MALESB(\d+[A-Z]?)$")
+_SB_RE = re.compile(r"^SBINC?(\d+[A-Z]?)$")
+
+
+def decode_panel_label(text: str) -> str | None:
+    """판넬 약어 → 사람 납품본 표기. 해독 대상이 아니면 None(=평소대로 번역)."""
+    squashed = _NON_ALNUM.sub("", text).upper()
+    if not squashed:
+        return None
+    if squashed in _DIRECTION_IN:
+        return "들어온다"
+    if squashed in _DIRECTION_OUT:
+        return "나간다"
+    # 순서 주의: FEMSB2B·MALESB6는 B로 끝나 좀비 규칙과 형태가 겹친다 —
+    # 구체적인 캐릭터 규칙을 먼저 본다.
+    m = _FEMALE_SB_RE.match(squashed)
+    if m:
+        return f"여자파티광{m.group(1)}"
+    m = _MALE_SB_RE.match(squashed)
+    if m:
+        return f"남자파티광{m.group(1)}"
+    m = _SB_RE.match(squashed)
+    if m:
+        return f"파티광{m.group(1)}"
+    m = _TEQUILA_RE.match(squashed)
+    if m:
+        return f"테킬라걸{m.group(1)}"
+    if _ZOMBIE_RE.match(squashed):
+        return "좀비"
+    return None
