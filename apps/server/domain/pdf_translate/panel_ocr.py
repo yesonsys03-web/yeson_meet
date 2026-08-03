@@ -32,6 +32,7 @@ import logging
 import os
 import re
 import threading
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 import numpy as np
@@ -89,16 +90,35 @@ _NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
 
 
 def _is_production_label(text: str) -> bool:
-    """확인된 제작 지시어로 시작하면 True — 빨강 비율 검사를 우회한다.
+    """확인된 제작 지시어를 포함하면 True — 빨강 비율 검사를 우회한다.
 
-    접두 매칭인 이유: 실물 라벨이 뒤에 식별자를 달고 나온다
-    (`FIELD GUIDE 1-2`, `FIELD GUIDE A LOUIS ONLY`). 접두를 안 쓰면
-    이 변형들을 전부 열거해야 한다."""
+    뒤에 식별자가 붙는 변형(`FIELD GUIDE 1-2`, `FIELD GUIDE A LOUIS ONLY`)을
+    일일이 열거하지 않으려고 원래 **접두** 매칭이었다. 그런데 실물은 앞에도
+    수식어를 단다 — FL104 p16의 `CAMERA FIELD GUIDE (MANNY and BELLE ONLY)`는
+    squash하면 `CAMERAFIELDGUIDE…`라 `CAMGUIDE`로도 `FIELDGUIDE`로도 시작하지
+    않아 통째로 버려졌다(사용자 신고 "카메라 필드 가이드 번역 누락").
+    OCR은 이 라벨을 신뢰도 1.00으로 정확히 읽고 있었는데 색 문턱에서 죽은
+    것이다(검정 지시어, 빨강 비율 0.000).
+
+    그래서 포함(substring) 매칭으로 넓힌다. 접두→포함으로 넓히면 필드 본문의
+    `CAM FIELD GUIDE 1-2` 같은 텍스트까지 통과할 수 있는데, 그건
+    `_panel_region`이 이제 필드 박스를 OCR 영역에서 제외하므로(같은 날 수정)
+    애초에 히트로 들어오지 않는다 — 두 수정은 함께 가야 한다."""
     squashed = _NON_ALNUM.sub("", text).upper()
-    return any(squashed.startswith(t) for t in _PRODUCTION_LABEL_TERMS)
+    return any(t in squashed for t in _PRODUCTION_LABEL_TERMS)
 
 
 _HANGUL = re.compile(r"[가-힣]")
+
+# 제작 지시어 다음 줄에 오는 괄호 한정구(`(MANNY and BELLE ONLY)`) — 위 줄이
+# 통과된 제작 지시어일 때만 함께 살린다(find_panel_labels의 2차 통과).
+_PARENTHETICAL_RE = re.compile(r"^\(.*\)$")
+# 두 줄 사이 허용 간격(pt). 12pt 한 줄이 약 12pt이라 그보다 좁게 잡아
+# **바로 다음 줄**만 인정한다 — 멀리 떨어진 그림 속 괄호까지 끌어오지 않는다.
+# 원래 200dpi 픽셀(25px·겹침 2px)로 재던 값을 pt로 환산한 것이다(× 72/200) —
+# 히트를 여러 크롭에서 모으면서 좌표계를 pt로 통일했다(_Hit 참고).
+_QUALIFIER_MAX_GAP = 25 * 72.0 / _OCR_DPI   # 9.0pt
+_QUALIFIER_OVERLAP = 2 * 72.0 / _OCR_DPI    # 0.72pt
 
 
 def _new_engine(**kwargs):  # test seam(slate_ocr 미러)
@@ -154,16 +174,146 @@ def _crop_region_px(arr: np.ndarray, region: tuple[float, float, float, float],
     return arr[y0:y1, x0:x1]
 
 
+@dataclass(frozen=True)
+class _Hit:
+    """OCR 히트 하나 — 좌표는 **페이지 pt**.
+
+    크롭마다 다른 픽셀 좌표계를 쓰면 여러 크롭의 히트를 견줄 수 없다.
+    나오는 즉시 pt로 환산해 두면 판넬별 크롭과 전폭 크롭의 결과를 같은
+    자로 합칠 수 있다(_merge_hits)."""
+    text: str
+    bbox: tuple[float, float, float, float]
+    score: float
+    red: float
+
+
+def _ocr_crop(hi_arr: np.ndarray,
+              region: tuple[float, float, float, float]) -> list[_Hit]:
+    """region(pt)만큼 잘라 OCR — 히트를 페이지 pt 좌표로 돌려준다.
+
+    빨강 비율은 **여기서** 잰다. 히트 bbox 안의 픽셀이 필요한데 그건 이
+    크롭에만 있기 때문이다(뒤에서 다른 크롭의 히트와 섞이면 못 잰다)."""
+    crop = _crop_region_px(hi_arr, region, _OCR_DPI)
+    if crop.size == 0:
+        return []
+    try:
+        result, _elapse = _get_engine()(crop)
+    except Exception:  # 한 크롭의 OCR 실패가 추출 전체를 막지 않게
+        logger.exception("panel OCR failed for region %r", region)
+        return []
+    if not result:
+        return []
+
+    scale = _OCR_DPI / 72.0
+    crop_h, crop_w = crop.shape[:2]
+    out: list[_Hit] = []
+    for box, text, score in result:
+        text = text.strip()
+        if not text or _HANGUL.search(text):
+            continue
+        xs = [p[0] for p in box]
+        ys = [p[1] for p in box]
+        bx0 = max(0, min(crop_w, int(min(xs))))
+        bx1 = max(bx0, min(crop_w, int(max(xs))))
+        by0 = max(0, min(crop_h, int(min(ys))))
+        by1 = max(by0, min(crop_h, int(max(ys))))
+        sub = crop[by0:by1, bx0:bx1]
+        if sub.size == 0:
+            continue
+        out.append(_Hit(
+            text=text,
+            bbox=(bx0 / scale + region[0], by0 / scale + region[1],
+                  bx1 / scale + region[0], by1 / scale + region[1]),
+            score=float(score),
+            # 히트 bbox 내 빨강 픽셀 비율 — 패널 라벨은 빨간 글자이므로 검정
+            # 그림선(사인·표지판 텍스트 등)이 우연히 OCR 히트가 돼도 이 값으로
+            # 걸러진다.
+            red=float(_red_mask(sub).mean()),
+        ))
+    return out
+
+
+# RapidOCR 검출기가 입력의 **짧은 변**을 맞추는 크기(rapidocr_onnxruntime
+# config.yaml: Det.limit_side_len=736, limit_type=min). 짧은 변이 이보다
+# 작으면 그만큼 **키워서** 보고, 이미 크면 원본 그대로 본다.
+_DET_UPSCALE_TARGET_PX = 736
+
+
+def _crop_gains_upscale(region: tuple[float, float, float, float]) -> bool:
+    """이 크롭을 따로 읽으면 검출 해상도가 오르는가.
+
+    전폭 크롭은 짧은 변이 이미 문턱을 넘어(3단 1014px) 확대가 없다 — 그래서
+    작은 콜아웃이 검출 단계에서 사라진다. 칸 하나(467px)는 1.58배로 커진다.
+    반대로 1단 문서의 칸은 763px이라 전폭과 해상도가 같아, 따로 읽어 봐야
+    같은 것을 두 번 읽는 값만 든다(1037페이지 문서에서 그 값이 크다)."""
+    short_side_px = (min(region[2] - region[0], region[3] - region[1])
+                     * _OCR_DPI / 72.0)
+    return 0 < short_side_px < _DET_UPSCALE_TARGET_PX
+
+
+def _same_spot(a: tuple[float, float, float, float],
+               b: tuple[float, float, float, float]) -> bool:
+    """두 히트가 **같은 글자**를 읽은 것인가 — 좁은 쪽 넓이의 절반 이상이
+    겹치면 같다고 본다. 같은 글자를 두 크롭에서 읽으면 좌표가 1~2pt 안에서만
+    흔들리므로(실측) 이 문턱은 넉넉하고, 나란히 선 다른 라벨(최소 간격 ~36pt)은
+    스치지도 않는다."""
+    ix = min(a[2], b[2]) - max(a[0], b[0])
+    iy = min(a[3], b[3]) - max(a[1], b[1])
+    if ix <= 0 or iy <= 0:
+        return False
+    smaller = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return smaller > 0 and (ix * iy) / smaller >= 0.5
+
+
+def _better(a: _Hit, b: _Hit) -> bool:
+    """같은 자리를 읽은 두 판독 중 어느 쪽을 남길까.
+
+    **해독되는 쪽이 이긴다.** 실측(FL104 p133): 전폭 크롭은 `MALESB1`,
+    판넬 크롭은 `MALESB`를 신뢰도 1.00으로 준다 — 신뢰도만 보면 숫자를
+    잃은 쪽이 이겨 `남자파티광1`이 통째로 사라진다. 이 문서군의 라벨은
+    정해진 약어 집합이라, 그 집합에 맞아떨어지는 판독이 더 믿을 만하다.
+    둘 다 해독되거나 둘 다 아니면 신뢰도로 가른다."""
+    return ((decode_panel_label(a.text) is not None, a.score)
+            > (decode_panel_label(b.text) is not None, b.score))
+
+
+def _merge_hits(base: list[_Hit], extra: list[_Hit]) -> list[_Hit]:
+    """같은 자리 히트는 좋은 쪽만 남기고, 새 자리 히트는 더한다(합집합).
+
+    합집합인 것이 핵심이다 — 판넬별 크롭이 대개 더 잘 읽지만 항상은
+    아니어서(위 _better 사례), 어느 한쪽으로 갈아치우면 멀쩡하던 라벨을
+    잃는다."""
+    out = list(base)
+    for hit in extra:
+        for i, kept in enumerate(out):
+            if _same_spot(kept.bbox, hit.bbox):
+                if _better(hit, kept):
+                    out[i] = hit
+                break
+        else:
+            out.append(hit)
+    return out
+
+
 def find_panel_labels(
     doc: PdfDocument, page: int,
     region: tuple[float, float, float, float],
+    *, panels: tuple[tuple[float, float, float, float], ...] = (),
 ) -> list[RawBlock]:
     """region(pdf pt, (x0,y0,x1,y1)) 안에서 빨강 콜아웃 라벨을 OCR로 찾는다.
 
     킬스위치 YESON_PDF_PANEL_OCR=0이면 렌더조차 하지 않고 즉시 []. 프리필터
     (dpi 60 저해상도 렌더 + 빨강 픽셀 카운트)를 통과 못 하면 비싼 dpi 200
     렌더·OCR을 아예 건너뛴다 — 대다수 페이지(라벨 없음)의 비용을 없앤다.
-    """
+
+    `panels`(판넬 그림 칸의 사각형들)를 주면 **전폭 한 번 + 칸마다 한 번**
+    읽어 합친다. 왜 굳이 또 읽는가: RapidOCR 검출기는 입력의 짧은 변을
+    736px에 맞춰 키우는데(limit_type=min), 3단 전폭 크롭은 짧은 변이 이미
+    1014px이라 **확대가 걸리지 않는다** — 그 배율에서 `IN`·`OUT` 같은 작은
+    콜아웃은 검출 단계에서 통째로 사라진다(FL104 실측: 라벨이 그것뿐인
+    9페이지가 히트 0). 칸 하나만 자르면 짧은 변이 467px이라 1.58배로 커져
+    같은 글자가 잡힌다. 부르는 쪽이 어느 칸인지 알려 주는 이유는 좌표를
+    추측하지 않기 위해서다(profiles/storyboard._panel_subregions)."""
     if not _panel_ocr_enabled():
         return []
 
@@ -174,47 +324,46 @@ def find_panel_labels(
         return []
 
     hi_arr = _decode_png(doc.render_png(page, dpi=_OCR_DPI))
-    hi_crop = _crop_region_px(hi_arr, region, _OCR_DPI)
-    if hi_crop.size == 0:
+    hits = _ocr_crop(hi_arr, region)
+    for sub in panels:
+        if not _crop_gains_upscale(sub):
+            continue
+        hits = _merge_hits(hits, _ocr_crop(hi_arr, sub))
+    if not hits:
         return []
 
-    try:
-        result, _elapse = _get_engine()(hi_crop)
-    except Exception:  # 한 페이지 OCR 실패가 추출 전체를 막지 않게
-        logger.exception("panel OCR failed for page %d", page)
-        return []
-    if not result:
-        return []
-
-    scale = _OCR_DPI / 72.0
-    region_x0, region_y0, _rx1, _ry1 = region
-    crop_h, crop_w = hi_crop.shape[:2]
     out: list[RawBlock] = []
-    for box, text, _score in result:
-        text = text.strip()
-        if not text or _HANGUL.search(text):
-            continue
-        xs = [p[0] for p in box]
-        ys = [p[1] for p in box]
-        bx0 = max(0, min(crop_w, int(min(xs))))
-        bx1 = max(bx0, min(crop_w, int(max(xs))))
-        by0 = max(0, min(crop_h, int(min(ys))))
-        by1 = max(by0, min(crop_h, int(max(ys))))
-        sub = hi_crop[by0:by1, bx0:bx1]
-        if sub.size == 0:
-            continue
-        # 히트 bbox 내 빨강 픽셀 비율 — 패널 라벨은 빨간 글자이므로 검정
-        # 그림선(사인·표지판 텍스트 등)이 우연히 OCR 히트가 돼도 여기서 걸러진다.
-        # 단 확인된 제작 지시어(CAM GUIDE 등)는 검정으로 적히는 문서가 있어
+    # 제작 지시어의 괄호 한정구(둘째 줄)를 살리기 위한 기록 — 아래 2차 통과 참고.
+    kept_production: list[_Hit] = []
+    deferred: list[_Hit] = []
+    for hit in hits:
+        # 확인된 제작 지시어(CAM GUIDE 등)는 검정으로 적히는 문서가 있어
         # 색 검사를 우회한다(_PRODUCTION_LABEL_TERMS 주석 참고).
-        if (float(_red_mask(sub).mean()) < _HIT_RED_RATIO_MIN
-                and not _is_production_label(text)):
+        is_production = _is_production_label(hit.text)
+        if hit.red < _HIT_RED_RATIO_MIN and not is_production:
+            # 지금 버리되, 제작 지시어의 괄호 한정구일 수 있으니 후보로 남긴다.
+            if _PARENTHETICAL_RE.match(hit.text):
+                deferred.append(hit)
             continue
-        out.append(RawBlock(
-            text=text,
-            bbox=(bx0 / scale + region_x0, by0 / scale + region_y0,
-                  bx1 / scale + region_x0, by1 / scale + region_y0),
-        ))
+        if is_production:
+            kept_production.append(hit)
+        out.append(RawBlock(text=hit.text, bbox=hit.bbox))
+
+    # 2차 통과: 제작 지시어 **바로 아래**에 붙은 괄호 한정구를 되살린다.
+    #
+    # 실물(FL104 p16): `CAMERA FIELD GUIDE` 다음 줄이 `(MANNY and BELLE ONLY)`이고
+    # 사람은 두 줄 다 옮긴다(`카메라 필드 가이드` / `(매니&벨만)`). 이 줄은 지시어
+    # 이름을 갖고 있지 않아 _is_production_label로는 못 잡고, 검정이라 색 문턱에도
+    # 걸린다 — 그렇다고 괄호를 무조건 통과시키면 그림 속 괄호 텍스트까지 들어온다.
+    # 그래서 "바로 위에 통과된 제작 지시어가 있고 x가 겹칠 때"로만 한정한다.
+    for hit in deferred:
+        for keep in kept_production:
+            if (hit.bbox[1] - keep.bbox[3] <= _QUALIFIER_MAX_GAP
+                    and hit.bbox[1] >= keep.bbox[3] - _QUALIFIER_OVERLAP
+                    and min(hit.bbox[2], keep.bbox[2])
+                    - max(hit.bbox[0], keep.bbox[0]) > 0):
+                out.append(RawBlock(text=hit.text, bbox=hit.bbox))
+                break
     return out
 
 
@@ -382,3 +531,101 @@ def repair_corrupt_words(doc: PdfDocument, page: int,
             text = text[:offset] + new + text[offset + len(old):]
         out[block_index] = RawBlock(text=text, bbox=out[block_index].bbox)
     return out
+
+
+# ── 판넬 약어 해독 (FL104 실측 + 사용자 확인, 2026-08-03) ─────────────────
+#
+# 판넬 콜아웃은 영어 문장이 아니라 **제작 약어**다(`SPCZMB`, `TTINCA`, `IN`).
+# 그대로 번역기에 넘기면 LLM이 옮길 게 없어 원문을 되돌려주고, pdf_run은 그걸
+# "번역 실패"로 보고 주석을 아예 만들지 않는다 — 재실행 실측에서 되살아난 7
+# 페이지가 전부 `아웃`(OUT 음역) 하나뿐이었고 나머지 27페이지가 비어 있던
+# 이유다. 그래서 LLM에 맡기지 않고 **결정적으로** 해독한다(사람 납품본과
+# 글자 그대로 맞출 수 있고, 같은 코드가 매번 같은 말로 나온다).
+#
+# 매핑 근거: 되살아난 27페이지에서 OCR 히트를 사람 주석과 **위치로** 짝지어
+# 뽑았다(각 히트의 최근접 한글 주석, 40pt 이내). SPCZMB↔좀비가 18건으로
+# 가장 강하고, TTINC*↔테킬라걸*, FEMSB/MALESB/SBINC↔파티광 계열, OUT↔나간다,
+# IN↔들어온다가 뒤를 잇는다. 2026-08-03 사용자 확인 완료.
+#
+# OCR 오독도 함께 받는다 — 같은 라벨이 판마다 다르게 읽힌다(실측:
+# OUT/OVT/Ov1/ou, IN/EN/HN, SPCZMB/SPC ZMB/SPCINCB/SPINCB). 약어는 짧아서
+# 한 글자만 틀려도 매칭이 깨지므로, 관측된 변형을 명시적으로 수용한다.
+_DIRECTION_IN = frozenset({"IN", "EN", "HN"})
+_DIRECTION_OUT = frozenset({"OUT", "OVT", "OV1", "OU"})
+# 좀비 표기 흔들림: 앞이 SP로 시작하고 뒤가 B로 끝나는 짧은 토큰
+# (SPCZMB·SPCINCB·SPINCB). 길이를 4~8로 묶어 그림 속 단어까지 삼키지 않는다.
+_ZOMBIE_RE = re.compile(r"^SP[A-Z]{1,5}B$")
+_TEQUILA_RE = re.compile(r"^TTINC?([A-C])$")
+_FEMALE_SB_RE = re.compile(r"^FEM(?:ALE)?SB(\d+[A-Z]?)$")
+_MALE_SB_RE = re.compile(r"^MALESB(\d+[A-Z]?)$")
+_SB_RE = re.compile(r"^SBINC?(\d+[A-Z]?)$")
+
+
+def _parse_panel_code(text: str) -> tuple[str | None, str | None, str | None]:
+    """약어 하나 → (수식어, 역할, 단독어). 해당 없으면 (None, None, None).
+
+    수식어(`좀비`·`남자`·`여자`)와 역할(`파티광3`·`테킬라걸A`)을 나눠 두는 건
+    사람 납품본이 **두 줄로 나눠** 쓰기 때문이다 — 한 줄에 몰아 쓰면 폭이
+    넓어져 옆 캐릭터의 라벨을 침범한다(아래 decode_panel_label_lines 참고).
+    """
+    squashed = _NON_ALNUM.sub("", text).upper()
+    if not squashed:
+        return (None, None, None)
+    if squashed in _DIRECTION_IN:
+        return (None, None, "들어온다")
+    if squashed in _DIRECTION_OUT:
+        return (None, None, "나간다")
+    # 순서 주의: FEMSB2B·MALESB6는 B로 끝나 좀비 규칙과 형태가 겹친다 —
+    # 구체적인 캐릭터 규칙을 먼저 본다.
+    m = _FEMALE_SB_RE.match(squashed)
+    if m:
+        return ("여자", f"파티광{m.group(1)}", None)
+    m = _MALE_SB_RE.match(squashed)
+    if m:
+        return ("남자", f"파티광{m.group(1)}", None)
+    m = _SB_RE.match(squashed)
+    if m:
+        return (None, f"파티광{m.group(1)}", None)
+    m = _TEQUILA_RE.match(squashed)
+    if m:
+        return (None, f"테킬라걸{m.group(1)}", None)
+    if _ZOMBIE_RE.match(squashed):
+        return ("좀비", None, None)
+    return (None, None, None)
+
+
+def decode_panel_label(text: str) -> str | None:
+    """약어 하나를 한 줄로 해독 — 해독 대상이 아니면 None."""
+    qual, role, standalone = _parse_panel_code(text)
+    if standalone:
+        return standalone
+    if qual or role:
+        return f"{qual or ''}{role or ''}"
+    return None
+
+
+def decode_panel_label_lines(texts: list[str]) -> list[str] | None:
+    """세로로 붙은 약어 묶음 → 사람 납품본과 같은 **줄 구성**.
+
+    사람은 수식어를 윗줄, 번호가 붙은 역할을 아랫줄에 쓴다 — FL104 p20의
+    5쌍이 5/5(`좀비`·`남자` 위 / `파티광N` 아래), p133도 `남자좀비`/`파티광1`,
+    `여자좀비`/`파티광3`으로 같다. 이렇게 나누면 각 줄이 짧아져(4글자 안팎)
+    옆 라벨과 겹치지 않는다 — 한 줄로 몰아 쓴 `남자파티광1`(6글자 ≈ 64pt)은
+    실제로 옆 캐릭터 주석을 침범했다(사용자 신고 2026-08-03).
+
+    묶음 안에 해독 못 하는 게 하나라도 있으면 None — 그때는 묶음 전체가
+    평소대로 번역기를 탄다(`CAMERA FIELD GUIDE` + `(BG ONLY)` 같은 영어 문장).
+    """
+    parsed = [_parse_panel_code(t) for t in texts]
+    if not parsed or any(q is None and r is None and s is None
+                         for q, r, s in parsed):
+        return None
+    quals = [q for q, _r, _s in parsed if q]
+    roles = [r for _q, r, _s in parsed if r]
+    alone = [s for _q, _r, s in parsed if s]
+    lines = []
+    if quals:
+        lines.append("".join(dict.fromkeys(quals)))  # 중복 제거, 순서 보존
+    lines.extend(roles)
+    lines.extend(alone)
+    return lines or None

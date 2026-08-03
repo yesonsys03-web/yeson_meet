@@ -677,6 +677,53 @@ def test_extract_includes_panel_label_and_place_avoids_intersection(tmp_path):
         doc.close()
 
 
+def _make_three_panel_pdf(tmp_path: Path) -> Path:
+    """3단 템플릿의 기하 그대로 — 판넬 칸 3개(래스터 이미지)와 그림 속 작은
+    로고 이미지 하나. 좌표는 실물 실측값이다(FL102·FL104 3단이 전 페이지
+    동일: 302.1×168.3pt 3칸)."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 629, 354), False)
+    pix.clear_with(220)
+    for x0 in (38.1, 353.5, 668.9):
+        page.insert_image(fitz.Rect(x0, 110.9, x0 + 302.1, 279.2), pixmap=pix)
+    logo = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 40, 40), False)
+    logo.clear_with(120)
+    page.insert_image(fitz.Rect(120.0, 130.0, 160.0, 170.0), pixmap=logo)
+    page.insert_text((72, 460), "Dialog", fontsize=8)
+    page.insert_text((72, 478), "If you wanna go, then go.", fontsize=10)
+    path = tmp_path / "sb_three_panel.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_panel_subregions_reads_panel_boxes_from_the_document(tmp_path):
+    """판넬 칸 좌표는 상수로 박지 않고 **문서에서** 읽는다 — Storyboard Pro가
+    칸 하나를 이미지 하나로 굽는 관례를 그대로 쓴다. 그림 속 작은 로고
+    이미지는 넓이 문턱에서 제외돼 OCR 호출을 늘리지 않는다."""
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        _panel_region,
+        _panel_subregions,
+    )
+    doc = open_pdf(_make_three_panel_pdf(tmp_path))
+    try:
+        raws = doc.raw_blocks(0)
+        page_w, _page_h = doc.page_size(0)
+        region = _panel_region(raws, page_w)
+        subs = _panel_subregions(doc, 0, region)
+        assert len(subs) == 3, subs
+        # 여유 2pt: MuPDF가 이미지 원본 종횡비를 지켜 배치하느라 지정 사각형
+        # 안에서 폭을 조금 줄인다(실물 익스포트는 종횡비가 맞아 그대로 들어간다).
+        assert subs[0] == pytest.approx((38.1, 110.9, 340.2, 279.2), abs=2.0)
+        # 영역 밖으로 나가는 부분은 잘린다(칸이 필드 박스를 삼키지 않게).
+        tight = _panel_subregions(doc, 0, (0.0, 95.0, page_w, 200.0))
+        assert all(s[3] == pytest.approx(200.0) for s in tight), tight
+    finally:
+        doc.close()
+
+
 def _make_storyboard_title_page_pdf(tmp_path: Path) -> Path:
     """표지/타이틀 페이지 흉내 — 빨간 큰 로고/타이틀 텍스트만 있고
     Dialog/Action Notes 필드 라벨은 전혀 없다(리뷰 후속 회귀 가드: 실물
@@ -713,6 +760,93 @@ def test_extract_skips_panel_ocr_on_pages_without_field_labels(tmp_path, monkeyp
     finally:
         doc.close()
         panel_ocr._reset_engines()
+
+
+def _make_storyboard_artwork_only_page_pdf(tmp_path: Path) -> Path:
+    """대사도 액션노트도 없는 **순수 그림 페이지** — 씬 테이블 헤더는 있고
+    Dialog/Action Notes 라벨은 없다(Storyboard Pro가 빈 필드를 통째로
+    생략하기 때문). FL104_FNL_Nrev 실측에서 209페이지 중 34장이 이 모양이고,
+    사람은 그 34장 전부에 판넬 안 콜아웃을 달았다."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    # 씬 테이블 헤더(실물 y≈73 — _PANEL_Y_TOP=95 위)
+    page.insert_text((39, 80), "Scene", fontsize=12)
+    page.insert_text((192, 80), "Panel", fontsize=12)
+    page.insert_text((172, 96), "17", fontsize=12)
+    # 판넬 영역의 빨간 콜아웃(사람이 번역하는 대상)
+    page.insert_text((300, 250), "ZOMBIE", fontsize=10, color=(1, 0, 0))
+    path = tmp_path / "sb_artwork_only.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_extract_runs_panel_ocr_on_artwork_only_pages_with_scene_header(
+        tmp_path, monkeypatch):
+    """FL104 실측 회귀(2026-08-03): 필드 라벨이 없어도 씬 테이블 헤더가 있는
+    판넬 페이지는 패널 OCR을 **돌려야** 한다.
+
+    예전 게이트(_has_field_label)는 이런 순수 그림 페이지를 표지로 오인해
+    OCR을 통째로 건너뛰었고, FL104 209페이지에서 34장이 한 글자도 번역되지
+    않았다(사람이 단 주석 97개 누락 = 전체 격차 246개의 39%).
+
+    OCR 결과 자체가 아니라 **게이트가 열렸는지**(엔진 생성)를 본다 — 위
+    표지 테스트와 같은 기법이고, 합성 PDF에 대한 RapidOCR 판독 결과에
+    의존하지 않아 결정적이다."""
+    from apps.server.domain.pdf_translate import panel_ocr
+
+    calls: list[dict] = []
+    monkeypatch.setattr(panel_ocr, "_new_engine", lambda **kw: calls.append(kw))
+    panel_ocr._reset_engines()
+    doc = open_pdf(_make_storyboard_artwork_only_page_pdf(tmp_path))
+    try:
+        StoryboardProfile().extract(doc)
+        assert calls, ("씬 테이블 헤더가 있는 순수 그림 페이지에서 패널 OCR "
+                       "게이트가 열리지 않았다 (FL104 34페이지 누락 회귀)")
+    finally:
+        doc.close()
+        panel_ocr._reset_engines()
+
+
+def test_place_below_fallback_never_crosses_field_box_bottom():
+    """FL104 p2 실물 회귀(사용자 스크린샷, 2026-08-03): 대사 주석이 자기 필드
+    박스를 넘어 **다음 필드(Action Notes) 박스 위에 겹쳐 찍히던** 문제.
+
+    `_place_below_in_box`가 limit_y 안에 못 넣어 폴백하면, 폴백 경로가
+    페이지 하단만 보고 상한 없이 아래로 뻗었다. 잘리는 건 허용하되(이 파일의
+    '잘리더라도 원문 비침범이 우선' 원칙) 박스는 넘지 않아야 한다."""
+    limit_y = 410.7
+    block = PdfBlock(page=0, kind="dialog",
+                     text="238 FEMALE SPRING BREAKER #1/FEMALE SPRING BREAKER #2",
+                     bbox=(354.4, 285.7, 642.4, 376.3),
+                     limit_y=limit_y, limit_x1=657.8)
+    long_ko = ("여자 파티광 #1/여자 파티광 #2/여자 파티광 #3/남자 파티광(연호):"
+               "화끈하게 놀자. 화끈하게 놀자... " * 4)
+    ov = StoryboardProfile().place(block, long_ko, (1008.0, 612.0))
+    assert ov.rect[3] <= limit_y + 0.5, (
+        f"주석이 필드 박스 하단({limit_y})을 넘어 {ov.rect[3]}까지 뻗었다 — "
+        "다음 필드 박스를 덮는다")
+
+
+def test_place_below_ignores_limit_that_sits_above_the_source():
+    """FL104 p16 회귀(사용자 신고 "Dialog 번역 누락", 2026-08-03): 대사 주석이
+    필드 박스를 벗어나 **판넬 그림 위로 밀려 올라갔다.**
+
+    그 페이지의 limit_y(281.7)는 자기 블록 bbox(285.7~361.3)보다도 위였다 —
+    1열 Dialog의 다음 라벨을 못 찾은 열 무관 폴백이 다른 열 Action Notes의
+    y를 집어온 값이다. 그런 모순된 하한을 그대로 접으면 max_y1 < y0가 되고
+    크래시 방지 안전망이 주석을 위로 밀어 올린다. 아래 경로의 원칙은
+    '위로 밀지 않는다'이므로 그런 하한은 무시해야 한다."""
+    block = PdfBlock(page=0, kind="dialog",
+                     text="240 BELLE Keep moving, Manny!",
+                     bbox=(39.0, 285.7, 319.0, 361.3),
+                     limit_y=281.7,          # ← 자기 원문보다 위(모순)
+                     limit_x1=326.6)
+    ov = StoryboardProfile().place(
+        block, "벨: 계속 가, 매니! 몇 블록만 더 가면 집이야.", (1008.0, 612.0))
+    assert ov.rect[1] >= block.bbox[3], (
+        f"주석이 원문(하단 {block.bbox[3]}) 위 {ov.rect[1]}에 놓였다 — 판넬 침범")
 
 
 def test_place_panel_label_above_when_room():
