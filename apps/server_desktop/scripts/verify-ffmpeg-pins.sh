@@ -100,7 +100,18 @@ for TRIPLE in "${TRIPLES[@]}"; do
     # curl already writes 000 through -w when it cannot connect at all, so do
     # NOT append another 000 on non-zero exit — that concatenated into a
     # nonsense "HTTP 000000" the first time a DNS blip hit this.
-    CODE="$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 60 -r 0-0 "${URL}" 2>/dev/null)" || true
+    #
+    # --retry matters more than it looks: this is an ALARM, and a false alarm
+    # is expensive because it teaches people to ignore the real one. The first
+    # scheduled-style run went red purely because osxexperts.net timed out once
+    # from a GitHub runner (60s, while every other run that hour passed it).
+    # curl's plain --retry covers exactly the transient cases (timeouts, 408,
+    # 429, 5xx) and deliberately does NOT retry a 404 — so a genuinely pruned
+    # artifact still fails fast instead of costing three extra waits.
+    CODE="$(curl -sSL -o /dev/null -w '%{http_code}' \
+                 --retry 3 --retry-delay 5 --retry-connrefused \
+                 --connect-timeout 20 --max-time 90 \
+                 -r 0-0 "${URL}" 2>/dev/null)" || true
     [[ -n "${CODE}" ]] || CODE="000"
     if [[ "${CODE}" != "200" && "${CODE}" != "206" ]]; then
         if [[ "${CODE}" == "404" ]]; then
@@ -114,10 +125,12 @@ for TRIPLE in "${TRIPLES[@]}"; do
             # blip is a problem with THIS machine, not evidence that the pin
             # rotted. Reporting it the same way would send someone re-pinning
             # a perfectly healthy artifact.
-            echo "  ✗ UNREACHABLE — could not connect (DNS, network, or host down)"
+            echo "  ✗ UNREACHABLE — could not connect after retries"
+            echo "    (DNS failure, network, or the host is down/timing out)"
             echo "    ${URL}"
-            echo "    Transport problem, not proof the pin is bad. Re-run before"
-            echo "    changing anything; if it persists, check from another network."
+            echo "    Transport problem, not proof the pin is bad — this does NOT"
+            echo "    mean the artifact was pruned. Re-run before changing anything;"
+            echo "    if it persists, check the URL from another network."
             FAILED+=("${TRIPLE}: UNREACHABLE (no connection)")
         else
             echo "  ✗ UNREACHABLE (HTTP ${CODE})"
@@ -132,7 +145,8 @@ for TRIPLE in "${TRIPLES[@]}"; do
         continue
     fi
 
-    if ! curl -fsSL --max-time 600 "${URL}" -o "${TMP}/pkg"; then
+    if ! curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused \
+              --connect-timeout 20 --max-time 600 "${URL}" -o "${TMP}/pkg"; then
         echo "  ✗ UNREACHABLE — download failed after a successful range probe"
         echo "    ${URL}"
         FAILED+=("${TRIPLE}: download failed"); continue
