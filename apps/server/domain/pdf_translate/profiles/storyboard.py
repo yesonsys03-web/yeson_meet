@@ -17,7 +17,11 @@ import math
 import re
 
 from ..backend import PdfDocument, RawBlock
-from ..panel_ocr import decode_panel_label, find_panel_labels, repair_corrupt_words
+from ..panel_ocr import (
+    decode_panel_label_lines,
+    find_panel_labels,
+    repair_corrupt_words,
+)
 from .base import Overlay, PdfBlock, has_hangul, normalize_ws
 
 logger = logging.getLogger("yeson.pdf.profiles.storyboard")
@@ -113,6 +117,50 @@ def _is_panel_page(raws: list[RawBlock]) -> bool:
     필드 라벨이 있으면 당연히 템플릿 페이지고, 없더라도 씬 테이블 헤더가
     있으면 대사·액션노트가 비어 있을 뿐인 판넬 페이지다."""
     return _has_field_label(raws) or _has_scene_table_header(raws)
+
+
+# 세로로 겹쳐 붙은 판넬 라벨은 **한 덩어리**다 — 각각 따로 주석을 달면
+# 서로 위에 포개져 읽을 수 없다(사용자 신고 2026-08-03: "너무 다닥다닥
+# 붙어 있어서 가독성이 떨어진다").
+#
+# 실물(FL104 p20): 빨간 라벨 상자 하나가 `SB INC 3` / `SPC ZMB` 두 줄이고
+# OCR은 이를 별개 히트로 준다(y 172.8~181.0 / 178.9~186.8 — **서로 겹친다**).
+# 각 히트가 "자기 라벨 바로 위"에 10pt 주석을 놓으니 두 주석이 같은 자리에
+# 찍혔다. 사람은 같은 자리에 **2줄 한 덩어리**(줄 간격 12.5pt)를 라벨 위에
+# 얹는다 — 병합이 곧 사람 관례다.
+#
+# 문턱: 위 줄의 아래(y1)와 아래 줄의 위(y0) 차이가 이 값 이하이고 x가 겹치면
+# 한 덩어리. 실측 쌍은 -2.5~-0.7pt(= 살짝 겹침)라 0보다 넉넉히 잡되, 멀리
+# 떨어진 다른 캐릭터의 라벨(같은 페이지 최소 간격 ~50pt)은 묶이지 않게 한다.
+_STACK_MAX_GAP = 6.0
+
+
+def _label_width(ko_text: str) -> float:
+    """판넬 라벨 주석에 필요한 폭 — 가장 긴 줄 기준(CJK 글자당 ≈ fontsize pt,
+    `_estimate_height`와 같은 근사) + 여유 4pt. 여유가 없으면 근사 오차로
+    한 글자가 다음 줄로 접힌다."""
+    longest = max((len(line) for line in ko_text.split("\n")), default=0)
+    return longest * _PANEL_FONTSIZE + 4.0
+
+
+def _union_bbox(blocks: list[RawBlock]) -> tuple[float, float, float, float]:
+    return (min(b.bbox[0] for b in blocks), min(b.bbox[1] for b in blocks),
+            max(b.bbox[2] for b in blocks), max(b.bbox[3] for b in blocks))
+
+
+def _group_stacked_labels(labels: list[RawBlock]) -> list[list[RawBlock]]:
+    """세로로 맞닿은 라벨들을 묶는다(x 겹침 + y 간격 <= _STACK_MAX_GAP)."""
+    groups: list[list[RawBlock]] = []
+    for raw in sorted(labels, key=lambda r: (r.bbox[1], r.bbox[0])):
+        for g in groups:
+            gx0, _gy0, gx1, gy1 = _union_bbox(g)
+            if (min(raw.bbox[2], gx1) - max(raw.bbox[0], gx0) > 0
+                    and raw.bbox[1] - gy1 <= _STACK_MAX_GAP):
+                g.append(raw)
+                break
+        else:
+            groups.append([raw])
+    return groups
 
 
 def _looks_like_field_label(text: str) -> bool:
@@ -218,16 +266,18 @@ class StoryboardProfile:
             if _is_panel_page(raws):
                 page_w, _page_h = doc.page_size(page)
                 region = _panel_region(raws, page_w)
-                for raw in find_panel_labels(doc, page, region):
-                    text = normalize_ws(raw.text)
-                    if not text or has_hangul(text):
-                        continue
+                labels = [r for r in find_panel_labels(doc, page, region)
+                          if normalize_ws(r.text) and not has_hangul(r.text)]
+                for group in _group_stacked_labels(labels):
+                    texts = [normalize_ws(r.text) for r in group]
                     # 판넬 약어(SPCZMB·TTINCA·IN…)는 결정적으로 해독한다 —
                     # 해독 대상이 아니면 ko=None이라 평소대로 번역기를 탄다
                     # (예: `CAMERA FIELD GUIDE`는 영어 문장이라 LLM이 옮긴다).
-                    out.append(PdfBlock(page=page, kind=_PANEL_LABEL_KIND,
-                                        text=text, bbox=raw.bbox,
-                                        ko=decode_panel_label(text)))
+                    lines = decode_panel_label_lines(texts)
+                    ko = "\n".join(lines) if lines else None
+                    out.append(PdfBlock(
+                        page=page, kind=_PANEL_LABEL_KIND,
+                        text="\n".join(texts), bbox=_union_bbox(group), ko=ko))
         return out
 
     def place(self, block: PdfBlock, ko_text: str,
@@ -263,7 +313,18 @@ class StoryboardProfile:
         page_w, page_h = page_size
         bx0, by0, bx1, _by1 = block.bbox
         x0 = bx0
-        x1 = min(page_w - 8.0, max(bx1, bx0 + _PANEL_MIN_WIDTH))
+        # 폭은 **글자가 필요한 만큼만** 쓴다.
+        #
+        # 예전엔 무조건 _PANEL_MIN_WIDTH(90pt)를 확보했는데, 판넬 라벨은
+        # `파티광3`처럼 짧아서(10pt CJK 4글자 ≈ 40pt) 남는 50pt가 옆
+        # 캐릭터의 라벨 자리를 침범한다 — FL104 p20에서 인접 라벨 주석
+        # 5쌍이 실제로 겹쳤다(사용자 신고: "다닥다닥 붙어 가독성이 떨어진다").
+        # 사람 납품본도 텍스트 폭만큼만 쓰고 36~82pt 간격으로 나란히 둔다.
+        #
+        # 90pt는 여기서 버리되 **오른쪽 배치 문턱으로는 그대로** 쓴다(아래
+        # 폴백 호출) — 그쪽은 "오른쪽에 놓을 만한 여유가 있나"를 재는 값이라
+        # 성격이 다르다.
+        x1 = min(page_w - 8.0, max(bx1, bx0 + _label_width(ko_text)))
         height = _estimate_height(ko_text, x1 - x0, _PANEL_FONTSIZE)
         y1 = by0 - 2.0
         y0 = y1 - height

@@ -733,3 +733,28 @@ def test_decode_panel_label_character_rules_win_over_zombie_shape():
     구체적인 캐릭터 규칙이 먼저 걸려야 한다(순서 회귀 가드)."""
     assert panel_ocr.decode_panel_label("FEMSB2B") == "여자파티광2B"
     assert panel_ocr.decode_panel_label("MALESB6") == "남자파티광6"
+
+
+# ── 묶음 해독: 세로로 붙은 두 줄을 사람 관례대로 나눈다 ──────────────────
+
+@pytest.mark.parametrize("group,expected", [
+    (["SBINC3", "SPCZMB"], ["좀비", "파티광3"]),        # p20 사람: 좀비/파티광3
+    (["MALESB7", "SPCZMB"], ["남자좀비", "파티광7"]),   # p133 사람: 남자좀비/파티광1
+    (["FEMSB3", "SPCZMB"], ["여자좀비", "파티광3"]),    # p133 사람과 동일
+    (["TTINCA", "SPCZMB"], ["좀비", "테킬라걸A"]),
+    (["MALESB6"], ["남자", "파티광6"]),
+    (["SPCZMB"], ["좀비"]),
+    (["IN"], ["들어온다"]),
+])
+def test_decode_panel_label_lines(group, expected):
+    """수식어는 윗줄, 번호가 붙은 역할은 아랫줄 — FL104 p20 5쌍이 5/5 이
+    순서다. 이렇게 나눠야 각 줄이 짧아 옆 라벨을 침범하지 않는다."""
+    assert panel_ocr.decode_panel_label_lines(group) == expected
+
+
+def test_decode_panel_label_lines_returns_none_for_english_group():
+    """묶음에 해독 못 하는 게 섞이면 None — 묶음 전체가 평소대로 번역기를
+    탄다(`CAMERA FIELD GUIDE` + `(BG ONLY)`는 영어 문장이라 LLM이 옮긴다)."""
+    assert panel_ocr.decode_panel_label_lines(
+        ["CAMERA FIELD GUIDE", "(BG ONLY)"]) is None
+    assert panel_ocr.decode_panel_label_lines(["SPCZMB", "REHABCENTER"]) is None

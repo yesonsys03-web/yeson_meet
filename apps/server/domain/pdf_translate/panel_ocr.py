@@ -455,29 +455,71 @@ _MALE_SB_RE = re.compile(r"^MALESB(\d+[A-Z]?)$")
 _SB_RE = re.compile(r"^SBINC?(\d+[A-Z]?)$")
 
 
-def decode_panel_label(text: str) -> str | None:
-    """판넬 약어 → 사람 납품본 표기. 해독 대상이 아니면 None(=평소대로 번역)."""
+def _parse_panel_code(text: str) -> tuple[str | None, str | None, str | None]:
+    """약어 하나 → (수식어, 역할, 단독어). 해당 없으면 (None, None, None).
+
+    수식어(`좀비`·`남자`·`여자`)와 역할(`파티광3`·`테킬라걸A`)을 나눠 두는 건
+    사람 납품본이 **두 줄로 나눠** 쓰기 때문이다 — 한 줄에 몰아 쓰면 폭이
+    넓어져 옆 캐릭터의 라벨을 침범한다(아래 decode_panel_label_lines 참고).
+    """
     squashed = _NON_ALNUM.sub("", text).upper()
     if not squashed:
-        return None
+        return (None, None, None)
     if squashed in _DIRECTION_IN:
-        return "들어온다"
+        return (None, None, "들어온다")
     if squashed in _DIRECTION_OUT:
-        return "나간다"
+        return (None, None, "나간다")
     # 순서 주의: FEMSB2B·MALESB6는 B로 끝나 좀비 규칙과 형태가 겹친다 —
     # 구체적인 캐릭터 규칙을 먼저 본다.
     m = _FEMALE_SB_RE.match(squashed)
     if m:
-        return f"여자파티광{m.group(1)}"
+        return ("여자", f"파티광{m.group(1)}", None)
     m = _MALE_SB_RE.match(squashed)
     if m:
-        return f"남자파티광{m.group(1)}"
+        return ("남자", f"파티광{m.group(1)}", None)
     m = _SB_RE.match(squashed)
     if m:
-        return f"파티광{m.group(1)}"
+        return (None, f"파티광{m.group(1)}", None)
     m = _TEQUILA_RE.match(squashed)
     if m:
-        return f"테킬라걸{m.group(1)}"
+        return (None, f"테킬라걸{m.group(1)}", None)
     if _ZOMBIE_RE.match(squashed):
-        return "좀비"
+        return ("좀비", None, None)
+    return (None, None, None)
+
+
+def decode_panel_label(text: str) -> str | None:
+    """약어 하나를 한 줄로 해독 — 해독 대상이 아니면 None."""
+    qual, role, standalone = _parse_panel_code(text)
+    if standalone:
+        return standalone
+    if qual or role:
+        return f"{qual or ''}{role or ''}"
     return None
+
+
+def decode_panel_label_lines(texts: list[str]) -> list[str] | None:
+    """세로로 붙은 약어 묶음 → 사람 납품본과 같은 **줄 구성**.
+
+    사람은 수식어를 윗줄, 번호가 붙은 역할을 아랫줄에 쓴다 — FL104 p20의
+    5쌍이 5/5(`좀비`·`남자` 위 / `파티광N` 아래), p133도 `남자좀비`/`파티광1`,
+    `여자좀비`/`파티광3`으로 같다. 이렇게 나누면 각 줄이 짧아져(4글자 안팎)
+    옆 라벨과 겹치지 않는다 — 한 줄로 몰아 쓴 `남자파티광1`(6글자 ≈ 64pt)은
+    실제로 옆 캐릭터 주석을 침범했다(사용자 신고 2026-08-03).
+
+    묶음 안에 해독 못 하는 게 하나라도 있으면 None — 그때는 묶음 전체가
+    평소대로 번역기를 탄다(`CAMERA FIELD GUIDE` + `(BG ONLY)` 같은 영어 문장).
+    """
+    parsed = [_parse_panel_code(t) for t in texts]
+    if not parsed or any(q is None and r is None and s is None
+                         for q, r, s in parsed):
+        return None
+    quals = [q for q, _r, _s in parsed if q]
+    roles = [r for _q, r, _s in parsed if r]
+    alone = [s for _q, _r, s in parsed if s]
+    lines = []
+    if quals:
+        lines.append("".join(dict.fromkeys(quals)))  # 중복 제거, 순서 보존
+    lines.extend(roles)
+    lines.extend(alone)
+    return lines or None
