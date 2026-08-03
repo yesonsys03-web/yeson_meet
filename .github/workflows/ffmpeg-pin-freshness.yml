@@ -1,0 +1,96 @@
+name: ffmpeg pin freshness
+
+# Early warning for ffmpeg pins that have rotted, so a release never discovers
+# it the way v1.8.0 did.
+#
+# v1.8.0 배경: 고정해 둔 BtbN autobuild 태그가 업스트림에서 삭제돼 URL이 404가
+# 됐고, Windows 서버 빌드가 **PyInstaller 동결을 다 끝낸 뒤** ffmpeg 벤더링에서
+# 죽었다. 즉 릴리스를 시작하기 전에는 아무도 핀이 썩은 걸 몰랐다. 이 워크플로가
+# 그 공백을 메운다 — 핀이 죽으면 릴리스가 아니라 여기서 먼저 터진다.
+#
+# Win/Linux 핀은 이제 우리 릴리스 자산(ffmpeg-vendor-* prerelease)을 가리키므로
+# 상류 보관 기간에 더는 매이지 않는다. 그래도 4개 전부를 계속 감시한다:
+#   - 미러 자산이 실수로 지워지는 경우
+#   - osxexperts(aarch64)는 URL이 메이저 버전만 담고 있어 **같은 자리에서 재빌드**
+#     될 수 있다 → 404가 아니라 sha256 불일치로 나타난다
+#   - evermeet(x86_64) 버전별 URL이 정리되는 경우
+#
+# 트리거는 이 잡이 실제로 지키는 것만 본다(P0 스파이크에서 얻은 교훈: 넓기만 하고
+# 정작 표적은 빠진 트리거는 비용만 태운다): 이 워크플로 자신 + 검증 스크립트 +
+# 핀 파일. 핀 파일에 걸어 둔 덕에 재핀 PR은 머지 전에 자동 검증된다.
+on:
+  schedule:
+    # Weekly, Monday 03:00 UTC. Scheduled runs only fire on the default branch.
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+  push:
+    # 브랜치 push 로 한정 — branches 가 없으면 태그 push 도 매치하고, 이 리포는
+    # 미러 릴리스(ffmpeg-vendor-*)를 만들 때마다 태그를 찍는다. 그대로 두면
+    # 재미러링마다 이 잡이 헛돈다(p0 스파이크가 실제로 그렇게 당했다).
+    branches: ["**"]
+    paths:
+      - ".github/workflows/ffmpeg-pin-freshness.yml"
+      - "apps/server_desktop/scripts/verify-ffmpeg-pins.sh"
+      - "apps/server_desktop/ffmpeg.lock.json"
+
+permissions:
+  contents: read
+  issues: write   # opens/updates the alert issue when a pin has rotted
+
+jobs:
+  verify:
+    name: Verify every ffmpeg pin
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify pins (download + sha256 + member extraction)
+        id: verify
+        run: |
+          set -o pipefail
+          ./apps/server_desktop/scripts/verify-ffmpeg-pins.sh 2>&1 | tee pin-report.txt
+
+      # Only the UNATTENDED path files an issue. A push/dispatch run already has
+      # someone watching the red X, and filing issues for those would just add
+      # noise to experiment branches.
+      - name: Open or update the alert issue
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: "ffmpeg pin이 썩었습니다 (자동 감지)"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          REPORT="$(cat pin-report.txt 2>/dev/null || echo '(리포트를 남기지 못한 채 실패했습니다)')"
+          BODY=$(cat <<EOF
+          정기 ffmpeg 핀 검증이 실패했습니다. **다음 릴리스를 시작하기 전에** 고쳐야 합니다 —
+          방치하면 v1.8.0처럼 동결을 다 끝낸 뒤 벤더링 단계에서 빌드가 죽습니다.
+
+          실행 로그: ${RUN_URL}
+
+          \`\`\`
+          ${REPORT}
+          \`\`\`
+
+          조치는 실패 유형에 따라 다릅니다:
+
+          - **GONE (404)** — 상류에서 아티팩트가 사라졌습니다. 살아 있는 아티팩트로 재핀한 뒤
+            \`apps/server_desktop/scripts/mirror-ffmpeg.sh\`로 미러링해서 재발을 끊으세요.
+          - **SHA256 MISMATCH** — URL은 살아 있는데 바이트가 다릅니다. 그냥 재핀하지 마세요.
+            상류가 같은 자리에서 재빌드했거나(osxexperts가 그럽니다) 변조된 것입니다.
+            \`ffmpeg.lock.json\`의 \`_readme\` 요구사항(libass, --enable-nonfree 금지, static)을
+            다시 확인한 뒤에 재핀하세요.
+          - **MEMBER MISSING** — 아카이브 내부 경로가 바뀌었습니다. \`member\`를 맞추세요.
+
+          이 이슈는 자동 생성됐습니다. 핀을 고치면 닫으세요.
+          EOF
+          )
+          EXISTING="$(gh issue list --state open --search "$TITLE in:title" \
+                        --json number,title \
+                        -q ".[] | select(.title == \"$TITLE\") | .number" | head -1)"
+          if [ -n "$EXISTING" ]; then
+            echo "Updating existing issue #$EXISTING (no duplicate)"
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi
