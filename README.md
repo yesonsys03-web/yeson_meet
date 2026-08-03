@@ -40,3 +40,15 @@
 ## Status
 
 MVP-α Slice 0 bootstrap
+
+## License
+
+**GNU Affero General Public License v3.0** — 전문은 [LICENSE](LICENSE).
+
+이 저장소가 곧 배포본의 **대응 소스**다. 설치본을 받았거나 서버 콘솔·뷰어를
+네트워크로 사용한 사람은 여기서 같은 버전의 소스를 받을 수 있다(AGPL §13).
+
+동봉된 서드파티 구성요소와 각 라이선스는
+[서드파티 고지](docs/THIRD-PARTY-NOTICES.md)에 정리돼 있다. PDF 번역 기능이
+쓰는 PyMuPDF가 AGPL-3.0(또는 Artifex 상용)이라 프로젝트 전체가 AGPL-3.0을
+따른다 — 결정 근거는 그 문서 §5.1.
