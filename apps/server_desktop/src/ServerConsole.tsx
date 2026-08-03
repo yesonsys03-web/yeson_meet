@@ -399,6 +399,16 @@ export default function ServerConsole() {
       <aside style={styles.sidebar}>
         <p style={styles.brand}>yeson server console</p>
         {appVersion ? <span style={styles.version}>v{appVersion}</span> : null}
+        {/* AGPL-3.0 §13 — 네트워크로 이 프로그램과 상호작용하는 사용자에게
+            대응 소스를 제공한다는 고지. 링크 한 줄이 그 의무를 충족한다. */}
+        <a
+          style={styles.sourceLink}
+          href="https://github.com/yesonsys03-web/yeson_meet"
+          target="_blank"
+          rel="noreferrer"
+        >
+          AGPL-3.0 · 소스
+        </a>
         <UpdateBanner status={update.status} onCheckNow={update.checkNow} onApplyNow={update.applyNow} />
         <span style={{ ...styles.badge, ...(running ? styles.badgeOn : styles.badgeOff) }}>
           {running ? "RUNNING" : "STOPPED"}
@@ -663,6 +673,7 @@ const styles: Record<string, React.CSSProperties> = {
     textTransform: "uppercase",
   },
   version: { fontSize: 11, color: "var(--ys-text-faint)", fontVariantNumeric: "tabular-nums", letterSpacing: ".04em" },
+  sourceLink: { fontSize: 10, color: "var(--ys-text-faint)", letterSpacing: ".04em", textDecoration: "none" },
   nav: { display: "flex", flexDirection: "column", gap: 4, marginTop: 8 },
   navButton: {
     textAlign: "left",
