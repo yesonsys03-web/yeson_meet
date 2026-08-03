@@ -15,8 +15,8 @@ description: Use when cutting a yeson-meet release (vX.Y.Z) — bumping the app 
 1. **선행 확인**: 로컬 main이 origin/main 최신이고 릴리스 대상 변경 전부 머지됨(`git log`로 확인).
    `apps/server` 소스가 바뀐 릴리스라면 재동결(`apps/server_desktop/scripts/build-server.sh`) 후 E2E가 이미 끝났는지 확인 — 동결 안 된 번들은 새 라우트가 404/405.
    **ffmpeg 핀 확인**: `./apps/server_desktop/scripts/verify-ffmpeg-pins.sh --quick` (수 초). v1.8.0은 이 확인이 없어서 동결·스모크를 전부 통과한 뒤 ffmpeg 벤더링에서 죽었다. 3중으로 막아 뒀으니 어느 층에서 걸리든 릴리스 전에 드러난다:
-   - `ffmpeg pin freshness` 워크플로가 주 1회 4개 핀 전부를 검증하고, 실패하면 이슈로 경보한다(재핀 PR도 이 워크플로가 자동 검증).
-   - 두 서버 콘솔 빌드가 **동결 전에** 같은 확인을 자동 수행한다 — 죽은 핀은 40분이 아니라 수 분 안에 드러난다.
+   - `ffmpeg pin freshness` 워크플로가 주 1회 4개 핀 전부를 검증하고(도달성+sha256+member 추출), 실패하면 이슈로 경보한다. 재핀 PR도 이 워크플로가 자동 검증한다.
+   - 두 빌드 스크립트가 ffmpeg를 **PyInstaller 동결보다 먼저** 받는다(전엔 맨 끝이었다). 썩은 핀은 40분이 아니라 몇 초 만에 빌드를 세운다 — 이 순서 자체가 게이트다.
    - Win/Linux 핀은 자체 미러를 가리키므로 상류 보관 기간에 더는 매이지 않는다.
 2. **릴리스 브랜치** `release/vX.Y.Z` 생성. main 직접 push 금지 — **차단 장치는 없음(정책)**, 실수로 push하면 그대로 워크플로가 발화하므로 반드시 브랜치+PR.
 3. **버전 범프 — 반드시 2곳 모두** (두 앱은 항상 같은 버전으로 함께 릴리스 — 한쪽만 변경돼도 둘 다 범프, v1.2.3 클라가 그 사례):

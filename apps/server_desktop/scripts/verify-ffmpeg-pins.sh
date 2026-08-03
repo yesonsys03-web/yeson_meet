@@ -7,9 +7,9 @@ set -uo pipefail
 # change underneath us, and until now the only thing that noticed was a release
 # build failing. On v1.8.0 a pruned BtbN autobuild tag 404'd and took the
 # Windows server build down *after* the PyInstaller freeze had already
-# succeeded. This script is the early-warning channel — run on a schedule by
-# .github/workflows/ffmpeg-pin-freshness.yml, and in --quick form as a
-# fail-fast gate at the top of the release builds.
+# succeeded. This script is the early-warning channel — run weekly by
+# .github/workflows/ffmpeg-pin-freshness.yml, and in --quick form as the manual
+# pre-release check in .claude/skills/release/SKILL.md step 1.
 #
 # The two failure modes need DIFFERENT remediation, so they are reported
 # separately rather than as one "broken pin":
@@ -31,11 +31,13 @@ set -uo pipefail
 #   scripts/verify-ffmpeg-pins.sh --quick         # reachability only (fast)
 #   scripts/verify-ffmpeg-pins.sh <triple> [...]  # limit to specific triples
 #
-# --quick exists for the release-build gate: it answers "is the pin still
-# served?" in about a second per triple instead of downloading ~300MB. It
-# deliberately does NOT re-check sha256, because the vendoring steps in
-# fetch-ffmpeg.sh and build-server.ps1 already verify the hash and fail closed.
-# Duplicating that download in every build would cost more than it catches.
+# --quick answers "is every pin still served?" in about a second per triple
+# instead of downloading ~300MB, which is what makes it usable as a manual
+# pre-release check. It deliberately does NOT re-check sha256: the vendoring
+# steps in fetch-ffmpeg.sh and build-server.ps1 already verify the hash and fail
+# closed, and those now run BEFORE the freeze, so the build itself is the
+# hash-checking gate. Use the full mode when you want to catch an in-place
+# upstream rebuild rather than a disappearance.
 #
 # Env:
 #   FFMPEG_MANIFEST  path to the lock file (default apps/server_desktop/ffmpeg.lock.json)
@@ -95,7 +97,11 @@ for TRIPLE in "${TRIPLES[@]}"; do
 
     # Reachability first. A range request keeps --quick cheap and still follows
     # the redirect chain that GitHub release assets use.
-    CODE="$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 60 -r 0-0 "${URL}" 2>/dev/null || echo 000)"
+    # curl already writes 000 through -w when it cannot connect at all, so do
+    # NOT append another 000 on non-zero exit — that concatenated into a
+    # nonsense "HTTP 000000" the first time a DNS blip hit this.
+    CODE="$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 60 -r 0-0 "${URL}" 2>/dev/null)" || true
+    [[ -n "${CODE}" ]] || CODE="000"
     if [[ "${CODE}" != "200" && "${CODE}" != "206" ]]; then
         if [[ "${CODE}" == "404" ]]; then
             echo "  ✗ GONE (404) — the pinned artifact is no longer served"
@@ -103,6 +109,16 @@ for TRIPLE in "${TRIPLES[@]}"; do
             echo "    Fix: re-pin to a live artifact, and mirror it so this cannot recur"
             echo "         (apps/server_desktop/scripts/mirror-ffmpeg.sh)"
             FAILED+=("${TRIPLE}: GONE (404)")
+        elif [[ "${CODE}" == "000" ]]; then
+            # Distinguished from an HTTP error on purpose: a DNS or network
+            # blip is a problem with THIS machine, not evidence that the pin
+            # rotted. Reporting it the same way would send someone re-pinning
+            # a perfectly healthy artifact.
+            echo "  ✗ UNREACHABLE — could not connect (DNS, network, or host down)"
+            echo "    ${URL}"
+            echo "    Transport problem, not proof the pin is bad. Re-run before"
+            echo "    changing anything; if it persists, check from another network."
+            FAILED+=("${TRIPLE}: UNREACHABLE (no connection)")
         else
             echo "  ✗ UNREACHABLE (HTTP ${CODE})"
             echo "    ${URL}"
