@@ -26,6 +26,20 @@ BUILD_VENV="target/server-build-venv"
 DIST="target/server-dist"
 WORK="target/server-build"
 
+# Task 14: vendor the host-triple ffmpeg (subtitle burn-in + probing) so
+# tauri.conf's `binaries/ffmpeg-*` resource glob is satisfied when `tauri
+# build` packages the app. Idempotent — fetch-ffmpeg.sh skips the download if
+# already present. Without this the packaged app's video-caption feature has
+# no ffmpeg to fall back to (only PATH, which a plain user install may lack).
+#
+# 동결보다 먼저 받는다. 예전엔 이 블록이 스크립트 맨 끝이라, 핀이 썩었으면
+# PyInstaller 동결과 스모크를 전부 통과한 **뒤에야** 죽었다(v1.8.0 Windows에서
+# 실제로 그렇게 40분을 태웠다). 받는 총량은 같고 순서만 바뀐다 — 썩은 핀은 이제
+# 몇 초 만에 드러난다. mac 쪽이 특히 중요한데, osxexperts URL은 메이저 버전만
+# 담고 있어 같은 자리에서 재빌드되면 404가 아니라 sha256 불일치로 나타난다.
+echo "Vendoring ffmpeg binary (Task 14)…"
+bash apps/server_desktop/scripts/fetch-ffmpeg.sh
+
 echo "Preparing Python ${PY_VERSION} build venv (server deps + pyinstaller)…"
 uv venv --clear --python "${PY_VERSION}" "${BUILD_VENV}"
 # Install the server project (pulls fastapi/uvicorn/grpc/google-genai/bcrypt/
@@ -177,11 +191,3 @@ bash apps/server_desktop/scripts/smoke-server-bundle.sh
 # present. Without this the packaged app would lack the public-tunnel binary.
 echo "Vendoring cloudflared quick-tunnel binary (P4.3)…"
 bash apps/server_desktop/scripts/fetch-cloudflared.sh
-
-# Task 14: vendor the host-triple ffmpeg (subtitle burn-in + probing) so
-# tauri.conf's `binaries/ffmpeg-*` resource glob is satisfied when `tauri
-# build` packages the app. Idempotent — fetch-ffmpeg.sh skips the download if
-# already present. Without this the packaged app's video-caption feature has
-# no ffmpeg to fall back to (only PATH, which a plain user install may lack).
-echo "Vendoring ffmpeg binary (Task 14)…"
-bash apps/server_desktop/scripts/fetch-ffmpeg.sh
