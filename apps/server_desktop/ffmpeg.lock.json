@@ -13,7 +13,12 @@
     "automatically when this file changes (the .pinned stamp beside the binary is",
     "compared against version+sha256), and abort on a hash mismatch.",
     "",
-    "MIRRORED TRIPLES (windows, linux): their `url` points at THIS repo's own",
+    "LINUX WAS REMOVED (2026-08-03): nothing builds or ships for Linux — the",
+    "release workflows are macOS/Windows only — so the pin was dead weight that",
+    "the weekly freshness check still had to prove alive. The mirror asset is",
+    "left in place; git history holds the pin if it is ever needed again.",
+    "",
+    "MIRRORED TRIPLE (windows): its `url` points at THIS repo's own",
     "release assets, not at the upstream builder. BtbN prunes its autobuild tags",
     "after roughly 11-15 days, which 404'd the pin mid-release on v1.8.0 and took",
     "the Windows server build down after the freeze had already succeeded.",
@@ -116,24 +121,6 @@
         "tags after ~11-15 days, and that pruning is what broke the v1.8.0 release.",
         "A 404 here would now mean the mirror asset itself went missing, which is",
         "a much louder and more fixable problem than an upstream retention window."
-      ]
-    },
-    "x86_64-unknown-linux-gnu": {
-      "version": "n8.1.2-32-gcfa62de001",
-      "url": "https://github.com/yesonsys03-web/yeson_meet/releases/download/ffmpeg-vendor-n8.1.2-32-gcfa62de001/ffmpeg-n8.1.2-32-gcfa62de001-linux64-gpl-8.1.tar.xz",
-      "sha256": "cd00d35281f0f37c4d1727f9ec58417e11f2d6931b530c53d8ae7be8f6dd11e9",
-      "archive": "tar.xz",
-      "member": "ffmpeg-n8.1.2-32-gcfa62de001-linux64-gpl-8.1/bin/ffmpeg",
-      "bin": "ffmpeg",
-      "license": "gpl",
-      "provenance": "upstream-checksums",
-      "_notes": [
-        "Dev-convenience triple — no Linux installer ships. Moved off johnvansickle",
-        "(which deletes older versioned tarballs, so a pinned URL there would 404)",
-        "onto the same BtbN tag as Windows, keeping both on one version.",
-        "MIRRORED alongside Windows, from the same BtbN tag, for the same reason",
-        "(see the mirror section in _readme). Keeping the two on one mirror release",
-        "preserves the single-version property that motivated the original move."
       ]
     }
   }

@@ -44,7 +44,6 @@ OS="$(uname -s)"
 case "${OS}-${ARCH}" in
     Darwin-arm64)                              TRIPLE="aarch64-apple-darwin" ;;
     Darwin-x86_64)                             TRIPLE="x86_64-apple-darwin" ;;
-    Linux-x86_64)                              TRIPLE="x86_64-unknown-linux-gnu" ;;
     MINGW*-x86_64|MSYS*-x86_64|CYGWIN*-x86_64) TRIPLE="x86_64-pc-windows-msvc" ;;
     *)
         echo "ERROR: unsupported host ${OS}-${ARCH}" >&2; exit 1 ;;
