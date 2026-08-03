@@ -20,6 +20,13 @@ name: P0 Windows freeze spike
 on:
   workflow_dispatch:
   push:
+    # branches 필터가 없으면 **태그 push 도 매치**한다. 2026-08-03에 ffmpeg 미러
+    # 릴리스 태그(ffmpeg-vendor-*)를 만들었더니 이 스파이크가 그 태그로 한 번
+    # 돌았다 — Windows 러너(2배 과금) ~20분을 이 스파이크와 아무 상관 없는 일에
+    # 태운 것이고, 재미러링할 때마다 반복될 참이었다. 바로 위 트리거 정정의
+    # 취지("고유 관심사만 본다")와 정면으로 어긋나므로 브랜치 push 로 한정한다.
+    # '**' 는 슬래시 포함 모든 브랜치를 매치하므로 기존 브랜치 동작은 그대로다.
+    branches: ["**"]
     paths:
       - ".github/workflows/p0-windows-freeze-spike.yml"
       - "apps/server_desktop/scripts/build-server.ps1"

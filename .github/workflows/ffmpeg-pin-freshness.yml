@@ -24,6 +24,10 @@ on:
     - cron: "0 3 * * 1"
   workflow_dispatch:
   push:
+    # 브랜치 push 로 한정 — branches 가 없으면 태그 push 도 매치하고, 이 리포는
+    # 미러 릴리스(ffmpeg-vendor-*)를 만들 때마다 태그를 찍는다. 그대로 두면
+    # 재미러링마다 이 잡이 헛돈다(p0 스파이크가 실제로 그렇게 당했다).
+    branches: ["**"]
     paths:
       - ".github/workflows/ffmpeg-pin-freshness.yml"
       - "apps/server_desktop/scripts/verify-ffmpeg-pins.sh"
