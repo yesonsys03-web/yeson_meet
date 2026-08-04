@@ -126,3 +126,43 @@ export function newLabelRect(
 export function rowsOnPage(rows: LabelRow[], page: number): LabelRow[] {
   return rows.filter((r) => r.page === page);
 }
+
+/**
+ * 주석이 **하나도 없는** 페이지들 — 번역 누락을 찾는 사람이 훑어야 할 곳.
+ *
+ * 왜 목록 필터가 아니라 이것인가(FL104_Orev 113p 실측): 번역이 안 된 라벨은
+ * `refine_ko`가 그 줄을 지워서 주석이 **아예 안 만들어지고**, OCR이 못 읽은
+ * 손글씨는 애초에 블록이 없다. 그래서 "번역 안 된 항목"으로 목록을 좁히면
+ * 0건이 뜬다(그 문서에서 영문이 그대로 찍힌 항목 = 0). 누락은 목록 **안**이
+ * 아니라 목록에 **없는 페이지**로 나타난다 — 그 문서에서 주석 0개 페이지가
+ * 69/113장이었다.
+ *
+ * 판정은 넘겨준 `rows` 기준이다. 편집기는 종류 필터를 통과한 행을 넘기므로
+ * `판넬 라벨`을 보고 있으면 "판넬 라벨이 없는 페이지"를, `전체`면 "주석이
+ * 아무것도 없는 페이지"를 돌게 된다 — 필터가 목록·화면·순회를 함께 지배한다.
+ *
+ * 표지처럼 원래 칸이 없는 페이지도 섞인다(실측 113장 중 1장). 그건 판넬
+ * 정보가 있어야 걸러지는데 클라이언트는 현재 페이지 것만 받으므로, 걸러내는
+ * 대신 사람이 넘기게 둔다 — 조용히 빼면 진짜 누락도 같이 빠질 위험이 있다.
+ */
+export function pagesWithoutRows(rows: LabelRow[], pageCount: number): number[] {
+  const seen = new Set(rows.map((r) => r.page));
+  const out: number[] = [];
+  for (let p = 0; p < pageCount; p += 1) if (!seen.has(p)) out.push(p);
+  return out;
+}
+
+/**
+ * `from`에서 `delta` 방향으로 가장 가까운 후보 페이지. 없으면 `null`.
+ *
+ * 현재 페이지 자신은 건너뛴다 — 빈 페이지에 서서 `다음`을 눌렀는데 제자리면
+ * 버튼이 고장 난 것처럼 보인다. 끝에서는 되돌지 않고 `null`(버튼 비활성)이다.
+ */
+export function nextPageWithout(
+  pages: number[], from: number, delta: 1 | -1,
+): number | null {
+  const ahead = delta > 0
+    ? pages.filter((p) => p > from)
+    : pages.filter((p) => p < from).reverse();
+  return ahead.length ? ahead[0] as number : null;
+}

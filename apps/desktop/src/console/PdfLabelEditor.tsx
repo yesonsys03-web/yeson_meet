@@ -17,8 +17,9 @@ import {
   type PdfPanelsResponse,
 } from "./pdfApi";
 import {
-  dragCommitRect, editorReducer, initialEditorState, resolveSubmitText,
-  rowsOnPage, type EditorState, type LabelRow,
+  dragCommitRect, editorReducer, initialEditorState, nextPageWithout,
+  pagesWithoutRows, resolveSubmitText, rowsOnPage,
+  type EditorState, type LabelRow,
 } from "./pdfLabelEditorState";
 import {
   clientPointToPt, hitTestPanel, pxToPt, rectToStyle,
@@ -130,6 +131,14 @@ export function PdfLabelEditor({ job, onClose }: {
       || r.source_text.toLowerCase().includes(needle));
   }, [byKind, state.query]);
   const onPage = useMemo(() => rowsOnPage(byKind, state.page), [byKind, state.page]);
+  // 번역 누락은 목록 **안**이 아니라 목록에 **없는 페이지**로 나타난다
+  // (pagesWithoutRows 주석 참고) — 종류 필터를 통과한 행을 기준으로 센다.
+  const blankPages = useMemo(
+    () => pagesWithoutRows(byKind, pageCount), [byKind, pageCount]);
+  const pageIsBlank = useMemo(
+    () => blankPages.includes(state.page), [blankPages, state.page]);
+  const prevBlank = nextPageWithout(blankPages, state.page, -1);
+  const nextBlank = nextPageWithout(blankPages, state.page, 1);
   const selected = rows.find((r) => r.id === state.selectedId) ?? null;
   const version = labels?.edits_version ?? 0;
 
@@ -223,6 +232,29 @@ export function PdfLabelEditor({ job, onClose }: {
           {labels?.unresolved.length ? badge(`주소를 잃은 라벨 ${labels.unresolved.length}`, "#f87171") : null}
           {panels && !panels.is_panel_page ? badge("판넬 없는 페이지", "#64748b") : null}
         </span>
+      </div>
+
+      {/* ── 누락 순회 ─────────────────────────────────────────────────────
+          번역이 빠진 자리는 목록에 행으로 남지 않는다(미번역 라벨은 주석이
+          아예 안 만들어지고, OCR이 못 읽은 손글씨는 블록조차 없다). 그래서
+          "주석이 하나도 없는 페이지"만 건너뛰며 보는 것이 사람이 누락을 찾는
+          가장 짧은 길이다 — 실측 113장 중 69장으로 좁혀진다. */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12,
+        flexWrap: "wrap", marginBottom: 8 }}>
+        <span style={{ color: "#94a3b8" }}>
+          주석 없는 페이지 {blankPages.length} / {pageCount}
+        </span>
+        <button type="button" disabled={prevBlank === null}
+          onClick={() => { if (prevBlank !== null) dispatch({ type: "gotoPage", page: prevBlank }); }}>
+          ← 이전 누락 후보
+        </button>
+        <button type="button" disabled={nextBlank === null}
+          onClick={() => { if (nextBlank !== null) dispatch({ type: "gotoPage", page: nextBlank }); }}>
+          다음 누락 후보 →
+        </button>
+        {pageIsBlank ? badge(
+          state.kind === "all" ? "이 페이지 주석 0개" : "이 페이지 판넬 라벨 0개",
+          "#fbbf24") : null}
       </div>
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>

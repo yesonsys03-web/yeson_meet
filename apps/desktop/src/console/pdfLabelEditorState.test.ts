@@ -5,6 +5,8 @@ import {
   editorReducer,
   initialEditorState,
   newLabelRect,
+  nextPageWithout,
+  pagesWithoutRows,
   resolveSubmitText,
   rowsOnPage,
   type EditorState,
@@ -103,5 +105,41 @@ describe("newLabelRect / rowsOnPage", () => {
     const rows = [row({ id: "a", page: 1 }), row({ id: "b", page: 2 }),
       row({ id: "c", page: 1 })];
     expect(rowsOnPage(rows, 1).map((r) => r.id)).toEqual(["a", "c"]);
+  });
+});
+
+describe("주석 없는 페이지 순회", () => {
+  it("주석이 하나도 없는 페이지를 오름차순으로 모은다", () => {
+    const rows = [row({ id: "a", page: 1 }), row({ id: "b", page: 1 }),
+      row({ id: "c", page: 3 })];
+    expect(pagesWithoutRows(rows, 5)).toEqual([0, 2, 4]);
+  });
+
+  it("행이 하나도 없으면 전 페이지가 후보다", () => {
+    expect(pagesWithoutRows([], 3)).toEqual([0, 1, 2]);
+    expect(pagesWithoutRows([row({ page: 0 })], 0)).toEqual([]);
+  });
+
+  it("넘겨준 행이 곧 기준이다 — 종류 필터가 순회 범위를 정한다", () => {
+    // 판넬 라벨은 없고 대사만 있는 페이지는 `판넬 라벨` 필터에서 후보가 된다
+    // (실측: 그런 페이지가 21장 있었다).
+    const all = [row({ page: 2, kind: "dialog" }), row({ page: 4 })];
+    expect(pagesWithoutRows(all, 5)).toEqual([0, 1, 3]);
+    const onlyPanel = all.filter((r) => r.kind === "panel_label");
+    expect(pagesWithoutRows(onlyPanel, 5)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("현재 페이지는 건너뛰고 가장 가까운 후보로 간다", () => {
+    const pages = [0, 2, 5, 9];
+    expect(nextPageWithout(pages, 2, 1)).toBe(5);
+    expect(nextPageWithout(pages, 2, -1)).toBe(0);
+    expect(nextPageWithout(pages, 3, 1)).toBe(5);
+    expect(nextPageWithout(pages, 3, -1)).toBe(2);
+  });
+
+  it("끝에서는 되돌지 않고 없다고 답한다", () => {
+    expect(nextPageWithout([0, 2], 2, 1)).toBeNull();
+    expect(nextPageWithout([0, 2], 0, -1)).toBeNull();
+    expect(nextPageWithout([], 4, 1)).toBeNull();
   });
 });
