@@ -560,6 +560,48 @@ _FEMALE_SB_RE = re.compile(r"^FEM(?:ALE)?SB(\d+[A-Z]?)$")
 _MALE_SB_RE = re.compile(r"^MALESB(\d+[A-Z]?)$")
 _SB_RE = re.compile(r"^SBINC?(\d+[A-Z]?)$")
 
+# `INC` 꼬리 = 부수(incidental) 캐릭터 — FL104_Orev 사람 납품본 실측
+# (2026-08-03, 사용자 지시 "인간 번역과 비교"). 원본 그림의 빨강 라벨은
+# `SEX WORKER INC`·`CONGRESSMAN INC`·`BM INC 3`처럼 역할명 뒤에 `INC`를
+# 달고, 사람은 그 자리에 **`부수` 수식어**를 쓴다:
+#   SEX WORKER INC  → 부수 성노동자   (p84·p96)
+#   CONGRESSMAN INC → 부수 국회의원   (p87·p98)
+#   POPE INC        → 부수교황/부수 교황(p91·p97)
+#   BM INC 3/4      → 부수 회사원3/4  (p18·p19·p99·p100)
+# Nrev 사람 납품본도 같다(`전경 부수들`, `테킬라부수B`).
+#
+# 왜 결정적 해독인가: `INC`가 붙은 라벨은 영어 문장이 아니라 제작 코드라
+# LLM이 꼬리를 옮기지 못한다 — 실측 출력이 `성 노동자INC`·`하원의원INC`·
+# `교황INO`처럼 **영문이 그대로 새어 나왔고**(5건), `BMINC3`·`BMINC4`는
+# 아예 원문 복사로 돌아와 주석이 통째로 사라졌다(4건). 역할명 표까지 여기
+# 두는 건 `BM`(=회사원)처럼 LLM이 알 수 없는 약어가 섞여 있어서다.
+#
+# 표에 없는 역할은 해독하지 않는다(None) — 그때는 지금까지처럼 번역기를 탄다.
+#
+# ⚠왜 "꼬리가 INC면 무조건 부수"로 일반화하지 않는가: 같은 꼬리가 **자산
+# 코드**에도 붙는다(FL104_Orev p70 실측 `CROWD INC 009`·`PHOTO INC 002`·
+# `POOL INC 001`) — 사람 납품본은 그 라벨들을 **번역하지 않는다**(같은 페이지
+# 주석 0건). 지금은 LLM이 원문을 그대로 돌려주고 pdf_run이 주석을 안 만드는
+# 덕에 사람과 결과가 같은데, 꼬리만 보고 일반화하면 없던 `부수 군중 009`가
+# 생긴다. 같은 이유로 프롬프트에도 `INC=부수` 규칙을 넣지 않았다.
+# 근거 없는 항목 추가 금지(결정적 해독은 틀리면 조용히 틀린 채로 굳는다).
+#
+# 꼬리 표기 흔들림: OCR이 `INC`를 `INO`로도 읽는다(실측 p91 `POPEINO`,
+# 신뢰도 0.95) — `IN[CO]`로 둘 다 받는다. 앞의 역할부는 최소 두 글자를
+# 요구해 `IN`·`INC` 단독이 이 규칙으로 새지 않게 한다(`IN`은 위
+# _DIRECTION_IN이 먼저 잡는다).
+_INCIDENTAL_QUALIFIER = "부수"
+_INCIDENTAL_ROLES = {
+    "SEXWORKER": "성노동자",
+    "CONGRESSMAN": "국회의원",
+    "POPE": "교황",
+    "BM": "회사원",
+}
+_INCIDENTAL_RE = re.compile(r"^([A-Z]{2,}?)IN[CO](\d*)$")
+
+# 묶음에서 버려도 되는 미해독 조각의 최대 길이 — decode_panel_label_lines 참고.
+_NOISE_MAX_JUNK_LEN = 1
+
 
 def _parse_panel_code(text: str) -> tuple[str | None, str | None, str | None]:
     """약어 하나 → (수식어, 역할, 단독어). 해당 없으면 (None, None, None).
@@ -591,6 +633,14 @@ def _parse_panel_code(text: str) -> tuple[str | None, str | None, str | None]:
         return (None, f"테킬라걸{m.group(1)}", None)
     if _ZOMBIE_RE.match(squashed):
         return ("좀비", None, None)
+    # 부수(INC) 라벨은 맨 뒤에 본다 — 위 구체 규칙(SBINC·TTINC)도 형태가
+    # 겹치는데, 그쪽은 자기 역할명(파티광·테킬라걸)을 이미 갖고 있어 먼저
+    # 잡혀야 한다.
+    m = _INCIDENTAL_RE.match(squashed)
+    if m:
+        role = _INCIDENTAL_ROLES.get(m.group(1))
+        if role:
+            return (_INCIDENTAL_QUALIFIER, f"{role}{m.group(2)}", None)
     return (None, None, None)
 
 
@@ -615,11 +665,26 @@ def decode_panel_label_lines(texts: list[str]) -> list[str] | None:
 
     묶음 안에 해독 못 하는 게 하나라도 있으면 None — 그때는 묶음 전체가
     평소대로 번역기를 탄다(`CAMERA FIELD GUIDE` + `(BG ONLY)` 같은 영어 문장).
+
+    ⚠예외는 **한 글자 잡음**뿐이다. 실측(FL104_Orev p25): 동그라미 친 `IN`
+    옆의 화살표를 OCR이 `n`으로 읽어 묶음이 `['IN', 'n']`이 됐고, 위 규칙에
+    걸려 `들어온다` 대신 번역기가 낸 `인 n`이라는 뜻 없는 주석이 나갔다
+    (사람 납품본: `안으로`). 그래서 **해독되는 라벨이 하나라도 있을 때만**
+    한 글자짜리 미해독 조각을 버린다 — 묶음 전체가 미해독이면 아무것도
+    버리지 않으므로(`FG`/`Fol`/`STAMP`) 영어 라벨은 지금처럼 통째로
+    번역기를 탄다. 두 글자 이상은 의미 있는 라벨일 수 있어 버리지 않는다.
     """
     parsed = [_parse_panel_code(t) for t in texts]
-    if not parsed or any(q is None and r is None and s is None
-                         for q, r, s in parsed):
+    if not parsed:
         return None
+    undecoded = [t for t, p in zip(texts, parsed) if not any(p)]
+    if undecoded:
+        if len(undecoded) == len(parsed):
+            return None  # 전부 미해독 — 묶음째 번역기로
+        if any(len(_NON_ALNUM.sub("", t)) > _NOISE_MAX_JUNK_LEN
+               for t in undecoded):
+            return None
+        parsed = [p for p in parsed if any(p)]
     quals = [q for q, _r, _s in parsed if q]
     roles = [r for _q, r, _s in parsed if r]
     alone = [s for _q, _r, s in parsed if s]

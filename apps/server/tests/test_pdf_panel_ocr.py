@@ -877,3 +877,70 @@ def test_decode_panel_label_lines_returns_none_for_english_group():
     assert panel_ocr.decode_panel_label_lines(
         ["CAMERA FIELD GUIDE", "(BG ONLY)"]) is None
     assert panel_ocr.decode_panel_label_lines(["SPCZMB", "REHABCENTER"]) is None
+
+
+# ── 부수(INC) 라벨 (FL104_Orev 사람 납품본 대조, 2026-08-03) ─────────────
+
+@pytest.mark.parametrize("raw,expected", [
+    ("SEXWORKERINC", "부수성노동자"),      # p84·p96 사람: 부수 성노동자
+    ("SEX WORKER INC", "부수성노동자"),
+    ("CONGRESSMANINC", "부수국회의원"),    # p87·p98 사람: 부수 국회의원
+    ("POPEINC", "부수교황"),               # p91·p97 사람: 부수교황
+    ("POPEINO", "부수교황"),               # OCR 오독(C→O, 신뢰도 0.95)
+    ("BMINC3", "부수회사원3"),             # p18·p19·p99 사람: 부수 회사원3
+    ("BM INC 4", "부수회사원4"),           # p100 사람: 부수 회사원4
+])
+def test_decode_incidental_label(raw, expected):
+    """`INC` 꼬리 = 부수 캐릭터. 결정적으로 해독하지 않으면 LLM이 꼬리를 못
+    옮겨 `성 노동자INC`처럼 영문이 새거나(5건), `BMINC3`처럼 원문 복사로
+    돌아와 주석이 통째로 사라진다(4건) — 실측 결함 그대로가 근거다."""
+    assert panel_ocr.decode_panel_label(raw) == expected
+
+
+def test_decode_incidental_label_splits_qualifier_and_role():
+    """사람도 좁은 자리에서는 `부수`/`회사원4` 두 줄로 쓴다(p100·p18) —
+    기존 수식어/역할 관례를 그대로 따른다(옆 라벨 침범 방지)."""
+    assert panel_ocr.decode_panel_label_lines(
+        ["SEXWORKERINC"]) == ["부수", "성노동자"]
+
+
+@pytest.mark.parametrize("raw", [
+    "CROWDINC009", "CROWD INC 037", "PHOTOINC002", "POOLINC 001",
+])
+def test_decode_incidental_label_leaves_asset_codes_alone(raw):
+    """`INC`가 붙었다고 다 부수 캐릭터가 아니다 — FL104_Orev p70의
+    `CROWD INC 009`류는 **자산 코드**라 사람도 번역하지 않는다(실측: 사람
+    납품본 p70에 해당 주석 0건). 그래서 꼬리만 보고 일반화하지 않고
+    확인된 역할명 표에 있는 것만 해독한다."""
+    assert panel_ocr.decode_panel_label(raw) is None
+
+
+def test_decode_incidental_does_not_shadow_existing_rules():
+    """`SBINC`·`TTINC`는 자기 역할명을 이미 갖고 있어 먼저 잡혀야 한다."""
+    assert panel_ocr.decode_panel_label("SBINC12") == "파티광12"
+    assert panel_ocr.decode_panel_label("TTINCA") == "테킬라걸A"
+    assert panel_ocr.decode_panel_label("INC") is None
+    assert panel_ocr.decode_panel_label("IN") == "들어온다"
+
+
+# ── 한 글자 잡음 내성 (FL104_Orev p25 실측) ──────────────────────────────
+
+def test_decode_panel_label_lines_drops_single_char_noise():
+    """동그라미 친 `IN` 옆 화살표를 OCR이 `n`으로 읽어 묶음이 ['IN','n']이
+    됐고, '하나라도 못 읽으면 전부 번역기행' 규칙 탓에 `들어온다` 대신
+    뜻 없는 `인 n`이 주석으로 나갔다(사람: `안으로`)."""
+    assert panel_ocr.decode_panel_label_lines(["IN", "n"]) == ["들어온다"]
+    assert panel_ocr.decode_panel_label_lines(["SPCZMB", "7"]) == ["좀비"]
+
+
+def test_decode_panel_label_lines_keeps_two_char_fragments():
+    """두 글자 이상은 의미 있는 라벨일 수 있어 버리지 않는다 — 묶음째
+    번역기로 보낸다(조용히 라벨을 잃는 것보다 낫다)."""
+    assert panel_ocr.decode_panel_label_lines(["IN", "FG"]) is None
+
+
+def test_decode_panel_label_lines_all_undecodable_stays_none():
+    """전부 미해독이면 아무것도 버리지 않는다 — `FG`/`Fol`/`STAMP` 같은
+    영어 라벨 묶음은 지금처럼 통째로 번역기를 타야 한다."""
+    assert panel_ocr.decode_panel_label_lines(["FG", "Fol", "STAMP"]) is None
+    assert panel_ocr.decode_panel_label_lines(["n"]) is None

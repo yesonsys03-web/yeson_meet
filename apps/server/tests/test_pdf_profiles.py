@@ -1226,3 +1226,42 @@ def test_real_storyboard_sample(monkeypatch):
                 f"bbox {b.bbox}")
     finally:
         doc.close()
+
+
+# ── refine_ko: 판넬 라벨의 미번역 영문 줄 제거 (FL104_Orev p70 실측) ──────
+
+def _panel_block(text: str = "x") -> PdfBlock:
+    return PdfBlock(page=70, kind="panel_label", text=text, bbox=(0, 0, 1, 1))
+
+
+@pytest.mark.parametrize("ko,expected", [
+    # 실측 결함 그대로 — 자산 코드가 캐릭터 라벨과 한 묶음이 되어 딸려 나갔다.
+    ("CROWDINC037\n히피여자", "히피여자"),
+    ("SBINC12\n좀비\n여자 파티광1", "좀비\n여자 파티광1"),
+    # 통째로 미번역이면 붙일 게 없다 → 빈 문자열(부르는 쪽이 건너뛴다)
+    ("CROWDINC037", ""),
+])
+def test_refine_ko_drops_untranslated_english_lines(ko, expected):
+    """묶기 규칙을 아무리 다듬어도 서로 무관한 두 라벨이 나란히 서면 다시
+    생기는 결함이라, 마지막 관문에서 줄 단위로 걷어낸다."""
+    assert StoryboardProfile().refine_ko(_panel_block(), ko) == expected
+
+
+@pytest.mark.parametrize("ko", [
+    "부수\n성노동자", "좀비\n파티광3", "싸이클 1/2", "차006A",
+    # 사람 납품본 실측: 한글 없는 줄 113개 중 109개가 숫자 전용이고,
+    # 라틴 글자가 든 4개도 전부 한 글자 싸이클 기호다 — 정상 주석이다.
+    "126", "005", "1/2", "A 2/2\nB 1/2",
+])
+def test_refine_ko_keeps_legitimate_lines(ko):
+    """숫자 줄·한 글자 기호는 사람도 쓴다 — 지우면 멀쩡한 주석을 잃는다."""
+    assert StoryboardProfile().refine_ko(_panel_block(), ko) == ko
+
+
+def test_refine_ko_leaves_field_blocks_untouched():
+    """본문(dialog/action)에는 자산 ID·파일명이 정당하게 섞인다(프롬프트가
+    그대로 두라고 지시한다) — 줄 단위로 떼어낼 성질이 아니라 건드리지 않는다."""
+    ko = "매니:TGNO_PizzaBox_CL_V01 상자를 든다."
+    for kind in ("dialog", "action"):
+        block = PdfBlock(page=1, kind=kind, text="x", bbox=(0, 0, 1, 1))
+        assert StoryboardProfile().refine_ko(block, ko) == ko

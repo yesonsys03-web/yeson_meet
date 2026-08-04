@@ -182,12 +182,21 @@ async def run_pdf_job(external_id: UUID) -> None:
 
         await _set_status(external_id, "overlaying")
 
+        # 프로파일이 "이 블록에 이 번역을 정말 붙일 것인가"를 마지막으로
+        # 다듬는 선택적 훅. 없으면(다른 프로파일) 지금까지 동작 그대로.
+        refine_ko = getattr(profile, "refine_ko", None)
+
         def _overlay_and_save() -> Path | None:
             for i, block in enumerate(blocks):
                 ko = ko_by_block[i]
                 # 번역 실패 폴백(원문 복사)·빈 결과는 주석을 달지 않는다
                 if ko is None:
                     continue
+                if refine_ko is not None:
+                    ko = refine_ko(block, ko)
+                    if not ko:
+                        # 다듬고 나니 붙일 게 없다 — 주석을 만들지 않는다.
+                        continue
                 ov = profile.place(block, ko, doc.page_size(block.page))
                 if not _is_usable_rect(ov.rect, doc.page_size(block.page)):
                     # 방어선(2026-07-30 리뷰 Finding 1b) — place()가 아무리
