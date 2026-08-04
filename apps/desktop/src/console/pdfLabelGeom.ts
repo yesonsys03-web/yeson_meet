@@ -104,6 +104,14 @@ export function rectToRel(rect: Rect, panel: Rect): PointPt {
   };
 }
 
+/** `rectToRel`의 역 — 정규화 주소를 다시 pt로. 클릭 지점 표시에 쓴다. */
+export function relToPoint(panel: Rect, rel: [number, number]): PointPt {
+  return {
+    x: panel[0] + rel[0] * (panel[2] - panel[0]),
+    y: panel[1] + rel[1] * (panel[3] - panel[1]),
+  };
+}
+
 export function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }

@@ -22,7 +22,7 @@ import {
   type EditorState, type LabelRow,
 } from "./pdfLabelEditorState";
 import {
-  clientPointToPt, hitTestPanel, pxToPt, rectToStyle,
+  clientPointToPt, hitTestPanel, ptToPx, pxToPt, rectToStyle, relToPoint,
   type ImageBox, type Rect,
 } from "./pdfLabelGeom";
 
@@ -79,6 +79,7 @@ export function PdfLabelEditor({ job, onClose }: {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [drag, setDrag] = useState<{ id: string; dx: number; dy: number } | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const draftRef = useRef<HTMLDivElement | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -199,6 +200,23 @@ export function PdfLabelEditor({ job, onClose }: {
       setDraft(null);
     });
   };
+
+  // 새 라벨 폼은 이미지 **아래**에 그려진다 — 세로로 긴 페이지에서는 화면 밖에
+  // 생겨서, 판넬을 눌러도 "아무 일도 안 일어난다"로 보인다(실사용 보고).
+  // 새로 누를 때만 끌어온다 — 글자를 칠 때마다 스크롤하면 성가시다.
+  const draftKey = draft ? `${draft.panelIndex}:${draft.rel[0]}:${draft.rel[1]}` : "";
+  useEffect(() => {
+    if (draftKey) draftRef.current?.scrollIntoView({ block: "nearest" });
+  }, [draftKey]);
+
+  // 어디를 눌렀는지 그림 위에 남긴다 — 폼이 멀리 있어 잊기 쉽다.
+  const draftMark = (() => {
+    const panel = draft ? panels?.panels[draft.panelIndex]?.rect : undefined;
+    const box = boxOf(imgRef.current);
+    if (!draft || !panel || !box) return null;
+    const pt = relToPoint(panel as Rect, draft.rel);
+    return { left: ptToPx(pt.x, box), top: ptToPx(pt.y, box) };
+  })();
 
   const badge = (text: string, color: string) => (
     <span style={{
@@ -340,7 +358,17 @@ export function PdfLabelEditor({ job, onClose }: {
         </div>
 
         {/* ── 중: 페이지 + 판넬 경계 + 라벨 박스 ───────────────────────────── */}
-        <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {!readOnly && panels?.panels.length ? (
+            <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>
+              판넬(파란 점선) 안을 클릭하면 그 자리에 라벨을 추가합니다 —
+              OCR이 못 읽은 손글씨(IN → 들어온다)를 넣는 방법입니다.
+              라벨 상자는 끌어서 옮길 수 있고, 놓는 순간 저장됩니다.
+            </div>
+          ) : null}
+          {/* 절대배치 오버레이의 원점은 **이미지 좌상단**이어야 한다 — 안내문
+              같은 형제를 같은 relative 상자에 두면 박스가 통째로 밀린다. */}
+          <div style={{ position: "relative" }}>
           <img ref={imgRef} src={pdfPageUrl(job.job_id, state.page, variant)}
             alt={`p${state.page + 1}`} onClick={onImageClick}
             onLoad={() => setPanels((p) => (p ? { ...p } : p))}
@@ -402,13 +430,21 @@ export function PdfLabelEditor({ job, onClose }: {
                 }} />
             );
           })}
+          {draftMark ? (
+            <div style={{
+              position: "absolute", left: draftMark.left - 6, top: draftMark.top - 6,
+              width: 12, height: 12, borderRadius: "50%", pointerEvents: "none",
+              border: "2px solid #4ade80", background: "rgba(74,222,128,0.25)",
+            }} />
+          ) : null}
+          </div>
         </div>
       </div>
 
       {/* ── 하: 신규 입력 / 선택 항목 폼 ──────────────────────────────────── */}
       {draft ? (
-        <div style={{ marginTop: 8, padding: 8, border: "1px solid #334155",
-          borderRadius: 4, fontSize: 12 }}>
+        <div ref={draftRef} style={{ marginTop: 8, padding: 8,
+          border: "1px solid #4ade80", borderRadius: 4, fontSize: 12 }}>
           <strong>새 라벨 — {state.page + 1}쪽 {draft.panelIndex + 1}번 판넬</strong>
           <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center",
             flexWrap: "wrap" }}>

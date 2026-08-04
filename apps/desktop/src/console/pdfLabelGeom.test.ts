@@ -10,6 +10,7 @@ import {
   pxToPt,
   rectToRel,
   rectToStyle,
+  relToPoint,
   type ImageBox,
   type Rect,
 } from "./pdfLabelGeom";
@@ -84,5 +85,17 @@ describe("pdfLabelGeom", () => {
     const mid = rectToRel([189.15, 195.05, 200, 210], panel);
     expect(mid.x).toBeCloseTo(0.5, 3);
     expect(mid.y).toBeCloseTo(0.5, 3);
+  });
+
+  it("정규화 좌표를 pt로 되돌린다(클릭 지점 표시)", () => {
+    const panel: Rect = [38.1, 110.9, 340.2, 279.2];
+    // 왕복해도 제자리 — 표시용 마커가 저장될 주소와 어긋나면 안 된다.
+    for (const rel of [[0, 0], [0.5, 0.5], [1, 1], [0.23, 0.77]] as [number, number][]) {
+      const pt = relToPoint(panel, rel);
+      const back = rectToRel([pt.x, pt.y, pt.x + 1, pt.y + 1], panel);
+      expect(back.x).toBeCloseTo(rel[0], 6);
+      expect(back.y).toBeCloseTo(rel[1], 6);
+    }
+    expect(relToPoint(panel, [0, 0])).toEqual({ x: 38.1, y: 110.9 });
   });
 });
