@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import threading
 from pathlib import Path
@@ -21,6 +22,16 @@ from apps.server.domain.video_captions.translate import maybe_aclose_translator
 from apps.server.domain.video_captions.translate_cli import create_translator
 
 from .backend import open_pdf
+from .overlay_plan import (
+    apply_composed,
+    build_plan,
+    compose,
+    invalidate_baked_version,
+    load_edits,
+    mark_baked,
+    panels_resolver,
+    save_plan,
+)
 from .pdf_store import pdf_job_dir
 from .pdf_tasks import (
     _PDF_SEMAPHORE,
@@ -51,23 +62,6 @@ RETENTION_KEEP = 10
 
 class PdfTranslateError(RuntimeError):
     pass
-
-
-def _is_usable_rect(rect: tuple[float, float, float, float],
-                    page_size: tuple[float, float]) -> bool:
-    """add_freetext에 넘기기 전 마지막 방어선(2026-07-30 리뷰 Finding 1b).
-
-    profile.place()가 아무리 견고해도(스토리보드 프로파일은 이미
-    비퇴화·온페이지를 보장하지만, 다른/미래 프로파일까지 같은 보장을
-    한다는 계약은 없다) rect의 폭·높이가 0 이하이거나 완전히 페이지
-    밖이면 PyMuPDF add_freetext_annot이 'rect is infinite or empty'로
-    터진다 — 그 예외가 _overlay_and_save 루프 중간에서 나면 이미 끝낸
-    번역(최대 수백~천 블록)까지 통째로 날아간다."""
-    x0, y0, x1, y1 = rect
-    page_w, page_h = page_size
-    if not (x1 > x0 and y1 > y0):
-        return False
-    return x1 > 0.0 and y1 > 0.0 and x0 < page_w and y0 < page_h
 
 
 def _with_doc_lock(lock: threading.Lock, fn, *args):
@@ -182,42 +176,44 @@ async def run_pdf_job(external_id: UUID) -> None:
 
         await _set_status(external_id, "overlaying")
 
-        # 프로파일이 "이 블록에 이 번역을 정말 붙일 것인가"를 마지막으로
-        # 다듬는 선택적 훅. 없으면(다른 프로파일) 지금까지 동작 그대로.
-        refine_ko = getattr(profile, "refine_ko", None)
-
         def _overlay_and_save() -> Path | None:
-            for i, block in enumerate(blocks):
-                ko = ko_by_block[i]
-                # 번역 실패 폴백(원문 복사)·빈 결과는 주석을 달지 않는다
-                if ko is None:
-                    continue
-                if refine_ko is not None:
-                    ko = refine_ko(block, ko)
-                    if not ko:
-                        # 다듬고 나니 붙일 게 없다 — 주석을 만들지 않는다.
-                        continue
-                ov = profile.place(block, ko, doc.page_size(block.page))
-                if not _is_usable_rect(ov.rect, doc.page_size(block.page)):
-                    # 방어선(2026-07-30 리뷰 Finding 1b) — place()가 아무리
-                    # 견고해도, 퇴화(폭·높이 0 이하)하거나 페이지 밖으로 나간
-                    # rect를 add_freetext에 넘기면 PyMuPDF가
-                    # 'rect is infinite or empty'로 터진다. 그 한 블록
-                    # 때문에 이미 끝낸 번역(최대 수백~천 블록)까지 통째로
-                    # 잃을 수는 없으니, 이 블록만 건너뛰고 경고를 남긴다.
-                    logger.warning(
-                        "pdf-translate: page %d %s block의 rect가 유효하지 "
-                        "않아 주석을 건너뜀 %r", block.page, block.kind, ov.rect)
-                    continue
-                doc.add_freetext(ov.page, ov.rect, ov.text, fontsize=ov.fontsize)
+            job_dir = pdf_job_dir(external_id)
+            # 굽기 진입 = 디스크의 PDF와 계획이 어긋나는 구간의 시작. 계획을
+            # **지우지 않고 무효화만** 한다 — 지우면 취소가 이 직후에 도착했을
+            # 때 "멀쩡한 옛 PDF + 멀쩡한 편집 파일 + 계획 없음"이 남아, 목록에서
+            # 사용자의 수동 라벨이 통째로 사라지고 잡이 되살릴 길 없이 막힌다
+            # (overlay_plan.UNBAKED 주석 참조).
+            previous_version = invalidate_baked_version(job_dir)
+            plan = build_plan(doc, profile, blocks, ko_by_block,
+                              job_id=str(external_id),
+                              plan_version=previous_version + 1)
+            # 파이프라인은 편집 파일을 **읽기만** 한다 — 수동 라벨이
+            # (페이지, 판넬, 상대좌표) 주소로 구조적으로 재부착되는 지점이다.
+            edits = load_edits(job_dir, job_id=str(external_id))
+            composed = compose(plan, edits, panels_resolver(doc, profile))
+            if apply_composed(doc, composed.placed) is None:
+                return None
             if generation != _current_generation(external_id):
                 # 취소/삭제가 오버레이 배치 도중 도착했다 — 여기서 저장을
                 # 건너뛰지 않으면 doc.save()의 mkdir(parents=True)이 DELETE가
                 # 방금 지운 작업 폴더를 되살리고, DB 행 없는 고아
                 # translated.pdf를 남긴다(pdf_jobs엔 프루닝 스윕도 없다).
                 return None
-            dest = pdf_job_dir(external_id) / "translated.pdf"
-            doc.save(dest)
+            # tmp → os.replace: 디스크의 translated.pdf는 언제나 **완결된**
+            # 파일이어야 한다. 재시작 스윕이 "translated_path가 실재하면 done"
+            # 으로 복구하는데, 제자리 저장이면 doc.save 도중 죽었을 때 **잘린
+            # PDF가 done으로 승격**돼 다운로드 200이 나간다.
+            dest = job_dir / "translated.pdf"
+            tmp = dest.with_name(dest.name + ".tmp")
+            doc.save(tmp)
+            if generation != _current_generation(external_id):
+                tmp.unlink(missing_ok=True)
+                return None
+            os.replace(tmp, dest)
+            # 계획 저장은 세대 가드 **뒤**에 둔다(취소 시 고아 계획 금지).
+            # baked_edits_version은 방금 합성에 쓴 **그 스냅샷**의 값이다 —
+            # 여기서 편집 파일을 다시 읽으면 굽지 않은 편집을 구웠다고 기록한다.
+            save_plan(job_dir, mark_baked(plan, edits.edits_version))
             return dest
 
         dest = await asyncio.to_thread(_with_doc_lock, doc_lock, _overlay_and_save)
