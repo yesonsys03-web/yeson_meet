@@ -184,6 +184,10 @@ class PlacedItem:
     fontsize: float
     origin: str          # "auto" | "manual"
     item_id: str
+    kind: str = "panel_label"
+    source_text: str = ""
+    edited: bool = False        # 자동 항목에 사람의 수정이 적용됐는가
+    panel_index: int | None = None   # 수동 라벨의 주소(자동은 None)
 
 
 @dataclass(frozen=True)
@@ -485,7 +489,9 @@ def compose(plan: OverlayPlan, edits: LabelEdits,
                 else it.rect)
         placed.append(PlacedItem(page=it.page, rect=rect, text=text,
                                  fontsize=it.fontsize, origin="auto",
-                                 item_id=it.id))
+                                 item_id=it.id, kind=it.kind,
+                                 source_text=it.source_text,
+                                 edited=ov is not None))
 
     unresolved: list[ManualLabel] = []
     for m in edits.manual:
@@ -500,7 +506,9 @@ def compose(plan: OverlayPlan, edits: LabelEdits,
         y0 = py0 + m.rel[1] * (py1 - py0)
         placed.append(PlacedItem(
             page=m.page, rect=_rect2((x0, y0, x0 + m.size[0], y0 + m.size[1])),
-            text=m.text, fontsize=m.fontsize, origin="manual", item_id=m.id))
+            text=m.text, fontsize=m.fontsize, origin="manual", item_id=m.id,
+            kind="panel_label", source_text=m.source_text,
+            panel_index=m.panel_index))
 
     return ComposeResult(placed=placed, unresolved=unresolved,
                          dangling=dangling, deleted=deleted)
@@ -544,6 +552,108 @@ def apply_composed(doc: PdfDocument, placed: Sequence[PlacedItem], *,
         on_progress(len(placed))
     return ApplyStats(annots=annots, out_of_range=out_of_range,
                       unusable_rect=unusable)
+
+
+# ── 편집 변형 (전부 순수 함수: 편집 in → 편집 out) ───────────────────────────
+#
+# 파일 IO도 락도 여기 없다 — 라우트가 잡별 락 안에서 read-modify-write 한다.
+# 순수하게 두면 동시성 없이 규칙만 테스트할 수 있다.
+
+def _next(edits: LabelEdits, *, manual=None, overrides=None) -> LabelEdits:
+    """버전을 올린 새 편집 — 낙관적 동시성 토큰이 여기서만 증가한다."""
+    return LabelEdits(
+        job_id=edits.job_id, edits_version=edits.edits_version + 1,
+        manual=edits.manual if manual is None else manual,
+        overrides=edits.overrides if overrides is None else overrides,
+        updated_at=datetime.now(UTC).isoformat())
+
+
+def add_manual(edits: LabelEdits, label: ManualLabel) -> LabelEdits:
+    return _next(edits, manual=[*edits.manual, label])
+
+
+def patch_manual(edits: LabelEdits, item_id: str, *, text: str | None = None,
+                 rel: tuple[float, float] | None = None,
+                 size: tuple[float, float] | None = None,
+                 panel_rect: tuple[float, float, float, float] | None = None,
+                 ) -> LabelEdits:
+    """수동 라벨 수정. **rect가 아니라 `rel`을 저장한다** — 절대 좌표를 저장하면
+    재번역 후에도 옛 자리에 찍혀 AC11(주소 재부착)이 그 순간 무너진다."""
+    out = []
+    for m in edits.manual:
+        if m.id != item_id:
+            out.append(m)
+            continue
+        out.append(ManualLabel(
+            id=m.id, page=m.page, panel_index=m.panel_index,
+            rel=m.rel if rel is None else rel,
+            size=m.size if size is None else size,
+            fontsize=m.fontsize, source_text=m.source_text,
+            text=m.text if text is None else text,
+            panel_rect=m.panel_rect if panel_rect is None else panel_rect,
+            address_rev=m.address_rev))
+    return _next(edits, manual=out)
+
+
+def repoint_manual(edits: LabelEdits, item_id: str, *, page: int,
+                   panel_index: int, rel: tuple[float, float] | None = None,
+                   panel_rect: tuple[float, float, float, float] | None = None,
+                   ) -> LabelEdits:
+    """주소를 잃은 수동 라벨을 **사람이 직접** 다른 판넬로 다시 붙인다.
+
+    `page`도 받는다 — 페이지 자체가 사라진 orphan은 판넬 번호만으로는 복구할
+    수 없다. 시스템이 추정하지 않고 사람이 고르는 것이 이 경로의 요점이다.
+    """
+    out = []
+    for m in edits.manual:
+        if m.id != item_id:
+            out.append(m)
+            continue
+        out.append(ManualLabel(
+            id=m.id, page=page, panel_index=panel_index,
+            rel=m.rel if rel is None else rel, size=m.size,
+            fontsize=m.fontsize, source_text=m.source_text, text=m.text,
+            panel_rect=panel_rect, address_rev=PANEL_ADDRESS_REV))
+    return _next(edits, manual=out)
+
+
+def delete_manual(edits: LabelEdits, item_id: str) -> LabelEdits:
+    return _next(edits, manual=[m for m in edits.manual if m.id != item_id])
+
+
+def upsert_override(edits: LabelEdits, target: str, *, page: int,
+                    text: str | None = None,
+                    rect: tuple[float, float, float, float] | None = None,
+                    deleted: bool | None = None) -> LabelEdits:
+    """자동 라벨에 대한 사람의 수정/삭제를 덮어쓴다(없으면 만든다)."""
+    found = False
+    out: list[Override] = []
+    for o in edits.overrides:
+        if o.target != target:
+            out.append(o)
+            continue
+        found = True
+        out.append(Override(
+            target=target, page=page,
+            text=o.text if text is None else text,
+            rect=o.rect if rect is None else rect,
+            deleted=o.deleted if deleted is None else deleted))
+    if not found:
+        out.append(Override(target=target, page=page, text=text, rect=rect,
+                            deleted=bool(deleted)))
+    return _next(edits, overrides=out)
+
+
+def purge_dangling(edits: LabelEdits, known_ids: set[str]) -> LabelEdits:
+    """계획에 없는 target을 겨냥한 override만 정리한다.
+
+    ⚠ **수동 라벨은 어떤 상태에서도 이 경로로 삭제되지 않는다.** 주소를 잃은
+    수동 라벨(unresolved)은 판넬이 되돌아오면 다음 굽기에서 자동 복귀하는데,
+    "무효 항목 정리" 버튼이 그것까지 지우면 되돌아올 예정이던 사람의 라벨이
+    영구 소멸한다(버전 파일 누적은 Non-Goal이라 복구 수단도 없다).
+    """
+    return _next(edits, overrides=[o for o in edits.overrides
+                                   if o.target in known_ids])
 
 
 def panels_resolver(doc: PdfDocument, profile) -> Callable[[int], Sequence | None]:

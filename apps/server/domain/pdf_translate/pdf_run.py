@@ -28,6 +28,7 @@ from .overlay_plan import (
     apply_composed,
     build_plan,
     compose,
+    edits_path,
     invalidate_baked_version,
     load_edits,
     load_plan,
@@ -476,6 +477,34 @@ async def fail_inflight_pdf_jobs_at_startup() -> None:
             await db.commit()
 
 
+def _jobs_with_edits(external_ids: list) -> set:
+    """사람의 편집이 **내용상** 있는 작업들 — 프루닝 고정 대상.
+
+    파일 존재가 아니라 항목 수로 본다. `label_edits.json`은 항목이 0이 돼도
+    삭제하지 않으므로(생성/삭제 경합 제거) 존재만 보면 영원히 고정된다.
+    """
+    pinned = set()
+    for eid in external_ids:
+        job_dir = pdf_job_dir(eid)
+        try:
+            has_file = edits_path(job_dir).exists()
+            if has_file and load_edits(job_dir, job_id=str(eid)).item_count() > 0:
+                pinned.add(eid)
+            elif has_file:
+                # 파일은 있는데 항목이 0 — 사람이 전부 지웠거나(일반 대상으로
+                # 돌아간다) 파일이 깨져 `load_edits`가 빈 값으로 수렴시켰거나다.
+                # 둘을 구분할 수 없으므로 **읽어서 항목 0임이 확실한 경우만**
+                # 후보로 되돌린다. 여기서는 파싱이 성공했다는 뜻이므로 통과.
+                pass
+        except Exception:  # noqa: BLE001 — 아래 근거로 의도된 포괄 catch
+            # 편집 파일 상태를 확신할 수 없으면 **보존한다.** 번역본은 다시
+            # 구울 수 있지만 사람이 친 라벨은 재생성할 수 없어서, 여기서
+            # 틀리는 방향은 "지우지 않는 쪽"이어야 한다.
+            logger.warning("retention: %s 편집 파일 확인 실패 — 보존한다", eid)
+            pinned.add(eid)
+    return pinned
+
+
 async def _prune_pre_delete_hook(candidate_ids: list[int]) -> None:
     """프루닝의 SELECT와 DELETE 사이 지점 (기본 no-op). 테스트가 여기서 상태
     전이(done→translating 재실행)를 주입해 DELETE 시점의 상태 재확인 가드를
@@ -497,11 +526,34 @@ async def prune_old_pdf_jobs(keep: int = RETENTION_KEEP) -> int:
     try:
         async with AsyncSessionLocal() as db:
             rows = (await db.execute(
-                select(PdfJob.id, PdfJob.status).order_by(
+                select(PdfJob.id, PdfJob.status, PdfJob.external_id).order_by(
                     PdfJob.created_at.desc(), PdfJob.id.desc())
             )).all()
+            # 사람이 넣은 편집이 있는 작업은 **아무리 오래돼도 지우지 않는다.**
+            #
+            # 이 함수 하나가 업로드 시(`pdf_jobs.py`의 `_prune_old_jobs`)와 서버
+            # 시작 시(`prune_old_pdf_jobs_at_startup`) 프루닝의 유일한 경로라,
+            # 여기 한 번만 막으면 두 경로가 함께 닫힌다. 막지 않으면 스토리보드를
+            # 묶음 업로드하는 순간(또는 재시작 한 번에) 두 시간 걸려 넣은 라벨이
+            # 경고도 없이 폴더째 사라진다 — `translated.pdf`는 다시 구울 수 있지만
+            # 사람이 친 라벨은 재생성할 수 없다.
+            #
+            # 판정은 파일 존재가 아니라 **내용**이다(`item_count`) — 사용자가
+            # 편집을 전부 지우면 다시 일반 대상이 된다.
+            #
+            # ⚠ 이 재확인은 DB 상태에만 원자적이다. `_prune_delete` 의 WHERE는
+            # 컬럼만 볼 수 있고 편집 항목 수는 파일이라, SELECT와 DELETE 사이
+            # (밀리초)에 첫 편집이 생기면 그 작업은 여전히 삭제될 수 있다.
+            # 창이 매우 좁고(방금 만든 작업은 정렬상 후보에도 안 든다) 완전
+            # 배제가 아님을 기록해 둔다.
+            pinned = await asyncio.to_thread(
+                _jobs_with_edits, [r.external_id for r in rows[keep:]])
             candidate_ids = [r.id for r in rows[keep:]
-                             if r.status not in _INFLIGHT_STATUSES]
+                             if r.status not in _INFLIGHT_STATUSES
+                             and r.external_id not in pinned]
+            if pinned:
+                logger.info("retention: pinned %d job(s) with manual edits",
+                            len(pinned))
             if not candidate_ids:
                 return 0
             await _prune_pre_delete_hook(candidate_ids)
