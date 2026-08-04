@@ -4,6 +4,7 @@ import {
   cancelPdfJob, deletePdfJob, isActivePdfStatus, listPdfJobs,
   pdfDownloadUrl, pdfUploadUrl, uploadPdfJob, type PdfJobSummary,
 } from "./pdfApi";
+import { PdfLabelEditor } from "./PdfLabelEditor";
 import { PdfPreview } from "./PdfPreview";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -159,6 +160,10 @@ function PdfJobList({ jobs, onChanged, onError }: {
   onError: (msg: string) => void;
 }) {
   const [previewId, setPreviewId] = useState<string | null>(null);
+  // 편집 뷰는 **열려 있는 동안 언마운트하지 않는다.** 재굽기를 시작하면 상태가
+  // overlaying이 되어 아래 `status === "done"` 분기로는 버튼이 사라지는데,
+  // 그때 화면까지 닫히면 사람이 방금 무엇을 눌렀는지 잃는다.
+  const [editorId, setEditorId] = useState<string | null>(null);
   if (!jobs.length) {
     return <p style={{ color: "#64748b", fontSize: 12 }}>작업이 없습니다.</p>;
   }
@@ -198,13 +203,23 @@ function PdfJobList({ jobs, onChanged, onError }: {
               setPreviewId((cur) => (cur === j.job_id ? null : j.job_id))
             }>프리뷰</button>
             {j.status === "done" ? (
-              <button type="button" onClick={() => void downloadPdf(j, onError)}>
-                번역 PDF 저장
-              </button>
+              <>
+                <button type="button" onClick={() => void downloadPdf(j, onError)}>
+                  번역 PDF 저장
+                </button>
+                <button type="button" onClick={() =>
+                  setEditorId((cur) => (cur === j.job_id ? null : j.job_id))
+                }>
+                  라벨 편집{j.has_edits ? " ✎" : ""}{j.stale ? " (다시 굽기 필요)" : ""}
+                </button>
+              </>
             ) : null}
           </div>
           {previewId === j.job_id ? (
             <PdfPreview job={j} onClose={() => setPreviewId(null)} />
+          ) : null}
+          {editorId === j.job_id ? (
+            <PdfLabelEditor job={j} onClose={() => setEditorId(null)} />
           ) : null}
         </div>
       ))}

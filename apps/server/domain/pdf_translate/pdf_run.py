@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import threading
+from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
@@ -21,6 +24,18 @@ from apps.server.domain.video_captions.translate import maybe_aclose_translator
 from apps.server.domain.video_captions.translate_cli import create_translator
 
 from .backend import open_pdf
+from .overlay_plan import (
+    apply_composed,
+    build_plan,
+    compose,
+    edits_path,
+    invalidate_baked_version,
+    load_edits,
+    load_plan,
+    mark_baked,
+    panels_resolver,
+    save_plan,
+)
 from .pdf_store import pdf_job_dir
 from .pdf_tasks import (
     _PDF_SEMAPHORE,
@@ -28,9 +43,11 @@ from .pdf_tasks import (
     _current_generation,
     _set_progress,
     _set_status,
+    _set_status_if_current,
     _try_set_error,
+    mark_rebaking,
 )
-from .profiles import detect_profile
+from .profiles import detect_profile, profile_by_name
 from .translate_blocks import build_pdf_prompt, translate_texts
 from .utterances import group_utterances
 
@@ -53,23 +70,6 @@ class PdfTranslateError(RuntimeError):
     pass
 
 
-def _is_usable_rect(rect: tuple[float, float, float, float],
-                    page_size: tuple[float, float]) -> bool:
-    """add_freetext에 넘기기 전 마지막 방어선(2026-07-30 리뷰 Finding 1b).
-
-    profile.place()가 아무리 견고해도(스토리보드 프로파일은 이미
-    비퇴화·온페이지를 보장하지만, 다른/미래 프로파일까지 같은 보장을
-    한다는 계약은 없다) rect의 폭·높이가 0 이하이거나 완전히 페이지
-    밖이면 PyMuPDF add_freetext_annot이 'rect is infinite or empty'로
-    터진다 — 그 예외가 _overlay_and_save 루프 중간에서 나면 이미 끝낸
-    번역(최대 수백~천 블록)까지 통째로 날아간다."""
-    x0, y0, x1, y1 = rect
-    page_w, page_h = page_size
-    if not (x1 > x0 and y1 > y0):
-        return False
-    return x1 > 0.0 and y1 > 0.0 and x0 < page_w and y0 < page_h
-
-
 def _with_doc_lock(lock: threading.Lock, fn, *args):
     """doc을 만지는 모든 워커 스레드 진입점의 공통 게이트.
 
@@ -83,11 +83,100 @@ def _with_doc_lock(lock: threading.Lock, fn, *args):
         return fn(*args)
 
 
-async def run_pdf_job(external_id: UUID) -> None:
+@dataclass
+class _JobSlot:
+    """한 잡 실행이 점유하는 자원 — 세대·doc 락·열린 문서."""
+    generation: int
+    doc_lock: threading.Lock
+    doc: object | None = None
+
+    def run(self, fn, *args):
+        """doc을 만지는 워커 스레드 진입점 — 코루틴에서 `await`해 쓴다."""
+        return asyncio.to_thread(_with_doc_lock, self.doc_lock, fn, *args)
+
+
+@asynccontextmanager
+async def _pdf_job_slot(external_id: UUID):
+    """잡 실행 슬롯 — 세마포어·세대·doc 수명을 **한곳에서** 관리한다.
+
+    `run_pdf_job`과 `rebake_pdf_job`이 공유한다. 복제하면 이 파일에서 사고
+    이력이 가장 두꺼운 구간(아래 세마포어 반납 방어)이 두 벌이 되어, 다음에
+    한쪽만 고치는 사고가 난다.
+
+    ⚠ `acquire`는 `try` **밖**이다. 이건 의도적이다 — acquire 대기 중 취소가
+    오면 release를 하면 안 되는데, `try` 안으로 넣으면 값 1짜리 전역 세마포어가
+    2가 되어 직렬화가 깨진다. 바로 아래 구간은 정반대 사고(영구 고갈)를
+    기록하고 있어 **양방향 함정**이다.
+    """
     await _PDF_SEMAPHORE.acquire()
-    generation = _bump_generation(external_id)
+    slot = _JobSlot(generation=_bump_generation(external_id),
+                    doc_lock=threading.Lock())
+    try:
+        yield slot
+    finally:
+        # 세마포어 반납은 무조건 실행돼야 한다 — close 대기 중 두 번째 취소가
+        # 도착하면(cancel_pdf_task는 task.done()이 아닌 한 언제든 재취소 가능,
+        # 셧다운/그룹 취소·루프 종료 시 executor 거부도 마찬가지) 안쪽 await이
+        # CancelledError/RuntimeError를 던지고, 그걸 못 잡으면 release() 줄이
+        # 통째로 건너뛰어져 모듈 전역 _PDF_SEMAPHORE(값 1)가 영구 고갈된다
+        # (재시작 전까진 이후 모든 작업이 조용히 멈춤).
+        try:
+            if slot.doc is not None:
+                # 락을 쥔 채(고아 스레드가 doc을 다 쓸 때까지) 닫는다. 대기 자체도
+                # 워커 스레드에서 해야 이벤트 루프(실시간 자막 WebSocket)를 막지
+                # 않는다. asyncio.shield: close 도중 두 번째 취소가 와도 close
+                # 작업 자체는 백그라운드에서 끝까지 돌게 한다(중간에 버려지면
+                # 파일 핸들이 안 닫힌 채 새는 fitz 문서가 된다) — shield는 취소를
+                # 호출자에게는 그대로 전달하므로 바깥 except가 받는다.
+                await asyncio.shield(slot.run(slot.doc.close))
+        except BaseException:  # 무엇이 오든(재취소·RuntimeError 등) release는 반드시 실행
+            logger.exception("pdf job %s: doc close failed (during cleanup)",
+                             external_id)
+        finally:
+            _PDF_SEMAPHORE.release()
+
+
+async def _converge_after_failure(external_id: UUID, generation: int,
+                                  message: str) -> None:
+    """실패·취소로 끝났을 때 **쓸 만한 번역본이 남아 있으면** `done`으로 수렴.
+
+    `error`/`cancelled`로 굳으면 네 가지가 한꺼번에 잠긴다: `/download`가 영구
+    409(`status != "done"`), 편집·rebake·retranslate도 409, 시작 스윕은
+    in-flight만 보므로 구제 불가, 게다가 그 상태는 in-flight가 아니라서 **다음
+    업로드의 프루닝이 그 폴더를 rmtree 후보로 삼는다** — 사람이 넣은 라벨이
+    그렇게 사라진다.
+
+    첫 번역이 실패했을 때는 번역본 자체가 없으므로 평소대로 `error`가 된다.
+    재번역·재굽기가 실패했을 때만 옛 번역본이 남아 있어 `done`으로 돌아온다 —
+    한 규칙이 두 경우를 모두 옳게 처리한다.
+    """
+    translated = None
+    try:
+        async with AsyncSessionLocal() as db:
+            job = (await db.execute(
+                select(PdfJob).where(PdfJob.external_id == external_id)
+            )).scalar_one_or_none()
+            translated = job.translated_path if job is not None else None
+    except Exception:
+        logger.exception("pdf job %s: 상태 수렴 중 조회 실패", external_id)
+    if (translated and Path(translated).exists()
+            and await _set_status_if_current(external_id, generation, "done",
+                                             error=message)):
+        return
+    if generation == _current_generation(external_id):
+        await _try_set_error(external_id, message)
+
+
+async def run_pdf_job(external_id: UUID) -> None:
+    """번역 파이프라인 한 번 — 추출 → 번역 → 오버레이."""
+    async with _pdf_job_slot(external_id) as slot:
+        await _translate_and_overlay(external_id, slot)
+
+
+async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
+    generation = slot.generation
+    doc_lock = slot.doc_lock
     doc = None
-    doc_lock = threading.Lock()
     try:
         async with AsyncSessionLocal() as db:
             job = (await db.execute(
@@ -100,7 +189,7 @@ async def run_pdf_job(external_id: UUID) -> None:
             raise PdfTranslateError("원본 PDF 파일이 없습니다")
 
         await _set_status(external_id, "extracting")
-        doc = await asyncio.to_thread(open_pdf, Path(source_path))
+        doc = slot.doc = await asyncio.to_thread(open_pdf, Path(source_path))
         # detect_profile은 최대 3페이지 get_text("dict")를 훑는다(GIL 바운드) —
         # 이벤트 루프에서 직접 돌리면 실시간 자막 WebSocket이 수십ms 멎는다.
         profile = await asyncio.to_thread(_with_doc_lock, doc_lock, detect_profile, doc)
@@ -182,76 +271,172 @@ async def run_pdf_job(external_id: UUID) -> None:
 
         await _set_status(external_id, "overlaying")
 
-        # 프로파일이 "이 블록에 이 번역을 정말 붙일 것인가"를 마지막으로
-        # 다듬는 선택적 훅. 없으면(다른 프로파일) 지금까지 동작 그대로.
-        refine_ko = getattr(profile, "refine_ko", None)
-
         def _overlay_and_save() -> Path | None:
-            for i, block in enumerate(blocks):
-                ko = ko_by_block[i]
-                # 번역 실패 폴백(원문 복사)·빈 결과는 주석을 달지 않는다
-                if ko is None:
-                    continue
-                if refine_ko is not None:
-                    ko = refine_ko(block, ko)
-                    if not ko:
-                        # 다듬고 나니 붙일 게 없다 — 주석을 만들지 않는다.
-                        continue
-                ov = profile.place(block, ko, doc.page_size(block.page))
-                if not _is_usable_rect(ov.rect, doc.page_size(block.page)):
-                    # 방어선(2026-07-30 리뷰 Finding 1b) — place()가 아무리
-                    # 견고해도, 퇴화(폭·높이 0 이하)하거나 페이지 밖으로 나간
-                    # rect를 add_freetext에 넘기면 PyMuPDF가
-                    # 'rect is infinite or empty'로 터진다. 그 한 블록
-                    # 때문에 이미 끝낸 번역(최대 수백~천 블록)까지 통째로
-                    # 잃을 수는 없으니, 이 블록만 건너뛰고 경고를 남긴다.
-                    logger.warning(
-                        "pdf-translate: page %d %s block의 rect가 유효하지 "
-                        "않아 주석을 건너뜀 %r", block.page, block.kind, ov.rect)
-                    continue
-                doc.add_freetext(ov.page, ov.rect, ov.text, fontsize=ov.fontsize)
+            job_dir = pdf_job_dir(external_id)
+            # 굽기 진입 = 디스크의 PDF와 계획이 어긋나는 구간의 시작. 계획을
+            # **지우지 않고 무효화만** 한다 — 지우면 취소가 이 직후에 도착했을
+            # 때 "멀쩡한 옛 PDF + 멀쩡한 편집 파일 + 계획 없음"이 남아, 목록에서
+            # 사용자의 수동 라벨이 통째로 사라지고 잡이 되살릴 길 없이 막힌다
+            # (overlay_plan.UNBAKED 주석 참조).
+            previous_version = invalidate_baked_version(job_dir)
+            plan = build_plan(doc, profile, blocks, ko_by_block,
+                              job_id=str(external_id),
+                              plan_version=previous_version + 1)
+            # 파이프라인은 편집 파일을 **읽기만** 한다 — 수동 라벨이
+            # (페이지, 판넬, 상대좌표) 주소로 구조적으로 재부착되는 지점이다.
+            edits = load_edits(job_dir, job_id=str(external_id))
+            composed = compose(plan, edits, panels_resolver(doc, profile))
+            if apply_composed(doc, composed.placed) is None:
+                return None
             if generation != _current_generation(external_id):
                 # 취소/삭제가 오버레이 배치 도중 도착했다 — 여기서 저장을
                 # 건너뛰지 않으면 doc.save()의 mkdir(parents=True)이 DELETE가
                 # 방금 지운 작업 폴더를 되살리고, DB 행 없는 고아
                 # translated.pdf를 남긴다(pdf_jobs엔 프루닝 스윕도 없다).
                 return None
-            dest = pdf_job_dir(external_id) / "translated.pdf"
-            doc.save(dest)
+            # tmp → os.replace: 디스크의 translated.pdf는 언제나 **완결된**
+            # 파일이어야 한다. 재시작 스윕이 "translated_path가 실재하면 done"
+            # 으로 복구하는데, 제자리 저장이면 doc.save 도중 죽었을 때 **잘린
+            # PDF가 done으로 승격**돼 다운로드 200이 나간다.
+            dest = job_dir / "translated.pdf"
+            tmp = dest.with_name(dest.name + ".tmp")
+            doc.save(tmp)
+            if generation != _current_generation(external_id):
+                tmp.unlink(missing_ok=True)
+                return None
+            os.replace(tmp, dest)
+            # 계획 저장은 세대 가드 **뒤**에 둔다(취소 시 고아 계획 금지).
+            # baked_edits_version은 방금 합성에 쓴 **그 스냅샷**의 값이다 —
+            # 여기서 편집 파일을 다시 읽으면 굽지 않은 편집을 구웠다고 기록한다.
+            save_plan(job_dir, mark_baked(plan, edits.edits_version))
             return dest
 
         dest = await asyncio.to_thread(_with_doc_lock, doc_lock, _overlay_and_save)
         if dest is None:
+            # 취소로 저장을 건너뛰었다. **최종 상태는 취소 라우트가 쓴다** —
+            # 여기서 쓰려 해도 세대가 이미 밀려 있어 억제된다(그게 경합을
+            # 없애는 기전이다). 옛 번역본이 남아 있으면 라우트가 `done`으로
+            # 수렴시킨다(§4.7-C.7).
             raise asyncio.CancelledError
-        await _set_status(external_id, "done", translated_path=str(dest))
+        await _set_status_if_current(external_id, generation, "done",
+                                     translated_path=str(dest))
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         logger.exception("pdf job %s failed", external_id)
-        if generation == _current_generation(external_id):
-            await _try_set_error(external_id, str(exc))
+        await _converge_after_failure(external_id, generation, str(exc))
+
+
+def _cleanup_tmp_files(job_dir: Path) -> None:
+    """중단된 저장이 남긴 `*.tmp` 정리 — 원자 교체의 뒷정리다."""
+    try:
+        for tmp in job_dir.glob("*.tmp"):
+            tmp.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("pdf: %s 의 tmp 정리 실패", job_dir, exc_info=True)
+
+
+async def rebake_pdf_job(external_id: UUID) -> None:
+    """계획 + 편집을 합성해 `translated.pdf`만 다시 굽는다 — **번역은 하지 않는다.**
+
+    편집 한 건마다 문서를 굽지 않는 이유는 축 (c) 결정에 있다: 편집은 JSON
+    왕복(수백 ms)으로 끝내고 문서 재생성은 진행률·취소가 있는 백그라운드 작업으로
+    분리한다. 1037페이지 문서에서 키 입력마다 5초를 태울 수는 없다.
+
+    `run_pdf_job`과 **같은 슬롯**(세마포어·세대·doc 수명)을 쓴다 — 복제하면
+    세마포어 고갈 방어가 두 벌이 된다.
+    """
+    mark_rebaking(external_id, True)
+    try:
+        async with _pdf_job_slot(external_id) as slot:
+            generation = slot.generation
+            try:
+                async with AsyncSessionLocal() as db:
+                    job = (await db.execute(
+                        select(PdfJob).where(PdfJob.external_id == external_id)
+                    )).scalar_one()
+                    source_path, fmt = job.source_path, job.format
+                if not source_path or not Path(source_path).exists():
+                    raise PdfTranslateError("원본 PDF 파일이 없습니다")
+                job_dir = pdf_job_dir(external_id)
+                plan = load_plan(job_dir)
+                if plan is None:
+                    raise PdfTranslateError(
+                        "이 작업에는 편집 정보가 없습니다 — 다시 번역을 실행하세요")
+                profile = profile_by_name(fmt or "")
+                if profile is None:
+                    raise PdfTranslateError("이 작업은 편집을 지원하지 않습니다")
+
+                await _set_status_if_current(external_id, generation, "overlaying")
+                # `_set_status`가 overlaying에 95를 박으므로(`pdf_tasks._PROGRESS`)
+                # 곧바로 0으로 되돌린 뒤 0→100으로 올린다 — 95에서 3%로 되감기는
+                # 표시를 만들지 않는다.
+                await _set_progress(external_id, 0, generation)
+
+                doc = slot.doc = await asyncio.to_thread(
+                    open_pdf, Path(source_path))
+                edits = load_edits(job_dir, job_id=str(external_id))
+                composed = await slot.run(
+                    lambda: compose(plan, edits, panels_resolver(doc, profile)))
+
+                progress = {"n": 0}
+                total = max(1, len(composed.placed))
+
+                def _apply_and_save() -> Path | None:
+                    stats = apply_composed(
+                        doc, composed.placed,
+                        should_continue=lambda: (
+                            generation == _current_generation(external_id)),
+                        on_progress=lambda n: progress.__setitem__("n", n))
+                    if stats is None:
+                        return None      # 취소를 실제로 관측했다
+                    dest = job_dir / "translated.pdf"
+                    tmp = dest.with_name(dest.name + ".tmp")
+                    doc.save(tmp)
+                    if generation != _current_generation(external_id):
+                        tmp.unlink(missing_ok=True)
+                        return None
+                    os.replace(tmp, dest)
+                    save_plan(job_dir, mark_baked(plan, edits.edits_version))
+                    return dest
+
+                async def _poll() -> None:
+                    # 폴러 본문 전체를 감싼다 — 진행률은 부가 정보라, 여기서 난
+                    # 예외가 재굽기 자체를 죽이면 안 된다.
+                    try:
+                        while True:
+                            await asyncio.sleep(2)
+                            await _set_progress(
+                                external_id,
+                                min(99, int(progress["n"] / total * 100)),
+                                generation)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("pdf rebake %s: 진행률 폴러 실패",
+                                         external_id)
+
+                poller = asyncio.create_task(_poll())
+                try:
+                    dest = await slot.run(_apply_and_save)
+                finally:
+                    # 성공·실패·취소 **모든 경로**에서 폴러를 거둔다(누수 방지).
+                    poller.cancel()
+                    with suppress(BaseException):
+                        await poller
+
+                if dest is None:
+                    # 최종 상태는 취소 라우트가 쓴다(§4.7-C.6).
+                    raise asyncio.CancelledError
+                await _set_status_if_current(external_id, generation, "done",
+                                             translated_path=str(dest))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception("pdf rebake %s failed", external_id)
+                await _converge_after_failure(external_id, generation, str(exc))
     finally:
-        # 세마포어 반납은 무조건 실행돼야 한다 — close 대기 중 두 번째 취소가
-        # 도착하면(cancel_pdf_task는 task.done()이 아닌 한 언제든 재취소 가능,
-        # 셧다운/그룹 취소·루프 종료 시 executor 거부도 마찬가지) 안쪽 await이
-        # CancelledError/RuntimeError를 던지고, 그걸 못 잡으면 release() 줄이
-        # 통째로 건너뛰어져 모듈 전역 _PDF_SEMAPHORE(값 1)가 영구 고갈된다
-        # (재시작 전까진 이후 모든 작업이 조용히 멈춤).
-        try:
-            if doc is not None:
-                # 락을 쥔 채(고아 스레드가 doc을 다 쓸 때까지) 닫는다. 대기 자체도
-                # 워커 스레드에서 해야 이벤트 루프(실시간 자막 WebSocket)를 막지
-                # 않는다. asyncio.shield: close 도중 두 번째 취소가 와도 close
-                # 작업 자체는 백그라운드에서 끝까지 돌게 한다(중간에 버려지면
-                # 파일 핸들이 안 닫힌 채 새는 fitz 문서가 된다) — shield는 취소를
-                # 호출자(여기)에게는 그대로 전달하므로 바로 아래 except가 받는다.
-                await asyncio.shield(
-                    asyncio.to_thread(_with_doc_lock, doc_lock, doc.close))
-        except BaseException:  # 무엇이 오든(재취소·RuntimeError 등) release는 반드시 실행
-            logger.exception("pdf job %s: doc close failed (during cleanup)",
-                             external_id)
-        finally:
-            _PDF_SEMAPHORE.release()
+        mark_rebaking(external_id, False)
 
 
 async def fail_inflight_pdf_jobs_at_startup() -> None:
@@ -270,10 +455,54 @@ async def fail_inflight_pdf_jobs_at_startup() -> None:
             select(PdfJob).where(PdfJob.status.in_(_INFLIGHT_STATUSES)))
         ).scalars().all()
         for job in rows:
-            job.status = "error"
-            job.error = "서버 재시작으로 중단됨 — 다시 업로드하세요"
+            # 쓸 만한 번역본이 남아 있으면 `error`로 봉인하지 않는다 — 재굽기나
+            # 재번역 도중 앱이 죽은 경우가 여기 해당한다. `error`로 굳히면
+            # /download가 영구 409가 되고 편집·rebake가 막히며, in-flight가
+            # 아니게 되어 다음 업로드의 프루닝이 그 폴더를 rmtree 후보로 삼는다.
+            #
+            # 이 승격이 **잘린 PDF를 done으로 만들지 않는** 이유: 최초 번역과
+            # 재굽기 두 경로 모두 tmp+os.replace로 저장하므로 디스크의
+            # translated.pdf는 언제나 완결된 파일이고, 미완성 산출물은 .tmp로만
+            # 존재한다. 중단된 재번역은 계획의 baked_edits_version이 -1로 남아
+            # stale=true로 보고되므로 "반영된 줄 아는" 위장도 생기지 않는다.
+            if job.translated_path and Path(job.translated_path).exists():
+                job.status = "done"
+                job.progress = 100
+                job.error = "작업이 중단됐습니다 — 다시 굽기를 눌러 주세요"
+            else:
+                job.status = "error"
+                job.error = "서버 재시작으로 중단됨 — 다시 업로드하세요"
+            _cleanup_tmp_files(pdf_job_dir(job.external_id))
         if rows:
             await db.commit()
+
+
+def _jobs_with_edits(external_ids: list) -> set:
+    """사람의 편집이 **내용상** 있는 작업들 — 프루닝 고정 대상.
+
+    파일 존재가 아니라 항목 수로 본다. `label_edits.json`은 항목이 0이 돼도
+    삭제하지 않으므로(생성/삭제 경합 제거) 존재만 보면 영원히 고정된다.
+    """
+    pinned = set()
+    for eid in external_ids:
+        job_dir = pdf_job_dir(eid)
+        try:
+            has_file = edits_path(job_dir).exists()
+            if has_file and load_edits(job_dir, job_id=str(eid)).item_count() > 0:
+                pinned.add(eid)
+            elif has_file:
+                # 파일은 있는데 항목이 0 — 사람이 전부 지웠거나(일반 대상으로
+                # 돌아간다) 파일이 깨져 `load_edits`가 빈 값으로 수렴시켰거나다.
+                # 둘을 구분할 수 없으므로 **읽어서 항목 0임이 확실한 경우만**
+                # 후보로 되돌린다. 여기서는 파싱이 성공했다는 뜻이므로 통과.
+                pass
+        except Exception:  # noqa: BLE001 — 아래 근거로 의도된 포괄 catch
+            # 편집 파일 상태를 확신할 수 없으면 **보존한다.** 번역본은 다시
+            # 구울 수 있지만 사람이 친 라벨은 재생성할 수 없어서, 여기서
+            # 틀리는 방향은 "지우지 않는 쪽"이어야 한다.
+            logger.warning("retention: %s 편집 파일 확인 실패 — 보존한다", eid)
+            pinned.add(eid)
+    return pinned
 
 
 async def _prune_pre_delete_hook(candidate_ids: list[int]) -> None:
@@ -297,11 +526,34 @@ async def prune_old_pdf_jobs(keep: int = RETENTION_KEEP) -> int:
     try:
         async with AsyncSessionLocal() as db:
             rows = (await db.execute(
-                select(PdfJob.id, PdfJob.status).order_by(
+                select(PdfJob.id, PdfJob.status, PdfJob.external_id).order_by(
                     PdfJob.created_at.desc(), PdfJob.id.desc())
             )).all()
+            # 사람이 넣은 편집이 있는 작업은 **아무리 오래돼도 지우지 않는다.**
+            #
+            # 이 함수 하나가 업로드 시(`pdf_jobs.py`의 `_prune_old_jobs`)와 서버
+            # 시작 시(`prune_old_pdf_jobs_at_startup`) 프루닝의 유일한 경로라,
+            # 여기 한 번만 막으면 두 경로가 함께 닫힌다. 막지 않으면 스토리보드를
+            # 묶음 업로드하는 순간(또는 재시작 한 번에) 두 시간 걸려 넣은 라벨이
+            # 경고도 없이 폴더째 사라진다 — `translated.pdf`는 다시 구울 수 있지만
+            # 사람이 친 라벨은 재생성할 수 없다.
+            #
+            # 판정은 파일 존재가 아니라 **내용**이다(`item_count`) — 사용자가
+            # 편집을 전부 지우면 다시 일반 대상이 된다.
+            #
+            # ⚠ 이 재확인은 DB 상태에만 원자적이다. `_prune_delete` 의 WHERE는
+            # 컬럼만 볼 수 있고 편집 항목 수는 파일이라, SELECT와 DELETE 사이
+            # (밀리초)에 첫 편집이 생기면 그 작업은 여전히 삭제될 수 있다.
+            # 창이 매우 좁고(방금 만든 작업은 정렬상 후보에도 안 든다) 완전
+            # 배제가 아님을 기록해 둔다.
+            pinned = await asyncio.to_thread(
+                _jobs_with_edits, [r.external_id for r in rows[keep:]])
             candidate_ids = [r.id for r in rows[keep:]
-                             if r.status not in _INFLIGHT_STATUSES]
+                             if r.status not in _INFLIGHT_STATUSES
+                             and r.external_id not in pinned]
+            if pinned:
+                logger.info("retention: pinned %d job(s) with manual edits",
+                            len(pinned))
             if not candidate_ids:
                 return 0
             await _prune_pre_delete_hook(candidate_ids)
