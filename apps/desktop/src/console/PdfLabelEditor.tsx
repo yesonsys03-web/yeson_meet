@@ -113,14 +113,21 @@ export function PdfLabelEditor({ job, onClose }: {
   }, [draft?.english]);
 
   const rows: LabelRow[] = useMemo(() => (labels?.items ?? []) as LabelRow[], [labels]);
+  // 종류 필터는 목록과 **화면을 함께** 지배한다. 한쪽에만 걸면 "화면엔 보이는데
+  // 목록에서 못 찾는 박스"가 생겨(예: 판넬 라벨 필터인데 action 주석 박스가 그려짐)
+  // 사람이 그게 무엇인지 알 수 없다. 전체를 보려면 `전체`로 바꾼다.
+  const byKind = useMemo(
+    () => rows.filter((r) => state.kind === "all" || r.kind === state.kind),
+    [rows, state.kind]);
+  // 텍스트 검색은 **목록에만** 건다 — 화면에서까지 숨기면 검색 중에 주변 맥락
+  // (옆 라벨과의 간격)이 사라져 위치를 못 잡는다.
   const filtered = useMemo(() => {
     const needle = state.query.trim().toLowerCase();
-    return rows.filter((r) =>
-      (state.kind === "all" || r.kind === state.kind)
-      && (!needle || r.text.toLowerCase().includes(needle)
-        || r.source_text.toLowerCase().includes(needle)));
-  }, [rows, state.kind, state.query]);
-  const onPage = useMemo(() => rowsOnPage(rows, state.page), [rows, state.page]);
+    if (!needle) return byKind;
+    return byKind.filter((r) => r.text.toLowerCase().includes(needle)
+      || r.source_text.toLowerCase().includes(needle));
+  }, [byKind, state.query]);
+  const onPage = useMemo(() => rowsOnPage(byKind, state.page), [byKind, state.page]);
   const selected = rows.find((r) => r.id === state.selectedId) ?? null;
   const version = labels?.edits_version ?? 0;
 
