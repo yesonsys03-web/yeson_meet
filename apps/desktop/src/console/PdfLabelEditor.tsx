@@ -35,6 +35,26 @@ type Draft = {
   decoded: string[] | null;
 };
 
+/**
+ * 확인 대화 — 이 리포의 관례대로 `plugin-dialog`를 쓴다.
+ *
+ * `window.confirm`은 웹뷰가 막으면 **조용히 false**가 되어 "눌렀는데 아무 일도
+ * 안 일어남"이 된다. `PdfTranslatePanel.tsx`가 이미 두 번(저장·취소) 고친 결함
+ * 클래스라 같은 함정을 새로 만들지 않는다. 브라우저 dev에서는 폴백한다.
+ */
+async function confirmAction(message: string, title: string): Promise<boolean> {
+  type TauriGlobal = typeof globalThis & { __TAURI_INTERNALS__?: unknown };
+  try {
+    if ((globalThis as TauriGlobal).__TAURI_INTERNALS__) {
+      const { ask } = await import("@tauri-apps/plugin-dialog");
+      return await ask(message, { title, kind: "warning" });
+    }
+  } catch {
+    /* 플러그인을 못 부르면 아래 폴백 */
+  }
+  return window.confirm(message);
+}
+
 function boxOf(img: HTMLImageElement | null): ImageBox | null {
   if (!img || !img.naturalWidth) return null;
   const r = img.getBoundingClientRect();
@@ -202,14 +222,15 @@ export function PdfLabelEditor({ job, onClose }: {
           번역본 다시 굽기
         </button>
         <button type="button" disabled={busy || job.status !== "done"}
-          onClick={() => {
+          onClick={() => void (async () => {
             const manual = rows.filter((r) => r.origin === "manual").length;
             const edited = rows.filter((r) => r.edited).length;
-            if (!window.confirm(
+            const ok = await confirmAction(
               `자동 라벨은 다시 만들어지고, 자동 라벨에 한 수정 ${edited}건은 무효가 됩니다.\n`
-              + `수동 라벨 ${manual}건은 유지됩니다. 계속할까요?`)) return;
-            void run(() => retranslatePdfJob(job.job_id));
-          }}>다시 번역</button>
+              + `수동 라벨 ${manual}건은 유지됩니다. 계속할까요?`, "다시 번역");
+            if (!ok) return;
+            await run(() => retranslatePdfJob(job.job_id));
+          })()}>다시 번역</button>
         {labels?.dangling.length ? (
           <button type="button" disabled={busy || readOnly}
             onClick={() => void run(() => purgeDanglingLabels(job.job_id, version))}>
