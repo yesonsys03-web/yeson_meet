@@ -77,7 +77,12 @@ export function PdfLabelEditor({ job, onClose }: {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number } | null>(null);
+  // 시작점(clientX/Y)을 들고 간다 — `movementX`는 엔진에 따라 **속성은 있는데
+  // 늘 0**인 경우가 있어(WKWebView 계열) 누적하면 delta가 영영 0이 된다.
+  // 시작점 대비 절대 차이로 재면 그 함정을 아예 밟지 않고, 이벤트를 몇 개
+  // 놓쳐도 위치가 어긋나지 않는다.
+  const [drag, setDrag] = useState<
+    { id: string; startX: number; startY: number; dx: number; dy: number } | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const draftRef = useRef<HTMLDivElement | null>(null);
 
@@ -180,12 +185,13 @@ export function PdfLabelEditor({ job, onClose }: {
     });
   };
 
-  const commitDrag = (row: LabelRow, dx: number, dy: number) => {
+  const commitDrag = (row: LabelRow, dx: number, dy: number): Promise<void> => {
     const box = boxOf(imgRef.current);
     const size = panels?.page_size;
-    if (!box || !size) return;
+    if (!box || !size) return Promise.resolve();
     const rect = dragCommitRect(row.rect, dx, dy, size);
-    void run(() => patchPdfLabel(job.job_id, row.id, { rect, edits_version: version }));
+    return run(() => patchPdfLabel(job.job_id, row.id,
+      { rect, edits_version: version }));
   };
 
   const submitDraft = () => {
@@ -395,7 +401,13 @@ export function PdfLabelEditor({ job, onClose }: {
           {onPage.map((r) => {
             const box = boxOf(imgRef.current);
             if (!box) return null;
-            const s = rectToStyle(r.rect, box);
+            const live = drag && drag.id === r.id ? drag : null;
+            const size = panels?.page_size;
+            // 끄는 동안 **보이는 자리 = 저장될 자리**다 — 같은 함수를 통과시켜
+            // 놓는 순간 박스가 튀지 않게 한다(페이지 밖 클램프까지 동일).
+            const shown = live && size
+              ? dragCommitRect(r.rect, live.dx, live.dy, size) : r.rect;
+            const s = rectToStyle(shown, box);
             const active = r.id === state.selectedId;
             return (
               <div key={r.id} title={r.text}
@@ -403,7 +415,8 @@ export function PdfLabelEditor({ job, onClose }: {
                   dispatch({ type: "selectRow", row: r });
                   if (readOnly || !r.editable) return;
                   ev.currentTarget.setPointerCapture(ev.pointerId);
-                  setDrag({ id: r.id, dx: 0, dy: 0 });
+                  setDrag({ id: r.id, startX: ev.clientX, startY: ev.clientY,
+                    dx: 0, dy: 0 });
                 }}
                 onPointerMove={(ev) => {
                   if (!drag || drag.id !== r.id) return;
@@ -411,22 +424,29 @@ export function PdfLabelEditor({ job, onClose }: {
                   if (!b) return;
                   // 화면 px → pt 변환은 **순수 모듈**을 통과시킨다. 여기에
                   // 직접 쓰면 AC6의 ±0.6pt 단언이 이 코드를 잠그지 못한다.
-                  setDrag({ id: r.id,
-                    dx: drag.dx + pxToPt(ev.movementX, b),
-                    dy: drag.dy + pxToPt(ev.movementY, b) });
+                  setDrag({ ...drag,
+                    dx: pxToPt(ev.clientX - drag.startX, b),
+                    dy: pxToPt(ev.clientY - drag.startY, b) });
                 }}
                 onPointerUp={() => {
+                  // 저장이 끝난 뒤에 미리보기를 놓는다 — 먼저 놓으면 서버
+                  // 왕복 동안 옛 자리로 튀었다가 새 자리로 가는 깜박임이 보인다.
                   if (drag && drag.id === r.id && (drag.dx || drag.dy)) {
-                    commitDrag(r, drag.dx, drag.dy);
+                    void commitDrag(r, drag.dx, drag.dy).finally(() => setDrag(null));
+                  } else {
+                    setDrag(null);
                   }
-                  setDrag(null);
                 }}
+                onPointerCancel={() => setDrag(null)}
                 style={{
                   position: "absolute", left: s.left, top: s.top,
                   width: s.width, height: s.height, boxSizing: "border-box",
                   border: `1px solid ${r.origin === "manual" ? "#4ade80" : "#f472b6"}`,
-                  background: active ? "rgba(56,189,248,0.25)" : "transparent",
+                  background: live ? "rgba(74,222,128,0.35)"
+                    : active ? "rgba(56,189,248,0.25)" : "transparent",
                   cursor: readOnly || !r.editable ? "default" : "move",
+                  // 끄는 도중 브라우저가 스크롤·선택으로 가로채지 못하게 한다.
+                  touchAction: "none", userSelect: "none",
                 }} />
             );
           })}
