@@ -25,13 +25,16 @@ from apps.server.api.v1.video_jobs import _default_owner_id
 from apps.server.db.models import PdfJob
 from apps.server.db.session import get_session
 from apps.server.domain.pdf_translate.backend import open_pdf
+from apps.server.domain.pdf_translate.overlay_plan import load_plan
 from apps.server.domain.pdf_translate.pdf_run import (
     prune_old_pdf_jobs,
+    rebake_pdf_job,
     run_pdf_job,
 )
 from apps.server.domain.pdf_translate.pdf_store import pdf_job_dir
 from apps.server.domain.pdf_translate.pdf_tasks import (
     cancel_pdf_task,
+    is_rebaking,
     start_background_task,
     start_pdf_task,
 )
@@ -50,6 +53,10 @@ _TERMINAL = ("done", "error", "cancelled")
 
 def _start_pdf_pipeline(external_id: UUID) -> None:  # test seam
     start_pdf_task(external_id, run_pdf_job(external_id))
+
+
+def _start_rebake(external_id: UUID) -> None:  # test seam
+    start_pdf_task(external_id, rebake_pdf_job(external_id))
 
 
 def _prune_old_jobs() -> None:  # test seam
@@ -227,11 +234,49 @@ async def cancel_pdf_job(
     job = await _get_job(db, job_id)
     if job.status in _TERMINAL:
         raise HTTPException(status.HTTP_409_CONFLICT, "이미 끝난 작업입니다")
+    rebaking = is_rebaking(job_id)
     cancel_pdf_task(job_id)
-    job.status = "cancelled"
-    job.progress = 0
+    # 최종 상태의 **유일한 저자는 이 라우트**다. `cancel_pdf_task`가
+    # `task.cancel()`보다 먼저 세대를 밀고(`pdf_tasks.py:61-67`) 그 뒤 커밋까지
+    # await 지점이 없으므로, 뒤늦게 끝난 태스크의 상태 쓰기는 세대 가드에
+    # 막힌다 — 누가 먼저 쓰느냐는 순서 가정이 필요 없다.
+    if rebaking or (job.translated_path and Path(job.translated_path).exists()):
+        # 재굽기·재번역 취소: 멀쩡한 번역본이 디스크에 그대로 있다.
+        # `cancelled`로 굳히면 /download가 영구 409가 되고(status != "done")
+        # 편집·rebake·retranslate가 전부 막히며, in-flight가 아니게 되어
+        # 다음 업로드의 프루닝이 그 폴더를 rmtree 후보로 삼는다.
+        job.status = "done"
+        job.progress = 100
+        job.error = ("재굽기를 취소했습니다" if rebaking
+                     else "다시 번역이 취소됐습니다")
+    else:
+        job.status = "cancelled"
+        job.progress = 0
     await db.commit()
-    return {"status": "cancelled"}
+    return {"status": job.status}
+
+
+@router.post("/{job_id}/rebake")
+async def rebake_pdf(
+    job_id: UUID, db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """계획 + 편집을 합성해 번역본만 다시 굽는다 — 번역기를 부르지 않는다."""
+    job = await _get_job(db, job_id)
+    if job.status != "done":
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "아직 번역이 끝나지 않았습니다")
+    if not job.source_path or not Path(job.source_path).exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "원본 PDF가 없습니다")
+    if load_plan(pdf_job_dir(job_id)) is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "이 작업에는 편집 정보가 없습니다 — 다시 번역을 실행하세요")
+    job.status = "overlaying"
+    job.progress = 0
+    job.error = None
+    await db.commit()
+    _start_rebake(job_id)
+    return {"status": "overlaying"}
 
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)

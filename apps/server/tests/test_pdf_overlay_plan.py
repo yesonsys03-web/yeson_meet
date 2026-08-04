@@ -257,3 +257,180 @@ async def test_manual_label_survives_rebuild_by_address(db_session, admin_user):
     assert [m.id for m in edits.manual] == ["m1"]
     assert edits.edits_version == 3, "파이프라인이 편집 파일을 쓰지 않았다"
     assert _annot_count(job_dir / "translated.pdf") == before
+
+
+# ── S2 게이트 — 합성 재굽기·잡 슬롯 공유·상태 원복 ────────────────────────────
+
+async def test_rebake_applies_edited_plan_without_translating(
+        db_session, admin_user, monkeypatch):
+    """계획을 직접 고쳐 rebake → 주석 텍스트가 바뀐다. 번역기는 부르지 않는다."""
+    job = await _seed_job(db_session, admin_user)
+    job_dir = pdf_job_dir(job.external_id)
+    await pdf_run.run_pdf_job(job.external_id)
+
+    plan = load_plan(job_dir)
+    edited = overlay_plan.OverlayPlan(
+        job_id=plan.job_id, profile=plan.profile, page_count=plan.page_count,
+        page_sizes=plan.page_sizes,
+        items=[overlay_plan.PlanItem(
+            id=it.id, kind=it.kind, page=it.page, panel_index=it.panel_index,
+            rect=it.rect, fontsize=it.fontsize, source_text=it.source_text,
+            text="편집된주석") for it in plan.items],
+        plan_version=plan.plan_version, baked_edits_version=plan.baked_edits_version)
+    overlay_plan.save_plan(job_dir, edited)
+
+    def _boom(*a, **kw):  # 번역기를 부르면 즉시 실패시킨다
+        raise AssertionError("rebake는 번역기를 부르면 안 된다")
+
+    monkeypatch.setattr(pdf_run, "create_translator", _boom)
+    job.status = "done"
+    await db_session.commit()
+    await pdf_run.rebake_pdf_job(job.external_id)
+
+    import fitz
+    doc = fitz.open(job_dir / "translated.pdf")
+    try:
+        contents = [a.info.get("content", "")
+                    for p in range(doc.page_count) for a in doc[p].annots()]
+    finally:
+        doc.close()
+    assert contents and all(c == "편집된주석" for c in contents), contents
+
+
+async def test_rebake_deletes_annotation_via_override(db_session, admin_user):
+    """`deleted` override는 재굽기 결과에서 그 주석을 없앤다 —
+    이미 구운 PDF의 주석을 지우는 게 아니라 **다시 굽는다**(AC12)."""
+    job = await _seed_job(db_session, admin_user)
+    job_dir = pdf_job_dir(job.external_id)
+    await pdf_run.run_pdf_job(job.external_id)
+    plan = load_plan(job_dir)
+    before = _annot_count(job_dir / "translated.pdf")
+
+    save_edits(job_dir, LabelEdits(
+        job_id=str(job.external_id), edits_version=1,
+        overrides=[overlay_plan.Override(
+            target=plan.items[0].id, page=plan.items[0].page, deleted=True)]))
+    job.status = "done"
+    await db_session.commit()
+    await pdf_run.rebake_pdf_job(job.external_id)
+
+    assert _annot_count(job_dir / "translated.pdf") == before - 1
+    assert load_plan(job_dir).baked_edits_version == 1
+
+
+async def test_semaphore_is_released_exactly_once_after_cancel(
+        db_session, admin_user, monkeypatch):
+    """세마포어 값이 1로 돌아온다 — **과다 릴리스도 함께 잡는다**(2가 되면 실패).
+
+    `acquire`를 `try` 안으로 넣으면 값이 2가 되어 직렬화가 깨지고, `finally`를
+    빠뜨리면 0으로 고갈돼 재시작 전까지 모든 작업이 조용히 멈춘다. 양방향
+    함정이라 한 단언으로 둘 다 지킨다.
+    """
+    from apps.server.domain.pdf_translate.pdf_tasks import _PDF_SEMAPHORE
+
+    job = await _seed_job(db_session, admin_user)
+    before = _PDF_SEMAPHORE._value
+    await pdf_run.run_pdf_job(job.external_id)
+    assert _PDF_SEMAPHORE._value == before
+
+    real_build = overlay_plan.build_plan
+    flipped: list[bool] = []
+
+    def build_then_flip(*args, **kwargs):
+        plan = real_build(*args, **kwargs)
+        flipped.append(True)
+        return plan
+
+    real_current = pdf_run._current_generation
+    monkeypatch.setattr(pdf_run, "build_plan", build_then_flip)
+    monkeypatch.setattr(pdf_run, "_current_generation",
+                        lambda eid: (-999 if flipped else real_current(eid)))
+    job.status = "queued"
+    await db_session.commit()
+    with pytest.raises(asyncio.CancelledError):
+        await pdf_run.run_pdf_job(job.external_id)
+    assert _PDF_SEMAPHORE._value == before, "취소 경로에서도 정확히 한 번만 반납"
+
+
+async def test_late_task_write_is_suppressed_by_generation_guard(
+        db_session, admin_user):
+    """취소 라우트가 확정한 상태를 뒤늦게 끝난 태스크가 덮어쓰지 않는다.
+
+    순서에 의존하지 않는 단언이다 — 세대를 먼저 밀어 두면 태스크의 쓰기는
+    언제 도착하든 억제된다.
+    """
+    from apps.server.domain.pdf_translate.pdf_tasks import (
+        _bump_generation,
+        _set_status_if_current,
+    )
+
+    job = await _seed_job(db_session, admin_user)
+    # ⚠ expire_all() 뒤에 ORM 속성을 읽으면 만료 속성의 동기 재로드가 일어나
+    # aiosqlite에서 MissingGreenlet이 난다(test_pdf_run.py:56 주석) — 미리 캡처.
+    eid = job.external_id
+    stale_generation = _bump_generation(eid)
+    _bump_generation(eid)                      # 취소가 세대를 한 번 더 민다
+
+    wrote = await _set_status_if_current(
+        eid, stale_generation, "done", error="늦은 쓰기")
+    assert wrote is False
+    db_session.expire_all()
+    from sqlalchemy import select
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.external_id == eid))).scalar_one()
+    assert row.status == "queued", "억제됐어야 한다"
+
+
+async def test_startup_sweep_recovers_job_with_intact_output(
+        db_session, admin_user):
+    """중단된 재굽기: 멀쩡한 번역본이 있으면 `done`으로 되살린다.
+
+    `error`로 굳히면 /download가 영구 409가 되고 편집·rebake가 막히며, 그 상태는
+    in-flight가 아니라서 다음 업로드의 프루닝이 폴더를 통째로 지운다.
+    """
+    job = await _seed_job(db_session, admin_user)
+    eid = job.external_id       # expire_all() 뒤 속성 접근 회피(위 주석 참조)
+    await pdf_run.run_pdf_job(eid)
+    db_session.expire_all()
+    from sqlalchemy import select
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.external_id == eid))).scalar_one()
+    translated = row.translated_path
+    row.status = "overlaying"          # 굽는 중에 앱이 죽은 상태
+    await db_session.commit()
+
+    await pdf_run.fail_inflight_pdf_jobs_at_startup()
+
+    db_session.expire_all()
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.external_id == eid))).scalar_one()
+    assert row.status == "done" and row.progress == 100
+    assert "다시 굽기" in (row.error or "")
+    assert Path(translated).exists()
+
+
+async def test_startup_sweep_does_not_promote_truncated_output(
+        db_session, admin_user):
+    """`doc.save` 도중 죽은 상황: 잘린 산출물은 `.tmp`로만 존재하므로
+    승격되지 않고, 스윕이 그 tmp를 정리한다.
+
+    이 성질이 성립하는 이유는 두 저장 경로(최초 번역·재굽기)가 **모두**
+    tmp+os.replace를 쓰기 때문이다. 제자리 저장이 하나라도 남으면 잘린 PDF가
+    `done`으로 승격돼 다운로드 200이 나간다.
+    """
+    job = await _seed_job(db_session, admin_user)
+    eid = job.external_id       # expire_all() 뒤 속성 접근 회피(위 주석 참조)
+    job_dir = pdf_job_dir(eid)
+    job_dir.mkdir(parents=True, exist_ok=True)
+    (job_dir / "translated.pdf.tmp").write_bytes(b"%PDF-1.7 truncated")
+    job.status = "overlaying"
+    await db_session.commit()
+
+    await pdf_run.fail_inflight_pdf_jobs_at_startup()
+
+    db_session.expire_all()
+    from sqlalchemy import select
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.external_id == eid))).scalar_one()
+    assert row.status == "error", "완결된 번역본이 없으므로 승격 금지"
+    assert not (job_dir / "translated.pdf.tmp").exists(), "tmp는 정리된다"

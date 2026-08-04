@@ -144,10 +144,17 @@ async def _run(pdf_path: Path, workdir: Path, phase: str) -> dict:
     # ── 계측 훅 ──────────────────────────────────────────────────────────────
     stage_at: dict[str, float] = {}
     orig_set_status = pdf_run._set_status
+    # 파이프라인은 최종 상태를 세대 가드가 달린 래퍼로 쓴다 — 둘 다 감싸지
+    # 않으면 `done` 시각이 안 잡혀 마지막 단계의 벽시계가 null이 된다.
+    orig_set_status_if_current = pdf_run._set_status_if_current
 
     async def timed_set_status(eid, status, **kw):
         stage_at.setdefault(status, time.perf_counter())
         return await orig_set_status(eid, status, **kw)
+
+    async def timed_set_status_if_current(eid, generation, status, **kw):
+        stage_at.setdefault(status, time.perf_counter())
+        return await orig_set_status_if_current(eid, generation, status, **kw)
 
     save_seconds: list[float] = []
     orig_save = backend_mupdf.MuPdfDocument.save
@@ -159,7 +166,44 @@ async def _run(pdf_path: Path, workdir: Path, phase: str) -> dict:
         finally:
             save_seconds.append(time.perf_counter() - t)
 
+    # ── phase b: 이 기능이 오버레이 단계에 **새로 더한** 작업만 따로 잰다.
+    #
+    # AC13의 재굽기 상한이 "기준 overlaying × 1.2"인데, 기준을 이 기능이 들어간
+    # 뒤에 재면 자기참조가 된다. 그래서 신규 작업(panels 호출 + 계획 직렬화)을
+    # 분리 계측해 `기준 = 실측 − 신규작업`으로 되돌린다.
+    panels_by_page: dict[int, float] = {}
+    serialize_seconds: list[float] = []
+    if phase == "b":
+        from apps.server.domain.pdf_translate import overlay_plan
+        from apps.server.domain.pdf_translate.profiles.storyboard import (
+            StoryboardProfile,
+        )
+
+        orig_layout = StoryboardProfile.panel_layout
+
+        def timed_layout(self, doc_, page):
+            t = time.perf_counter()
+            try:
+                return orig_layout(self, doc_, page)
+            finally:
+                panels_by_page[page] = (panels_by_page.get(page, 0.0)
+                                        + time.perf_counter() - t)
+
+        orig_save_plan = overlay_plan.save_plan
+
+        def timed_save_plan(job_dir_, plan_):
+            t = time.perf_counter()
+            try:
+                return orig_save_plan(job_dir_, plan_)
+            finally:
+                serialize_seconds.append(time.perf_counter() - t)
+
+        StoryboardProfile.panel_layout = timed_layout       # type: ignore[assignment]
+        overlay_plan.save_plan = timed_save_plan            # type: ignore[assignment]
+        pdf_run.save_plan = timed_save_plan                 # type: ignore[assignment]
+
     pdf_run._set_status = timed_set_status                      # type: ignore[assignment]
+    pdf_run._set_status_if_current = timed_set_status_if_current  # type: ignore[assignment]
     pdf_run.create_translator = (                               # type: ignore[assignment]
         lambda provider, cli_model, prompt_builder: _StubTranslator())
     backend_mupdf.MuPdfDocument.save = timed_save               # type: ignore[assignment]
@@ -169,7 +213,12 @@ async def _run(pdf_path: Path, workdir: Path, phase: str) -> dict:
         await pdf_run.run_pdf_job(external_id)
     finally:
         pdf_run._set_status = orig_set_status                   # type: ignore[assignment]
+        pdf_run._set_status_if_current = orig_set_status_if_current  # type: ignore[assignment]
         backend_mupdf.MuPdfDocument.save = orig_save            # type: ignore[assignment]
+        if phase == "b":
+            StoryboardProfile.panel_layout = orig_layout        # type: ignore[assignment]
+            overlay_plan.save_plan = orig_save_plan             # type: ignore[assignment]
+            pdf_run.save_plan = orig_save_plan                  # type: ignore[assignment]
     total = time.perf_counter() - started
 
     async with AsyncSessionLocal() as db:
@@ -190,6 +239,35 @@ async def _run(pdf_path: Path, workdir: Path, phase: str) -> dict:
                 if translated_path and Path(translated_path).exists() else None)
     plan_file = job_dir / "overlay_plan.json"
 
+    # ── phase b 파생값: 신규 작업을 빼서 기준 overlaying을 되돌린다.
+    extra: dict = {}
+    if phase == "b":
+        from apps.server.domain.pdf_translate.backend import open_pdf
+
+        probe = open_pdf(pdf_path)
+        try:
+            broken = {p for p in range(probe.page_count) if probe.corrupt_words(p)}
+        finally:
+            probe.close()
+        panels_total = sum(panels_by_page.values())
+        # 깨진 페이지에서 `panels()`가 쓴 시간 = `extract`가 이미 낸 300dpi
+        # 렌더+단어 OCR을 **재지불**한 몫(상한). 이 값이 크면 폴백이 필요하다:
+        # ⓐ extract가 계산한 판넬을 부산물로 넘겨 재사용 ⓑ panel_index를
+        # 목록 라우트에서 지연 산출(표시 전용이라 배치에 영향 없음).
+        dup = sum(t for p, t in panels_by_page.items() if p in broken)
+        serialize = sum(serialize_seconds)
+        overlaying = stages.get("overlaying")
+        extra = {
+            "panels_calls": len(panels_by_page),
+            "panels_seconds_total": round(panels_total, 3),
+            "broken_pages": len(broken),
+            "repair_duplication_seconds": round(dup, 3),
+            "serialize_seconds": round(serialize, 3),
+            "baseline_overlaying_seconds": (
+                None if overlaying is None
+                else round(overlaying - panels_total - serialize, 3)),
+        }
+
     return {
         "phase": phase,
         "pdf": str(pdf_path),
@@ -208,6 +286,7 @@ async def _run(pdf_path: Path, workdir: Path, phase: str) -> dict:
         # "기준선은 계획 파일이 생기기 전에 쟀다"는 증거다.
         "overlay_plan_bytes": (plan_file.stat().st_size
                                if plan_file.exists() else None),
+        **extra,
     }
 
 

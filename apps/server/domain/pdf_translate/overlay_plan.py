@@ -395,25 +395,8 @@ def invalidate_baked_version(job_dir: Path) -> int:
 
 # ── 계획 산출 ────────────────────────────────────────────────────────────────
 
-def _panel_index_for(bbox: tuple[float, float, float, float],
-                     panels: Sequence[tuple[float, float, float, float]]
-                     ) -> int | None:
-    """블록 bbox의 **중심점**이 들어가는 판넬 — 없으면 None.
-
-    표시·필터 전용이며 배치에는 쓰지 않는다. 그래서 주소 층이 혹시 어긋나도
-    파급이 표시 문제로 한정된다.
-    """
-    cx = (bbox[0] + bbox[2]) / 2.0
-    cy = (bbox[1] + bbox[3]) / 2.0
-    for i, (x0, y0, x1, y1) in enumerate(panels):
-        if x0 <= cx <= x1 and y0 <= cy <= y1:
-            return i
-    return None
-
-
 def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
-               *, job_id: str, plan_version: int = 1,
-               panel_label_kind: str = "panel_label") -> OverlayPlan:
+               *, job_id: str, plan_version: int = 1) -> OverlayPlan:
     """현행 오버레이 루프의 **결정 부분만** 옮긴 것 — 무엇을 어디에 찍을지 정한다.
 
     찍는 일은 `apply_composed`가 한다. 둘을 나눠야 사람의 편집을 사이에 끼워
@@ -423,18 +406,24 @@ def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
     사람이 일부러 친 라틴 라벨(`CAM`·`BG`)을 통째로 지운다.
     """
     refine_ko = getattr(profile, "refine_ko", None)
-    panels_hook = getattr(profile, "panels", None)
 
-    # `panel_index`는 판넬 라벨이 있는 페이지에서만 계산한다(비용 예산) —
-    # `panels()`는 페이지마다 raw_blocks + 복구 + image_rects를 돌므로 전
-    # 페이지에 부르면 `extract`가 이미 낸 비용을 통째로 재지불한다.
-    pages_needing_panels = {
-        b.page for b in blocks if getattr(b, "kind", None) == panel_label_kind}
-    panels_by_page: dict[int, tuple] = {}
-    if panels_hook is not None:
-        for page in sorted(pages_needing_panels):
-            panels_by_page[page] = panels_hook(doc, page)
-
+    # ⚠ 자동 항목의 `panel_index`는 **여기서 계산하지 않는다**(항상 None).
+    #
+    # 처음엔 판넬 라벨이 있는 페이지에서만 `panels()`를 부르는 것으로 예산을
+    # 잡았는데, S0-b 실측이 그 예산을 깼다(GABE01 1037p):
+    #   overlaying 5.185s → 23.217s (+348%), 그중 panels 18.931s /138 호출,
+    #   깨진 페이지 복구 재지불만 9.868s.
+    # AC13의 "기준 overlaying 대비 +20%"를 크게 넘는다.
+    #
+    # 계획이 준비해 둔 폴백 둘 중 ⓐ(`extract`가 계산한 판넬 재사용)는 중복
+    # 9.868s를 없애도 나머지 9.06s(138 × 약 66ms)가 남아 **여전히 초과**한다.
+    # 그래서 ⓑ를 택했다: 자동 항목의 `panel_index`는 §4.3대로 **표시·필터
+    # 전용이고 배치에 쓰이지 않으므로**, 굽는 동안 계산할 이유가 없다.
+    # 편집 화면은 현재 페이지의 `/panels`를 이미 받으므로 그 페이지에 한해
+    # 클라이언트가 히트 테스트로 파생한다 — 서버 비용 0.
+    #
+    # 수동 라벨의 `panel_index`는 영향이 없다. 그건 계산값이 아니라 사람이
+    # 고른 **주소**이고 편집 파일에 저장된다.
     items: list[PlanItem] = []
     for i, block in enumerate(blocks):
         ko = ko_by_block[i]
@@ -455,13 +444,9 @@ def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
                 "pdf-translate: page %d %s block의 rect가 유효하지 않아 "
                 "주석을 건너뜀 %r", block.page, block.kind, ov.rect)
             continue
-        panel_index = None
-        if block.kind == panel_label_kind:
-            panel_index = _panel_index_for(block.bbox,
-                                           panels_by_page.get(block.page, ()))
         items.append(PlanItem(
             id=uuid4().hex[:12], kind=block.kind, page=ov.page,
-            panel_index=panel_index, rect=_rect2(ov.rect),
+            panel_index=None, rect=_rect2(ov.rect),
             fontsize=ov.fontsize, source_text=block.text, text=ov.text))
 
     return OverlayPlan(
