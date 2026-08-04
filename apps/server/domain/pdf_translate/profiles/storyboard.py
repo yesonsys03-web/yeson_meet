@@ -99,6 +99,10 @@ def _has_field_label(raws: list[RawBlock]) -> bool:
 # 나온다(즉 라벨이 블록 선두가 아니다). 그래서 토큰 소속으로 본다.
 _HEADER_TOKENS = frozenset({"Scene", "Panel"})
 
+# 번역되지 않은 영문 낱말 — 연속 2글자 이상의 라틴 문자(refine_ko 참고).
+# 한 글자(`A 2/2`·`B 1/2`)는 사람도 쓰는 싸이클 기호라 통과시킨다.
+_UNTRANSLATED_WORD_RE = re.compile(r"[A-Za-z]{2,}")
+
 
 def _has_scene_table_header(raws: list[RawBlock]) -> bool:
     seen: set[str] = set()
@@ -281,6 +285,37 @@ class StoryboardProfile:
                         page=page, kind=_PANEL_LABEL_KIND,
                         text="\n".join(texts), bbox=_union_bbox(group), ko=ko))
         return out
+
+    def refine_ko(self, block: PdfBlock, ko_text: str) -> str:
+        """판넬 라벨 주석에서 **번역되지 않은 영문 줄**을 뺀다(빈 문자열이면
+        부르는 쪽이 주석을 만들지 않는다).
+
+        왜 필요한가(FL104_Orev p70 실측): 세로로 맞닿았다는 이유로 자산 코드
+        `CROWD INC 037`과 캐릭터 라벨 `HIPPIE LADY`가 한 묶음이 된다. 묶음의
+        일부만 번역되면 블록 전체가 "번역 성공"으로 판정돼 **영문 코드가 그대로
+        주석에 실려 나간다**(`CROWDINC037 히피여자`). 같은 부류가 Nrev 출력의
+        `SBINC12 좀비 여자 파티광1`이다 — 묶기 규칙을 아무리 다듬어도 서로
+        무관한 두 라벨이 나란히 서면 다시 생긴다.
+
+        판정 기준이 "한글 없음"이 아니라 **연속 2글자 이상의 영문**인 이유:
+        사람 납품본 실측(FL102+FL104 3단 전편, 주석 4733줄)에서 한글 없는 줄
+        113개 중 109개가 `1/2`·`126`·`005` 같은 숫자 전용이고, 라틴 글자가 든
+        나머지 4개도 `A 2/2`·`B 1/2`처럼 **한 글자** 싸이클 기호다. 영어 낱말은
+        0건 — 즉 숫자 줄은 사람도 쓰는 정상 주석이라 지우면 안 되고, 영문
+        낱말은 언제나 번역 실패의 흔적이다.
+
+        필드(dialog/action)에는 걸지 않는다 — 본문에는 자산 ID·파일명이
+        정당하게 섞이고(프롬프트가 그대로 두라고 지시한다), 그건 줄 단위로
+        떼어낼 수 있는 성질도 아니다."""
+        if block.kind != _PANEL_LABEL_KIND:
+            return ko_text
+        kept = [line for line in ko_text.split("\n")
+                if not _UNTRANSLATED_WORD_RE.search(line) or has_hangul(line)]
+        if len(kept) != len(ko_text.split("\n")):
+            logger.info(
+                "pdf-translate: page %d 판넬 라벨에서 미번역 영문 줄 제거 %r → %r",
+                block.page, ko_text, "\n".join(kept))
+        return "\n".join(kept)
 
     def place(self, block: PdfBlock, ko_text: str,
               page_size: tuple[float, float]) -> Overlay:
