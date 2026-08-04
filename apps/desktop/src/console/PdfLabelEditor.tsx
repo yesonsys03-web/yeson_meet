@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 
 import {
   createPdfLabel, decodePanelLabel, deletePdfLabel, explainPdfError,
-  getPdfPanels, listPdfLabels, patchPdfLabel, pdfPageUrl, purgeDanglingLabels,
+  fetchAllPdfLabels, getPdfPanels, patchPdfLabel, pdfPageUrl, purgeDanglingLabels,
   rebakePdfJob, repointPdfLabel, retranslatePdfJob,
   type PdfJobSummary, type PdfLabelItem, type PdfLabelsResponse,
   type PdfPanelsResponse,
@@ -83,7 +83,9 @@ export function PdfLabelEditor({ job, onClose }: {
     try {
       // 전량을 받아 목록표·오버레이가 같은 데이터를 본다(1037p 문서에서
       // 항목 1321개 = 수백 KB 수준이라 페이지네이션은 표시에만 쓴다).
-      setLabels(await listPdfLabels(job.job_id, { kind: "all", limit: 500 }));
+      // 서버 응답 상한이 500이라 **여러 번 나눠 받아야** 전량이 된다 —
+      // 한 번만 부르면 뒷페이지가 목록에서도 화면에서도 사라진다.
+      setLabels(await fetchAllPdfLabels(job.job_id, { kind: "all" }));
     } catch (e) {
       setMessage(explainPdfError(e));
     }

@@ -137,6 +137,52 @@ export async function listPdfLabels(
   return request(`${labelsUrl(jobId)}?${qs.toString()}`, {});
 }
 
+/** 서버가 응답 1건에 실어 주는 최대 항목 수(`pdf_jobs.py`의 `min(limit, 500)`). */
+const LABEL_PAGE_MAX = 500;
+
+/**
+ * 한 응답에 잘리지 않게 **끝까지** 받아 하나로 잇는다.
+ *
+ * 서버 상한이 500인데 실물 문서는 그보다 많다(1037p 표본 = 1321개). 한 번만
+ * 부르면 뒷페이지 라벨이 목록에서도 화면 박스에서도 통째로 사라져 **편집 자체가
+ * 불가능**해진다. 게다가 수동 라벨은 합성 결과 맨 뒤에 붙어서(`compose`) 가장
+ * 먼저 잘린다 — 방금 넣은 라벨이 사라져 보인다.
+ *
+ * 받는 도중 다른 클라이언트가 편집하면 `offset` 기준이 흔들려 항목이 겹치거나
+ * 빠진다. 그래서 `edits_version`이 바뀌면 이어붙이지 않고 **처음부터 다시**
+ * 받는다 — 조용히 어긋난 목록보다 한 번 더 받는 편이 낫다.
+ *
+ * `fetchPage`를 주입받는 이유는 이 리포에 컴포넌트/네트워크 테스트 인프라가
+ * 없어서다(테스트는 전부 node 환경 순수 로직). 이 함수만 직접 잠근다.
+ */
+export async function collectAllLabels(
+  fetchPage: (offset: number) => Promise<PdfLabelsResponse>,
+  attempts = 3,
+): Promise<PdfLabelsResponse> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const first = await fetchPage(0);
+    const items = [...first.items];
+    let torn = false;
+    while (items.length < first.total) {
+      const next = await fetchPage(items.length);
+      if (next.edits_version !== first.edits_version) { torn = true; break; }
+      // 더 줄 게 없는데 total과 어긋난다 — 무한 루프 대신 받은 만큼으로 끝낸다.
+      if (!next.items.length) break;
+      items.push(...next.items);
+    }
+    if (!torn) return { ...first, items };
+  }
+  throw new Error("라벨 목록을 받는 중 편집이 계속 바뀌었습니다 — 다시 시도하세요");
+}
+
+/** 목록표·오버레이가 같은 **전량**을 보도록 페이지를 밀어 가며 받는다. */
+export async function fetchAllPdfLabels(
+  jobId: string, opts: { kind?: string; q?: string } = {},
+): Promise<PdfLabelsResponse> {
+  return collectAllLabels((offset) =>
+    listPdfLabels(jobId, { ...opts, offset, limit: LABEL_PAGE_MAX }));
+}
+
 export async function getPdfPanels(
   jobId: string, page: number,
 ): Promise<PdfPanelsResponse> {
