@@ -704,6 +704,37 @@ async def purge_dangling_overrides(
             "manual_count": len(updated.manual)}
 
 
+@router.post("/{job_id}/retranslate")
+async def retranslate_pdf(
+    job_id: UUID, db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """번역을 처음부터 다시 — 자동 라벨을 새로 만든다.
+
+    **`done`일 때만 허용한다.** 명세에 없는 범용 재시도를 열지 않기 위해서다.
+    실패·취소로 끝난 작업도 쓸 만한 번역본이 남아 있으면 `done`으로 수렴하므로
+    (§4.7-C.7) 이 문턱에 막히지 않는다.
+
+    수동 라벨의 재부착은 **구조로 성립한다** — `run_pdf_job`은 계획만 다시 쓰고
+    편집 파일은 읽기만 하므로, 수동 라벨이 `(페이지, 판넬, 상대좌표)` 주소로
+    자동으로 다시 붙는다. 휴리스틱 키가 0개인 이유다.
+
+    반대로 자동 라벨에 한 수정(override)은 계획 item id가 새로 발급되면서
+    전량 무효가 된다 — 조용히 사라지지 않고 목록에 표시된다.
+    """
+    job = await _get_job(db, job_id)
+    if job.status != "done":
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "완료된 작업만 다시 번역할 수 있습니다")
+    if not job.source_path or not Path(job.source_path).exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "원본 PDF가 없습니다")
+    job.status = "queued"
+    job.progress = 0
+    job.error = None
+    await db.commit()
+    _start_pdf_pipeline(job_id)
+    return {"status": "queued"}
+
+
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_pdf_job(
     job_id: UUID, db: Annotated[AsyncSession, Depends(get_session)],

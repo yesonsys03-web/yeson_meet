@@ -287,3 +287,92 @@ async def test_job_list_never_opens_overlay_plan(
     item = next(i for i in resp.json()["items"] if i["job_id"] == str(eid))
     assert item["has_edits"] is True
     assert item["stale"] is True
+
+
+# ── S6 게이트 — 재실행('다시 번역') ───────────────────────────────────────────
+
+async def test_retranslate_keeps_manual_labels_and_dangles_overrides(
+        client, db_session, admin_user):
+    """수동 라벨은 주소로 살아남고, 자동 라벨 수정은 전량 무효가 된다.
+
+    수동 생존은 휴리스틱이 아니라 **구조**다 — 파이프라인이 편집 파일을 읽기만
+    하므로 (페이지, 판넬, 상대좌표)가 그대로 다시 풀린다. 반대로 override는
+    계획 item id가 새로 발급되면서 dangling이 되는데, 이건 난수 id 규칙의 직접
+    귀결이다(결정적 해시로 구현했다면 이 단언이 실패한다).
+    """
+    eid = await _baked_job(db_session, admin_user)
+    await _add_label(client, eid, version=0, panel=1)
+    await _add_label(client, eid, version=1, panel=2, text="나간다")
+
+    # 어떤 자동 항목을 겨냥하든 무효화 규칙은 같다(합성 픽스처의 판넬에는 빨간
+    # 콜아웃이 없어 panel_label 자동 항목이 생기지 않는다 — 여기서 확인할 것은
+    # "id가 새로 발급되면 override가 dangling이 된다"이지 종류가 아니다).
+    plan = overlay_plan.load_plan(pdf_job_dir(eid))
+    label = plan.items[0]
+    job_dir = pdf_job_dir(eid)
+    edits = overlay_plan.upsert_override(
+        overlay_plan.load_edits(job_dir, job_id=str(eid)),
+        label.id, page=label.page, text="사람이 고친 자동 라벨")
+    overlay_plan.save_edits(job_dir, edits)
+    version_before = edits.edits_version
+
+    resp = await client.post(f"/api/v1/pdf-jobs/{eid}/retranslate")
+    assert resp.status_code == 200, resp.text
+    await pdf_run.run_pdf_job(eid)
+
+    body = (await client.get(f"/api/v1/pdf-jobs/{eid}/labels")).json()
+    manual = [i for i in body["items"] if i["origin"] == "manual"]
+    assert len(manual) == 2, "수동 라벨은 주소로 재부착된다"
+    assert {m["text"] for m in manual} == {"들어온다", "나간다"}
+    assert len(body["dangling"]) == 1, "자동 라벨 수정은 무효가 되고 목록에 남는다"
+
+    after = overlay_plan.load_edits(job_dir, job_id=str(eid))
+    assert after.edits_version == version_before, \
+        "파이프라인은 편집 파일을 쓰지 않는다"
+
+
+async def test_retranslate_rejected_unless_done(client, db_session, admin_user):
+    eid = await _baked_job(db_session, admin_user)
+    from sqlalchemy import select
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.external_id == eid))).scalar_one()
+    row.status = "translating"
+    await db_session.commit()
+    resp = await client.post(f"/api/v1/pdf-jobs/{eid}/retranslate")
+    assert resp.status_code == 409
+
+
+async def test_cancelled_rebake_converges_to_done_and_reopens_editing(
+        client, db_session, admin_user):
+    """재굽기를 취소해도 잡이 영구 불능이 되지 않는다.
+
+    `cancelled`로 굳으면 /download가 영구 409가 되고 편집·rebake·retranslate가
+    전부 막히며, in-flight가 아니라서 프루닝 대상으로 승격된다 — 사람이 넣은
+    라벨이 그렇게 사라진다.
+    """
+    from apps.server.domain.pdf_translate.pdf_tasks import mark_rebaking
+
+    eid = await _baked_job(db_session, admin_user)
+    await _add_label(client, eid, version=0)
+    from sqlalchemy import select
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.external_id == eid))).scalar_one()
+    row.status = "overlaying"          # 재굽기 진행 중을 흉내 낸다
+    await db_session.commit()
+    mark_rebaking(eid, True)
+    try:
+        resp = await client.post(f"/api/v1/pdf-jobs/{eid}/cancel")
+    finally:
+        mark_rebaking(eid, False)
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "done", "멀쩡한 번역본이 있으므로 done으로 수렴"
+
+    db_session.expire_all()
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.external_id == eid))).scalar_one()
+    assert row.status == "done" and row.progress == 100
+    assert "취소" in (row.error or "")
+    # 다운로드와 편집이 다시 열린다.
+    assert (await client.get(f"/api/v1/pdf-jobs/{eid}/download")).status_code == 200
+    assert (await _add_label(client, eid, version=1)).status_code == 201
