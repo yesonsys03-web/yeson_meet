@@ -100,6 +100,20 @@ export function PdfLabelEditor({ job, onClose }: {
 
   useEffect(() => { void reload(); }, [reload]);
 
+  // 창 크기·배율이 바뀌면 이미지의 표시 배율이 달라진다. 오버레이 좌표는
+  // **렌더 중에** `getBoundingClientRect()`로 파생하므로, 다시 그리게 하지
+  // 않으면 박스가 옛 자리에 남는다 — 지금까지는 원본/번역본을 눌러 `img`가
+  // 새로 load될 때만 맞춰졌다(실사용 보고). 이미지 자체를 관찰하면 창 크기,
+  // 목록 칸 높이 변화, 확대/축소가 한 경로로 모인다.
+  const [, redrawOverlays] = useState(0);
+  useEffect(() => {
+    const el = imgRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => redrawOverlays((n) => n + 1));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(() => {
     let alive = true;
     getPdfPanels(job.job_id, state.page)
@@ -317,9 +331,12 @@ export function PdfLabelEditor({ job, onClose }: {
       ) : null}
       {message ? <p style={{ color: "#f87171", fontSize: 12 }}>{message}</p> : null}
 
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+      {/* `alignItems`를 기본값(stretch)으로 둔다 — flex-start면 목록 칸이 제 내용
+          높이에서 멈춰, 세로로 긴 페이지 옆에 커다란 빈 공간이 남는다. */}
+      <div style={{ display: "flex", gap: 12 }}>
         {/* ── 좌: 목록표 ─────────────────────────────────────────────────── */}
-        <div style={{ width: 320, flexShrink: 0 }}>
+        <div style={{ width: 320, flexShrink: 0,
+          display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
             <select value={state.kind} style={{ fontSize: 12 }}
               onChange={(e) => dispatch({ type: "setKind",
@@ -334,21 +351,29 @@ export function PdfLabelEditor({ job, onClose }: {
             {filtered.length}건 · {state.offset + 1}–
             {Math.min(state.offset + PAGE_ROWS, filtered.length)} 표시
           </div>
-          <div style={{ maxHeight: 420, overflowY: "auto",
-            border: "1px solid #334155", borderRadius: 4 }}>
-            {filtered.slice(state.offset, state.offset + PAGE_ROWS).map((r) => (
-              <button key={r.id} type="button"
-                onClick={() => dispatch({ type: "selectRow", row: r })}
-                style={{
-                  display: "block", width: "100%", textAlign: "left", fontSize: 12,
-                  padding: "4px 6px", border: "none", cursor: "pointer",
-                  background: r.id === state.selectedId ? "#1e293b" : "transparent",
-                  color: r.editable ? "inherit" : "#64748b",
-                }}>
-                <span style={{ color: "#94a3b8" }}>p{r.page + 1}</span>{" "}
-                {r.origin === "manual" ? "✎" : ""}{r.edited ? "*" : ""} {r.text}
-              </button>
-            ))}
+          {/* 목록 높이는 **옆 이미지가 정한다.**
+              `flex:1`만으로는 안 된다 — 부모 높이가 내용으로 정해지는 상황에서는
+              목록이 제 길이만큼 늘어나 행 높이를 지배하고, 창을 줄여도 따라오지
+              않는다(실사용 보고). 그래서 스크롤 상자를 `absolute`로 띄워
+              **높이 계산에서 빼고**, 남는 자리를 채우게 한다. 그러면 행 높이는
+              이미지가 정하고 목록은 그 안에서 접힌다. */}
+          <div style={{ flex: 1, position: "relative", minHeight: 160 }}>
+            <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0,
+              overflowY: "auto", border: "1px solid #334155", borderRadius: 4 }}>
+              {filtered.slice(state.offset, state.offset + PAGE_ROWS).map((r) => (
+                <button key={r.id} type="button"
+                  onClick={() => dispatch({ type: "selectRow", row: r })}
+                  style={{
+                    display: "block", width: "100%", textAlign: "left", fontSize: 12,
+                    padding: "4px 6px", border: "none", cursor: "pointer",
+                    background: r.id === state.selectedId ? "#1e293b" : "transparent",
+                    color: r.editable ? "inherit" : "#64748b",
+                  }}>
+                  <span style={{ color: "#94a3b8" }}>p{r.page + 1}</span>{" "}
+                  {r.origin === "manual" ? "✎" : ""}{r.edited ? "*" : ""} {r.text}
+                </button>
+              ))}
+            </div>
           </div>
           <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
             <button type="button" disabled={state.offset <= 0}
