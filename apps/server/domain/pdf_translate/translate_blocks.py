@@ -78,6 +78,20 @@ _STYLE_EXAMPLES: list[tuple[str, str]] = [
     # 철자도 `씬밖`으로 통일한다(FL102 9건 + GABE01 1건 vs `신밖` GABE01 1건).
     ("66 JIMMY (O.S.) Your pro-nuts suck!",
      "지미(씬밖):당신들 도너츠 완전 별로야!"),
+    # (V.O.)는 (O.S.)와 **다른** 표기다 — FL102 41건 + FL104 2건, 사람은
+    # 43/43 전부 `(목소리만)`으로 옮기고 `(씬밖)`은 (O.S.) 자리에만 쓴다
+    # (22/22). 예시 하나로 둘을 나란히 보여 준다(FL104_Orev p104 사람 납품본
+    # 그대로).
+    (("296 PARTY GATOR (V.O.) I had finally come up with enough money to "
+      "get home to my daughter..."),
+     ("파티악어(목소리만):난 드디어 딸을 만나러 집에 갈수 있을만큼 충분한 돈을 "
+      "마련했어.")),
+    # (CONT'D)는 화자줄에 남긴다 — FL104 9건 전부 사람이 `(계속)`으로
+    # 표기하고 **다른 괄호 한정구보다 앞**에 둔다(FL104_Orev p72 그대로).
+    # 원문 추출에서 어포스트로피가 `?`로 나오는 폰트 결함까지 예시에 그대로
+    # 둔다(실물이 그렇게 들어온다).
+    ("293 PARTY GATOR (CONT?D) (AS HIPPIE LADY) Cool, yeah--",
+     "파티악어(계속)(히피여자처럼):와,좋네요-"),
     # 짧은 구어체 의역 — 축자 "통과"가 아닌 자연스러운 대화체 (GABE01 A1 p130)
     ("16 HANK Pass.", "행크:넘어가죠."),
     # 감탄 어미(-군) 자연스러운 구어체 (GABE01 A1 p215)
@@ -128,7 +142,11 @@ _HOUSE_STYLE_BLOCK = (
     "cycle=싸이클, REFERENCE=참고, bad choices(스폰서명)=배드초이스,\n"
     # 판넬 안 제작 지시어(FL102 실측: 카메라 가이드 6건, 필드 가이드 5건).
     # OCR이 같은 라벨을 CAM GUIDE / CAMGUIDE 둘 다로 돌려주므로 둘 다 적는다.
-    "CAM GUIDE=카메라 가이드 (CAMGUIDE도 같음), FIELD GUIDE=필드 가이드.\n"
+    "CAM GUIDE=카메라 가이드 (CAMGUIDE도 같음), FIELD GUIDE=필드 가이드,\n"
+    # FL104 사람 납품본 실측(2026-08-03) — house_style.HOUSE_KO_CORRECTIONS의
+    # FL104 절과 같은 근거·같은 항목(프롬프트 1차 / KO→KO 후처리 2차 방어).
+    "Party Gator=파티악어, Party Gator Man=파티악어맨, HIPPIE LADY=히피여자,\n"
+    "PLAY OVER PREVIOUS SHOT=이전 씬 위로 재생, bath salts=목욕소금.\n"
     "Register (화계) consistency: keep each character's politeness level consistent\n"
     "toward the same listener across the whole document. HANK speaks politely\n"
     "(해요체/합쇼체) to employees and customers — never 반말/하게체 to them.\n"
@@ -183,11 +201,16 @@ def build_pdf_prompt(texts: list[str]) -> str:
         "name (e.g. \"3 HANK/EMPLOYEES Propane.\"), format the Korean as "
         "\"화자명:대사\" (no space after the colon) — translate the speaker "
         "name, omit the leading cue number (e.g. \"행크/직원들:프로판.\").\n"
-        "Off-screen markers on the speaker line — \"(O.S.)\", \"(OS)\", "
-        "\"(V.O.)\" — are KEPT as \"(씬밖)\" attached right after the "
-        "speaker name, before the colon (e.g. \"3 LOUIS (OS) ...\" → "
-        "\"루이스(씬밖):...\"). Do not drop them and do not move them into "
-        "the dialogue body.\n"
+        "Speaker-line markers are KEPT, attached right after the speaker "
+        "name and before the colon — never dropped, never moved into the "
+        "dialogue body:\n"
+        "  off-screen \"(O.S.)\"/\"(OS)\" → \"(씬밖)\" "
+        "(e.g. \"3 LOUIS (OS) ...\" → \"루이스(씬밖):...\");\n"
+        "  voice-over \"(V.O.)\"/\"(VO)\" → \"(목소리만)\" — a DIFFERENT "
+        "marker from off-screen, never render it as \"(씬밖)\";\n"
+        "  continuation \"(CONT'D)\" (the apostrophe may extract as \"?\", "
+        "i.e. \"(CONT?D)\") → \"(계속)\", placed immediately after the name "
+        "and before any other parenthetical.\n"
         "Brand, sponsor and company names are transliterated (음역), never "
         "translated for meaning — even when they are made of ordinary "
         "English words (e.g. a sponsor called \"bad choices\" → "
@@ -315,6 +338,36 @@ def _post_process(ko: str) -> str:
     return apply_output_normalization(apply_house_style(apply_ko_corrections(ko)))
 
 
+# 화자줄 마커 2차 방어 — 원문을 봐야만 고칠 수 있는 유일한 하우스 표기다.
+#
+# (O.S.)와 (V.O.)는 사람 납품본에서 **다른 말**로 옮겨진다(FL102+FL104 실측
+# 2026-08-03, 예외 0건): (O.S.)/(OS) 22/22 `씬밖`, (V.O.) 43/43 `목소리만`.
+# 우리 프롬프트는 2026-07-31까지 둘을 한 덩어리로 묶어 전부 `(씬밖)`으로
+# 내라고 지시했고, FL104_Orev 출력 2건이 실제로 그렇게 나갔다.
+#
+# 왜 house_style.py(KO→KO)에 못 넣는가: 잘못된 결과값 `(씬밖)`은 (O.S.)의
+# **정답**이기도 하다 — KO만 보고는 어느 쪽인지 알 수 없다. 원문에 (V.O.)가
+# 있고 (O.S.)가 없을 때만 고친다(둘 다 있으면 어느 마커가 어느 자리인지
+# 모르므로 손대지 않는다 — 조용한 악화 금지).
+_VOICE_OVER_SRC_RE = re.compile(r"\(\s*V\s*[.?]?\s*O\s*[.?]?\s*\)", re.IGNORECASE)
+_OFF_SCREEN_SRC_RE = re.compile(r"\(\s*O\s*[.?]?\s*S\s*[.?]?\s*\)", re.IGNORECASE)
+_OFF_SCREEN_KO = "(씬밖)"
+_VOICE_OVER_KO = "(목소리만)"
+
+
+def apply_source_markers(src: str, ko: str) -> str:
+    """원문 기반 마커 교정 — 지금은 (V.O.) 하나뿐이다.
+
+    영문 폴백값(번역 실패 시 원문 그대로)은 `(씬밖)`을 담을 수 없으므로 이
+    함수는 폴백을 절대 건드리지 않는다 — translate_texts의 폴백 식별
+    (`value.strip() == unique_texts[uidx]`)이 그대로 성립한다."""
+    if _OFF_SCREEN_KO not in ko:
+        return ko
+    if not _VOICE_OVER_SRC_RE.search(src) or _OFF_SCREEN_SRC_RE.search(src):
+        return ko
+    return ko.replace(_OFF_SCREEN_KO, _VOICE_OVER_KO)
+
+
 _DIGITS_RE = re.compile(r"\d+")
 
 
@@ -375,7 +428,7 @@ async def _verify_and_fix_numbers(
 
     # unresolved → 블록 단건 재번역 폴백(기존 kept-as-source 경로 재사용).
     retried = await _resilient(provider, [src])
-    retried_ko = _post_process(retried[0].strip())
+    retried_ko = apply_source_markers(src, _post_process(retried[0].strip()))
     re_fixed, re_verdict = _verify_numbers(src, retried_ko)
     if re_verdict != "unresolved":
         if re_verdict == "fixed":
@@ -491,7 +544,11 @@ async def translate_texts(
             # 후처리 체인(_post_process: ko교정 → 하우스표기 → 출력정규화) →
             # 숫자 게이트 순서. 재번역 폴백 경로(_verify_and_fix_numbers)도
             # 같은 헬퍼를 쓴다 — 두 경로가 갈라지면 한쪽만 한글 가드를 잃는다.
-            corrected = [_post_process(t.strip()) for t in translated]
+            # 원문 기반 마커 교정(apply_source_markers)은 후처리 체인 **뒤**에
+            # 온다 — house_style이 `신밖`→`씬밖` 철자를 먼저 통일해야 여기서
+            # 한 가지 형태만 보면 된다.
+            corrected = [apply_source_markers(src, _post_process(t.strip()))
+                         for src, t in zip(chunk, translated)]
             # 숫자 보존 게이트(Task 16) — 순서·진행률 계약을 흔들지 않게
             # 같은 청크 워커·같은 세마포어 구간 안에서 후처리한다.
             results[idx] = [

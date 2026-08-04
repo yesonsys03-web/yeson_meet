@@ -13,6 +13,7 @@ from apps.server.domain.pdf_translate.translate_blocks import (
     _post_process,
     _verify_numbers,
     apply_output_normalization,
+    apply_source_markers,
     build_pdf_prompt,
     translate_texts,
 )
@@ -73,6 +74,67 @@ def test_pdf_prompt_keeps_offscreen_marker_as_ssinbak():
     # few-shot도 같은 규칙을 시연해야 한다(지시문과 예시가 엇갈리면 모델이
     # 예시를 따른다 — 예전 버전이 정확히 그 상태였다).
     assert "지미(씬밖):" in p
+
+
+def test_pdf_prompt_separates_voice_over_from_off_screen():
+    """(V.O.)는 (O.S.)와 **다른** 표기다 — FL102+FL104 사람 납품본 실측
+    (2026-08-03, 예외 0건): (O.S.)/(OS) 22/22 `씬밖`, (V.O.) 43/43
+    `목소리만`. 2026-07-31판 프롬프트는 둘을 한 덩어리로 묶어 전부 `(씬밖)`
+    으로 내라고 지시했고, FL104_Orev 출력 2건이 실제로 그렇게 나갔다."""
+    p = build_pdf_prompt(["278 PARTY GATOR (V.O.) Now look,"])
+    assert "(목소리만)" in p
+    assert "파티악어(목소리만):" in p  # few-shot도 같은 규칙을 시연
+
+
+def test_pdf_prompt_keeps_contd_marker():
+    """(CONT'D)는 화자줄에 `(계속)`으로 남긴다 — FL104 9건 전부 사람이
+    표기했고 다른 괄호 한정구보다 앞에 둔다. 우리 출력은 통째로 떨어뜨렸다.
+    원문 추출에서 어포스트로피가 `?`로 나오는 폰트 결함도 함께 알린다."""
+    p = build_pdf_prompt(["293 PARTY GATOR (CONT?D) (AS HIPPIE LADY) Cool"])
+    assert "(계속)" in p
+    assert "(CONT?D)" in p
+    assert "파티악어(계속)(히피여자처럼):" in p
+
+
+def test_pdf_prompt_includes_fl104_house_terms():
+    """FL104 하우스 표기는 프롬프트(1차)와 house_style(2차) 양쪽에 있어야
+    한다 — 이 파일의 다른 표기 항목과 같은 이중 방어."""
+    p = build_pdf_prompt(["Party Gator thinly slices shallots"])
+    for term in ("파티악어", "파티악어맨", "히피여자",
+                 "이전 씬 위로 재생", "목욕소금"):
+        assert term in p
+
+
+# ── 원문 기반 마커 교정(apply_source_markers) ────────────────────────────
+
+def test_source_markers_fix_voice_over_rendered_as_off_screen():
+    """`(씬밖)`은 (O.S.)의 정답이기도 해서 KO만 보고는 못 고친다 — 원문에
+    (V.O.)가 있을 때만 `(목소리만)`으로 바로잡는다."""
+    assert apply_source_markers(
+        "278 PARTY GATOR (V.O.) Now look,",
+        "파티악어(씬밖):자 봐,") == "파티악어(목소리만):자 봐,"
+    assert apply_source_markers(
+        "296 PARTY GATOR (VO) I had", "파티악어(씬밖):난") == "파티악어(목소리만):난"
+
+
+def test_source_markers_leave_real_off_screen_alone():
+    """(O.S.) 자리의 `(씬밖)`은 정답이다 — 건드리면 안 된다."""
+    ko = "루이스(씬밖):전문가와 스님이요."
+    assert apply_source_markers("3 LOUIS (O.S.) --specialist", ko) == ko
+
+
+def test_source_markers_skip_ambiguous_block_with_both_markers():
+    """한 블록에 (V.O.)와 (O.S.)가 함께 있으면 어느 `(씬밖)`이 어느 마커인지
+    알 수 없다 — 조용한 악화 대신 손대지 않는다."""
+    ko = "엑스(씬밖):둘 다"
+    assert apply_source_markers("9 X (V.O.) then 10 Y (O.S.)", ko) == ko
+
+
+def test_source_markers_leave_english_fallback_untouched():
+    """번역 실패 폴백값(영문 원문)은 `(씬밖)`을 담을 수 없어 이 함수가
+    건드리지 않는다 — translate_texts의 폴백 식별이 그대로 성립한다."""
+    src = "278 PARTY GATOR (V.O.) Now look,"
+    assert apply_source_markers(src, src) == src
 
 
 def test_pdf_prompt_requires_brand_transliteration():
