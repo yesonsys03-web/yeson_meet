@@ -35,6 +35,7 @@ from apps.server.domain.pdf_translate.pdf_tasks import (
     start_background_task,
     start_pdf_task,
 )
+from apps.server.domain.pdf_translate.profiles import profile_by_name
 from apps.server.domain.video_captions.ingest import save_upload
 from apps.server.domain.video_captions.translate_cli import list_translate_engines
 
@@ -152,6 +153,57 @@ async def get_pdf_page_png(
     except IndexError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "페이지 범위 밖입니다")
     return Response(content=png, media_type="image/png")
+
+
+def _page_panels(path: str, page: int, profile_name: str) -> dict:
+    """판넬 주소 열거 — `_render_page`와 같은 open→use→close 패턴.
+
+    프로파일은 `job.format`으로 되찾는다(재감지 없음). `panel_layout` 훅이
+    없는 프로파일이면 `LookupError` — 호출부가 409로 끝낸다.
+    """
+    profile = profile_by_name(profile_name)
+    layout = getattr(profile, "panel_layout", None) if profile is not None else None
+    if layout is None:
+        raise LookupError(profile_name)
+    doc = open_pdf(Path(path))
+    try:
+        if page < 0 or page >= doc.page_count:
+            raise IndexError(page)
+        width, height = doc.page_size(page)
+        is_panel_page, rects = layout(doc, page)
+        return {
+            "page_size": [width, height],
+            "is_panel_page": is_panel_page,
+            "panels": [{"index": i, "rect": list(r)} for i, r in enumerate(rects)],
+        }
+    finally:
+        doc.close()
+
+
+@router.get("/{job_id}/page/{page}/panels")
+async def get_pdf_page_panels(
+    job_id: UUID, page: int,
+    db: Annotated[AsyncSession, Depends(get_session)],
+) -> dict:
+    """이 페이지의 판넬 칸 — 수동 라벨이 붙을 주소.
+
+    좌표는 **원본 기준 pt**다(원점 좌상단). 화면 픽셀 변환은 클라이언트가 한다
+    — pt를 유일한 진실로 두고 px는 파생값으로 유지하기 위해서다.
+    """
+    job = await _get_job(db, job_id)
+    if not job.source_path or not Path(job.source_path).exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "원본 PDF가 없습니다")
+    if not job.format:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "이 작업은 편집을 지원하지 않습니다")
+    try:
+        return await asyncio.to_thread(
+            _page_panels, job.source_path, page, job.format)
+    except IndexError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "페이지 범위 밖입니다")
+    except LookupError:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "이 작업은 편집을 지원하지 않습니다")
 
 
 @router.get("/{job_id}/download")

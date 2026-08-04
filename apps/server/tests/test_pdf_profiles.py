@@ -1265,3 +1265,251 @@ def test_refine_ko_leaves_field_blocks_untouched():
     for kind in ("dialog", "action"):
         block = PdfBlock(page=1, kind=kind, text="x", bbox=(0, 0, 1, 1))
         assert StoryboardProfile().refine_ko(block, ko) == ko
+
+
+# ── S3: 판넬 주소 층 (ADR-4) ──────────────────────────────────────────────────
+#
+# 주소 층은 OCR 층(`_panel_subregions`)과 **같은 영역·같은 면적비**를 쓰되 개수
+# 상한을 걸지 않고 중복을 제거한다. OCR 층은 한 글자도 건드리지 않는다 — 그쪽의
+# 유일한 소비자가 OCR 크롭 입력이라, 정렬이나 캡을 심으면 번역 결과가 바뀐다.
+
+
+def test_sort_panels_reading_order_three_panel_same_y0():
+    """3단(같은 y0) — 좌→우."""
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        _sort_panels_reading_order,
+    )
+    rects = [(668.9, 110.9, 971.0, 279.2),
+             (38.1, 110.9, 340.2, 279.2),
+             (353.5, 110.9, 655.6, 279.2)]
+    out = _sort_panels_reading_order(rects)
+    assert [r[0] for r in out] == [38.1, 353.5, 668.9]
+
+
+def test_sort_panels_reading_order_survives_y0_jitter():
+    """3단인데 y0가 0.4pt씩 어긋난 경우 — 사전식 `(y0, x0)`라면 좌우가 뒤집힌다.
+
+    행 밴드로 묶으면 세 칸이 한 행이 되고 x0 순서가 그대로 나온다. 사람이
+    "2번 칸"이라 부르는 주소가 지터로 흔들리면 안 된다.
+    """
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        _sort_panels_reading_order,
+    )
+    rects = [(668.9, 110.5, 971.0, 279.2),
+             (38.1, 110.9, 340.2, 279.2),
+             (353.5, 110.7, 655.6, 279.2)]
+    out = _sort_panels_reading_order(rects)
+    assert [r[0] for r in out] == [38.1, 353.5, 668.9]
+    # 사전식이었다면 y0가 가장 작은 오른쪽 칸이 1번이 됐을 것이다.
+    assert out[0][0] != 668.9
+
+
+def test_sort_panels_reading_order_single_panel():
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        _sort_panels_reading_order,
+    )
+    rects = [(38.0, 100.0, 574.0, 374.7)]
+    assert _sort_panels_reading_order(rects) == tuple(rects)
+
+
+def test_sort_panels_reading_order_vertical_four_rows():
+    """세로형 — 행마다 한 칸이면 위→아래 그대로."""
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        _sort_panels_reading_order,
+    )
+    rects = [(40.0, 300.0, 560.0, 380.0),
+             (40.0, 100.0, 560.0, 180.0),
+             (40.0, 200.0, 560.0, 280.0),
+             (40.0, 400.0, 560.0, 480.0)]
+    out = _sort_panels_reading_order(rects)
+    assert [r[1] for r in out] == [100.0, 200.0, 300.0, 400.0]
+
+
+def test_sort_panels_reading_order_two_by_two_grid():
+    """2×2 — 위 행 좌→우, 그다음 아래 행 좌→우."""
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        _sort_panels_reading_order,
+    )
+    rects = [(500.0, 300.0, 900.0, 500.0),   # 아래 우
+             (50.0, 100.0, 450.0, 280.0),    # 위 좌
+             (500.0, 100.0, 900.0, 280.0),   # 위 우
+             (50.0, 300.0, 450.0, 500.0)]    # 아래 좌
+    out = _sort_panels_reading_order(rects)
+    assert [(r[0], r[1]) for r in out] == [
+        (50.0, 100.0), (500.0, 100.0), (50.0, 300.0), (500.0, 300.0)]
+
+
+def test_sort_panels_reading_order_is_input_order_independent():
+    """같은 집합이면 어떤 순서로 들어와도 같은 결과 — 주소의 결정성."""
+    import itertools
+
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        _sort_panels_reading_order,
+    )
+    rects = [(38.1, 110.9, 340.2, 279.2),
+             (353.5, 110.7, 655.6, 279.2),
+             (668.9, 110.5, 971.0, 279.2)]
+    expected = _sort_panels_reading_order(rects)
+    for perm in itertools.permutations(rects):
+        assert _sort_panels_reading_order(list(perm)) == expected
+
+
+def test_panels_gate_matches_extract_gate(tmp_path):
+    """게이트 2: `panel_layout`의 판넬 페이지 판정이 `extract`와 **같은 입력**을 본다.
+
+    `extract`는 `repair_corrupt_words`를 거친 raws로 `_is_panel_page`를 판정한다
+    (`storyboard.py:209`, `:270`). 주소 층이 원본 raws를 보면 매핑이 깨진
+    페이지에서 판정이 갈리고, 하필 그런 페이지가 이 기능의 표적(손글씨 IN/OUT)일
+    수 있다. 두 판정이 같은 값을 내는지 직접 대조한다.
+    """
+    from apps.server.domain.pdf_translate.panel_ocr import repair_corrupt_words
+    from apps.server.domain.pdf_translate.profiles.storyboard import _is_panel_page
+
+    doc = open_pdf(_make_three_panel_pdf(tmp_path))
+    try:
+        raws = repair_corrupt_words(doc, 0, doc.raw_blocks(0))
+        is_panel_page, _rects = StoryboardProfile().panel_layout(doc, 0)
+        assert is_panel_page is _is_panel_page(raws) is True
+    finally:
+        doc.close()
+
+
+def test_panels_returns_empty_on_title_page(tmp_path):
+    """게이트 3: 표지에는 가짜 판넬 번호를 그리지 않는다.
+
+    표지의 빨간 로고가 라벨로 오인식되던 실물 회귀(GABE01 page 0)를 막는
+    `extract`의 게이트와 같은 판정이어야 한다.
+    """
+    doc = open_pdf(_make_storyboard_title_page_pdf(tmp_path))
+    try:
+        is_panel_page, rects = StoryboardProfile().panel_layout(doc, 0)
+        assert is_panel_page is False
+        assert rects == ()
+        assert StoryboardProfile().panels(doc, 0) == ()
+    finally:
+        doc.close()
+
+
+def test_panels_is_superset_of_panel_subregions(tmp_path):
+    """게이트 4: `set(panels()) ⊇ set(_panel_subregions(...))`.
+
+    같은 영역·같은 면적비를 쓰고 캡만 없앴으므로 구조적으로 성립한다 — 이
+    테스트는 그 구조가 유지되는지(누가 영역이나 면적비를 한쪽에만 바꾸지
+    않았는지) 감시한다.
+    """
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        _panel_region,
+        _panel_subregions,
+    )
+    doc = open_pdf(_make_three_panel_pdf(tmp_path))
+    try:
+        raws = doc.raw_blocks(0)
+        page_w, _page_h = doc.page_size(0)
+        region = _panel_region(raws, page_w)
+        subs = set(_panel_subregions(doc, 0, region))
+        addressed = set(StoryboardProfile().panels(doc, 0))
+        assert subs <= addressed, (subs - addressed)
+    finally:
+        doc.close()
+
+
+def _make_duplicate_image_pdf(tmp_path: Path) -> Path:
+    """같은 자리에 이미지를 두 번 그린 페이지 — `image_rects`는 `page_rects`와
+    달리 중복을 제거하지 않는다(`backend_mupdf.py:110-124` vs `:100-108`)."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1008, height=612)
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 629, 354), False)
+    pix.clear_with(220)
+    for x0 in (38.1, 353.5):
+        page.insert_image(fitz.Rect(x0, 110.9, x0 + 302.1, 279.2), pixmap=pix)
+    # 첫 칸을 한 번 더 — 중복
+    page.insert_image(fitz.Rect(38.1, 110.9, 38.1 + 302.1, 279.2), pixmap=pix)
+    page.insert_text((72, 460), "Dialog", fontsize=8)
+    page.insert_text((72, 478), "If you wanna go, then go.", fontsize=10)
+    path = tmp_path / "sb_dup_image.pdf"
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_panels_dedupes_duplicate_image_rects(tmp_path):
+    """게이트 5: 중복 이미지가 사람이 보는 판넬 번호를 밀지 않는다."""
+    doc = open_pdf(_make_duplicate_image_pdf(tmp_path))
+    try:
+        raw = doc.image_rects(0)
+        rects = StoryboardProfile().panels(doc, 0)
+        assert len(raw) > len(rects), (raw, rects)   # 원재료엔 중복이 있고
+        assert len(rects) == 2, rects                 # 주소는 칸 수만큼만
+        assert rects[0][0] < rects[1][0]              # 좌→우
+    finally:
+        doc.close()
+
+
+def test_panels_golden_fixture_freezes_address_rev(tmp_path):
+    """게이트 7: 주소 규약이 바뀌면 여기서 걸린다.
+
+    `_panel_region`·`_PANEL_MIN_AREA_RATIO`·`_sort_panels_reading_order` 중
+    하나라도 고치면 이 골든이 깨지고, 그때 `PANEL_ADDRESS_REV`를 함께 올리라는
+    신호가 된다. 규약이 조용히 바뀌면 이미 저장된 수동 라벨이 **다른 칸으로
+    이동**하기 때문이다(AC12의 `__protocol_attrs__` 동결과 같은 수법).
+    """
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        PANEL_ADDRESS_REV,
+    )
+    assert PANEL_ADDRESS_REV == 1, (
+        "주소 산출 규약을 바꿨다면 이 값을 올리고 골든도 함께 갱신할 것")
+    doc = open_pdf(_make_three_panel_pdf(tmp_path))
+    try:
+        rects = StoryboardProfile().panels(doc, 0)
+        # 여유 2pt: MuPDF가 이미지 종횡비를 지키느라 폭을 조금 줄인다
+        # (기존 `test_panel_subregions_reads_panel_boxes_from_the_document`와 동일).
+        assert len(rects) == 3, rects
+        for got, want in zip(rects, [(38.1, 110.9, 340.2, 279.2),
+                                     (353.5, 110.9, 655.6, 279.2),
+                                     (668.9, 110.9, 971.0, 279.2)]):
+            assert got == pytest.approx(want, abs=2.0)
+    finally:
+        doc.close()
+
+
+@pytest.mark.skipif(not SAMPLES, reason="실물 샘플 경로(YESON_PDF_SAMPLES) 미지정")
+def test_panels_latency_normal_p95_and_worst_broken_page():
+    """게이트 6: `/panels`의 서버측 계산 시간 — 정상 p95는 상한, 깨진 페이지는 기록.
+
+    깨진 페이지(글리프 매핑이 깨져 `repair_corrupt_words` 2단계가 도는 페이지)는
+    전체의 약 2%라 **p95에 잡히지 않는다.** 상한만 걸면 게이트는 통과하면서
+    최악값이 숨는다 — 그래서 정상 페이지에만 상한을 걸고 깨진 페이지는 실측값을
+    출력해 드러낸다(A-m1). 300dpi 렌더 + 단어별 OCR이라 초 단위가 정상이다.
+
+    최악값이 실용 범위를 벗어나면 `/panels` 경로에 한해
+    `YESON_PDF_TEXT_REPAIR=0` 킬스위치(`panel_ocr.py:392`)를 적용하는 안을
+    검토한다 — 단 그러면 게이트 2(`extract`와 판정 일치)가 깨지므로 트레이드오프다.
+    """
+    path = Path(SAMPLES) / "1601_콘티번역" / "GABE01_A1_FinalShipped.pdf"
+    profile = StoryboardProfile()
+    doc = open_pdf(path)
+    try:
+        broken = [p for p in range(doc.page_count) if doc.corrupt_words(p)]
+        normal = [p for p in range(doc.page_count) if p not in set(broken)]
+        # 균등 표본 60쪽 — 전량은 게이트 런타임을 불필요하게 키운다.
+        step = max(1, len(normal) // 60)
+        sample = normal[::step][:60]
+
+        def _ms(page: int) -> float:
+            t0 = time.perf_counter()
+            profile.panel_layout(doc, page)
+            return (time.perf_counter() - t0) * 1000.0
+
+        normal_ms = sorted(_ms(p) for p in sample)
+        p95 = normal_ms[min(len(normal_ms) - 1, int(len(normal_ms) * 0.95))]
+        worst_broken = max((_ms(p) for p in broken[:3]), default=None)
+
+        print(f"\n[게이트6] 깨진 페이지 {len(broken)}/{doc.page_count} "
+              f"({len(broken) / doc.page_count:.1%}) | "
+              f"정상 표본 {len(sample)}쪽 p95={p95:.1f}ms "
+              f"median={normal_ms[len(normal_ms) // 2]:.1f}ms | "
+              f"깨진 페이지 최악={worst_broken if worst_broken is None else f'{worst_broken:.1f}ms'}")
+        assert p95 <= 300.0, f"정상 페이지 p95 {p95:.1f}ms > 300ms"
+    finally:
+        doc.close()

@@ -286,6 +286,72 @@ class StoryboardProfile:
                         text="\n".join(texts), bbox=_union_bbox(group), ko=ko))
         return out
 
+    def panel_layout(self, doc: PdfDocument, page: int
+                     ) -> tuple[bool, tuple[tuple[float, float, float, float], ...]]:
+        """`(판넬 페이지인가, 칸들)` — 수동 라벨의 **주소 공간**.
+
+        왜 두 값을 한 번에 주는가: 편집 화면은 "칸이 0개"와 "여긴 표지라 애초에
+        칸이 없는 페이지"를 구분해 안내해야 하는데 `panels()`만으로는 둘 다 빈
+        튜플이라 구분이 안 된다. 따로 물으면 아래 `repair_corrupt_words`가 **두
+        번** 돌고, 그건 깨진 페이지에서 300dpi 렌더+단어별 OCR을 재지불하는
+        일이다(`panel_ocr.py:377`). 계산은 여기 한 번, `panels()`는 이 결과의
+        뒷값을 돌려주는 얇은 껍데기다.
+
+        OCR 층(`_panel_subregions`)과 **같은 영역·같은 면적비**를 쓰되 둘이 다르다:
+        - **개수 상한을 걸지 않는다.** `_PANEL_MAX_SUBREGIONS`는 OCR 호출 비용의
+          상한이지 주소 공간의 상한이 아니다 — 9번째 칸에 사람이 라벨을 못 붙일
+          이유가 없다.
+        - **중복을 제거한다.** `image_rects`는 `page_rects`와 달리 dedup을 하지
+          않아(`backend_mupdf.py:110-124` vs `:100-108`) 같은 자리에 두 번 그려진
+          이미지가 사람이 보는 판넬 번호를 밀어 버린다.
+
+        그래서 `set(panels()) ⊇ set(_panel_subregions(...))`가 **코드 구조로**
+        성립한다 — 캡 제거는 늘리기만 하고 중복 제거는 같은 rect의 사본만
+        줄인다. 검증해야 할 성질이 아니라 구조적 보장이다.
+
+        ⚠ `_panel_region`·`_panel_subregions`는 **읽기만 하고 수정하지 않는다.**
+        `_panel_subregions`의 유일한 소비자가 OCR 크롭 입력이라(`:275`) 거기에
+        정렬이나 캡 변경을 심으면 **번역 결과가 바뀐다**(8칸을 넘는 페이지에서
+        읽는 칸 집합 자체가 달라진다). 주소는 이 층에서만 만든다.
+
+        ⚠ `raws`는 `extract`(`:209`)와 **같은 `repair_corrupt_words` 입력**이어야
+        한다 — 게이트 판정이 갈리면 매핑이 깨진 페이지에서 OCR은 판넬을 읽었는데
+        주소층은 "칸 없음"을 돌려주고, 하필 그런 페이지가 이 기능의 표적(손글씨
+        IN/OUT)일 수 있다.
+
+        `FormatProfile` Protocol에는 등록하지 않는다 — `refine_ko`와 같은 선택
+        훅이고 호출부는 `getattr(profile, "panels", None)`로 접근한다.
+        """
+        raws = repair_corrupt_words(doc, page, doc.raw_blocks(page))
+        # 표지·간지에 가짜 판넬 번호를 그리지 않는다 — 표지의 빨간 로고가
+        # 라벨로 오인식되던 실물 회귀를 막는 `extract`의 게이트(`:270`)와
+        # **같은 판정**이어야 한다.
+        if not _is_panel_page(raws):
+            return False, ()
+        page_w, _page_h = doc.page_size(page)
+        region = _panel_region(raws, page_w)
+        region_area = max(0.0, (region[2] - region[0]) * (region[3] - region[1]))
+        if region_area <= 0:
+            return True, ()
+        out: list[tuple[float, float, float, float]] = []
+        for rect in dict.fromkeys(doc.image_rects(page)):
+            sub = (max(rect[0], region[0]), max(rect[1], region[1]),
+                   min(rect[2], region[2]), min(rect[3], region[3]))
+            w, h = sub[2] - sub[0], sub[3] - sub[1]
+            if w <= 0 or h <= 0:
+                continue
+            if w * h < region_area * _PANEL_MIN_AREA_RATIO:
+                continue
+            out.append(sub)
+        # 잘라낸 뒤에 같아질 수도 있다(영역 밖에서만 다르던 두 이미지) — 번호가
+        # 밀리지 않게 한 번 더 접는다. 순서 보존 dedup이라 결과는 결정적이다.
+        return True, _sort_panels_reading_order(list(dict.fromkeys(out)))
+
+    def panels(self, doc: PdfDocument, page: int
+               ) -> tuple[tuple[float, float, float, float], ...]:
+        """이 페이지의 판넬 칸을 읽기 순서로 — `panel_layout`의 뒷값."""
+        return self.panel_layout(doc, page)[1]
+
     def refine_ko(self, block: PdfBlock, ko_text: str) -> str:
         """판넬 라벨 주석에서 **번역되지 않은 영문 줄**을 뺀다(빈 문자열이면
         부르는 쪽이 주석을 만들지 않는다).
@@ -518,6 +584,17 @@ def _panel_region(raws: list[RawBlock], page_w: float
 # 판넬 칸으로 인정할 최소 넓이(OCR 영역 대비). 그림 속 아이콘·로고 이미지가
 # 칸으로 둔갑해 OCR 호출만 늘리는 것을 막는다(3단 칸 = 영역의 약 27%).
 _PANEL_MIN_AREA_RATIO = 0.05
+
+# 판넬 **주소** 산출 규약의 리비전. 사람이 붙인 수동 라벨은 `(페이지, 판넬
+# 번호)`로 주소를 갖는데, 그 번호를 만드는 규칙(영역·면적비·정렬)이 바뀌면
+# **기존 라벨이 조용히 다른 칸으로 이동한다**. 레코드에 이 값을 함께 적어 두면
+# 나중에 불일치를 감지할 수 있다.
+#
+# ⚠ `_panel_region`·`_PANEL_MIN_AREA_RATIO`·`_sort_panels_reading_order` 중
+# 하나라도 고치면 이 값을 올려야 한다. 잊으면 드리프트 감지기가 조용히
+# 거짓말한다 — 그래서 `panels()` 골든 픽스처 테스트가 이 상수와 기하를 함께
+# 동결한다(AC12의 `__protocol_attrs__` 동결과 같은 수법).
+PANEL_ADDRESS_REV = 1
 # 한 페이지에서 따로 읽을 칸의 최대 개수 — 비용 상한(3단=3, 1단=1이 실물).
 _PANEL_MAX_SUBREGIONS = 8
 
@@ -555,6 +632,43 @@ def _panel_subregions(doc: PdfDocument, page: int,
             continue
         out.append(sub)
     return tuple(out[:_PANEL_MAX_SUBREGIONS])
+
+
+def _sort_panels_reading_order(
+    rects: list[tuple[float, float, float, float]],
+) -> tuple[tuple[float, float, float, float], ...]:
+    """판넬 칸을 **사람이 부르는 순서**(위→아래·좌→우)로 정렬한다.
+
+    사전식 `(y0, x0)`가 아니라 **행 밴드**로 묶는다. 백엔드가 주는 순서는
+    사전식인데(`backend_mupdf.py:118-124`), 그건 같은 행의 두 칸이 y0에서
+    0.5pt만 어긋나도 좌우가 뒤집힌다 — 사람이 "2번 칸"이라고 부르는 주소가
+    그런 지터로 흔들리면 안 된다.
+
+    묶는 규칙: 두 사각형의 세로 겹침이 **더 작은 높이의 50%를 초과**하면 같은
+    행이다. 3단(같은 y0)·3단(0.4pt 지터)·1단·세로형 4행·2×2 격자 모두에서
+    위→아래·좌→우가 나온다.
+
+    입력 순서에 의존하지 않는다 — 먼저 `(y0, x0)`로 정규화한 뒤 훑으므로 같은
+    집합이면 어떤 순서로 들어와도 같은 결과다(주소가 흔들리면 안 되므로
+    결정성은 테스트로 잠근다).
+    """
+    rows: list[list[tuple[float, float, float, float]]] = []
+    for r in sorted(rects, key=lambda b: (b[1], b[0])):
+        for row in rows:
+            row_y0 = min(b[1] for b in row)
+            row_y1 = max(b[3] for b in row)
+            overlap = min(row_y1, r[3]) - max(row_y0, r[1])
+            shorter = min(row_y1 - row_y0, r[3] - r[1])
+            if shorter > 0 and overlap > shorter * 0.5:
+                row.append(r)
+                break
+        else:
+            rows.append([r])
+    rows.sort(key=lambda row: min(b[1] for b in row))
+    out: list[tuple[float, float, float, float]] = []
+    for row in rows:
+        out.extend(sorted(row, key=lambda b: b[0]))
+    return tuple(out)
 
 
 def _next_label_y0(raws: list[RawBlock], next_label: str | None,
