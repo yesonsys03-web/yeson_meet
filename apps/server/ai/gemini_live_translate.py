@@ -272,11 +272,47 @@ async def _translate_final_text(text_client: Any, en: str) -> str | None:
                 # 규칙은 용어집 '뒤'(입력 직전)에 둔다 — 380항목 목록 앞에 두면
                 # 입력과 멀어져 준수도가 떨어진다(실기: 온도 규칙이 긴 문장에서
                 # 무시되던 케이스가 재배치로 해소).
-                "Rules: Keep numbers as digits with their units (e.g. 5%, "
-                "4~6프레임). Any temperature or 'N degree(s)' from an English "
-                "speaker is Fahrenheit — convert to Celsius, rounded, rendered "
-                "as '약 M도' (e.g. '90, 93 degree weather' → '약 32도, 34도 "
-                "날씨'); never leave a Fahrenheit number as a bare N도. "
+                # 단위 창작 금지 — 한국어는 수사 뒤 조수사가 문법적으로 필수라
+                # 모델이 하나를 지어낸다. 구 규칙의 "with their units"가 그걸
+                # 부추겼다(실기 2026-08-04: 화번 305 → 305년/305건/305개, 실행
+                # 마다 갈림). 맨숫자는 맨숫자로 두는 편이 항상 안전하다.
+                "Rules: Keep numbers as digits, and keep only the unit the "
+                "speaker actually said (e.g. 5%, 4~6프레임). If a number has no "
+                "unit in the English, write the bare number — never supply a "
+                "Korean counter or unit of your own (년·개·건·도·일 …). A bare "
+                "'305' stays '305', never '305년' or '305개'. "
+                # 화번 규칙 — "bare number는 bare로" 만으로는 'of 305'·'in 305'
+                # 같은 전치사 구문에서 모델이 부분표현으로 읽어 개/건을 붙인다
+                # (측정: 5/5 잔존). 이 바닥에서 세 자리 수는 화번이므로 뜻을
+                # 직접 박아 준다. 단 뒤에 단위어가 붙으면 그건 진짜 수량이다
+                # ("305 shots completed and 55 remaining" = 실제 샷 수).
+                "A three-digit number like 305 or 402 is an episode number "
+                "(season 3 episode 05) — render it '305화', even after 'of' or "
+                "'in' ('100% of 305' → '305화의 100%'). Only when an explicit "
+                "unit word follows it in the English is it a quantity "
+                "('305 shots' → '305 샷'). "
+                # 화씨 규칙(PR#67)은 유지하되 '화자가 실제로 degree를 말했을 때'로
+                # 게이트. 예시가 쉼표로 이어진 맨숫자 두 개라, 온도와 무관한
+                # "it's not 73, it's 49"까지 끌어다 73도/49도를 만들었다.
+                "Only when the speaker actually says 'degree(s)' or names a "
+                "temperature, treat it as Fahrenheit — convert to Celsius, "
+                "rounded, rendered as '약 M도' (e.g. '90, 93 degree weather' → "
+                "'약 32도, 34도 날씨'); never leave a Fahrenheit number as a "
+                "bare N도. Numbers with no temperature word are never 도. "
+                # 서법 보존 — 문장별 호출이라 문맥이 없어 조건문이 지시문으로
+                # 뒤집히면 회의록에 없던 약속이 생긴다(실기 2026-08-04:
+                # "you think that you can do them by next week" → "다음 주까지
+                # 하세요", "if we do not deliver" → "전달하고 있습니다").
+                # 호칭·말투 — 발주사↔벤더 회의라 '당신'은 실례이고, 문장별 호출
+                # 이라 한 줄만 반말로 튀기도 한다(실기 2026-08-04: '당신의
+                # 프로젝션' 등 3곳, '이야기하고 싶었어' 1곳).
+                "Always use 존댓말, and address the other party as '그쪽' or by "
+                "their team/company name — never '당신'. "
+                "Preserve the speaker's mood exactly: a conditional stays "
+                "conditional, a statement never becomes a command, and never "
+                "add or remove a negation that is not in the English. If the "
+                "English is cut off mid-sentence, leave it unfinished rather "
+                "than completing it. "
                 # 관용구 직역 방지 — 사전 등록 항목(plant the seed)만이 아니라
                 # 모든 관용구에 일반화한다(실기 2026-07-28: "씨앗을 심어두고").
                 # '대체'를 명시한다 — 직역을 내놓고 괄호 해설을 덧붙이는 반쪽

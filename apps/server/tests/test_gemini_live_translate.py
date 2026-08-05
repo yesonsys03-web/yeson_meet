@@ -334,6 +334,71 @@ class TestTranslateFinalText:
         assert "Celsius" in calls[0]["contents"]
         assert "약 32도" in calls[0]["contents"]
 
+    async def test_prompt_bans_invented_number_units(self) -> None:
+        """원문에 없는 조수사를 지어내지 않도록 고정한다 — 한국어는 수사 뒤
+        조수사가 문법적으로 필수라, 구 규칙의 "with their units"가 있으면
+        모델이 하나를 만들어낸다(실기 2026-08-04 보고서: 화번 305가
+        305년/305건/305개로, 실행마다 다르게)."""
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        calls: list = []
+        await _translate_final_text(
+            text_client(reply="73이 아니라 49입니다.", calls=calls),
+            "it's not 73, it's 49 back on that we have remaining.",
+        )
+        prompt = calls[0]["contents"]
+        assert "never supply a" in prompt
+        assert "Korean counter" in prompt
+        # 온도 규칙이 맨숫자까지 끌어가지 않도록 하는 명시적 차단
+        assert "Numbers with no temperature word are never 도" in prompt
+
+    async def test_prompt_gates_fahrenheit_on_an_explicit_degree_word(self) -> None:
+        """화씨 환산은 화자가 실제로 degree/temperature를 말했을 때만 — 구
+        규칙의 예시('90, 93 degree weather')가 쉼표로 이어진 맨숫자 두 개
+        모양이라, 온도와 무관한 "it's not 73, it's 49"까지 끌어다 73도/49도를
+        만들었다(실기 2026-08-04). PR#67의 실제 날씨 환산 의도는 유지."""
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        calls: list = []
+        await _translate_final_text(text_client(reply="약 32도예요.", calls=calls), "It's 90 degrees.")
+        assert "Only when the speaker actually says 'degree(s)'" in calls[0]["contents"]
+
+    async def test_prompt_pins_three_digit_number_to_episode(self) -> None:
+        """세 자리 수는 화번('305화')으로 고정 — "bare number는 bare로"만으로는
+        'of 305'·'in 305' 같은 전치사 구문에서 모델이 부분표현으로 읽어 개/건을
+        붙인다(수정 1차 측정에서 5/5 잔존). 단 뒤에 단위어가 오면 진짜 수량이라
+        예외를 함께 박는다("305 shots completed and 55 remaining")."""
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        calls: list = []
+        await _translate_final_text(
+            text_client(reply="305화의 100%입니다.", calls=calls),
+            "do you have 100% of 305 that is complete?",
+        )
+        prompt = calls[0]["contents"]
+        assert "episode number" in prompt
+        assert "305화" in prompt
+        # 진짜 수량을 화번으로 오염시키지 않는 예외가 반드시 함께 있어야 한다
+        assert "unit word follows it" in prompt
+        assert "305 샷" in prompt
+
+    async def test_prompt_preserves_speaker_mood(self) -> None:
+        """조건문·평서문·부정을 뒤집지 않도록 고정 — 문장별 호출이라 문맥이 없어
+        회의록에 없던 약속이 생긴다(실기 2026-08-04: "you think that you can do
+        them by next week" → "다음 주까지 하세요", "if we do not deliver" →
+        "전달하고 있습니다", 잘린 문장에 없던 부정 삽입)."""
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        calls: list = []
+        await _translate_final_text(
+            text_client(reply="다음 주까지 하실 수 있다면요.", calls=calls),
+            "and then you think that you can still do them by next week.",
+        )
+        prompt = calls[0]["contents"]
+        assert "a conditional stays" in prompt
+        assert "never becomes a command" in prompt
+        assert "leave it unfinished" in prompt
+
     async def test_prompt_renders_idioms_by_meaning(self) -> None:
         """관용구를 직역하지 않도록 프롬프트가 고정한다 — 사전은 등록 항목만
         고치지만 이 규칙은 모든 관용구에 일반화된다(실기 2026-07-28:
