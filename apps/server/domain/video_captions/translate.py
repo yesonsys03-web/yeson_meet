@@ -49,7 +49,9 @@ def build_translation_prompt(texts: list[str]) -> str:
         "length with the Korean translations in the same order.\n"
         "Return ONLY the JSON array. No prose, no markdown fences.\n"
         "Use this glossary:\n"
-        + glossary_block()
+        # 자막 메이커는 작품 대사라 dialogue 스코프 — 회의 전용 항목("씨앗을 심어"
+        # 등)이 대사를 망친다.
+        + glossary_block(scope="dialogue")
         + "\n\nInput:\n" + numbered
     )
 
@@ -207,7 +209,9 @@ async def translate_segments(
         chunk = segments[i:i + chunk_size]
         translated = await _translate_resilient(provider, [s.text for s in chunk])
         for seg, ko in zip(chunk, translated):
-            out.append(replace(seg, text=apply_ko_corrections(ko.strip())))
+            # 프롬프트와 같은 dialogue 스코프 — Apple provider는 프롬프트 주입이
+            # 불가해 이 후보정이 유일한 용어 교정 경로다.
+            out.append(replace(seg, text=apply_ko_corrections(ko.strip(), scope="dialogue")))
         # 영문 그대로 남은 줄 수를 함께 남긴다 — 줄 단위 실패 로그가 수백 줄이면
         # 눈에 안 들어온다. 이 숫자가 계속 붙으면 '가끔 실패'가 아니라 '엔진이
         # 통째로 안 되는 중'이라는 뜻이다(실기 윈도우 306/306).
