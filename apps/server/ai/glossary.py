@@ -86,6 +86,9 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("highlight", "하이라이트"),
     ("tone", "톤"),
     ("background", "배경"),
+    # 이 바닥에서 environment는 "환경"이 아니라 배경/세트다(실기 2026-08-04
+    # 보고서: 같은 문단에서 배경/환경으로 갈렸다).
+    ("environment", "배경"),
     # --- Toon Boom Harmony specifics ---
     ("node", "노드"),
     ("node view", "노드 뷰"),
@@ -141,6 +144,13 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("milestone", "마일스톤"),
     ("dailies", "데일리"),
     ("push out", "밀림"),
+    # 진척 계획. "예측/예상치"로 갈리던 것을 하나로 고정(실기 2026-08-04).
+    ("projection", "프로젝션"),
+    # 포스트 공정 이름 — 동사로 읽히면 "하나를 찍으세요" 같은 명령문이 나온다
+    # (실기 2026-08-04: "take one from three or four" → "세 개 중에 하나를 찍으세요").
+    ("take one", "테이크 원"),
+    ("take two", "테이크 투"),
+    ("picture lock", "픽처 락"),
     # 회의 관용구 — "씨앗을 심어두고" 직역 관측(2026-07-28 보고서). 뜻으로 옮긴다.
     ("plant the seed", "미리 주제로 던져 두다"),
     ("footage", "풋티지"),
