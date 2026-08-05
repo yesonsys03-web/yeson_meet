@@ -151,6 +151,12 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("take one", "테이크 원"),
     ("take two", "테이크 투"),
     ("picture lock", "픽처 락"),
+    # STT 오인식 복구 — 연음에서 "on our" /ɒn ˈaʊər/ 와 "an hour" /ən ˈaʊər/ 가
+    # 같은 소리라 3.5가 더 흔한 쪽으로 적는다(실기 2026-08-04: "17 assets to
+    # receive on our side" → "...an hour side" → "한 시간 분량입니다").
+    # 좌변이 3단어라 안전하다 — 정상 영어에서 "an hour" 뒤에 "side"가 올 일이
+    # 없다. "an hour"만 잡으면 "in an hour"(한 시간 뒤)까지 망가진다.
+    ("an hour side", "저희 쪽"),
     # 회의 관용구 — "씨앗을 심어두고" 직역 관측(2026-07-28 보고서). 뜻으로 옮긴다.
     ("plant the seed", "미리 주제로 던져 두다"),
     ("footage", "풋티지"),

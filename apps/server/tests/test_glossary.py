@@ -28,6 +28,20 @@ def test_default_glossary_fixes_cleanup(monkeypatch, tmp_path):
     assert terms["yeson"] == "예손"  # heard as "yes on" and dropped otherwise
 
 
+def test_default_glossary_repairs_misheard_on_our_side(monkeypatch, tmp_path):
+    """연음에서 "on our" /ɒn ˈaʊər/ 와 "an hour" /ən ˈaʊər/ 가 같은 소리라 3.5가
+    더 흔한 쪽으로 적는다(실기 2026-08-04: "17 assets to receive on our side"가
+    "...an hour side"로 전사돼 "한 시간 분량입니다"로 번역됐다).
+
+    좌변이 3단어라 정상적인 "an hour"는 다치지 않는다 — "an hour"만 등록하면
+    "in an hour"(한 시간 뒤)까지 망가진다.
+    """
+    mod = _fresh(monkeypatch, tmp_path, STORAGE_ROOT=str(tmp_path))
+    terms = {en.lower(): ko for en, ko in mod.load_glossary()}
+    assert terms["an hour side"] == "저희 쪽"
+    assert "an hour" not in terms
+
+
 def test_ko_corrections_fix_report_awkwardness(monkeypatch, tmp_path):
     """실제 보고서에서 나온 어색한 문구가 교정되고, 정당한 표현은 안 다친다."""
     mod = _fresh(monkeypatch, tmp_path, STORAGE_ROOT=str(tmp_path))
