@@ -4,6 +4,8 @@
 // 파일 텍스트를 마크다운풍 미리보기 블록(제목/주석/표/오류)으로 변환한다.
 // 렌더 규칙: "─"가 든 주석 줄 = 섹션 제목, 그 외 주석 = 설명 문단,
 // 연속된 항목 줄 = 표 하나, 파싱 불가 줄 = 오류(줄 번호 표시).
+// resolveGlossaryFile은 별개 관심사: 서버 응답에 특정 파일 키가 없을 때(구버전
+// 동결 번들이 새 대사 사전 키를 아직 안 주는 경우) 빈 내용으로 안전하게 대체한다.
 
 export type GlossaryEntry = { en: string; ko: string };
 
@@ -77,5 +79,35 @@ export function renderBlocks(content: string): GlossaryBlock[] {
   });
   flush();
   return blocks;
+}
+
+export type GlossaryFileLookup = {
+  supported: boolean;
+  content: string;
+  terms: number;
+  effective_terms: number;
+};
+
+// data는 API 응답 그대로(런타임에 신뢰할 수 없는 형태일 수 있음) 넘겨받는다 —
+// 키가 없거나 모양이 다르면(구버전 서버) supported:false + 빈 내용으로 반환해
+// 호출부가 그 파일만 "미지원"으로 표시하고 나머지 탭은 정상 동작하게 한다.
+export function resolveGlossaryFile(data: unknown, name: string): GlossaryFileLookup {
+  const info = (data as Record<string, unknown> | null | undefined)?.[name] as
+    | { content?: unknown; terms?: unknown; effective_terms?: unknown }
+    | undefined;
+  if (
+    info &&
+    typeof info.content === "string" &&
+    typeof info.terms === "number" &&
+    typeof info.effective_terms === "number"
+  ) {
+    return {
+      supported: true,
+      content: info.content,
+      terms: info.terms,
+      effective_terms: info.effective_terms,
+    };
+  }
+  return { supported: false, content: "", terms: 0, effective_terms: 0 };
 }
 // === ANCHOR: GLOSSARY_LOGIC_END ===

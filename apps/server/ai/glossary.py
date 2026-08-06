@@ -15,6 +15,12 @@ Lines starting with ``#`` are comments. ``=>``, a tab, or ``=`` separates the
 two sides. File entries override same-key defaults (case-insensitive) and append
 new terms. Changes are picked up on the next translation (mtime-checked), so a
 server restart is not required.
+
+스코프(scope) 축: 이 사전은 원래 회의 자막용으로 튜닝돼 있어서, 그대로 자막
+메이커(작품 대사)에 붙이면 회의 전용 항목이 대사를 망친다(정원 장면의 "씨앗을
+심어"가 "주제로 던져"로 깨지는 식). ``"meeting"``(기본)은 오늘까지의 동작
+그대로이고, ``"dialogue"``는 회의 전용 항목 몇 개를 내장 기본값에서 뺀 뒤
+``glossary_dialogue.txt`` / ``glossary_ko_dialogue.txt``로 마지막에 덮는다.
 """
 from __future__ import annotations
 
@@ -28,6 +34,16 @@ DEFAULT_STORAGE_ROOT = "/var/lib/yeson-meet/storage"
 GLOSSARY_FILENAME = "glossary.txt"
 KO_CORRECTIONS_PATH_ENV = "YESON_GLOSSARY_KO_PATH"
 KO_CORRECTIONS_FILENAME = "glossary_ko.txt"
+# 대사(자막 메이커) 전용 오버라이드 — 회의용 파일을 상속한 뒤 마지막에 덮는다.
+GLOSSARY_DIALOGUE_PATH_ENV = "YESON_GLOSSARY_DIALOGUE_PATH"
+GLOSSARY_DIALOGUE_FILENAME = "glossary_dialogue.txt"
+KO_CORRECTIONS_DIALOGUE_PATH_ENV = "YESON_GLOSSARY_KO_DIALOGUE_PATH"
+KO_CORRECTIONS_DIALOGUE_FILENAME = "glossary_ko_dialogue.txt"
+
+# meeting = 라이브 회의(기본). dialogue = 자막 메이커의 작품 대사.
+SCOPE_MEETING = "meeting"
+SCOPE_DIALOGUE = "dialogue"
+_SCOPES = (SCOPE_MEETING, SCOPE_DIALOGUE)
 
 # English term -> Korean caption rendering. Targeted at this studio's 2D
 # pipeline (Toon Boom Harmony / Adobe Photoshop) plus the production/management
@@ -49,6 +65,12 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("breakdown", "브레이크다운"),
     ("inbetween", "인비트윈"),
     ("in-between", "인비트윈"),
+    # 축약형. 같은 회의에서 트윈/트윈즈로 갈렸다(실기 2026-08-05 보고서).
+    # ⚠ 이 회의의 실제 등장 6회 중 5회는 3.5가 "twins"로 잘못 전사했다 —
+    # 그건 좌변이 한 단어라 위험해서 등록하지 않는다(쌍둥이가 진짜 나올 수 있다).
+    # 그쪽은 프롬프트 도메인 힌트가 담당한다.
+    ("tween", "트윈"),
+    ("tweens", "트윈"),
     ("pencil test", "펜슬 테스트"),
     ("line test", "라인 테스트"),
     # --- Motion principles ---
@@ -59,9 +81,29 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("follow through", "팔로우 스루"),
     ("overlap", "오버랩"),
     ("arc", "아크"),
+    # tight ease = 끝에서 급격히 감속. "부드러운 이즈"로 뒤집힌 실측이 있다
+    # (2026-08-05 보고서 85행). 같은 회의 121행에선 "타이트한 이즈"로 맞게 나와
+    # 한 회의 안에서 정반대로 갈렸다.
+    ("tight ease", "타이트한 이즈"),
     ("hold", "홀드"),
     ("cycle", "사이클"),
     ("walk cycle", "워크 사이클"),
+    # 워크 사이클에서 몸이 위아래로 오르내리는 움직임. 음차 '밥'이 밥(飯)과
+    # 겹쳐 "위아래 밥 애니메이션"·"밥에 이즈를 추가"가 나왔다(실기 2026-08-05
+    # 보고서 173·181행). trim => 테두리 장식과 같은 자리 — 음차가 못 쓰여
+    # 뜻으로 옮기는 예외다(문구는 사용자 확정).
+    ("bob", "바운스"),
+    # 촬영 단위(드로잉 한 장을 몇 프레임 노출하느냐). 음차가 한 회의 안에서
+    # 6가지로 갈렸다(실기 2026-08-05 보고서: 투스 / 투스(on twos) / 온 투스 /
+    # 온 원스 / 온 투 / 온 원). 스튜디오 공정 용어인 '스텝' 축으로 고정한다.
+    # 단수형("on two"/"on one")은 등록하지 않는다 — "on one of these frames"
+    # 처럼 정상 영어를 삼킨다. 좌변을 좁게 두는 건 an hour side와 같은 원칙.
+    ("on twos", "2스텝"),
+    ("on ones", "1스텝"),
+    # 위 '스텝'과의 충돌 방지. 같은 영어("how high should his step be")가 인접
+    # 발화에서 '발걸음 높이'와 '스텝 높이'로 갈렸다(같은 보고서). 촬영 단위가
+    # 스텝을 가져갔으므로 walk cycle의 step은 발걸음으로 못박는다.
+    ("step", "발걸음"),
     ("loop", "루프"),
     ("lip sync", "립싱크"),
     # --- Pre-production ---
@@ -102,6 +144,9 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("pencil", "펜슬"),
     ("stroke", "스트로크"),
     ("onion skin", "어니언 스킨"),
+    # 하모니 기능명. 기능명인 걸 놓치면 and가 조사로 풀려 "시프트와 트레이스"가
+    # 된다(실기 2026-08-05 보고서 135행).
+    ("shift and trace", "시프트 앤 트레이스"),
     ("timeline", "타임라인"),
     ("library", "라이브러리"),
     ("template", "템플릿"),
@@ -200,19 +245,84 @@ DEFAULT_GLOSSARY: list[tuple[str, str]] = [
     ("Yeson", "예손"),
 ]
 
+# dialogue 스코프에서 DEFAULT_GLOSSARY에서 빼는 회의 전용 항목(대소문자 무시로
+# EN 키와 비교). ★제외는 **내장 기본값에만** 적용한다 — 운영자가 glossary.txt에
+# 같은 키를 직접 다시 적었다면 그건 운영자의 결정이므로 살린다. 대사 전용 파일이
+# 기존 merge_glossary 규칙으로 언제든 다시 덮을 수 있는 게 탈출구다.
+_DIALOGUE_EXCLUDE_EN: frozenset[str] = frozenset(
+    s.lower()
+    for s in (
+        # 회의 STT의 연음 오인식("on our side" → "an hour side") 복구 전용.
+        # 작품 대사엔 그 오인식 맥락이 없어 이득 없이 위험만 남는다.
+        "an hour side",
+        # 회의 관용구를 뜻으로 푸는 항목. 정원·농사 장면에선 정말로 씨를 심는
+        # 대사라 뜻풀이가 오히려 오역이 된다.
+        "plant the seed",
+        # 촬영 단위 '스텝'과 충돌하지 않게 회의에서만 못박는 항목. 작품 대사에서
+        # step은 발걸음이 아닌 쪽이 훨씬 흔하다("take a step back" → 물러서다,
+        # "step aside" → 비켜). 대사엔 on twos/ones가 나올 일도 없으니 충돌
+        # 자체가 없어 못박을 이유도 사라진다.
+        "step",
+        # 회의에선 워크 사이클의 상하 운동이지만, 작품 대사에선 Bob이 정말
+        # 사람 이름일 수 있다("Bob, wait!" → "바운스, 기다려!"). 회의록에서
+        # 캐릭터 이름으로 의심됐던 바로 그 상황이 대사 쪽에선 성립한다.
+        "bob",
+    )
+)
+
 _SEPARATORS = ("=>", "\t", "=")
 
 # mtime-keyed cache so repeated translation calls don't re-read/re-parse the
 # file, while a freshly edited glossary is still picked up without a restart.
-_cache: dict[str, object] = {"key": None, "terms": None, "block": None}
+# 스코프마다 독립 슬롯 — 회의용 캐시가 대사용 결과로 덮이면 안 된다.
+_cache: dict[str, dict[str, object]] = {
+    scope: {"key": None, "terms": None, "block": None} for scope in _SCOPES
+}
 
 
-def _candidate_path() -> Path:
-    explicit = os.environ.get(GLOSSARY_PATH_ENV)
+def _check_scope(scope: str) -> str:
+    """모르는 스코프는 조용히 meeting으로 떨어뜨리지 않는다 — 오타 하나가 회의용
+    사전을 작품 대사에 그대로 붙이는 사고가 이 축을 만든 이유다."""
+    if scope not in _SCOPES:
+        raise ValueError(f"unknown glossary scope: {scope!r} (expected {_SCOPES})")
+    return scope
+
+
+def _storage_path(path_env: str, filename: str) -> Path:
+    explicit = os.environ.get(path_env)
     if explicit:
         return Path(explicit)
     root = os.environ.get(STORAGE_ROOT_ENV) or DEFAULT_STORAGE_ROOT
-    return Path(root) / GLOSSARY_FILENAME
+    return Path(root) / filename
+
+
+def _candidate_path() -> Path:
+    return _storage_path(GLOSSARY_PATH_ENV, GLOSSARY_FILENAME)
+
+
+def _glossary_sources(scope: str) -> list[Path]:
+    """스코프가 읽는 오버라이드 파일들 — 뒤에 오는 파일이 앞을 덮는다.
+
+    dialogue는 회의용 파일을 '상속'한 뒤 대사 전용 파일로 마지막에 덮는다.
+    """
+    paths = [_candidate_path()]
+    if _check_scope(scope) == SCOPE_DIALOGUE:
+        paths.append(
+            _storage_path(GLOSSARY_DIALOGUE_PATH_ENV, GLOSSARY_DIALOGUE_FILENAME)
+        )
+    return paths
+
+
+def _ko_sources(scope: str) -> list[Path]:
+    """사후 교정 쪽 동일 규칙 — 회의용 파일 뒤에 대사 전용 파일."""
+    paths = [_ko_corrections_path()]
+    if _check_scope(scope) == SCOPE_DIALOGUE:
+        paths.append(
+            _storage_path(
+                KO_CORRECTIONS_DIALOGUE_PATH_ENV, KO_CORRECTIONS_DIALOGUE_FILENAME
+            )
+        )
+    return paths
 
 
 def parse_glossary_file(text: str) -> list[tuple[str, str]]:
@@ -257,17 +367,38 @@ def _read_overrides(path: Path) -> tuple[object, list[tuple[str, str]]]:
     return mtime, parse_glossary_file(text)
 
 
-def load_glossary() -> list[tuple[str, str]]:
+def _read_chain(paths: list[Path]) -> tuple[tuple, list[tuple[str, str]]]:
+    """오버라이드 파일들을 순서대로 읽어 (캐시키, 병합할 항목)을 돌려준다.
+
+    캐시키에 **모든** 파일의 mtime이 들어가야 파일이 둘인 dialogue도 재시작 없이
+    다음 번역부터 반영된다. 항목을 이어 붙여 merge_glossary를 한 번만 호출하는
+    것은 파일마다 순차 병합하는 것과 결과가 같다(뒤에 온 같은 키가 이긴다).
+    """
+    key: list[tuple[str, object]] = []
+    entries: list[tuple[str, str]] = []
+    for path in paths:
+        mtime, overrides = _read_overrides(path)
+        key.append((str(path), mtime))
+        entries.extend(overrides)
+    return tuple(key), entries
+
+
+def load_glossary(scope: str = SCOPE_MEETING) -> list[tuple[str, str]]:
     """Return the effective glossary (defaults merged with the override file)."""
-    path = _candidate_path()
-    mtime, overrides = _read_overrides(path)
-    cache_key = (str(path), mtime)
-    if _cache["key"] == cache_key and _cache["terms"] is not None:
-        return _cache["terms"]  # type: ignore[return-value]
-    terms = merge_glossary(DEFAULT_GLOSSARY, overrides)
-    _cache["key"] = cache_key
-    _cache["terms"] = terms
-    _cache["block"] = _format_block(terms)
+    cache = _cache[_check_scope(scope)]
+    cache_key, overrides = _read_chain(_glossary_sources(scope))
+    if cache["key"] == cache_key and cache["terms"] is not None:
+        return cache["terms"]  # type: ignore[return-value]
+    defaults = DEFAULT_GLOSSARY
+    if scope == SCOPE_DIALOGUE:
+        defaults = [
+            (en, ko) for en, ko in DEFAULT_GLOSSARY
+            if en.lower() not in _DIALOGUE_EXCLUDE_EN
+        ]
+    terms = merge_glossary(defaults, overrides)
+    cache["key"] = cache_key
+    cache["terms"] = terms
+    cache["block"] = _format_block(terms)
     return terms
 
 
@@ -280,12 +411,14 @@ def _format_block(terms: list[tuple[str, str]]) -> str:
     )
 
 
-def glossary_block() -> str:
+def glossary_block(scope: str = SCOPE_MEETING) -> str:
     """Prompt-ready instruction block listing every term mapping.
 
     Returns "" when disabled via ``GEMINI_GLOSSARY_ENABLED`` (0/false/no/off) so
     the glossary can be isolated as a variable without rebuilding the prompts.
     """
+    # 스코프 검증은 킬스위치보다 먼저 — 오타가 env 상태에 따라 조용히 넘어가면 안 된다.
+    _check_scope(scope)
     if os.environ.get(GLOSSARY_ENABLED_ENV, "1").strip().lower() in (
         "0",
         "false",
@@ -293,8 +426,8 @@ def glossary_block() -> str:
         "off",
     ):
         return ""
-    load_glossary()
-    return _cache["block"]  # type: ignore[return-value]
+    load_glossary(scope)
+    return _cache[scope]["block"]  # type: ignore[return-value]
 
 
 # Korean-output corrections for providers that accept no prompt/instructions
@@ -327,54 +460,70 @@ DEFAULT_KO_CORRECTIONS: list[tuple[str, str]] = [
     # "순연"은 격식체라 어렵다는 사용자 피드백 → 현장 회화체 "밀림"으로.
     ("푸시 아웃", "밀림"),
     ("푸시아웃", "밀림"),
-    # "plant the seed" 직역("일단 씨앗을 심어두고") — 관용구를 뜻으로. ⚠자막메이커
-    # (작품 대사)에도 적용된다: 정원 가꾸기 대사가 있는 작품에선 오버라이드 파일에서
-    # 이 항목을 무해한 값(씨앗을 심어 => 씨앗을 심어)으로 덮어 끌 것.
+    # "plant the seed" 직역("일단 씨앗을 심어두고") — 관용구를 뜻으로. 자막메이커
+    # (작품 대사)는 dialogue 스코프가 이 항목을 빼므로 별도 조치가 필요 없다.
     ("씨앗을 심어", "주제로 던져"),
 ]
 
-_ko_cache: dict[str, object] = {"key": None, "terms": None}
+# dialogue 스코프에서 DEFAULT_KO_CORRECTIONS에서 빼는 회의 전용 항목(좌변 정확
+# 일치). 제외 범위 규칙은 _DIALOGUE_EXCLUDE_EN과 같다 — 내장 기본값에만 적용.
+_DIALOGUE_EXCLUDE_KO: frozenset[str] = frozenset({
+    # 작품에 청소부·청소 장면이 나오면 평범한 대사가 "클린업 팀/작업"으로 오염된다.
+    "청소 팀",
+    "청소팀",
+    "청소 작업",
+    # 정원 가꾸기 장면에서 문자 그대로의 "씨앗을 심어"가 깨진다.
+    "씨앗을 심어",
+})
+
+_ko_cache: dict[str, dict[str, object]] = {
+    scope: {"key": None, "terms": None} for scope in _SCOPES
+}
 
 
 def _ko_corrections_path() -> Path:
-    explicit = os.environ.get(KO_CORRECTIONS_PATH_ENV)
-    if explicit:
-        return Path(explicit)
-    root = os.environ.get(STORAGE_ROOT_ENV) or DEFAULT_STORAGE_ROOT
-    return Path(root) / KO_CORRECTIONS_FILENAME
+    return _storage_path(KO_CORRECTIONS_PATH_ENV, KO_CORRECTIONS_FILENAME)
 
 
-def load_ko_corrections() -> list[tuple[str, str]]:
+def load_ko_corrections(scope: str = SCOPE_MEETING) -> list[tuple[str, str]]:
     """Effective KO corrections (defaults merged with the override file)."""
-    path = _ko_corrections_path()
-    mtime, overrides = _read_overrides(path)
-    cache_key = (str(path), mtime)
-    if _ko_cache["key"] == cache_key and _ko_cache["terms"] is not None:
-        return _ko_cache["terms"]  # type: ignore[return-value]
-    terms = merge_glossary(DEFAULT_KO_CORRECTIONS, overrides)
-    _ko_cache["key"] = cache_key
-    _ko_cache["terms"] = terms
+    cache = _ko_cache[_check_scope(scope)]
+    cache_key, overrides = _read_chain(_ko_sources(scope))
+    if cache["key"] == cache_key and cache["terms"] is not None:
+        return cache["terms"]  # type: ignore[return-value]
+    defaults = DEFAULT_KO_CORRECTIONS
+    if scope == SCOPE_DIALOGUE:
+        defaults = [
+            (wrong, right) for wrong, right in DEFAULT_KO_CORRECTIONS
+            if wrong not in _DIALOGUE_EXCLUDE_KO
+        ]
+    terms = merge_glossary(defaults, overrides)
+    cache["key"] = cache_key
+    cache["terms"] = terms
     return terms
 
 
-def apply_ko_corrections(text: str) -> str:
+def apply_ko_corrections(text: str, scope: str = SCOPE_MEETING) -> str:
     """Rewrite known-bad literal renderings in Korean caption text."""
     if not text:
         return text
-    for wrong, right in load_ko_corrections():
+    for wrong, right in load_ko_corrections(scope):
         if wrong in text:
             text = text.replace(wrong, right)
     return text
 
 
-def glossary_file_path() -> Path:
-    """용어집 오버라이드 파일 경로 — 편집 API가 로더와 같은 해석을 쓰게 공개."""
-    return _candidate_path()
+def glossary_file_path(scope: str = SCOPE_MEETING) -> Path:
+    """용어집 오버라이드 파일 경로 — 편집 API가 로더와 같은 해석을 쓰게 공개.
+
+    체인의 마지막 = 그 스코프가 직접 쓰는 파일(dialogue면 대사 전용 파일).
+    """
+    return _glossary_sources(scope)[-1]
 
 
-def ko_corrections_file_path() -> Path:
+def ko_corrections_file_path(scope: str = SCOPE_MEETING) -> Path:
     """사후 교정 오버라이드 파일 경로 — 편집 API 공용."""
-    return _ko_corrections_path()
+    return _ko_sources(scope)[-1]
 
 
 def invalid_glossary_lines(text: str) -> list[tuple[int, str]]:

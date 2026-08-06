@@ -14,6 +14,8 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from apps.server.ai.glossary import (
+    SCOPE_DIALOGUE,
+    SCOPE_MEETING,
     glossary_file_path,
     invalid_glossary_lines,
     ko_corrections_file_path,
@@ -30,15 +32,23 @@ class GlossaryPutIn(BaseModel):
 
 
 def _paths() -> dict[str, Path]:
+    """편집 가능한 4개 파일. 키 이름은 콘솔 UI와의 계약이라 바꾸면 탭이 깨진다."""
     return {
         "glossary": glossary_file_path(),
         "corrections": ko_corrections_file_path(),
+        "glossary_dialogue": glossary_file_path(SCOPE_DIALOGUE),
+        "corrections_dialogue": ko_corrections_file_path(SCOPE_DIALOGUE),
     }
 
 
 def _effective_terms(name: str) -> int:
-    """내장 기본 + 오버라이드 병합 후 실제 적용 항목 수."""
-    return len(load_glossary() if name == "glossary" else load_ko_corrections())
+    """내장 기본 + 오버라이드 병합 후 실제 적용 항목 수 (해당 스코프 기준).
+
+    대사용 파일은 회의용을 상속하므로 여기 숫자도 상속분을 포함한다.
+    """
+    scope = SCOPE_DIALOGUE if name.endswith("_dialogue") else SCOPE_MEETING
+    load = load_ko_corrections if name.startswith("corrections") else load_glossary
+    return len(load(scope))
 
 
 def _file_info(name: str, path: Path) -> dict:

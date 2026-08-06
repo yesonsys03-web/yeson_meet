@@ -2,7 +2,11 @@
 // 용어 사전 편집 API 클라이언트 (무인증 loopback REST — reportsAdmin과 동일 사상).
 const API = "/api/v1";
 
-export type GlossaryFileName = "glossary" | "corrections";
+export type GlossaryFileName =
+  | "glossary"
+  | "corrections"
+  | "glossary_dialogue"
+  | "corrections_dialogue";
 
 export type GlossaryFileInfo = {
   content: string;
@@ -13,6 +17,8 @@ export type GlossaryFileInfo = {
 export type GlossaryState = {
   glossary: GlossaryFileInfo;
   corrections: GlossaryFileInfo;
+  glossary_dialogue: GlossaryFileInfo;
+  corrections_dialogue: GlossaryFileInfo;
 };
 
 export type GlossarySaveResult = {
