@@ -86,23 +86,68 @@ server_logger = logging.getLogger("apps.server")
 logger = logging.getLogger(__name__)
 
 
-class _HealthAccessLogFilter(logging.Filter):
-    """Drop uvicorn access-log lines for the high-frequency health endpoint.
+# 폴링·에셋 GET은 콘솔 로그 버퍼(최근 1000건)를 태워 실제 사건을 밀어낸다.
+# 실측(2026-08-05 윈도우 서버 콘솔 내보내기): 1000건이 23분 43초에 소진됐고
+# 963건이 액세스 로그였다. 씬 썸네일 하나만 342건(35%) — 고유 171개를 정확히
+# 두 번씩 받았다. 그 사이에 있던 라이브 회의 구간은 이미 밀려나 콘솔
+# 내보내기로 복구할 수 없었다.
+#
+# 경로를 하나씩 적는다 — 접두사로 뭉뚱그리면 같은 트리의 진짜 요청까지 삼킨다
+# ("/api/v1/video-jobs" 접두사는 업로드·삭제·씬 조회를 전부 먹는다).
+_NOISE_EXACT_PATHS = frozenset(
+    {
+        # 자막 메이커 패널이 3초마다 6개를 한 묶음으로 다시 받는다
+        # (VideoCaptionPanel.tsx refresh()). 그중 넷은 사실상 정적 카탈로그다.
+        "/api/v1/video-models",
+        "/api/v1/video-models/gpu",
+        "/api/v1/translate-models",
+        "/api/v1/video-jobs",
+        "/api/v1/video-jobs/translate-engines",
+        "/api/v1/video-jobs/storage",
+        # PDF 탭이 잡 진행 중 ~1.6초마다 다시 받는다. 진행률의 진짜 신호는
+        # yeson.pdf.translate 로그 쪽이라 이 목록 폴링은 순수 소음이다.
+        "/api/v1/pdf-jobs",
+    }
+)
+_NOISE_PATH_PREFIXES = ("/api/v1/health/",)
+# 잡 id가 가운데 끼어 exact로는 못 잡는 것들.
+_NOISE_PATH_SUBSTRINGS = ("/scenes/thumb", "/scenes/boundary-check/status")
+
+
+class _NoisyAccessLogFilter(logging.Filter):
+    """Drop uvicorn access-log lines for high-frequency polls and asset fetches.
 
     The server console polls ``/api/v1/health/*`` once per second to keep its
-    uptime/PID display live. On a 24/7 server, logging every one of those
-    requests would dominate the on-disk logs (~75% of all lines) and grow them
-    by tens of MB/day. Real requests still log normally; only health polls are
-    dropped. Cross-platform (pure stdlib).
+    uptime/PID display live, and the desktop panels poll job/catalog lists on a
+    timer. On a 24/7 server, logging every one of those requests dominates the
+    on-disk logs (~75% of all lines) and — worse — evicts real events from the
+    console's 1000-entry ring buffer within minutes.
+
+    Two guards keep this from hiding anything that matters: only ``GET`` is
+    ever dropped (writes are always actions worth seeing), and only successful
+    responses (a poll that starts failing must stay visible). Cross-platform
+    (pure stdlib).
     """
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
         args = record.args
         # uvicorn.access record args: (client, method, path, http_version, status)
-        if isinstance(args, tuple) and len(args) >= 3:
-            if str(args[2]).startswith("/api/v1/health/"):
-                return False
-        return True
+        if not isinstance(args, tuple) or len(args) < 5:
+            return True
+        if str(args[1]).upper() != "GET":
+            return True
+        try:
+            status = int(args[4])  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return True
+        if status >= 400:
+            return True
+        path = str(args[2]).split("?", 1)[0]
+        if path in _NOISE_EXACT_PATHS:
+            return False
+        if path.startswith(_NOISE_PATH_PREFIXES):
+            return False
+        return not any(part in path for part in _NOISE_PATH_SUBSTRINGS)
 
 
 @asynccontextmanager
@@ -110,7 +155,7 @@ async def lifespan(app: FastAPI):
     # Quiet the per-second health-poll access logs so a 24/7 server's logs stay
     # small. Installed here (not at import) so it survives uvicorn's own logging
     # setup, which runs before the lifespan startup.
-    logging.getLogger("uvicorn.access").addFilter(_HealthAccessLogFilter())
+    logging.getLogger("uvicorn.access").addFilter(_NoisyAccessLogFilter())
 
     # Alembic upgrade is run via deploy script or compose entrypoint; do not run here
     # to keep dev/prod start identical. Health endpoint stays cheap.

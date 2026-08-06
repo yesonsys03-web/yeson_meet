@@ -168,6 +168,21 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     }
   }, []);
 
+  // 3초 폴링용 — 실제로 변하는 둘만 받는다. 위 refresh()의 나머지 넷(모델·번역
+  // 모델·번역 엔진·GPU)은 사용자가 설치·삭제할 때만 바뀌고 그 경로는 전부
+  // refresh()를 직접 부르므로 타이머가 다시 받을 이유가 없다. 묶어서 돌리던
+  // 탓에 서버 액세스 로그가 카탈로그 폴링으로 뒤덮였다(실측 2026-08-05 윈도우
+  // 서버 로그: 24분 중 카탈로그 4종만 183건, 콘솔 1000건 버퍼가 24분에 소진).
+  const refreshJobs = useCallback(async () => {
+    try {
+      const [j, s] = await Promise.all([listVideoJobs(), getVideoStorage()]);
+      setJobs(j);
+      setStorage(s);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
   const refreshCatalog = useCallback(async () => {
     setRefreshingCatalog(true);
     try {
@@ -193,13 +208,14 @@ function VideoCaptionInner({ active }: { active: boolean }) {
     if (opt && !opt.available) setTranslateProvider("");
   }, [engineOptions, translateProvider]);
 
-  // 탭이 보이는 동안만 3초 폴링 (숨김 탭은 mount 유지되므로 active로 게이트)
+  // 탭이 보이는 동안만 3초 폴링 (숨김 탭은 mount 유지되므로 active로 게이트).
+  // 탭을 열 때 한 번은 전부 받고, 이후 타이머는 잡·용량만 다시 받는다.
   useEffect(() => {
     if (!active) return;
     void refresh();
-    const timer = setInterval(() => void refresh(), 3000);
+    const timer = setInterval(() => void refreshJobs(), 3000);
     return () => clearInterval(timer);
-  }, [active, refresh]);
+  }, [active, refresh, refreshJobs]);
 
   const selectedInstalled = models.find((m) => m.name === selectedModel)?.downloaded;
 
