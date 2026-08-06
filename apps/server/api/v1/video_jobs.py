@@ -1079,6 +1079,17 @@ async def save_boundary_ok(
     return {"count": len(body.items)}
 
 
+# 썸네일은 프레임 격자 기반(thumb_00001.jpg = 1번 프레임)이라 씬 경계를 편집해도
+# 같은 인덱스는 같은 그림이다. 유일한 무효화 요인은 재스캔인데 그건 분 단위로
+# 걸리므로(실측 25분) 이 창 안에 옛 썸네일을 볼 길이 없다. 만료 후에는
+# FileResponse가 붙이는 etag/last-modified로 재검증되니 정확성은 그쪽이 보장한다.
+#
+# 이 헤더가 없어서 필름스트립을 다시 그릴 때마다 전량을 다시 받았다(실측
+# 2026-08-05 윈도우 서버 로그: 고유 171개를 31초 간격으로 정확히 두 번, 342건
+# 전부 200이고 304는 0건 — 그 하나가 액세스 로그의 35%였다).
+_THUMB_CACHE_HEADERS = {"Cache-Control": "private, max-age=300"}
+
+
 @router.get("/{external_id}/scenes/thumb/{index}")
 async def scene_thumbnail(
     external_id: UUID,
@@ -1090,7 +1101,7 @@ async def scene_thumbnail(
     path = job_dir(external_id) / "scene_thumbs" / f"thumb_{index + 1:05d}.jpg"
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "thumbnail not found")
-    return FileResponse(path, media_type="image/jpeg")
+    return FileResponse(path, media_type="image/jpeg", headers=_THUMB_CACHE_HEADERS)
 
 
 @router.post("/{external_id}/scenes/cancel", status_code=status.HTTP_202_ACCEPTED)
@@ -1218,7 +1229,10 @@ async def scene_thumbnail_at(
                                 h)
         if not path.exists():
             raise HTTPException(status.HTTP_404_NOT_FOUND, "thumbnail not found")
-    return FileResponse(path, media_type="image/jpeg")
+    # 같은 창을 다시 그릴 때 재요청하지 않게 — thumb/{index}와 같은 정책을 쓴다.
+    # 여기 캐시 키는 t_ms(+높이)라 경계 편집엔 애초에 영향받지 않고, 다시 굽는
+    # 경우만 내용이 달라질 수 있어 만료를 짧게 잡는다.
+    return FileResponse(path, media_type="image/jpeg", headers=_THUMB_CACHE_HEADERS)
 
 
 @router.get("/{external_id}/download")
