@@ -311,6 +311,68 @@ class TestTranslateFinalText:
         client = text_client(reply="  ")
         assert await _translate_final_text(client, "Hello.") is None
 
+    async def test_prompt_carries_the_animation_domain_hint(self) -> None:
+        """3.5 전사가 이 바닥 낱말을 흔한 일반어로 잘못 적는다(실기 2026-08-05:
+        tweens→"twins" 6회 중 5회, "an ease"→"anyways", "in line"→"online").
+        도메인을 알려 주면 모델이 복구한다 — 같은 회의에서 "the claim stuff"를
+        "클린업 작업"으로 스스로 되살린 게 그 증거다."""
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        calls: list = []
+        await _translate_final_text(text_client(reply="네.", calls=calls), "Hi.")
+        prompt = calls[0]["contents"]
+        assert "2D animation production review meeting" in prompt
+        assert "speech-to-text" in prompt
+        # 지어내기로 번지지 않게 막는 문장이 함께 있어야 한다.
+        assert "Never add content that is not in the English." in prompt
+
+    async def test_previous_utterance_goes_in_as_context_only(self) -> None:
+        """파이널이 KO 문장 경계로 잘리는데 EN은 그 자리에서 문장 중간일 수 있어
+        앞 문장 꼬리가 다음 발화 첫머리로 넘어간다. 문맥 없이 단독 번역하면
+        뜻이 무너진다(실기: "spindle" / "horse rough perfectly."로 갈려
+        스튜디오 이름이 "말"이 됐다)."""
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        calls: list = []
+        await _translate_final_text(
+            text_client(reply="스핀들호스 러프와 일치하는지.", calls=calls),
+            "horse rough perfectly.",
+            "the version that comes back in cleanup matches the spindle",
+        )
+        prompt = calls[0]["contents"]
+        assert "spindle" in prompt
+        assert "Previous (context only):" in prompt
+        # 번역·복창·이어쓰기를 모두 막아야 한다 — 하나만 적으면 이어쓰기가 샌다.
+        for banned in ("Do not translate it", "repeat it", "continue it"):
+            assert banned in prompt
+        # 번역 대상은 어디까지나 뒤쪽 줄이다.
+        assert prompt.rstrip().endswith("English: horse rough perfectly.")
+
+    async def test_first_utterance_has_no_context_block(self) -> None:
+        """직전 발화가 없으면 블록 자체가 없다 — 빈 문맥을 넣으면 모델이
+        빈자리를 채우려 든다."""
+        from apps.server.ai.gemini_live_translate import _translate_final_text
+
+        calls: list = []
+        await _translate_final_text(text_client(reply="네.", calls=calls), "Hi.")
+        assert "Previous (context only):" not in calls[0]["contents"]
+
+    async def test_long_previous_utterance_keeps_its_tail(self) -> None:
+        """상한을 넘으면 앞을 자른다 — 지금 문장에 붙어 있는 건 뒤쪽이다."""
+        from apps.server.ai.gemini_live_translate import (
+            _PREV_CONTEXT_MAX_CHARS,
+            _translate_final_text,
+        )
+
+        calls: list = []
+        prev = "x" * (_PREV_CONTEXT_MAX_CHARS + 50) + " the spindle"
+        await _translate_final_text(
+            text_client(reply="네.", calls=calls), "horse rough.", prev
+        )
+        prompt = calls[0]["contents"]
+        assert "the spindle" in prompt
+        assert "x" * (_PREV_CONTEXT_MAX_CHARS + 1) not in prompt
+
     async def test_model_env_override(self, monkeypatch) -> None:
         from apps.server.ai.gemini_live_translate import _translate_final_text
 
@@ -517,4 +579,41 @@ class TestApplyFinalTranslation:
         finals = [u for u in utterances if u.is_final]
         assert [u.text_ko for u in finals] == ["교정된 파이널."]
         assert all(u.text_ko != "교정된 파이널." for u in utterances if not u.is_final)
+
+    async def test_hybrid_stream_feeds_each_final_the_previous_one(
+        self, monkeypatch
+    ) -> None:
+        """배선 확인 — 두 번째 파이널의 프롬프트에 첫 번째 발화가 들어가야 한다.
+        첫 번째는 앞이 없으므로 문맥 블록이 없다.
+
+        실제 회의가 쓰는 GeminiHybridTranslateProvider를 그대로 세운다 —
+        기반 클래스에 _final_translate를 손으로 꽂으면 지금은 같은 상태지만
+        하이브리드가 나중에 갈라져도 테스트가 못 잡는다.
+        """
+        from apps.server.ai.gemini_live_translate import GeminiHybridTranslateProvider
+
+        monkeypatch.setenv("GEMINI_LT_MIN_FINAL_CHARS", "2")
+        session = FakeSession(
+            [
+                message(en=" We received the spindle"),
+                message(ko=" 스핀들을 받았습니다."),
+                message(en=" horse rough perfectly."),
+                message(ko=" 말 러프 완벽해요."),
+            ]
+        )
+        calls: list = []
+        client = SimpleNamespace(
+            aio=SimpleNamespace(
+                live=FakeLive(session),
+                models=text_client(reply="교정된 파이널.", calls=calls).aio.models,
+            )
+        )
+        provider = GeminiHybridTranslateProvider(api_key="k", client=client)
+        assert provider._final_translate is True  # 플래그를 꽂지 않는다
+        [u async for u in provider.stream(_audio(), "en")]
+
+        assert len(calls) >= 2, "파이널이 둘은 나와야 배선을 볼 수 있다"
+        assert "Previous (context only):" not in calls[0]["contents"]
+        assert "spindle" in calls[1]["contents"]
+        assert "Previous (context only):" in calls[1]["contents"]
 # === ANCHOR: TEST_GEMINI_LIVE_TRANSLATE_END ===

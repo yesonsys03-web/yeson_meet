@@ -252,12 +252,28 @@ class TranscriptAssembler:
         )
 
 
-async def _translate_final_text(text_client: Any, en: str) -> str | None:
+# 직전 발화를 문맥으로 넣을 때의 길이 상한. 발화는 보통 한두 문장이라 넉넉하고,
+# 넘치면 앞을 자른다 — 뒤쪽이 지금 문장에 붙어 있는 말이라 정보가 더 많다.
+_PREV_CONTEXT_MAX_CHARS = 400
+
+
+async def _translate_final_text(
+    text_client: Any, en: str, prev_en: str = ""
+) -> str | None:
     """확정된 EN 문장을 텍스트 모델+단어집으로 번역. 실패/빈 결과는 None —
-    호출부가 3.5 KO 원문으로 폴백한다."""
+    호출부가 3.5 KO 원문으로 폴백한다.
+
+    ``prev_en``은 직전 확정 발화의 영어다. 번역 대상이 아니라 문맥으로만 준다 —
+    파이널이 KO 문장 경계로 잘리는데 EN 버퍼는 그 자리에서 문장 중간일 수 있어,
+    앞 문장의 꼬리가 다음 발화의 첫머리로 넘어간다(_finalize 참조). 그 조각을
+    단독 문장으로 번역하면 뜻이 무너진다(실기 2026-08-05 보고서: "spindle" /
+    "horse rough perfectly."로 갈려 스튜디오 이름이 "말"이 됐고, 144발화 중
+    73건이 문장 중간에서 끊겼다).
+    """
     stripped = en.strip()
     if not stripped:
         return None
+    prev_context = prev_en.strip()[-_PREV_CONTEXT_MAX_CHARS:]
     from google.genai import types
 
     try:
@@ -272,6 +288,22 @@ async def _translate_final_text(text_client: Any, en: str) -> str | None:
                 # 규칙은 용어집 '뒤'(입력 직전)에 둔다 — 380항목 목록 앞에 두면
                 # 입력과 멀어져 준수도가 떨어진다(실기: 온도 규칙이 긴 문장에서
                 # 무시되던 케이스가 재배치로 해소).
+                #
+                # 도메인 힌트 — 3.5 전사가 이 바닥 낱말을 더 흔한 일반어로
+                # 잘못 적고, 문장별 호출이라 모델이 그걸 곧이곧대로 옮긴다
+                # (실기 2026-08-05 보고서: tweens→"twins"가 6회 중 5회,
+                # "an ease has been added"→"anyways..."→"어차피",
+                # "back in line"→"online"→"온라인"). 반대로 같은 회의에서
+                # "the claim stuff"→"클린업 작업"은 스스로 복구했다 —
+                # 도메인을 알려주면 되는 종류의 오류라는 증거다. 지어내는 쪽으로
+                # 번지지 않게 마지막 문장으로 못을 박는다.
+                "Context: this is a 2D animation production review meeting "
+                "(Toon Boom Harmony; rough → cleanup → composite). The English "
+                "comes from live speech-to-text, so mishearings are common — "
+                "when a word makes no sense in that domain, translate what the "
+                "speaker plainly meant ('twins' among inbetweens is 'tweens'; "
+                "'moved back online' in a layout note is 'back in line'). "
+                "Never add content that is not in the English. "
                 # 단위 창작 금지 — 한국어는 수사 뒤 조수사가 문법적으로 필수라
                 # 모델이 하나를 지어낸다. 구 규칙의 "with their units"가 그걸
                 # 부추겼다(실기 2026-08-04: 화번 305 → 305년/305건/305개, 실행
@@ -338,7 +370,19 @@ async def _translate_final_text(text_client: Any, en: str) -> str | None:
                 "Return only the Korean subtitle text — no notes, "
                 "alternatives, explanations, or parenthetical commentary "
                 "about the translation.\n\n"
-                f"English: {stripped}"
+                # 직전 발화는 문맥으로만. "번역하지 말라"를 세 가지 방식으로
+                # (translate/repeat/continue) 막는다 — 하나만 적으면 이어쓰기가
+                # 샌다. 블록을 입력 바로 앞에 두는 것도 같은 이유(07-23 교훈).
+                + (
+                    "The line below is the PREVIOUS utterance, given only so "
+                    "you can resolve words that were cut across the boundary. "
+                    "Do not translate it, repeat it, or continue it — output "
+                    "the Korean for the 'English:' line only.\n"
+                    f"Previous (context only): {prev_context}\n\n"
+                    if prev_context
+                    else ""
+                )
+                + f"English: {stripped}"
             ),
             config=types.GenerateContentConfig(
                 temperature=0,
@@ -360,10 +404,12 @@ class GeminiLiveTranslateProvider:
     _final_translate = False
 
     async def _apply_final_translation(
-        self, utterance: TranslatedUtterance, text_client: Any
+        self, utterance: TranslatedUtterance, text_client: Any, prev_en: str = ""
     ) -> TranslatedUtterance:
         """확정 파이널의 KO를 단어집 번역으로 교체. 실패·타임아웃·빈 결과는
-        3.5 KO 유지 — 어떤 경로로도 파이널을 잃지 않는다."""
+        3.5 KO 유지 — 어떤 경로로도 파이널을 잃지 않는다.
+
+        ``prev_en``은 직전 확정 발화의 영어(문맥 전용)."""
         if not self._final_translate or not utterance.text_en.strip():
             return utterance
         timeout_s = max(
@@ -374,7 +420,8 @@ class GeminiLiveTranslateProvider:
         ) / 1000
         try:
             ko = await asyncio.wait_for(
-                _translate_final_text(text_client, utterance.text_en), timeout_s
+                _translate_final_text(text_client, utterance.text_en, prev_en),
+                timeout_s,
             )
         except asyncio.TimeoutError:
             logger.warning(
@@ -423,7 +470,16 @@ class GeminiLiveTranslateProvider:
             client = genai.Client(api_key=self._api_key)
 
         self._segment_index += 1
-        trace = {**self._trace_extra, "gemini_lt_segment": self._segment_index}
+        # 프로바이더 이름을 trace에 실어 이 스트림의 모든 로그가 들고 다니게 한다.
+        # 시작 시 찍히는 "Gemini Live configured model=…"은 gemini_live(3.1)
+        # 모듈의 상수라 실제로 어떤 엔진이 회의를 돌렸는지 말해 주지 않는다
+        # (실기 2026-08-05: 하이브리드 회의인데 로그엔 3.1로 보였다). 07-22에
+        # 기본 프로바이더가 조용히 3.5로 바뀐 걸 오래 못 잡은 것도 같은 사각지대.
+        trace = {
+            **self._trace_extra,
+            "gemini_lt_segment": self._segment_index,
+            "gemini_provider": type(self).__name__,
+        }
         config = types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             translation_config=types.TranslationConfig(
@@ -433,6 +489,9 @@ class GeminiLiveTranslateProvider:
             output_audio_transcription={},
         )
         assembler = TranscriptAssembler(provider_segment=self._segment_index)
+        # 직전 확정 발화의 EN — 다음 파이널 번역에 문맥으로만 넘긴다.
+        # stream() 로컬이라 재접속(새 stream 호출)마다 자연히 비워진다.
+        prev_final_en = ""
         connect_started_at = time.monotonic()
         logger.info(
             "Gemini Live Translate connect starting",
@@ -525,8 +584,9 @@ class GeminiLiveTranslateProvider:
                             )
                         if utterance.is_final:
                             utterance = await self._apply_final_translation(
-                                utterance, client
+                                utterance, client, prev_final_en
                             )
+                            prev_final_en = utterance.text_en or prev_final_en
                         yield utterance
                     # Once the meeting audio ends, give the model a short
                     # window to deliver the translation tail, then stop.
@@ -547,7 +607,11 @@ class GeminiLiveTranslateProvider:
                     with contextlib.suppress(BaseException):
                         await task
         for utterance in assembler.flush():
-            yield await self._apply_final_translation(utterance, client)
+            translated = await self._apply_final_translation(
+                utterance, client, prev_final_en
+            )
+            prev_final_en = translated.text_en or prev_final_en
+            yield translated
         logger.info("Gemini Live Translate stream ended", extra=trace)
 
 
