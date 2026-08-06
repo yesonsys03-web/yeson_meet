@@ -48,6 +48,57 @@ def test_default_glossary_repairs_misheard_on_our_side(monkeypatch, tmp_path):
     assert "an hour" not in terms
 
 
+def test_shooting_unit_is_pinned_to_the_step_axis(monkeypatch, tmp_path):
+    """촬영 단위 on twos/ones가 한 회의 안에서 6가지 음차로 갈렸다(실기
+    2026-08-05 보고서: 투스 / 투스(on twos) / 온 투스 / 온 원스 / 온 투 / 온 원).
+
+    단수형을 등록하지 않는 게 핵심이다 — "on one of these frames" 같은 정상
+    영어를 삼킨다. an hour side와 같은 '좌변을 좁게' 원칙.
+    """
+    mod = _fresh(monkeypatch, tmp_path, STORAGE_ROOT=str(tmp_path))
+    terms = {en.lower(): ko for en, ko in mod.load_glossary()}
+    assert terms["on twos"] == "2스텝"
+    assert terms["on ones"] == "1스텝"
+    assert "on two" not in terms
+    assert "on one" not in terms
+    # 촬영 단위가 '스텝'을 가져갔으므로 walk cycle의 step은 발걸음으로 못박힌다.
+    # 같은 영어("how high should his step be")가 인접 발화에서 '발걸음 높이'와
+    # '스텝 높이'로 갈렸던 자리다.
+    assert terms["step"] == "발걸음"
+
+
+def test_terms_that_split_within_one_meeting(monkeypatch, tmp_path):
+    """한 회의 안에서 두 갈래로 갈린 용어들(실기 2026-08-05 보고서)."""
+    mod = _fresh(monkeypatch, tmp_path, STORAGE_ROOT=str(tmp_path))
+    terms = {en.lower(): ko for en, ko in mod.load_glossary()}
+    # 트윈/트윈즈로 갈렸다. 축약형이라 inbetween과 같은 개념이지만 스튜디오가
+    # 두 말을 다 쓰므로 각각 고정한다.
+    assert terms["tween"] == "트윈"
+    assert terms["tweens"] == "트윈"
+    # 85행 "부드러운 이즈" vs 121행 "타이트한 이즈" — tight는 급격한 감속이다.
+    assert terms["tight ease"] == "타이트한 이즈"
+    # 하모니 기능명. 놓치면 and가 조사로 풀려 "시프트와 트레이스"가 된다.
+    assert terms["shift and trace"] == "시프트 앤 트레이스"
+    # 3.5가 "twins"로 잘못 전사한 쪽은 등록하지 않는다 — 좌변이 한 단어라
+    # 진짜 쌍둥이를 삼킨다. 그건 프롬프트 도메인 힌트 몫.
+    assert "twins" not in terms
+
+
+def test_dialogue_scope_drops_the_step_pin(monkeypatch, tmp_path):
+    """step => 발걸음은 회의 전용이다. 작품 대사에서 step은 발걸음이 아닌 쪽이
+    훨씬 흔하고("take a step back" → 물러서다), 대사엔 on twos/ones가 나올 일이
+    없어 못박을 이유였던 충돌 자체가 없다."""
+    mod = _fresh(monkeypatch, tmp_path, STORAGE_ROOT=str(tmp_path))
+    dialogue = {en.lower(): ko for en, ko in mod.load_glossary(scope="dialogue")}
+    assert "step" not in dialogue
+    # bob도 같은 이유로 회의 전용 — 대사에선 Bob이 사람 이름일 수 있어
+    # "Bob, wait!"가 "바운스, 기다려!"가 된다.
+    assert "bob" not in dialogue
+    assert dict(mod.load_glossary())["bob"] == "바운스"  # 회의에는 남아 있다
+    # 촬영 단위는 대사에 무해하므로 굳이 빼지 않는다 — 제외는 최소로.
+    assert dialogue["on twos"] == "2스텝"
+
+
 def test_ko_corrections_fix_report_awkwardness(monkeypatch, tmp_path):
     """실제 보고서에서 나온 어색한 문구가 교정되고, 정당한 표현은 안 다친다."""
     mod = _fresh(monkeypatch, tmp_path, STORAGE_ROOT=str(tmp_path))
@@ -185,7 +236,7 @@ def test_dialogue_without_files_is_meeting_minus_exclusions(monkeypatch, tmp_pat
     assert dialogue_ko == [
         (w, r) for w, r in meeting_ko if w not in mod._DIALOGUE_EXCLUDE_KO
     ]
-    assert len(meeting) - len(dialogue) == 2
+    assert len(meeting) - len(dialogue) == 4
     assert len(meeting_ko) - len(dialogue_ko) == 4
 
 
