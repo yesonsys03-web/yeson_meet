@@ -64,7 +64,7 @@ def test_burn_runs_with_relative_srt_and_cwd(monkeypatch, tmp_path: Path):
     srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
     ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
                       "Alignment=2,MarginV=40,Fontsize=18")
-    call = calls[0]
+    call = next(c for c in calls if "-vf" in c["cmd"])  # 앞의 오디오 프로브 호출 제외
     vf = call["cmd"][call["cmd"].index("-vf") + 1]
     assert vf == "subtitles=subs.srt:force_style='Alignment=2,MarginV=40,Fontsize=18'"
     assert call["kwargs"]["cwd"] == str(tmp_path)
@@ -84,7 +84,7 @@ def test_burn_preset_env_override_applies_to_libx264(monkeypatch, tmp_path: Path
     srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
     ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
                       "Alignment=2")
-    cmd = calls[0]["cmd"]
+    cmd = next(c["cmd"] for c in calls if "-vf" in c["cmd"])
     assert cmd[cmd.index("-preset") + 1] == "ultrafast"
 
 
@@ -98,7 +98,7 @@ def test_burn_preset_invalid_falls_back_to_veryfast(monkeypatch, tmp_path: Path)
     srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
     ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
                       "Alignment=2")
-    cmd = calls[0]["cmd"]
+    cmd = next(c["cmd"] for c in calls if "-vf" in c["cmd"])
     assert cmd[cmd.index("-preset") + 1] == "veryfast"
 
 
@@ -196,8 +196,9 @@ def test_burn_gpu_failure_falls_back_to_libx264(monkeypatch, tmp_path: Path):
     srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
     ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
                       "Alignment=2")
-    assert "h264_nvenc" in cmds[0]
-    assert "libx264" in cmds[1]
+    burns = [c for c in cmds if "-vf" in c]  # 오디오 프로브 호출 제외
+    assert "h264_nvenc" in burns[0]
+    assert "libx264" in burns[1]
     # 실패한 GPU 인코더는 이후 작업에서도 재시도하지 않도록 캐시를 CPU로 고정
     assert ff._encoder_cache[("ffmpeg", True)] == "libx264"
 
@@ -216,8 +217,10 @@ def test_burn_subtitles_use_gpu_false_uses_libx264_without_probe(monkeypatch, tm
     srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
     ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
                       "Alignment=2", use_gpu=False)
-    assert "libx264" in calls[0]["cmd"]
-    assert calls[0]["cmd"].count("-c:v") == 1  # 재시도 없이 단 한 번의 호출
+    burns = [c["cmd"] for c in calls if "-vf" in c["cmd"]]  # 오디오 프로브 호출 제외
+    assert len(burns) == 1  # 재시도 없이 단 한 번의 호출
+    assert "libx264" in burns[0]
+    assert burns[0].count("-c:v") == 1
 
 
 def test_nonzero_returncode_raises(monkeypatch, tmp_path: Path):
@@ -280,6 +283,7 @@ def test_burn_progress_parses_out_time_ms(monkeypatch, tmp_path: Path):
         captured_cmd.extend(cmd)
         return FakePopen(cmd, **kwargs)
 
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: _Result(1, ""))
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
 
     seen: list[float] = []
@@ -305,6 +309,7 @@ def test_burn_progress_exception_kills_ffmpeg(monkeypatch, tmp_path: Path):
         def kill(self):
             killed["v"] = True
 
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: _Result(1, ""))
     monkeypatch.setattr(subprocess, "Popen",
                         lambda cmd, **kw: KillTrackingPopen(cmd, **kw))
 
@@ -416,6 +421,7 @@ def test_burn_subtitles_skips_cpu_retry_when_gpu_run_was_killed(monkeypatch, tmp
         calls.append(cmd)
         return _KilledDuringBurnPopen(cmd, **kw)
 
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: _Result(1, ""))
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
 
     def progress_cb(seconds: float) -> None:
@@ -480,3 +486,70 @@ def test_ensure_preview_mp4_passthrough_does_not_touch_registry(tmp_path: Path):
                                proc_key="job-passthrough")
     assert result == src
     assert "job-passthrough" not in ff._ACTIVE
+
+
+_MP3_PROBE_STDERR = (
+    "  Stream #0:0[0x1](eng): Video: h264 (High) (avc1 / 0x31637661), yuv420p\n"
+    "  Stream #0:1[0x2](eng): Audio: mp3 (mp4a / 0x6134706D), 48000 Hz, "
+    "stereo, fltp, 192 kb/s\n"
+)
+_AAC_PROBE_STDERR = (
+    "  Stream #0:0[0x1](eng): Video: h264 (High) (avc1 / 0x31637661), yuv420p\n"
+    "  Stream #0:1[0x2](eng): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, "
+    "stereo, fltp, 128 kb/s\n"
+)
+
+
+def _fake_run_with_probe(calls: list[dict], probe_stderr: str):
+    """subprocess.run 대역 — 오디오 프로브(`ffmpeg -i src`, -y 없음)에는 스트림
+    정보 stderr를, 굽기 실행에는 성공을 돌려준다."""
+
+    def fake_run(cmd, **kw):
+        calls.append({"cmd": cmd, "kwargs": kw})
+        if "-y" not in cmd:
+            return _Result(1, probe_stderr)
+        return _Result()
+
+    return fake_run
+
+
+def test_burn_reencodes_mp3_audio_to_aac(monkeypatch, tmp_path: Path):
+    """mp3 오디오를 copy로 MP4에 담으면 QuickTime(AVFoundation)이 디코딩하지 못해
+    무음이 된다(2026-08-19 실측: afinfo AudioFileOpenURL failed) — aac 재인코딩."""
+    monkeypatch.setenv("YESON_BURN_ENCODER", "libx264")
+    calls: list[dict] = []
+    monkeypatch.setattr(subprocess, "run", _fake_run_with_probe(calls, _MP3_PROBE_STDERR))
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+    ff.burn_subtitles("ffmpeg", tmp_path / "src.mov", srt, tmp_path / "out.mp4",
+                      "Alignment=2")
+    burn = next(c["cmd"] for c in calls if "-vf" in c["cmd"])
+    assert burn[burn.index("-c:a") + 1] == "aac"
+    assert "copy" not in burn
+
+
+def test_burn_keeps_audio_copy_for_aac(monkeypatch, tmp_path: Path):
+    """aac는 MP4에 그대로 담아도 어디서나 재생된다 — 불필요한 재인코딩 금지."""
+    monkeypatch.setenv("YESON_BURN_ENCODER", "libx264")
+    calls: list[dict] = []
+    monkeypatch.setattr(subprocess, "run", _fake_run_with_probe(calls, _AAC_PROBE_STDERR))
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+    ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
+                      "Alignment=2")
+    burn = next(c["cmd"] for c in calls if "-vf" in c["cmd"])
+    assert burn[burn.index("-c:a") + 1] == "copy"
+
+
+def test_burn_audio_probe_failure_keeps_copy(monkeypatch, tmp_path: Path):
+    """프로브가 스트림 정보를 못 읽으면(빈 stderr) 기존 동작(copy) 유지 —
+    오디오 없는 영상도 이 경로로 안전하게 통과한다."""
+    monkeypatch.setenv("YESON_BURN_ENCODER", "libx264")
+    calls: list[dict] = []
+    monkeypatch.setattr(subprocess, "run", _fake_run_with_probe(calls, ""))
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+    ff.burn_subtitles("ffmpeg", tmp_path / "src.mp4", srt, tmp_path / "out.mp4",
+                      "Alignment=2")
+    burn = next(c["cmd"] for c in calls if "-vf" in c["cmd"])
+    assert burn[burn.index("-c:a") + 1] == "copy"
