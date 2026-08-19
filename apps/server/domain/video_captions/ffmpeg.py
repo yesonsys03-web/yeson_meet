@@ -265,6 +265,38 @@ def detect_burn_encoder(ffmpeg: str, use_gpu: bool) -> str:
     return _encoder_cache[key]
 
 
+_AUDIO_RE = re.compile(r"Audio:\s*([A-Za-z0-9_]+)")
+
+# MP4에 무변환(copy)으로 담아도 재생 호환이 확실한 오디오 코덱. mp3는 MP4 안에서
+# 규격상 합법이지만 Apple 재생 스택(QuickTime/AVFoundation)이 디코딩하지 못해
+# 영상만 나오고 무음이 되며(2026-08-19 실측: afinfo AudioFileOpenURL failed),
+# pcm_*은 MP4 컨테이너가 아예 거부한다 — 목록 밖은 aac로 재인코딩한다.
+_COPY_SAFE_AUDIO = frozenset({"aac"})
+
+
+def _audio_codec(ffmpeg: str, src: Path) -> str | None:
+    """`ffmpeg -i` stderr의 첫 오디오 스트림 코덱명(ffprobe 미번들). 실패·무오디오는 None."""
+    try:
+        result = subprocess.run(
+            [ffmpeg, "-i", str(src)], capture_output=True, text=True, check=False,
+            encoding="utf-8", errors="replace", **_SUBPROCESS_FLAGS,
+        )
+    except OSError:
+        return None
+    m = _AUDIO_RE.search(result.stderr or "")
+    return m.group(1).lower() if m else None
+
+
+def _audio_args(ffmpeg: str, src: Path) -> list[str]:
+    """굽기 오디오 옵션 — copy 안전 코덱만 무변환, 그 외는 aac 재인코딩.
+    프로브 실패·오디오 없음은 기존 동작(copy)을 유지한다."""
+    codec = _audio_codec(ffmpeg, src)
+    if codec is None or codec in _COPY_SAFE_AUDIO:
+        return ["-c:a", "copy"]
+    logger.info("burn: 오디오 %s → aac 재인코딩(mp4 재생 호환)", codec)
+    return ["-c:a", "aac", "-b:a", "192k"]
+
+
 def burn_subtitles(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
                    force_style: str,
                    progress_cb: Callable[[float], None] | None = None,
@@ -280,20 +312,21 @@ def burn_subtitles(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
     프로브 자체를 건너뛰고 libx264로 굽는다.
     """
     encoder = detect_burn_encoder(ffmpeg, use_gpu)
+    audio_args = _audio_args(ffmpeg, src)
     try:
-        _burn_once(ffmpeg, src, srt_path, dst, force_style, encoder, progress_cb,
-                   proc_key)
+        _burn_once(ffmpeg, src, srt_path, dst, force_style, encoder, audio_args,
+                   progress_cb, proc_key)
     except FfmpegError:
         if encoder == "libx264" or _was_killed(proc_key):
             raise
         logger.warning("burn: %s 인코딩 실패 — libx264로 재시도", encoder)
         _encoder_cache[(ffmpeg, use_gpu)] = "libx264"  # 이후 작업도 CPU로
-        _burn_once(ffmpeg, src, srt_path, dst, force_style, "libx264", progress_cb,
-                   proc_key)
+        _burn_once(ffmpeg, src, srt_path, dst, force_style, "libx264", audio_args,
+                   progress_cb, proc_key)
 
 
 def _burn_once(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
-               force_style: str, encoder: str,
+               force_style: str, encoder: str, audio_args: list[str],
                progress_cb: Callable[[float], None] | None = None,
                proc_key: str | None = None) -> None:
     """subtitles 필터는 경로 이스케이프가 취약 → cwd를 srt 디렉터리로 두고 상대 파일명 사용.
@@ -307,7 +340,7 @@ def _burn_once(ffmpeg: str, src: Path, srt_path: Path, dst: Path,
     """
     vf = f"subtitles={srt_path.name}:force_style='{force_style}'"
     cmd = [ffmpeg, "-y", "-i", str(src), "-vf", vf,
-           "-c:v", encoder, *_encoder_args(encoder), "-c:a", "copy"]
+           "-c:v", encoder, *_encoder_args(encoder), *audio_args]
     if progress_cb is not None:
         cmd += ["-progress", "pipe:1", "-nostats"]
     cmd.append(str(dst))
