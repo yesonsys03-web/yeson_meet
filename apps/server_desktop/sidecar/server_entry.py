@@ -219,6 +219,20 @@ def _pdf_selftest_mode() -> int:
             doc.close()
             png = open_pdf(out).render_png(0, dpi=36)
             assert png[:8] == b"\x89PNG\r\n\x1a\n"
+            # 프로파일 레지스트리·엑스시트 경로가 동결본에 살아 있는지.
+            # xsheet는 cv2·rapidocr(네이티브 의존)를 쓰므로 위 uv-cache 함정에
+            # 그대로 노출된다 — 빠지면 앱에서 "지원하지 않는 PDF 포맷"으로만
+            # 보이고 원인을 알 수 없다. 여기서 빌드를 세우는 게 낫다.
+            from apps.server.domain.pdf_translate import (
+                handwriting_transcribe as _ht,
+            )
+            from apps.server.domain.pdf_translate.profiles import (
+                profile_names,
+            )
+            assert "xsheet" in profile_names(), profile_names()
+            assert callable(_ht.transcribe)
+            import cv2  # 잉크 덩어리 판정에 쓴다
+            assert hasattr(cv2, "connectedComponentsWithStats")
     except Exception as exc:  # noqa: BLE001
         print(f"PDF_SELFTEST_RESULT=FAIL {exc}", file=sys.stderr, flush=True)
         return 1
