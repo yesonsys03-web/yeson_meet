@@ -44,11 +44,13 @@ class FakeDoc:
     (_decode_png가 PIL로 실제 디코드하므로 가짜 바이트로는 안 된다)."""
 
     def __init__(self, *, pages: int = 1, size=(792.0, 1224.0),
-                 text: str = "", png: bytes | None = None):
+                 text: str = "", png: bytes | None = None,
+                 scanned: bool = True):
         self._pages = pages
         self._size = size
         self._text = text
         self._png = png or _png_bytes()
+        self._scanned = scanned
         self.render_calls: list[tuple[int, int]] = []
 
     @property
@@ -58,13 +60,21 @@ class FakeDoc:
     def page_size(self, page: int):
         return self._size
 
+    def image_rects(self, page: int):
+        """스캔본이면 페이지를 덮는 이미지 하나(detect의 판정 근거)."""
+        if not self._scanned:
+            return []
+        return [(0.0, 0.0, self._size[0], self._size[1])]
+
     def raw_blocks(self, page: int):
         if not self._text:
             return []
         from apps.server.domain.pdf_translate.backend import RawBlock
         return [RawBlock(text=self._text, bbox=(0, 0, 10, 10))]
 
-    def render_png(self, page: int, *, dpi: int = 120) -> bytes:
+    def render_png(self, page: int, *, dpi: int = 120,
+                   annots: bool = True) -> bytes:
+        assert annots is False, "추출·크롭은 스캔만 봐야 한다"
         self.render_calls.append((page, dpi))
         return self._png
 
@@ -82,6 +92,15 @@ class FakeEngine:
         for (x0, y0, x1, y1), text, conf in self._items:
             boxes.append(([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], text, conf))
         return boxes, 0.0
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ocr_engine():
+    """OCR 엔진은 스레드 로컬 싱글턴이라 테스트 사이에 새어 나간다 —
+    가짜 엔진이 남아 실물 샘플 테스트가 빈 결과를 받는 사고를 막는다."""
+    xs._reset_engines()
+    yield
+    xs._reset_engines()
 
 
 def _install_engine(monkeypatch, engine: FakeEngine) -> None:
@@ -106,12 +125,13 @@ def test_registry_has_xsheet():
     assert profile_by_name("xsheet") is not None
 
 
-def test_detect_skips_ocr_for_text_documents(monkeypatch):
+def test_detect_skips_ocr_for_non_scanned_documents(monkeypatch):
     engine = FakeEngine([])
     _install_engine(monkeypatch, engine)
-    doc = FakeDoc(text="Dialog Action Notes and plenty of body text here")
+    doc = FakeDoc(text="Dialog Action Notes and plenty of body text here",
+                  scanned=False)
     assert xs.XsheetProfile().detect(doc) is False
-    assert engine.calls == 0  # 텍스트 문서엔 OCR 비용을 쓰지 않는다
+    assert engine.calls == 0  # 스캔이 아니면 OCR 비용을 쓰지 않는다
 
 
 def test_detect_scanned_sheet_by_header_tokens(monkeypatch):
@@ -149,33 +169,60 @@ def test_detect_profile_order_prefers_storyboard(monkeypatch):
 # ---------------------------------------------------------------- extract
 
 
+def _header_row(dpi, labels):
+    """칸 머리글 줄 OCR 항목 — 기하 유도의 앵커."""
+    out = []
+    for text, x0, x1 in labels:
+        out.append((_box_px((x0, 160, x1, 172), dpi), text, 1.0))
+    return out
+
+
 def test_extract_filters_template_and_clusters(monkeypatch):
+    """머리글에서 유도한 칸 구조로 서식·음소·번호를 걸러낸다."""
     dpi = xs._OCR_DPI
-    engine = FakeEngine([
-        # 인쇄 템플릿(제외 대상): 헤더·프레임번호·음소·푸터·화이트리스트 단어
-        (_box_px((400, 100, 460, 112), dpi), "ANIMATOR", 0.99),
-        (_box_px((355, 300, 365, 310), dpi), "7", 0.99),
-        (_box_px((395, 300, 405, 310), dpi), "EH", 0.9),
-        (_box_px((100, 1200, 130, 1210), dpi), "410", 0.99),
+    items = _header_row(dpi, [("ACTION", 100, 140), ("DIALOG", 370, 400),
+                              ("EXP", 405, 425), ("CAMERA NOTES", 700, 780)])
+    items += [
+        # 번호 컬럼(숫자만 촘촘히) — 12개 이상 모여야 컬럼으로 인정된다
+        *[(_box_px((355, 200 + i * 20, 365, 210 + i * 20), dpi), str(i + 1), 1.0)
+          for i in range(14)],
+        (_box_px((410, 300, 420, 310), dpi), "EH", 0.9),       # 립싱크 음소
+        (_box_px((380, 400, 400, 410), dpi), "HARRIS", 0.9),   # 화자 이름은 남는다
+        (_box_px((100, 1200, 130, 1210), dpi), "410", 0.99),   # 푸터 아래
         (_box_px((600, 300, 640, 310), dpi), "FOOTAGE", 0.99),
-        # 손글씨 노트 1: 세로로 쌓인 두 단어 → 한 블록으로 클러스터
-        (_box_px((50, 200, 95, 209), dpi), "SUBnE", 0.6),
+        (_box_px((50, 200, 95, 209), dpi), "SUBnE", 0.6),      # 손글씨 노트
         (_box_px((50, 212, 100, 221), dpi), "T2Em3LE", 0.55),
-        # 손글씨 노트 2: 카메라 노트 구역
         (_box_px((700, 300, 760, 310), dpi), "TRUCK UP", 0.7),
-        # 한글 노트(재투입 안전장치로 제외)
-        (_box_px((50, 400, 90, 410), dpi), "행크", 0.9),
-    ])
-    _install_engine(monkeypatch, engine)
+        (_box_px((50, 400, 90, 410), dpi), "행크", 0.9),        # 한글 재투입 차단
+        # 푸터 라벨(아래쪽) — 이게 있어야 footer_y가 잡힌다
+        (_box_px((100, 1150, 160, 1162), dpi), "PROD NO", 1.0),
+    ]
+    _install_engine(monkeypatch, FakeEngine(items))
     blocks = xs.XsheetProfile().extract(FakeDoc())
-    assert len(blocks) == 2
-    stacked = next(b for b in blocks if b.bbox[0] < 200)
-    camera = next(b for b in blocks if b.bbox[0] > 600)
+    texts = sorted(b.text for b in blocks)
+    assert texts == ["HARRIS", "SUBnE T2Em3LE", "TRUCK UP"]
+    stacked = next(b for b in blocks if b.text.startswith("SUBnE"))
     assert stacked.kind == xs.NOTE_KIND
-    assert stacked.text == "SUBnE T2Em3LE"          # 원시 OCR(전사 전 임시)
     assert stacked.bbox == (50.0, 200.0, 100.0, 221.0)
-    assert stacked.limit_x1 == pytest.approx(xs._ACTION_X1)
-    assert camera.limit_x1 == pytest.approx(792.0 - 8.0)
+
+
+def test_geometry_follows_a_different_studio_layout(monkeypatch):
+    """⛔양식은 작품마다 다르다 — 좌표를 박지 않는다. BM802(titmouse) 실측
+    배치처럼 대사 칸이 5쌍이면 그 **전체 구간**이 음소 칸으로 잡혀야 한다."""
+    labels = [("ACTION", 126, 165), ("DIALO", 299, 329), ("EXP", 338, 359),
+              ("DIAL 2", 365, 395), ("EXP", 401, 422), ("DIAL 3", 427, 459),
+              ("EXP", 464, 485), ("DIAL4", 486, 520), ("EXP", 524, 544),
+              ("DIAL5", 547, 580), ("EXP", 583, 604), ("TRUCK", 638, 668),
+              ("CAMERA NOTES", 714, 805)]
+    # _derive_geometry는 pt 좌표를 받는다(_ocr_page가 이미 환산해 넘긴다)
+    items = [((x0, 160.0, x1, 172.0), text, 1.0) for text, x0, x1 in labels]
+    g = xs._derive_geometry(items, 841.92, 1189.92)
+    assert g is not None
+    lo, hi = g.dialog_band
+    assert lo < 300 and hi > 600          # 다섯 쌍 전체를 덮는다
+    # KOTH 좌표(음소 밴드 370~432)만 덮는 옛 방식이었다면 DIAL4·5가 샜다
+    assert xs._is_template((550, 300, 560, 310), "ay", g) is True
+    assert xs._is_template((550, 300, 590, 310), "HARRIS", g) is False
 
 
 # ---------------------------------------------------------------- place
@@ -184,22 +231,22 @@ def test_extract_filters_template_and_clusters(monkeypatch):
 def test_place_prefers_right_of_note():
     profile = xs.XsheetProfile()
     block = PdfBlock(page=0, kind=xs.NOTE_KIND, text="x",
-                     bbox=(50, 200, 95, 225), limit_x1=xs._ACTION_X1)
+                     bbox=(50, 200, 95, 225), limit_x1=351.6)
     ov = profile.place(block, "행크에 내내 떨림.", (792.0, 1224.0))
     assert ov.fontsize == xs._FONTSIZE
     assert ov.rect[0] == pytest.approx(98.0)         # 원문 오른쪽에서 시작
-    assert ov.rect[2] <= xs._ACTION_X1 + 0.01        # 열 경계를 넘지 않는다
+    assert ov.rect[2] <= 351.6 + 0.01        # 열 경계를 넘지 않는다
     assert ov.rect[1] == pytest.approx(200.0)
 
 
 def test_place_falls_back_below_when_row_is_full():
     profile = xs.XsheetProfile()
     block = PdfBlock(page=0, kind=xs.NOTE_KIND, text="x",
-                     bbox=(10, 200, 340, 210), limit_x1=xs._ACTION_X1)
+                     bbox=(10, 200, 340, 210), limit_x1=351.6)
     ov = profile.place(block, "아주 긴 번역 문장이 들어간다.", (792.0, 1224.0))
     assert ov.rect[1] == pytest.approx(212.0)        # 원문 아래
     assert ov.rect[0] == pytest.approx(10.0)
-    assert ov.rect[2] <= xs._ACTION_X1 + 0.01
+    assert ov.rect[2] <= 351.6 + 0.01
 
 
 # ------------------------------------------------------ transcribe module
@@ -576,15 +623,16 @@ def test_extract_drops_junk_crops(monkeypatch):
     """잡티(작고 원시 OCR이 한 글자)는 블록으로 만들지 않는다 — 전사 세션
     낭비. 크지만 원시 OCR이 짧은 것, 작지만 글자가 있는 것은 살린다."""
     dpi = xs._OCR_DPI
-    engine = FakeEngine([
-        (_box_px((100, 200, 108, 210), dpi), "M", 0.5),        # 잡티: 8x10pt 1글자
-        (_box_px((100, 300, 118, 312), dpi), "AD", 0.6),       # 작지만 2글자 → 유지
-        (_box_px((100, 400, 160, 430), dpi), "X", 0.5),        # 크다(60x30) → 유지
-    ])
-    _install_engine(monkeypatch, engine)
+    items = _header_row(dpi, [("ACTION", 100, 140), ("DIALOG", 370, 400),
+                              ("EXP", 405, 425), ("CAMERA NOTES", 700, 780)])
+    items += [
+        (_box_px((100, 200, 108, 210), dpi), "M", 0.5),        # 잡티 8x10pt
+        (_box_px((100, 300, 118, 312), dpi), "AD", 0.6),       # 작지만 2글자
+        (_box_px((100, 400, 160, 430), dpi), "X", 0.5),        # 크다 60x30
+    ]
+    _install_engine(monkeypatch, FakeEngine(items))
     blocks = xs.XsheetProfile().extract(FakeDoc())
-    texts = sorted(b.text for b in blocks)
-    assert texts == ["AD", "X"]
+    assert sorted(b.text for b in blocks) == ["AD", "X"]
 
 
 def test_argv_differs_per_cli():
@@ -675,3 +723,39 @@ def test_expand_to_ink_is_bounded():
     """글자 덩어리가 상한 밖까지 이어져도 상자는 상한에서 멈춘다."""
     _x0, _y0, x1, _y1 = ht._expand_to_ink(_wide_word(), 300, 400, 500, 500)
     assert x1 - 500 <= ht._MAX_GROW_PX
+
+
+@pytest.mark.skipif(not SAMPLES, reason="실물 샘플 경로(YESON_PDF_SAMPLES) 미지정")
+def test_real_samples_two_studios_geometry():
+    """⛔작품마다 양식이 다르다 — 두 실물에서 칸 구조가 각자 맞게 유도돼야 한다.
+
+    KOTH(792×1224, 대사 1쌍) / BM802(A3 841.92×1189.92, titmouse, 대사 5쌍).
+    좌표를 박아 두면 BM802에서 DIAL4·5의 립싱크 음소가 통째로 번역 대상이
+    된다(2026-08-20 실측으로 확인된 실패).
+    """
+    from apps.server.domain.pdf_translate.backend import open_pdf
+    from apps.server.domain.pdf_translate.profiles import xsheet as xsm
+
+    cases = [
+        (Path(SAMPLES) / "script_trans" / "1401_XSHEETS_번역" / "KOTH_1401_A1.pdf",
+         1, (375.0, 425.0)),          # 실측 367.6~432.4 (대사 1쌍)
+        (Path(SAMPLES) / "xsheet_ocr_test" / "BM802_XSHEETS_SECTION_A_041224.pdf",
+         0, (310.0, 590.0)),          # 실측 296.6~607.0 (대사 5쌍)
+    ]
+    for path, page, (lo_max, hi_min) in cases:
+        if not path.exists():
+            pytest.skip(f"샘플 없음: {path.name}")
+        doc = open_pdf(path)
+        try:
+            pw, ph = doc.page_size(page)
+            geom = xsm._derive_geometry(
+                xsm._ocr_page(doc, page, xsm._OCR_DPI), pw, ph)
+            assert geom is not None, f"{path.name}: 머리글 줄 미검출"
+            assert geom.dialog_band is not None
+            lo, hi = geom.dialog_band
+            assert lo <= lo_max and hi >= hi_min, (path.name, lo, hi)
+            assert 0 < geom.header_y < ph * 0.25
+            assert geom.footer_y > ph * 0.8
+            assert len(geom.num_bands) >= 1
+        finally:
+            doc.close()

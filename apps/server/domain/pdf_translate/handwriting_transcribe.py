@@ -128,7 +128,7 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
             # 188페이지 재렌더). 예전엔 렌더를 먼저 하고 크롭 단위로만
             # exists()를 봤다.
             continue
-        arr = _decode_png(doc.render_png(page, dpi=_CROP_DPI))
+        arr = _decode_png(doc.render_png(page, dpi=_CROP_DPI, annots=False))
         h, w = arr.shape[:2]
         for b in missing:
             dest = crops / crop_name(b)

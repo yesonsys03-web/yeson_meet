@@ -21,6 +21,7 @@ import logging
 import re
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -37,23 +38,30 @@ NOTE_KIND = "xsheet_note"
 _DETECT_DPI = 100   # 헤더 토큰만 읽으면 되므로 저해상으로 충분(페이지당 ~1s)
 _OCR_DPI = 200      # panel_ocr._OCR_DPI와 동일 — 손글씨 탐지엔 300 불필요
 _DETECT_PAGES = 3
+_SCAN_COVER = 0.5    # 페이지 면적의 이 비율 이상을 덮는 이미지 = 스캔본
 _FONTSIZE = 9.0     # 사람 납품본 9pt 실측
 _MIN_FONTSIZE = 7.0
 
-# 템플릿 좌표(pt) — 792×1224pt(타블로이드) KOTH 시트 실측값. 다른 스캔
-# 크기에 대비해 사용할 때 페이지 크기 비율로 스케일한다(_scaled).
-_BASE_W, _BASE_H = 792.0, 1224.0
-_Y_HEADER = 121.0    # 인쇄 헤더 밴드 하단 — 위는 템플릿 라벨·에피소드 타이틀
-_Y_FOOTER = 1186.0   # 인쇄 푸터 밴드 상단
-# 프레임 번호 세로 컬럼 2줄(좌: 1~15 반복, 우: 통산 1~80) — 인쇄 숫자
-_NUM_BANDS = ((351.6, 372.0), (649.2, 670.8))
-# DIALOG/EXP 립싱크 음소 글자(A·M·EH…) — 사람도 번역하지 않는다
-_PHONETIC_BAND = (369.6, 432.0)
-# 배치 상한(limit_x1)을 정하는 열 경계: 액션 구역은 DIALOG 컬럼 직전까지,
-# 중간(프레임 카운트 그리드)은 우측 번호 컬럼 직전까지, 카메라 노트 구역은
-# 페이지 우단까지.
-_ACTION_X1 = 351.6
-_MIDDLE_X1 = 649.2
+# ⛔템플릿 좌표를 박지 않는다(2026-08-20). 작품마다 시트 양식이 다르다 —
+# KOTH(792×1224pt, 대사 컬럼 1쌍)와 BM802(A3 841.92×1189.92pt, titmouse
+# 양식, DIAL 2~5까지 대사 컬럼 5쌍)는 판형·비율·칸 배치가 전부 다르다.
+# 페이지 크기 비율로만 늘린 좌표는 엉뚱한 칸을 가리킨다(실측: KOTH 기준
+# 음소 밴드가 BM802에서는 DIAL2~3 위로 떨어져, 나머지 대사 컬럼의 립싱크
+# 음소가 통째로 번역 대상이 됐다).
+#
+# 대신 **페이지에서 읽어 유도한다** — 칸 머리글(ACTION·DIALOG·EXP·DIAL n·
+# TRUCK·CAMERA NOTES)은 인쇄 활자라 OCR이 conf 0.91~1.00으로 읽는다(양쪽
+# 샘플 실측). 그 x·y가 곧 칸 경계다.
+_HEADER_LABELS = {"ACTION", "CAMERANOTES", "TRUCK"}
+_DIALOG_RE = re.compile(r"^(DIAL[A-Z0-9]{0,3}|EXP)$")
+_FOOTER_LABELS = {"PRODNO", "FOOTAGE", "ANIMATOR", "SCENENO", "SHEETNO",
+                  "PRODUCTIONNO", "SCENEDIRECTOR", "APPROVED"}
+_HEADER_ROW_TOL = 8.0    # 같은 머리글 줄로 볼 y 오차(pt)
+_BAND_PAD = 3.0          # 칸 경계 여유(pt)
+_NUM_BIN_PT = 12.0       # 번호 컬럼 탐지용 x 버킷 폭
+_NUM_BIN_MIN = 12        # 이 개수 이상이 모여야 컬럼으로 인정
+_NUM_BIN_RATIO = 0.8     # 그중 숫자 비율
+_PHONETIC_MAX_LEN = 3    # 대사 칸에서 이 길이 이하는 립싱크 음소(번역 안 함)
 _CLUSTER_PAD = 6.0   # 세로로 쌓인 손글씨 단어들을 노트 하나로 묶는 근접 반경
 # 전사 보내기 전에 버리는 잡티 크롭 기준. 전사는 CLI 세션(=구독 쿼터)을
 # 쓰므로 어차피 버려질 것을 보내지 않는 게 곧 처리량이다.
@@ -67,14 +75,20 @@ _MIN_NOTE_AREA = 300.0
 _MIN_RAW_ALNUM = 2
 _ALNUM_RE = re.compile(r"[A-Za-z0-9]")
 
-# 인쇄 템플릿 문구(정규화: 영숫자만·대문자) — OCR conf 1.00으로 읽히는
-# 활자들이라 화이트리스트 일치로 안전하게 걸러진다.
+# 인쇄 서식 문구(정규화: 영숫자만·대문자). **업계 공통 항목만** 둔다 —
+# 스튜디오·작품 로고(KOTH의 `KING`/`HILL`, BM802의 `titmouse`/`BIG MOUTH`)는
+# 여기 넣지 않는다. 작품마다 다를뿐더러, 로고는 머리글 줄 위라 유도된
+# header_y로 이미 걸러진다.
 _TEMPLATE_WORDS = {
-    "KING", "HILL", "PRODNO", "FOOTAGE", "ANIMATOR", "SCENENO", "SHEETNO",
-    "DIALOG", "EXP", "CAMERANOTES", "ACTION", "CONT", "SCENEDIRECTOR",
-    "APPROVED", "PRODUCTIONNO", "ACT",
+    "PRODNO", "FOOTAGE", "ANIMATOR", "SCENENO", "SHEETNO", "DIALOG",
+    "EXP", "CAMERANOTES", "ACTION", "CONT", "SCENEDIRECTOR", "APPROVED",
+    "PRODUCTIONNO", "ACT", "TRUCK", "BG", "LEVEL",
 }
-_DETECT_TOKENS = {"ANIMATOR", "DIALOG", "EXP", "CAMERANOTES", "SHEETNO"}
+# 감지 토큰도 특정 양식에 매지 않는다 — 엑스시트라면 어느 하우스 것이든
+# '대사/EXP 칸 머리글'과 '서식 라벨'이 인쇄돼 있다(KOTH `DIALOG`,
+# BM802 `DIALO`·`DIAL 2`처럼 표기는 달라 정규식으로 받는다).
+_DETECT_LABELS = {"ANIMATOR", "CAMERANOTES", "SHEETNO", "ACTION",
+                  "PRODNO", "FOOTAGE", "SCENENO"}
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
 
 _local = threading.local()
@@ -111,7 +125,7 @@ def _norm(text: str) -> str:
 
 def _ocr_page(doc: PdfDocument, page: int, dpi: int) -> list[tuple[tuple[float, float, float, float], str, float]]:
     """페이지를 OCR해 (bbox_pt, text, conf) 목록으로. 좌표는 pt로 환산."""
-    arr = _decode_png(doc.render_png(page, dpi=dpi))
+    arr = _decode_png(doc.render_png(page, dpi=dpi, annots=False))
     result, _ = _get_engine()(arr)
     out = []
     scale = 72.0 / dpi
@@ -121,6 +135,92 @@ def _ocr_page(doc: PdfDocument, page: int, dpi: int) -> list[tuple[tuple[float, 
         rect = (min(xs) * scale, min(ys) * scale, max(xs) * scale, max(ys) * scale)
         out.append((rect, str(text), float(conf)))
     return out
+
+
+@dataclass(frozen=True)
+class _Geometry:
+    """페이지에서 읽어낸 시트 칸 구조(작품마다 다르다)."""
+    header_y: float          # 이 위는 로고·머리글 — 노트 아님
+    footer_y: float          # 이 아래는 푸터 라벨 — 노트 아님
+    dialog_band: tuple[float, float] | None   # 대사·EXP 칸 전체 x 구간
+    num_bands: tuple[tuple[float, float], ...]  # 프레임 번호 컬럼들
+    col_edges: tuple[float, ...]              # 배치 한계로 쓸 칸 경계 x
+
+    def limit_x1(self, cx: float, page_w: float) -> float:
+        for edge in self.col_edges:
+            if edge > cx + _BAND_PAD:
+                return edge
+        return page_w - 8.0
+
+
+def _is_scanned(doc: PdfDocument, page: int) -> bool:
+    """이 페이지가 스캔본인가 — 페이지를 거의 덮는 이미지가 있으면 그렇다."""
+    page_w, page_h = doc.page_size(page)
+    area = page_w * page_h
+    if area <= 0:
+        return False
+    for x0, y0, x1, y1 in doc.image_rects(page):
+        if (x1 - x0) * (y1 - y0) >= area * _SCAN_COVER:
+            return True
+    return False
+
+
+def _derive_geometry(items, page_w: float, page_h: float) -> _Geometry | None:
+    """OCR 결과에서 칸 구조를 유도한다. 머리글 줄을 못 찾으면 None."""
+    labelled = [(r, _norm(t)) for r, t, _c in items]
+    header_hits = [(r, n) for r, n in labelled
+                   if n in _HEADER_LABELS or _DIALOG_RE.match(n)]
+    if not header_hits:
+        return None
+    # 머리글은 한 줄에 몰려 있다 — 가장 많이 모인 y 밴드를 고른다
+    best, best_y = [], None
+    for r0, _n0 in header_hits:
+        cy = (r0[1] + r0[3]) / 2
+        row = [(r, n) for r, n in header_hits
+               if abs((r[1] + r[3]) / 2 - cy) <= _HEADER_ROW_TOL]
+        if len(row) > len(best):
+            best, best_y = row, cy
+    if best_y is None or len(best) < 2:
+        return None
+    header_y = max(r[3] for r, _ in best)
+
+    dialog = [r for r, n in best if _DIALOG_RE.match(n)]
+    dialog_band = ((min(r[0] for r in dialog) - _BAND_PAD,
+                    max(r[2] for r in dialog) + _BAND_PAD) if dialog else None)
+
+    # 푸터: 페이지 아래쪽에 있는 서식 라벨(같은 라벨이 머리글에 있는 양식도
+    # 있어서 — KOTH는 ANIMATOR가 머리글이다 — 위치로 가른다)
+    foot = [r for r, n in labelled
+            if n in _FOOTER_LABELS and r[1] > page_h * 0.8]
+    footer_y = min((r[1] for r in foot), default=page_h)
+
+    # 프레임 번호 컬럼: 숫자만 촘촘히 쌓인 x 구간(양식마다 위치·개수가 다르다)
+    bins: dict[int, list[str]] = {}
+    for r, n in labelled:
+        if not (header_y < r[1] < footer_y):
+            continue
+        bins.setdefault(int(((r[0] + r[2]) / 2) // _NUM_BIN_PT), []).append(n)
+    num_bands = []
+    for b, vals in sorted(bins.items()):
+        if len(vals) < _NUM_BIN_MIN:
+            continue
+        digits = sum(1 for v in vals if v.isdigit())
+        if digits / len(vals) >= _NUM_BIN_RATIO:
+            num_bands.append((b * _NUM_BIN_PT - _BAND_PAD,
+                              (b + 1) * _NUM_BIN_PT + _BAND_PAD))
+    merged: list[tuple[float, float]] = []
+    for lo, hi in num_bands:
+        if merged and lo <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], hi)
+        else:
+            merged.append((lo, hi))
+
+    edges = sorted({r[0] - _BAND_PAD for r, _ in best} |
+                   {lo for lo, _ in merged} |
+                   ({dialog_band[0]} if dialog_band else set()))
+    return _Geometry(header_y=header_y, footer_y=footer_y,
+                     dialog_band=dialog_band, num_bands=tuple(merged),
+                     col_edges=tuple(e for e in edges if e > 0))
 
 
 class XsheetProfile:
@@ -135,17 +235,22 @@ class XsheetProfile:
         pages = min(doc.page_count, _DETECT_PAGES)
         if pages == 0:
             return False
-        total_chars = sum(
-            len(b.text.strip())
-            for p in range(pages) for b in doc.raw_blocks(p))
-        if total_chars > 20:
-            return False
         for p in range(pages):
-            hits = 0
+            # 판정 기준은 "텍스트 레이어가 없다"가 아니라 **페이지가 스캔
+            # 이미지다**. 개정본·부분 번역본은 스캔 위에 텍스트가 얹혀 있어
+            # (BM802_O005 실측: 한글 주석 70~138자 + 파일명 스탬프) 텍스트
+            # 유무로 자르면 멀쩡한 엑스시트를 통째로 거른다. 스캔이 아닌
+            # 페이지는 OCR 비용도 쓰지 않고 건너뛴다.
+            if not _is_scanned(doc, p):
+                continue
+            seen: set[str] = set()
             for _rect, text, _conf in _ocr_page(doc, p, _DETECT_DPI):
-                if _norm(text) in _DETECT_TOKENS:
-                    hits += 1
-            if hits >= 2:
+                n = _norm(text)
+                if n in _DETECT_LABELS:
+                    seen.add(n)
+                elif _DIALOG_RE.match(n):
+                    seen.add("DIALOGCOL")      # 표기가 달라도 한 종류로
+            if len(seen) >= 2:
                 return True
         return False
 
@@ -157,12 +262,18 @@ class XsheetProfile:
         판독을 그대로 두는 이유는 한글 재투입 안전장치(has_hangul)와
         디버깅 단서로 쓰기 위해서다."""
         blocks: list[PdfBlock] = []
+        geom: _Geometry | None = None
         for page in range(doc.page_count):
             page_w, page_h = doc.page_size(page)
-            sx, sy = page_w / _BASE_W, page_h / _BASE_H
+            items = _ocr_page(doc, page, _OCR_DPI)
+            # 양식은 문서 안에서 일정하다 — 머리글이 안 읽힌 페이지(표지 등)는
+            # 직전 페이지에서 얻은 구조를 그대로 쓴다.
+            geom = _derive_geometry(items, page_w, page_h) or geom
+            if geom is None:
+                continue
             candidates = []
-            for rect, text, _conf in _ocr_page(doc, page, _OCR_DPI):
-                if self._is_template(rect, text, sx, sy):
+            for rect, text, _conf in items:
+                if _is_template(rect, text, geom):
                     continue
                 candidates.append((rect, text))
             for grp in _cluster(candidates):
@@ -177,33 +288,10 @@ class XsheetProfile:
                 if ((x1 - x0) * (y1 - y0) < _MIN_NOTE_AREA
                         and len(_ALNUM_RE.findall(raw)) < _MIN_RAW_ALNUM):
                     continue  # 잡티(서클 마커·셀 번호 한 글자) — 전사 낭비
-                cx = (x0 + x1) / 2
-                if cx <= _ACTION_X1 * sx:
-                    limit_x1 = _ACTION_X1 * sx
-                elif cx <= _MIDDLE_X1 * sx:
-                    limit_x1 = _MIDDLE_X1 * sx
-                else:
-                    limit_x1 = page_w - 8.0
                 blocks.append(PdfBlock(
-                    page=page, kind=NOTE_KIND, text=raw,
-                    bbox=(x0, y0, x1, y1), limit_x1=limit_x1))
+                    page=page, kind=NOTE_KIND, text=raw, bbox=(x0, y0, x1, y1),
+                    limit_x1=geom.limit_x1((x0 + x1) / 2, page_w)))
         return blocks
-
-    @staticmethod
-    def _is_template(rect: tuple[float, float, float, float], text: str,
-                     sx: float, sy: float) -> bool:
-        x0, y0, x1, y1 = rect
-        if y1 < _Y_HEADER * sy or y0 > _Y_FOOTER * sy:
-            return True
-        n = _norm(text)
-        if n in _TEMPLATE_WORDS:
-            return True
-        cx = (x0 + x1) / 2
-        for a, b in _NUM_BANDS:
-            if a * sx <= cx <= b * sx and (n.isdigit() or len(n) <= 2):
-                return True
-        pa, pb = _PHONETIC_BAND
-        return bool(pa * sx <= cx <= pb * sx and len(n) <= 3)
 
     # ---- 전사 훅(pdf_run이 getattr로 발견하는 optional 계약) ------------
     #
@@ -259,6 +347,29 @@ class XsheetProfile:
         rect = _clamp_nondegenerate(bx0, by1 + 2.0, x1, by1 + 2.0 + height, page_h)
         return Overlay(page=block.page, rect=rect, text=ko_text,
                        fontsize=_MIN_FONTSIZE)
+
+
+def _is_template(rect: tuple[float, float, float, float], text: str,
+                 geom: _Geometry) -> bool:
+    """인쇄 서식·번역 대상이 아닌 것을 걸러낸다(좌표는 geom에서 온다)."""
+    x0, y0, x1, y1 = rect
+    if y1 < geom.header_y or y0 > geom.footer_y:
+        return True
+    n = _norm(text)
+    if n in _TEMPLATE_WORDS or n in _FOOTER_LABELS or _DIALOG_RE.match(n):
+        return True
+    cx = (x0 + x1) / 2
+    for lo, hi in geom.num_bands:
+        if lo <= cx <= hi and (n.isdigit() or len(n) <= 2):
+            return True
+    if geom.dialog_band is not None:
+        lo, hi = geom.dialog_band
+        # 대사 칸에서 짧은 토큰 = 립싱크 음소(aa·ay·uw…) — 사람도 번역하지
+        # 않는다. 화자 이름(HARRIS…)은 길어서 살아남는다(BM802 실측: 사람이
+        # `해리슨`으로 옮겼다).
+        if lo <= cx <= hi and len(n) <= _PHONETIC_MAX_LEN:
+            return True
+    return False
 
 
 def _cluster(items: list[tuple[tuple[float, float, float, float], str]],
