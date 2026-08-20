@@ -8,7 +8,8 @@ import { PdfLabelEditor } from "./PdfLabelEditor";
 import { PdfPreview } from "./PdfPreview";
 
 const STATUS_LABEL: Record<string, string> = {
-  queued: "대기", extracting: "추출 중", translating: "번역 중",
+  queued: "대기", extracting: "추출 중", transcribing: "손글씨 판독 중",
+  translating: "번역 중",
   overlaying: "주석 생성 중", done: "완료", error: "오류", cancelled: "취소됨",
 };
 

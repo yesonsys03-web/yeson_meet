@@ -110,10 +110,13 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
 
 def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
                should_continue: Callable[[], bool] | None = None,
+               on_progress: Callable[[float], None] | None = None,
                ) -> list[PdfBlock]:
     """크롭들을 배치 전사해 블록 text를 교체하고, 번역할 거리가 없는
     블록(마커·숫자·판독 불가)은 버린다. 취소가 감지되면
-    asyncio.CancelledError를 던진다(pdf_run의 on_progress와 같은 규약)."""
+    asyncio.CancelledError를 던진다(pdf_run의 on_progress와 같은 규약).
+    on_progress에는 전체 크롭 대비 전사 완료 비율(0~1)이 배치마다 온다 —
+    캐시로 건너뛴 몫도 분자에 포함해 재개 런의 진행률이 이어져 보인다."""
     crops = job_dir / _CROPS_DIRNAME
     cache_path = job_dir / _CACHE_NAME
     done: dict[str, str] = {}
@@ -126,8 +129,8 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
             logger.warning("xsheet-transcribe: 캐시 파싱 실패 — 새로 시작")
 
     names = [crop_name(b) for b in blocks]
-    todo = sorted({n for n in names
-                   if n not in done and (crops / n).exists()})
+    all_names = {n for n in names if (crops / n).exists()}
+    todo = sorted(n for n in all_names if n not in done)
     # 동시 워커 + 실패 배치 반토막 재시도.
     #
     # 동시성: A1 전량 실측(2026-08-20)에서 크롭이 4,700장(=배치 235개)
@@ -188,6 +191,9 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
                 cache_path.write_text(
                     json.dumps(done, ensure_ascii=False, indent=1),
                     encoding="utf-8")
+                if on_progress is not None and all_names:
+                    on_progress(
+                        sum(1 for n in all_names if n in done) / len(all_names))
             _pump()
     if failed_batches:
         logger.warning("xsheet-transcribe: %d개 배치 실패 — 해당 노트는 "

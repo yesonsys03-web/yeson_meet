@@ -68,7 +68,8 @@ async function request<T>(url: string, init: RequestInit): Promise<T> {
 }
 
 export function isActivePdfStatus(status: string): boolean {
-  return ["queued", "extracting", "translating", "overlaying"].includes(status);
+  return ["queued", "extracting", "transcribing", "translating", "overlaying"]
+    .includes(status);
 }
 
 export function pdfUploadUrl(): string {

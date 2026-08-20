@@ -248,7 +248,7 @@ class PdfJob(Base):
     format: Mapped[str | None] = mapped_column(String(32), nullable=True)
     translate_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     translate_cli_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # queued|extracting|translating|overlaying|done|error|cancelled
+    # queued|extracting|transcribing|translating|overlaying|done|error|cancelled
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="queued", default="queued"
     )

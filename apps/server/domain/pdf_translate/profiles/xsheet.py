@@ -204,9 +204,11 @@ class XsheetProfile:
 
     def transcribe_blocks(self, blocks: list[PdfBlock], job_dir: Path,
                           should_continue: Callable[[], bool] | None = None,
+                          on_progress: Callable[[float], None] | None = None,
                           ) -> list[PdfBlock]:
         from ..handwriting_transcribe import transcribe
-        return transcribe(blocks, job_dir, should_continue=should_continue)
+        return transcribe(blocks, job_dir, should_continue=should_continue,
+                          on_progress=on_progress)
 
     def place(self, block: PdfBlock, ko_text: str,
               page_size: tuple[float, float]) -> Overlay:

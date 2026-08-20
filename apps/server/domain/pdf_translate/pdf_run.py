@@ -56,7 +56,8 @@ logger = logging.getLogger("yeson.pdf.pipeline")
 # 진행 중 상태 — 프루닝이 절대 건드리면 안 되는 집합이자, 재시작 스윕이
 # error로 정리하는 집합이다. 두 곳이 같은 상수를 봐야 한쪽만 갱신하는
 # 사고가 안 난다(video의 maintenance._INFLIGHT_STATUSES와 같은 취지).
-_INFLIGHT_STATUSES = ("queued", "extracting", "translating", "overlaying")
+_INFLIGHT_STATUSES = (
+    "queued", "extracting", "transcribing", "translating", "overlaying")
 
 # PDF 작업이 무한정 쌓이지 않도록 유지할 최근 작업 수 (개수 상한 정책).
 # 영상 자막(maintenance.RETENTION_KEEP=30)보다 작게 잡는다 — 이 기능의 기준
@@ -222,9 +223,24 @@ async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
             await asyncio.to_thread(
                 _with_doc_lock, doc_lock,
                 profile.render_transcribe_crops, doc, blocks, job_dir)
+            # 전사는 문서당 수십 분 — 전용 상태 + 배치 단위 진행률이 없으면
+            # 사용자는 "추출 중"에 멈춘 화면만 본다. format을 여기서 미리
+            # 기록해 탭별 목록 필터도 전사 중에 바로 선다.
+            await _set_status(external_id, "transcribing",
+                              format=profile.name, page_count=doc.page_count)
+            loop = asyncio.get_running_loop()
+
+            def _tx_progress(frac: float) -> None:
+                # 워커 스레드에서 불린다 — 이벤트 루프의 _set_progress(세대
+                # 가드 내장)로 넘긴다. result()로 짧게 기다려 역압을 준다.
+                asyncio.run_coroutine_threadsafe(
+                    _set_progress(external_id, int(frac * 100), generation),
+                    loop).result(timeout=10)
+
             blocks = await asyncio.to_thread(
                 profile.transcribe_blocks, blocks, job_dir,
-                lambda: generation == _current_generation(external_id))
+                lambda: generation == _current_generation(external_id),
+                _tx_progress)
             if not blocks:
                 raise PdfTranslateError(
                     "판독 가능한 손글씨 노트를 찾지 못했습니다 — "

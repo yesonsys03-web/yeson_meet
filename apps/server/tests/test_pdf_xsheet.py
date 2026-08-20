@@ -476,3 +476,21 @@ def test_transcribe_parallel_workers(tmp_path, monkeypatch):
     monkeypatch.setattr(ht, "_run_cli", _fake)
     out = ht.transcribe(blocks, tmp_path)
     assert len(out) == 6 and len(seen) == 6
+
+
+def test_transcribe_reports_progress_including_cache(tmp_path, monkeypatch):
+    """진행률 분자에 캐시 몫이 포함돼야 재개 런의 진행률이 이어져 보인다."""
+    blocks = [_note(0, 50, 100 + i * 20) for i in range(4)]
+    _touch_crops(tmp_path, blocks)
+    names = [ht.crop_name(b) for b in blocks]
+    # 절반은 이전 런의 캐시
+    (tmp_path / ht._CACHE_NAME).write_text(
+        json.dumps({names[0]: "OLD A", names[1]: "OLD B"}), encoding="utf-8")
+    monkeypatch.setattr(ht, "_BATCH", 1)
+    monkeypatch.setattr(ht, "_workers", lambda: 1)
+    monkeypatch.setattr(ht, "_run_cli", lambda prompt, cwd: json.dumps(
+        {n: f"NEW {n}" for n in names if n in prompt}))
+    fracs: list[float] = []
+    out = ht.transcribe(blocks, tmp_path, on_progress=fracs.append)
+    assert len(out) == 4
+    assert fracs == [0.75, 1.0]        # 시작점이 이미 0.5, 배치마다 +0.25
