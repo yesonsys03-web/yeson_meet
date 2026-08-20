@@ -84,7 +84,12 @@ _MIN_ANSWERED = 0.8
 # 이때는 쪼개서 재시도해도 전부 같은 거절이라 큐만 태운다 — 즉시 중단한다.
 _FATAL_RE = re.compile(
     r"quota reached|upgrade your subscription|rate.?limit|not (?:authenticated|logged in)"
-    r"|please (?:log ?in|authenticate)", re.IGNORECASE)
+    r"|please (?:log ?in|authenticate)"
+    # 헤드리스 권한 거부 — agy는 프롬프트를 띄울 수 없어 read_file을 자동
+    # 거부한다(실측: 신뢰 워크스페이스로 등록해도 열리지 않는다). 쪼개서
+    # 재시도해도 전부 같은 거부라 큐만 태운다.
+    r"|permission check failed|denied permission|permission denied",
+    re.IGNORECASE)
 _CROPS_DIRNAME = "xsheet_crops"
 _CACHE_NAME = "transcripts.json"
 # 전사에서 살아남는 기준: 영문 단어(2자+)가 하나라도 있어야 번역할 거리가
@@ -385,8 +390,12 @@ def _run_cli(prompt: str, cwd: Path) -> str:
     # 실패로 흘려보내면 쪼개기 재시도가 같은 거절을 반복하며 큐를 태우고,
     # 사용자는 노트가 대부분 빠진 PDF를 조용히 받는다.
     if _FATAL_RE.search(detail):
+        hint = ""
+        if re.search(r"permission", detail, re.IGNORECASE):
+            hint = (" · 이 CLI는 헤드리스에서 파일 읽기 권한이 필요합니다"
+                    f" (허용 규칙 등록 또는 {ENV_CLI}=claude 로 전환)")
         raise TranscribeFatalError(
-            f"전사 CLI({name})가 요청을 거절했습니다 — {detail}")
+            f"전사 CLI({name})가 요청을 거절했습니다 — {detail}{hint}")
     if result.returncode != 0 or not out:
         raise RuntimeError(f"전사 CLI 응답 없음(rc={result.returncode}): {detail}")
     return result.stdout

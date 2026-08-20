@@ -759,3 +759,26 @@ def test_real_samples_two_studios_geometry():
             assert len(geom.num_bands) >= 1
         finally:
             doc.close()
+
+
+def test_transcribe_aborts_on_permission_denial(tmp_path, monkeypatch):
+    """헤드리스 권한 거부도 즉시 중단 대상 — 쪼개 재시도해도 같은 거부다.
+    실측: agy는 신뢰 워크스페이스로 등록해도 headless read_file을 자동 거부한다."""
+    blocks = [_note(0, 50, 100 + i * 20) for i in range(4)]
+    _touch_crops(tmp_path, blocks)
+    monkeypatch.setattr(ht, "_BATCH", 2)
+    monkeypatch.setattr(ht, "_workers", lambda: 1)
+
+    class Denied:
+        returncode = 0
+        stdout = ('Error: permission check failed for read_file "/x/a.png": '
+                  "user denied permission for read_file(/x/a.png)")
+        stderr = ""
+
+    monkeypatch.setattr(ht.subprocess, "run", lambda argv, **kw: Denied())
+    monkeypatch.setattr(
+        "apps.server.domain.video_captions.translate_cli.resolve_cli",
+        lambda name: "/usr/bin/fake")
+    with pytest.raises(ht.TranscribeFatalError) as err:
+        ht.transcribe(blocks, tmp_path)
+    assert "권한" in str(err.value)          # 조치 가능한 안내가 붙는다
