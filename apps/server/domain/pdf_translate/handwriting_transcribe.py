@@ -58,7 +58,11 @@ def _workers() -> int:
     return max(1, min(n, 8))
 
 _CROP_DPI = 300      # 원본 스캔 해상도와 동일 — 전사 품질 실측 기준
-_MARGIN_PT = 5.0
+_MARGIN_PT = 5.0     # 기본 여백 — 잘린 크롭만 _expand_to_ink가 더 넓힌다
+_GROW_STEP_PX = 4    # 300dpi 기준 ≈1pt
+_MAX_GROW_PX = 60    # ≈14pt — 실측상 잘린 줄 하나를 살리기에 충분
+_INK_MIN_RATIO = 0.08   # 이보다 옅으면 잡티(스캔 노이즈)
+_LINE_RATIO = 0.75      # 이보다 넓게 채우면 시트 인쇄 괘선 — 성장 신호 아님
 # 배치 크기 = **구독 쿼터의 주된 소비 단위**. CLI 세션 1개당 쿼터가 깎이므로
 # (A1 전량 실측에서 20장 배치 235세션이 개인 쿼터를 소진시켜 전사가 8%에서
 # 멈췄다) 세션 수를 줄이는 게 최우선이다. 20 → 60으로 올리면 세션이 1/3로
@@ -130,7 +134,43 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
             py1 = min(int((y1 + _MARGIN_PT) * scale), h)
             if px1 <= px0 or py1 <= py0:
                 continue
+            py0, py1 = _expand_to_ink(arr, px0, py0, px1, py1)
             Image.fromarray(arr[py0:py1, px0:px1]).save(dest)
+
+
+def _expand_to_ink(arr, px0: int, py0: int, px1: int,
+                   py1: int) -> tuple[int, int]:
+    """위·아래 변에 **잘린 글자**가 걸쳐 있으면 그만큼만 넓힌다.
+
+    RapidOCR 텍스트 줄 상자는 글리프에 딱 붙는 데다 흐린 줄은 짧게 잡혀,
+    고정 여백 5pt로는 마지막 줄이 잘린다(실측: `CONT, TREMBLE CYCLE` 노트가
+    `TREMBLE`까지만 남아 전사도 한 단어를 잃었다 — claude/agy 불일치의 실제
+    원인). 여백을 일괄로 키우면 크롭 면적이 배로 늘어 토큰을 그만큼 더 쓰므로,
+    **필요한 크롭만** 잉크가 끊길 때까지 넓힌다.
+
+    시트의 인쇄 괘선은 변 폭을 거의 다 채우므로(_LINE_RATIO 이상) 성장
+    신호에서 제외한다 — 그러지 않으면 모든 크롭이 상한까지 자란다."""
+    for _ in range(_MAX_GROW_PX // _GROW_STEP_PX):
+        if not _edge_is_cut(arr, px0, py0, px1):
+            break
+        py0 = max(py0 - _GROW_STEP_PX, 0)
+    for _ in range(_MAX_GROW_PX // _GROW_STEP_PX):
+        if not _edge_is_cut(arr, px0, py1 - 1, px1):
+            break
+        py1 = min(py1 + _GROW_STEP_PX, arr.shape[0])
+    return py0, py1
+
+
+def _edge_is_cut(arr, px0: int, row: int, px1: int) -> bool:
+    """그 행의 잉크 비율이 '글자 일부'로 보이는 구간이면 True(괘선·여백 제외)."""
+    if row <= 0 or row >= arr.shape[0] - 1:
+        return False
+    band = arr[row, px0:px1]
+    if band.size == 0:
+        return False
+    dark = float((band.min(axis=-1) < 128).mean()) if band.ndim > 1 else \
+        float((band < 128).mean())
+    return _INK_MIN_RATIO < dark < _LINE_RATIO
 
 
 def transcribe(blocks: list[PdfBlock], job_dir: Path, *,

@@ -611,3 +611,33 @@ def test_extract_json_object_tolerates_cli_chatter():
         "a.png": "SEE {NOTE}", "b.png": 'SAYS "HI"'}
     with pytest.raises(ValueError, match="찾지 못했"):
         ht._extract_json_object("no json here")
+
+
+def _canvas(h=200, w=200):
+    import numpy as np
+    return np.full((h, w, 3), 255, dtype=np.uint8)
+
+
+def test_expand_to_ink_grows_only_where_text_is_cut():
+    """잘린 글자(변을 부분적으로 채움)만 따라 넓힌다 — 인쇄 괘선(변을 거의
+    다 채움)이나 여백은 성장 신호가 아니다(안 그러면 전 크롭이 상한까지 자라
+    토큰만 는다)."""
+    arr = _canvas()
+    arr[100:104, 40:80] = 0          # 아래 경계에 걸친 글자 획(폭 20%)
+    py0, py1 = ht._expand_to_ink(arr, 0, 60, 200, 101)
+    assert py1 > 101 and py0 == 60   # 아래로만 자란다
+
+    ruled = _canvas()
+    ruled[100:102, :] = 0            # 폭 100% = 인쇄 괘선
+    assert ht._expand_to_ink(ruled, 0, 60, 200, 101) == (60, 101)
+
+    blank = _canvas()
+    assert ht._expand_to_ink(blank, 0, 60, 200, 101) == (60, 101)
+
+
+def test_expand_to_ink_is_bounded():
+    """세로로 이어진 잉크라도 상한(_MAX_GROW_PX)에서 멈춘다."""
+    arr = _canvas(h=600, w=200)
+    arr[:, 40:80] = 0                # 위아래로 계속 이어지는 획
+    py0, py1 = ht._expand_to_ink(arr, 0, 300, 200, 340)
+    assert 300 - py0 <= ht._MAX_GROW_PX and py1 - 340 <= ht._MAX_GROW_PX
