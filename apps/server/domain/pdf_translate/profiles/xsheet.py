@@ -55,6 +55,17 @@ _PHONETIC_BAND = (369.6, 432.0)
 _ACTION_X1 = 351.6
 _MIDDLE_X1 = 649.2
 _CLUSTER_PAD = 6.0   # 세로로 쌓인 손글씨 단어들을 노트 하나로 묶는 근접 반경
+# 전사 보내기 전에 버리는 잡티 크롭 기준. 전사는 CLI 세션(=구독 쿼터)을
+# 쓰므로 어차피 버려질 것을 보내지 않는 게 곧 처리량이다.
+#
+# A1 전량 런의 실전사 380장 실측: 버려진 126장(33%)의 중앙값이 10×11pt·원시
+# OCR 1글자인 반면, 살아남은 254장은 56×27pt·10글자였다. `면적>=300pt² 또는
+# 원시 OCR 영숫자 2자 이상` 규칙이 쓰레기 90/126을 걷어내면서 진짜 노트는
+# 254장 중 1장만 잃었다(0.4% — RapidOCR이 `CUT`을 `M`으로 읽은 작은 칸).
+# 문턱을 더 올리면(면적 500·폭높이 20×14) 손실이 16~20%로 급등한다.
+_MIN_NOTE_AREA = 300.0
+_MIN_RAW_ALNUM = 2
+_ALNUM_RE = re.compile(r"[A-Za-z0-9]")
 
 # 인쇄 템플릿 문구(정규화: 영숫자만·대문자) — OCR conf 1.00으로 읽히는
 # 활자들이라 화이트리스트 일치로 안전하게 걸러진다.
@@ -163,6 +174,9 @@ class XsheetProfile:
                     t for _, t in sorted(grp, key=lambda it: (it[0][1], it[0][0])))
                 if has_hangul(raw):
                     continue  # 번역 완료본 재투입 안전장치(공통 규칙)
+                if ((x1 - x0) * (y1 - y0) < _MIN_NOTE_AREA
+                        and len(_ALNUM_RE.findall(raw)) < _MIN_RAW_ALNUM):
+                    continue  # 잡티(서클 마커·셀 번호 한 글자) — 전사 낭비
                 cx = (x0 + x1) / 2
                 if cx <= _ACTION_X1 * sx:
                     limit_x1 = _ACTION_X1 * sx

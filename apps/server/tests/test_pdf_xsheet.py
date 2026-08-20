@@ -247,7 +247,9 @@ def test_transcribe_replaces_text_and_drops_unusable(tmp_path, monkeypatch):
 
 
 def test_transcribe_batches_and_survives_one_failure(tmp_path, monkeypatch):
-    blocks = [_note(0, 50, 100 + i * 20) for i in range(4)]
+    # 실패 몫은 응답률 안전망(_MIN_ANSWERED) 아래로 내려가지 않을 만큼만 —
+    # 10장 중 2장 실패(80% 응답)는 "일부 배치 실패"의 정상 처리 경로다.
+    blocks = [_note(0, 50, 100 + i * 20) for i in range(10)]
     _touch_crops(tmp_path, blocks)
     monkeypatch.setattr(ht, "_BATCH", 2)
     monkeypatch.setattr(ht, "_workers", lambda: 1)  # 순서 단정은 직렬로
@@ -262,8 +264,8 @@ def test_transcribe_batches_and_survives_one_failure(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ht, "_run_cli", _fake)
     out = ht.transcribe(blocks, tmp_path)
-    assert len(calls) == 2                      # 실패해도 다음 배치는 돈다
-    assert len(out) == 2                        # 실패 배치 몫은 떨어진다
+    assert len(calls) == 5                      # 실패해도 다음 배치는 돈다
+    assert len(out) == 8                        # 실패 배치 몫만 떨어진다
 
 
 def test_transcribe_cancellation(tmp_path, monkeypatch):
@@ -513,3 +515,73 @@ def test_render_crops_skips_fully_cached_pages(tmp_path):
     (tmp_path / ht._CROPS_DIRNAME / ht.crop_name(p1[0])).unlink()
     ht.render_crops(doc, p0 + p1, tmp_path)
     assert doc.render_calls == [(1, ht._CROP_DPI)]   # 빠진 페이지만 렌더
+
+
+def test_transcribe_aborts_on_quota_refusal(tmp_path, monkeypatch):
+    """쿼터 소진(rc=0 + 평문 한 줄)은 쪼개기 재시도 대상이 아니라 즉시 중단.
+
+    A1 전량 런 실측: agy가 "Individual quota reached..."를 rc=0으로 돌려주자
+    파싱 실패로 취급돼 큐만 태우고 전사가 8%에서 조용히 멎었다."""
+    blocks = [_note(0, 50, 100 + i * 20) for i in range(8)]
+    _touch_crops(tmp_path, blocks)
+    monkeypatch.setattr(ht, "_BATCH", 2)
+    monkeypatch.setattr(ht, "_workers", lambda: 1)
+    calls: list[int] = []
+
+    class FakeCompleted:
+        returncode = 0
+        stdout = ("Error: Individual quota reached. Please upgrade your "
+                  "subscription to increase your limits. Resets in 28m13s.")
+        stderr = ""
+
+    def _fake_run(argv, **kw):
+        calls.append(1)
+        return FakeCompleted()
+
+    monkeypatch.setattr(ht.subprocess, "run", _fake_run)
+    monkeypatch.setattr(ht, "resolve_cli", lambda name: "/usr/bin/fake", raising=False)
+    monkeypatch.setattr(
+        "apps.server.domain.video_captions.translate_cli.resolve_cli",
+        lambda name: "/usr/bin/fake")
+    with pytest.raises(ht.TranscribeFatalError) as err:
+        ht.transcribe(blocks, tmp_path)
+    assert "거절" in str(err.value) and "quota" in str(err.value).lower()
+    assert len(calls) == 1          # 첫 거절에서 멈춘다(재시도 폭주 없음)
+
+
+def test_transcribe_fails_loudly_when_mostly_unanswered(tmp_path, monkeypatch):
+    """응답률이 문턱 아래면 반쪽 결과를 done으로 흘리지 않는다."""
+    blocks = [_note(0, 50, 100 + i * 20) for i in range(10)]
+    _touch_crops(tmp_path, blocks)
+    monkeypatch.setattr(ht, "_BATCH", 1)
+    monkeypatch.setattr(ht, "_SPLIT_MIN", 99)   # 쪼개기 없이 바로 실패 집계
+    monkeypatch.setattr(ht, "_workers", lambda: 1)
+    names = [ht.crop_name(b) for b in blocks]
+
+    def _fake(prompt, cwd):
+        n = next(x for x in names if x in prompt)
+        if names.index(n) < 3:
+            return json.dumps({n: "REAL NOTE"})
+        raise RuntimeError("세션 죽음")
+
+    monkeypatch.setattr(ht, "_run_cli", _fake)
+    with pytest.raises(RuntimeError, match="대부분 실패"):
+        ht.transcribe(blocks, tmp_path)
+    # 캐시는 남아 재번역이 이어받는다
+    cache = json.loads((tmp_path / ht._CACHE_NAME).read_text(encoding="utf-8"))
+    assert len(cache) == 3
+
+
+def test_extract_drops_junk_crops(monkeypatch):
+    """잡티(작고 원시 OCR이 한 글자)는 블록으로 만들지 않는다 — 전사 세션
+    낭비. 크지만 원시 OCR이 짧은 것, 작지만 글자가 있는 것은 살린다."""
+    dpi = xs._OCR_DPI
+    engine = FakeEngine([
+        (_box_px((100, 200, 108, 210), dpi), "M", 0.5),        # 잡티: 8x10pt 1글자
+        (_box_px((100, 300, 118, 312), dpi), "AD", 0.6),       # 작지만 2글자 → 유지
+        (_box_px((100, 400, 160, 430), dpi), "X", 0.5),        # 크다(60x30) → 유지
+    ])
+    _install_engine(monkeypatch, engine)
+    blocks = xs.XsheetProfile().extract(FakeDoc())
+    texts = sorted(b.text for b in blocks)
+    assert texts == ["AD", "X"]

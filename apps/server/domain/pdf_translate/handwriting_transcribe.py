@@ -40,6 +40,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("yeson.pdf_translate")
 
+
+class TranscribeFatalError(RuntimeError):
+    """재시도가 무의미한 CLI 거절(쿼터 소진·미로그인). 메시지가 그대로
+    잡 오류로 노출되므로 사람이 읽고 조치할 수 있는 문장이어야 한다."""
+
 ENV_CLI = "YESON_PDF_XSHEET_CLI"            # 기본 agy — 비전 지원 CLI만 의미 있음
 ENV_EXTRA_ARGS = "YESON_PDF_XSHEET_CLI_ARGS"  # shlex 분해되어 argv 뒤에 붙는다
 ENV_WORKERS = "YESON_PDF_XSHEET_CLI_WORKERS"  # 동시 CLI 세션 수(기본 3)
@@ -54,9 +59,23 @@ def _workers() -> int:
 
 _CROP_DPI = 300      # 원본 스캔 해상도와 동일 — 전사 품질 실측 기준
 _MARGIN_PT = 5.0
-_BATCH = 20          # 스파이크 실측 배치 크기(8배치 전부 20/20 성공)
+# 배치 크기 = **구독 쿼터의 주된 소비 단위**. CLI 세션 1개당 쿼터가 깎이므로
+# (A1 전량 실측에서 20장 배치 235세션이 개인 쿼터를 소진시켜 전사가 8%에서
+# 멈췄다) 세션 수를 줄이는 게 최우선이다. 20 → 60으로 올리면 세션이 1/3로
+# 줄고, 커진 배치가 타임아웃 나도 아래 반토막 재시도가 회수한다.
+_BATCH = 60
 _SPLIT_MIN = 8       # 이 크기 이상의 실패 배치만 반으로 나눠 재시도
-_CALL_TIMEOUT = 600  # 배치 하나당 상한(초) — agy 세션 기동 포함
+_CALL_TIMEOUT = 900  # 배치 하나당 상한(초) — 배치를 키운 만큼 함께 늘린다
+# 응답을 하나도 못 받은 크롭 비율이 이보다 크면 잡을 실패시킨다. 정상 런은
+# 쓰레기 크롭도 빈 문자열로 **응답은** 받으므로 1.0에 가깝다 — 0.8을 밑돈다는
+# 건 CLI가 조직적으로 죽고 있다는 뜻이고, 그대로 두면 노트 대부분이 빠진
+# PDF가 조용히 '완료'로 나간다(A1 실측에서 실제로 그럴 뻔했다).
+_MIN_ANSWERED = 0.8
+# 세션이 실패가 아니라 **치명적 거절**을 돌려준 경우(쿼터·인증·요금제).
+# 이때는 쪼개서 재시도해도 전부 같은 거절이라 큐만 태운다 — 즉시 중단한다.
+_FATAL_RE = re.compile(
+    r"quota reached|upgrade your subscription|rate.?limit|not (?:authenticated|logged in)"
+    r"|please (?:log ?in|authenticate)", re.IGNORECASE)
 _CROPS_DIRNAME = "xsheet_crops"
 _CACHE_NAME = "transcripts.json"
 # 전사에서 살아남는 기준: 영문 단어(2자+)가 하나라도 있어야 번역할 거리가
@@ -181,6 +200,15 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
                     for k, v in parsed.items():
                         if k in batch and isinstance(v, str):
                             done[k] = v
+                except TranscribeFatalError:
+                    # 쿼터·인증 거절은 재시도가 무의미 — 남은 세션을 접고
+                    # 그대로 올린다. 여기까지의 전사는 캐시에 남아 있어
+                    # (쿼터 회복 후) 재번역이 이어받는다.
+                    ex.shutdown(wait=False, cancel_futures=True)
+                    cache_path.write_text(
+                        json.dumps(done, ensure_ascii=False, indent=1),
+                        encoding="utf-8")
+                    raise
                 except Exception as exc:  # noqa: BLE001 — 배치 하나 실패로 전체를 죽이지 않는다
                     if len(batch) >= _SPLIT_MIN:
                         mid = len(batch) // 2
@@ -204,6 +232,13 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
     if failed_batches:
         logger.warning("xsheet-transcribe: %d개 배치 실패 — 해당 노트는 "
                        "주석이 빠진다(편집기 수동 추가 대상)", failed_batches)
+    # 조직적 실패 안전망: 응답 자체를 못 받은 크롭이 너무 많으면 반쪽짜리
+    # 결과를 done으로 흘리지 않는다(캐시는 남으므로 재번역이 이어받는다).
+    answered = sum(1 for n in all_names if n in done)
+    if all_names and answered / len(all_names) < _MIN_ANSWERED:
+        raise RuntimeError(
+            f"손글씨 판독이 대부분 실패했습니다 ({answered}/{len(all_names)}장만 "
+            "응답) — 전사 CLI 상태(쿼터·로그인)를 확인한 뒤 재번역하세요")
 
     out: list[PdfBlock] = []
     for b, name in zip(blocks, names):
@@ -241,8 +276,16 @@ def _run_cli(prompt: str, cwd: Path) -> str:
     result = subprocess.run(
         argv, cwd=cwd, capture_output=True, text=True, encoding="utf-8",
         timeout=_CALL_TIMEOUT, check=False, **_NO_WINDOW)
-    if result.returncode != 0 or not (result.stdout or "").strip():
-        detail = (result.stderr or result.stdout or "").strip()[:200]
+    out = (result.stdout or "").strip()
+    detail = (result.stderr or out or "").strip()[:200]
+    # 쿼터 소진·미로그인은 rc=0 + 평문 한 줄로 온다(agy 실측:
+    # "Error: Individual quota reached. ... Resets in 28m13s."). JSON 파싱
+    # 실패로 흘려보내면 쪼개기 재시도가 같은 거절을 반복하며 큐를 태우고,
+    # 사용자는 노트가 대부분 빠진 PDF를 조용히 받는다.
+    if _FATAL_RE.search(detail):
+        raise TranscribeFatalError(
+            f"전사 CLI({name})가 요청을 거절했습니다 — {detail}")
+    if result.returncode != 0 or not out:
         raise RuntimeError(f"전사 CLI 응답 없음(rc={result.returncode}): {detail}")
     return result.stdout
 
