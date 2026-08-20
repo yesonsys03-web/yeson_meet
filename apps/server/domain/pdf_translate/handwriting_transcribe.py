@@ -196,7 +196,7 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
             for fut in finished:
                 batch = futures.pop(fut)
                 try:
-                    parsed = json.loads(_strip_fences(fut.result()))
+                    parsed = _extract_json_object(fut.result())
                     for k, v in parsed.items():
                         if k in batch and isinstance(v, str):
                             done[k] = v
@@ -248,6 +248,23 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
     return out
 
 
+def _argv_for(name: str, path: str, prompt: str) -> list[str]:
+    """CLI별 호출 형태 — 플래그가 서로 다르다(translate_cli._BACKENDS와 같은
+    이유로 표를 둔다). `--print-timeout`은 agy 전용이라 claude에 넘기면
+    인자 오류로 즉사한다.
+
+    실측(2026-08-20): agy·claude 모두 `--add-dir`로 준 폴더의 PNG를 읽고
+    JSON으로 답한다. **claude는 권한 플래그 없이도 이미지를 읽는다**(읽기
+    전용 도구는 기본 승인) — agy만 read_file 허용 설정이 선행돼야 한다.
+    codex는 아직 미실측이라 목록에 넣지 않는다."""
+    if name == "codex":  # 미실측 경로 — 형태만 맞춰 둔다(translate_cli 미러)
+        return [path, "exec", "--skip-git-repo-check", prompt]
+    argv = [path, "-p", prompt, "--add-dir", "."]
+    if name == "agy":
+        argv += ["--print-timeout", "8m"]
+    return argv
+
+
 def _build_prompt(batch: list[str]) -> str:
     return (
         "Open each of these PNG files in this directory and transcribe the "
@@ -268,9 +285,8 @@ def _run_cli(prompt: str, cwd: Path) -> str:
     if path is None:
         raise RuntimeError(
             f"전사 CLI({name})를 찾지 못했습니다 — 설치/로그인 후 다시 시도")
-    extra = shlex.split(os.environ.get(ENV_EXTRA_ARGS, ""))
-    argv = [path, "-p", prompt, "--add-dir", ".",
-            "--print-timeout", "8m", *extra]
+    argv = [*_argv_for(name, path, prompt),
+            *shlex.split(os.environ.get(ENV_EXTRA_ARGS, ""))]
     # encoding 명시: Windows 한글 로케일에서 UTF-8 출력이 cp949 디코딩에
     # 실패하면 stdout이 None이 된다(report_summary.py 선례, f004487)
     result = subprocess.run(
@@ -288,6 +304,41 @@ def _run_cli(prompt: str, cwd: Path) -> str:
     if result.returncode != 0 or not out:
         raise RuntimeError(f"전사 CLI 응답 없음(rc={result.returncode}): {detail}")
     return result.stdout
+
+
+def _extract_json_object(stdout: str) -> dict:
+    """출력에서 **첫 JSON 객체만** 떼어낸다 — 통째로 json.loads 하지 않는다.
+
+    CLI마다 말투가 달라서 코드펜스 앞뒤에 설명이 붙는다(claude 실측:
+    펜스 닫은 뒤 요약 문단을 덧붙여 "Extra data" 파싱 실패). 문자열 안의
+    중괄호·이스케이프를 세면서 균형 잡힌 끝을 찾는다.
+    translate_cli._extract_json_array와 같은 방어다."""
+    text = _strip_fences(stdout)
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("응답에서 JSON 객체를 찾지 못했습니다")
+    depth = 0
+    in_str = False
+    escaped = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:i + 1])
+    raise ValueError("JSON 객체가 닫히지 않았습니다")
 
 
 def _strip_fences(text: str) -> str:

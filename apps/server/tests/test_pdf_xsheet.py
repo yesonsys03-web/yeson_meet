@@ -585,3 +585,29 @@ def test_extract_drops_junk_crops(monkeypatch):
     blocks = xs.XsheetProfile().extract(FakeDoc())
     texts = sorted(b.text for b in blocks)
     assert texts == ["AD", "X"]
+
+
+def test_argv_differs_per_cli():
+    """`--print-timeout`은 agy 전용 — claude에 넘기면 인자 오류로 즉사한다."""
+    agy = ht._argv_for("agy", "/bin/agy", "P")
+    claude = ht._argv_for("claude", "/bin/claude", "P")
+    assert agy[:5] == ["/bin/agy", "-p", "P", "--add-dir", "."]
+    assert "--print-timeout" in agy
+    assert claude == ["/bin/claude", "-p", "P", "--add-dir", "."]
+    assert ht._argv_for("codex", "/bin/codex", "P")[1] == "exec"
+
+
+def test_extract_json_object_tolerates_cli_chatter():
+    """CLI가 JSON 앞뒤에 말을 붙여도 객체만 떼어낸다(claude 실측: 펜스 뒤
+    요약 문단을 덧붙여 'Extra data'로 파싱이 깨졌다)."""
+    body = '{"a.png": "WALK\\nWEST.", "b.png": ""}'
+    assert ht._extract_json_object(f"```json\n{body}\n```") == {
+        "a.png": "WALK\nWEST.", "b.png": ""}
+    chatty = f"Here you go:\n```json\n{body}\n```\n\nI transcribed 2 crops.\n"
+    assert ht._extract_json_object(chatty)["a.png"] == "WALK\nWEST."
+    # 값 안의 중괄호·이스케이프된 따옴표에 속지 않는다
+    tricky = '{"a.png": "SEE {NOTE}", "b.png": "SAYS \\"HI\\""}'
+    assert ht._extract_json_object(f"{tricky} trailing junk") == {
+        "a.png": "SEE {NOTE}", "b.png": 'SAYS "HI"'}
+    with pytest.raises(ValueError, match="찾지 못했"):
+        ht._extract_json_object("no json here")
