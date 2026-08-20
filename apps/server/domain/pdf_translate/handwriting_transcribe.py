@@ -42,6 +42,15 @@ logger = logging.getLogger("yeson.pdf_translate")
 
 ENV_CLI = "YESON_PDF_XSHEET_CLI"            # 기본 agy — 비전 지원 CLI만 의미 있음
 ENV_EXTRA_ARGS = "YESON_PDF_XSHEET_CLI_ARGS"  # shlex 분해되어 argv 뒤에 붙는다
+ENV_WORKERS = "YESON_PDF_XSHEET_CLI_WORKERS"  # 동시 CLI 세션 수(기본 3)
+
+
+def _workers() -> int:
+    try:
+        n = int(os.environ.get(ENV_WORKERS, "3"))
+    except ValueError:
+        n = 3
+    return max(1, min(n, 8))
 
 _CROP_DPI = 300      # 원본 스캔 해상도와 동일 — 전사 품질 실측 기준
 _MARGIN_PT = 5.0
@@ -119,36 +128,67 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
     names = [crop_name(b) for b in blocks]
     todo = sorted({n for n in names
                    if n not in done and (crops / n).exists()})
-    # 실패 배치는 반으로 나눠 재시도한다 — A1 스파이크 2차 런 실측에서
-    # 노트 53개짜리 밀집 페이지(p182)의 20장 배치 2개가 600초 타임아웃으로
-    # 통째 죽었다(나머지 15배치는 전부 성공). agy는 배치가 클수록 세션이
-    # 길어지므로, 쪼개면 대부분 회복된다. 반토막은 크기가 단조 감소해
-    # _SPLIT_MIN 미만에서 종결 — 무한 재시도가 불가능하다.
-    queue = [todo[i:i + _BATCH] for i in range(0, len(todo), _BATCH)]
+    # 동시 워커 + 실패 배치 반토막 재시도.
+    #
+    # 동시성: A1 전량 실측(2026-08-20)에서 크롭이 4,700장(=배치 235개)
+    # 나왔다 — agy 세션이 배치당 1~2분이라 직렬이면 전사만 4시간+.
+    # 배치끼리는 완전 독립(서로 다른 파일)이라 CLI 세션 몇 개를 나란히
+    # 띄우는 게 안전한 지름길이다. 워커 결과 병합·캐시 쓰기는 메인
+    # 스레드만 한다(락 불필요).
+    #
+    # 반토막 재시도: 같은 실측에서 노트 53개짜리 밀집 페이지(p182)의
+    # 20장 배치 2개가 600초 타임아웃으로 통째 죽었다(나머지 15배치 전부
+    # 성공). agy는 배치가 클수록 세션이 길어지므로 쪼개면 대부분
+    # 회복된다. 반토막은 크기가 단조 감소해 _SPLIT_MIN 미만에서 종결 —
+    # 무한 재시도가 불가능하다.
+    from collections import deque
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+
+    queue = deque(todo[i:i + _BATCH] for i in range(0, len(todo), _BATCH))
     failed_batches = 0
-    while queue:
-        if should_continue is not None and not should_continue():
-            raise asyncio.CancelledError
-        batch = queue.pop(0)
-        try:
-            stdout = _run_cli(_build_prompt(batch), crops)
-            parsed = json.loads(_strip_fences(stdout))
-            for k, v in parsed.items():
-                if k in batch and isinstance(v, str):
-                    done[k] = v
-        except Exception as exc:  # noqa: BLE001 — 배치 하나 실패로 전체를 죽이지 않는다
-            if len(batch) >= _SPLIT_MIN:
-                mid = len(batch) // 2
-                queue.append(batch[:mid])
-                queue.append(batch[mid:])
-                logger.warning("xsheet-transcribe: 배치 실패(%s, %d장) — "
-                               "반으로 나눠 재시도: %s", batch[0], len(batch), exc)
-            else:
-                failed_batches += 1
-                logger.warning("xsheet-transcribe: 배치 실패(%s): %s",
-                               batch[0], exc)
-        cache_path.write_text(
-            json.dumps(done, ensure_ascii=False, indent=1), encoding="utf-8")
+    workers = _workers()
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures: dict = {}
+
+        def _pump() -> None:
+            while queue and len(futures) < workers:
+                b = queue.popleft()
+                futures[ex.submit(_run_cli, _build_prompt(b), crops)] = b
+
+        while queue or futures:
+            # 취소 검사는 반드시 제출(_pump)보다 먼저 — 취소가 이미 도착한
+            # 상태에서 CLI를 한 번이라도 더 띄우면 안 된다. 도는 중인 CLI는
+            # 제 타임아웃까지 알아서 끝나고 결과는 버려진다.
+            if should_continue is not None and not should_continue():
+                ex.shutdown(wait=False, cancel_futures=True)
+                raise asyncio.CancelledError
+            _pump()
+            finished, _ = wait(set(futures), timeout=5.0,
+                               return_when=FIRST_COMPLETED)
+            for fut in finished:
+                batch = futures.pop(fut)
+                try:
+                    parsed = json.loads(_strip_fences(fut.result()))
+                    for k, v in parsed.items():
+                        if k in batch and isinstance(v, str):
+                            done[k] = v
+                except Exception as exc:  # noqa: BLE001 — 배치 하나 실패로 전체를 죽이지 않는다
+                    if len(batch) >= _SPLIT_MIN:
+                        mid = len(batch) // 2
+                        queue.append(batch[:mid])
+                        queue.append(batch[mid:])
+                        logger.warning(
+                            "xsheet-transcribe: 배치 실패(%s, %d장) — "
+                            "반으로 나눠 재시도: %s", batch[0], len(batch), exc)
+                    else:
+                        failed_batches += 1
+                        logger.warning("xsheet-transcribe: 배치 실패(%s): %s",
+                                       batch[0], exc)
+            if finished:
+                cache_path.write_text(
+                    json.dumps(done, ensure_ascii=False, indent=1),
+                    encoding="utf-8")
+            _pump()
     if failed_batches:
         logger.warning("xsheet-transcribe: %d개 배치 실패 — 해당 노트는 "
                        "주석이 빠진다(편집기 수동 추가 대상)", failed_batches)

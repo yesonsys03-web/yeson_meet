@@ -250,6 +250,7 @@ def test_transcribe_batches_and_survives_one_failure(tmp_path, monkeypatch):
     blocks = [_note(0, 50, 100 + i * 20) for i in range(4)]
     _touch_crops(tmp_path, blocks)
     monkeypatch.setattr(ht, "_BATCH", 2)
+    monkeypatch.setattr(ht, "_workers", lambda: 1)  # 순서 단정은 직렬로
     calls: list[list[str]] = []
 
     def _fake(prompt, cwd):
@@ -440,6 +441,7 @@ def test_transcribe_splits_failed_batch_and_recovers(tmp_path, monkeypatch):
     _touch_crops(tmp_path, blocks)
     monkeypatch.setattr(ht, "_BATCH", 4)
     monkeypatch.setattr(ht, "_SPLIT_MIN", 2)
+    monkeypatch.setattr(ht, "_workers", lambda: 1)  # 순서 단정은 직렬로
     calls: list[int] = []
 
     def _fake(prompt, cwd):
@@ -453,3 +455,24 @@ def test_transcribe_splits_failed_batch_and_recovers(tmp_path, monkeypatch):
     out = ht.transcribe(blocks, tmp_path)
     assert calls == [4, 2, 2]          # 통배치 실패 → 반쪽 2개로 회복
     assert len(out) == 4               # 잃은 노트 0
+
+
+def test_transcribe_parallel_workers(tmp_path, monkeypatch):
+    """워커 3이 배치들을 나란히 처리해도 결과 병합·캐시가 온전해야 한다."""
+    import threading
+    blocks = [_note(0, 50, 100 + i * 20) for i in range(6)]
+    _touch_crops(tmp_path, blocks)
+    monkeypatch.setattr(ht, "_BATCH", 2)
+    monkeypatch.setenv(ht.ENV_WORKERS, "3")
+    seen = set()
+    barrier = threading.Barrier(3, timeout=10)
+
+    def _fake(prompt, cwd):
+        batch = [n for n in (ht.crop_name(b) for b in blocks) if n in prompt]
+        barrier.wait()  # 3배치가 실제로 동시에 떠 있어야 통과한다
+        seen.update(batch)
+        return json.dumps({n: f"NOTE {n}" for n in batch})
+
+    monkeypatch.setattr(ht, "_run_cli", _fake)
+    out = ht.transcribe(blocks, tmp_path)
+    assert len(out) == 6 and len(seen) == 6
