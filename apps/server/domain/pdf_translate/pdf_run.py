@@ -185,6 +185,7 @@ async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
             source_path = job.source_path
             provider = job.translate_provider
             cli_model = job.translate_cli_model
+            format_hint = job.format
         if not source_path or not Path(source_path).exists():
             raise PdfTranslateError("원본 PDF 파일이 없습니다")
 
@@ -192,13 +193,42 @@ async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
         doc = slot.doc = await asyncio.to_thread(open_pdf, Path(source_path))
         # detect_profile은 최대 3페이지 get_text("dict")를 훑는다(GIL 바운드) —
         # 이벤트 루프에서 직접 돌리면 실시간 자막 WebSocket이 수십ms 멎는다.
-        profile = await asyncio.to_thread(_with_doc_lock, doc_lock, detect_profile, doc)
+        #
+        # 업로드가 format_hint로 포맷을 미리 지정했으면(탭별 업로드) 감지
+        # 대신 그 프로파일을 쓰되, detect로 파일이 실제 그 포맷인지 한 번
+        # 확인한다 — 스토리보드를 엑스시트 탭에 올리는 실수를 조용히
+        # 엉뚱한 결과로 흘리지 않기 위해서다.
+        profile = profile_by_name(format_hint) if format_hint else None
+        if profile is not None:
+            matched = await asyncio.to_thread(
+                _with_doc_lock, doc_lock, profile.detect, doc)
+            if not matched:
+                raise PdfTranslateError(
+                    f"선택한 포맷({profile.label})과 파일이 다릅니다")
+        else:
+            profile = await asyncio.to_thread(
+                _with_doc_lock, doc_lock, detect_profile, doc)
         if profile is None:
             raise PdfTranslateError(
-                "지원하지 않는 PDF 포맷입니다 (현재 지원: 스토리보드형)")
+                "지원하지 않는 PDF 포맷입니다 (현재 지원: 스토리보드형·엑스시트)")
         blocks = await asyncio.to_thread(_with_doc_lock, doc_lock, profile.extract, doc)
         if not blocks:
             raise PdfTranslateError("번역할 텍스트 블록을 찾지 못했습니다")
+        # 손글씨 포맷(xsheet)의 전사 훅 — 크롭 렌더(doc 락 필요·빠름)와
+        # CLI 전사(락 불필요·문서당 수십 분)를 반드시 분리한다. 한 훅으로
+        # 합치면 전사 내내 페이지 미리보기 라우트가 doc 락에 막힌다.
+        if hasattr(profile, "transcribe_blocks"):
+            job_dir = pdf_job_dir(external_id)
+            await asyncio.to_thread(
+                _with_doc_lock, doc_lock,
+                profile.render_transcribe_crops, doc, blocks, job_dir)
+            blocks = await asyncio.to_thread(
+                profile.transcribe_blocks, blocks, job_dir,
+                lambda: generation == _current_generation(external_id))
+            if not blocks:
+                raise PdfTranslateError(
+                    "판독 가능한 손글씨 노트를 찾지 못했습니다 — "
+                    "전사 CLI 상태를 확인하세요")
         await _set_status(external_id, "translating", format=profile.name,
                           page_count=doc.page_count, block_count=len(blocks))
 
