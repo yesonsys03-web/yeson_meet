@@ -46,6 +46,7 @@ ENV_EXTRA_ARGS = "YESON_PDF_XSHEET_CLI_ARGS"  # shlex 분해되어 argv 뒤에 �
 _CROP_DPI = 300      # 원본 스캔 해상도와 동일 — 전사 품질 실측 기준
 _MARGIN_PT = 5.0
 _BATCH = 20          # 스파이크 실측 배치 크기(8배치 전부 20/20 성공)
+_SPLIT_MIN = 8       # 이 크기 이상의 실패 배치만 반으로 나눠 재시도
 _CALL_TIMEOUT = 600  # 배치 하나당 상한(초) — agy 세션 기동 포함
 _CROPS_DIRNAME = "xsheet_crops"
 _CACHE_NAME = "transcripts.json"
@@ -118,11 +119,17 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
     names = [crop_name(b) for b in blocks]
     todo = sorted({n for n in names
                    if n not in done and (crops / n).exists()})
+    # 실패 배치는 반으로 나눠 재시도한다 — A1 스파이크 2차 런 실측에서
+    # 노트 53개짜리 밀집 페이지(p182)의 20장 배치 2개가 600초 타임아웃으로
+    # 통째 죽었다(나머지 15배치는 전부 성공). agy는 배치가 클수록 세션이
+    # 길어지므로, 쪼개면 대부분 회복된다. 반토막은 크기가 단조 감소해
+    # _SPLIT_MIN 미만에서 종결 — 무한 재시도가 불가능하다.
+    queue = [todo[i:i + _BATCH] for i in range(0, len(todo), _BATCH)]
     failed_batches = 0
-    for i in range(0, len(todo), _BATCH):
+    while queue:
         if should_continue is not None and not should_continue():
             raise asyncio.CancelledError
-        batch = todo[i:i + _BATCH]
+        batch = queue.pop(0)
         try:
             stdout = _run_cli(_build_prompt(batch), crops)
             parsed = json.loads(_strip_fences(stdout))
@@ -130,9 +137,16 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
                 if k in batch and isinstance(v, str):
                     done[k] = v
         except Exception as exc:  # noqa: BLE001 — 배치 하나 실패로 전체를 죽이지 않는다
-            failed_batches += 1
-            logger.warning("xsheet-transcribe: 배치 실패(%s): %s",
-                           batch[0], exc)
+            if len(batch) >= _SPLIT_MIN:
+                mid = len(batch) // 2
+                queue.append(batch[:mid])
+                queue.append(batch[mid:])
+                logger.warning("xsheet-transcribe: 배치 실패(%s, %d장) — "
+                               "반으로 나눠 재시도: %s", batch[0], len(batch), exc)
+            else:
+                failed_batches += 1
+                logger.warning("xsheet-transcribe: 배치 실패(%s): %s",
+                               batch[0], exc)
         cache_path.write_text(
             json.dumps(done, ensure_ascii=False, indent=1), encoding="utf-8")
     if failed_batches:

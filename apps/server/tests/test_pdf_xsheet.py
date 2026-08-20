@@ -431,3 +431,25 @@ def _extract_pages(profile, doc, *, pages: int):
                            property(lambda self: pages)):
         _ = real_count
         return profile.extract(doc)
+
+
+def test_transcribe_splits_failed_batch_and_recovers(tmp_path, monkeypatch):
+    """대형 배치 타임아웃(A1 p182 실측: 20장 배치 2개가 600s 초과)은 반으로
+    나눠 재시도해 회복한다 — 반토막은 단조 감소라 무한 재시도가 불가능."""
+    blocks = [_note(0, 50, 100 + i * 20) for i in range(4)]
+    _touch_crops(tmp_path, blocks)
+    monkeypatch.setattr(ht, "_BATCH", 4)
+    monkeypatch.setattr(ht, "_SPLIT_MIN", 2)
+    calls: list[int] = []
+
+    def _fake(prompt, cwd):
+        batch = [n for n in (ht.crop_name(b) for b in blocks) if n in prompt]
+        calls.append(len(batch))
+        if len(batch) > 2:
+            raise TimeoutError("배치가 크면 타임아웃")
+        return json.dumps({n: f"NOTE {n}" for n in batch})
+
+    monkeypatch.setattr(ht, "_run_cli", _fake)
+    out = ht.transcribe(blocks, tmp_path)
+    assert calls == [4, 2, 2]          # 통배치 실패 → 반쪽 2개로 회복
+    assert len(out) == 4               # 잃은 노트 0
