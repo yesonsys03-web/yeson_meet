@@ -618,26 +618,60 @@ def _canvas(h=200, w=200):
     return np.full((h, w, 3), 255, dtype=np.uint8)
 
 
-def test_expand_to_ink_grows_only_where_text_is_cut():
-    """잘린 글자(변을 부분적으로 채움)만 따라 넓힌다 — 인쇄 괘선(변을 거의
-    다 채움)이나 여백은 성장 신호가 아니다(안 그러면 전 크롭이 상한까지 자라
-    토큰만 는다)."""
-    arr = _canvas()
-    arr[100:104, 40:80] = 0          # 아래 경계에 걸친 글자 획(폭 20%)
-    py0, py1 = ht._expand_to_ink(arr, 0, 60, 200, 101)
-    assert py1 > 101 and py0 == 60   # 아래로만 자란다
+def test_expand_to_ink_includes_whole_stroke():
+    """⛔손글씨는 잘리면 안 된다 — 상자에 걸친 획은 **덩어리째** 포함한다."""
+    arr = _canvas(h=300, w=300)
+    arr[140:200, 100:160] = 0        # 상자 아래로 삐져나온 획
+    _x0, y0, _x1, y1 = ht._expand_to_ink(arr, 90, 100, 200, 150)
+    assert y1 >= 200                 # 획 끝까지 내려간다
+    assert y0 <= 100
 
-    ruled = _canvas()
-    ruled[100:102, :] = 0            # 폭 100% = 인쇄 괘선
-    assert ht._expand_to_ink(ruled, 0, 60, 200, 101) == (60, 101)
 
-    blank = _canvas()
-    assert ht._expand_to_ink(blank, 0, 60, 200, 101) == (60, 101)
+def test_expand_to_ink_ignores_neighbour_and_ruled_lines():
+    """옆 노트는 별개 덩어리라 겹치지 않으므로 끌어오지 않는다 — 변에 닿은
+    잉크를 세던 옛 방식이 괘선 때문에 좌우 상한까지 부풀던 자리다."""
+    arr = _canvas(h=400, w=400)
+    arr[100:140, 100:160] = 0        # 내 노트
+    arr[100:140, 300:360] = 0        # 멀리 떨어진 옆 노트
+    arr[200:204, :] = 0              # 가로 인쇄 괘선
+    arr[:, 250:254] = 0              # 세로 칸 구분선
+    _x0, _y0, x1, y1 = ht._expand_to_ink(arr, 95, 95, 170, 145)
+    assert x1 < 250                  # 옆 노트·구분선까지 삼키지 않는다
+    assert y1 < 200                  # 괘선을 따라 늘어나지도 않는다
+
+
+def _wide_word(h=900, w=900):
+    """상한 밖까지 이어지는 **글자 덩어리**(화살표가 아니라).
+
+    긴 사선으로 만들면 코드가 (의도대로) 화살표로 보고 무시한다 — 잘림
+    판정을 시험하려면 짧고 촘촘한, 즉 글자로 인정되는 덩어리여야 한다."""
+    arr = _canvas(h=h, w=w)
+    arr[420:480, 450:670] = 0        # 상자에서 시작해 탐색 구역 끝을 넘김
+    return arr
+
+
+def test_ink_bounds_flags_clipping_at_the_cap():
+    """상한 밖까지 이어지는 글자면 clipped=True로 알린다(조용히 자르지 않는다)."""
+    _box, clipped = ht.ink_bounds(_wide_word(), 300, 400, 500, 500)
+    assert clipped is True
+    clean = _canvas(h=300, w=300)
+    clean[120:160, 120:160] = 0
+    _box2, clipped2 = ht.ink_bounds(clean, 100, 100, 200, 200)
+    assert clipped2 is False
+
+
+def test_ink_bounds_ignores_arrows():
+    """프레임을 가리키는 긴 화살표는 글자가 아니다 — 따라가면 상자가 상한까지
+    부푼다(실측 87%가 그렇게 터졌다)."""
+    arr = _canvas(h=900, w=900)
+    arr[420:460, 420:470] = 0                     # 내 글자
+    for i in range(400):                          # 길게 뻗은 얇은 화살표
+        arr[460 + i // 2, 470 + i] = 0
+    _x0, _y0, x1, _y1 = ht._expand_to_ink(arr, 400, 400, 500, 500)
+    assert x1 < 600                               # 화살표를 따라가지 않는다
 
 
 def test_expand_to_ink_is_bounded():
-    """세로로 이어진 잉크라도 상한(_MAX_GROW_PX)에서 멈춘다."""
-    arr = _canvas(h=600, w=200)
-    arr[:, 40:80] = 0                # 위아래로 계속 이어지는 획
-    py0, py1 = ht._expand_to_ink(arr, 0, 300, 200, 340)
-    assert 300 - py0 <= ht._MAX_GROW_PX and py1 - 340 <= ht._MAX_GROW_PX
+    """글자 덩어리가 상한 밖까지 이어져도 상자는 상한에서 멈춘다."""
+    _x0, _y0, x1, _y1 = ht._expand_to_ink(_wide_word(), 300, 400, 500, 500)
+    assert x1 - 500 <= ht._MAX_GROW_PX

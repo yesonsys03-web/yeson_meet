@@ -59,10 +59,15 @@ def _workers() -> int:
 
 _CROP_DPI = 300      # 원본 스캔 해상도와 동일 — 전사 품질 실측 기준
 _MARGIN_PT = 5.0     # 기본 여백 — 잘린 크롭만 _expand_to_ink가 더 넓힌다
-_GROW_STEP_PX = 4    # 300dpi 기준 ≈1pt
-_MAX_GROW_PX = 60    # ≈14pt — 실측상 잘린 줄 하나를 살리기에 충분
-_INK_MIN_RATIO = 0.08   # 이보다 옅으면 잡티(스캔 노이즈)
-_LINE_RATIO = 0.75      # 이보다 넓게 채우면 시트 인쇄 괘선 — 성장 신호 아님
+_MAX_GROW_PX = 150      # 상자를 넓힐 수 있는 최대 거리(변당) ≈36pt
+# 글자 덩어리 판정 — 화살표를 글자와 갈라내는 기준. 이 시트의 노트는
+# 프레임을 가리키는 긴 곡선 화살표와 획이 이어져 있어서, 덩어리를 무조건
+# 통째로 담으면 화살표를 따라 상한까지 부푼다(실측 87%가 상한 초과, 면적
+# 2.2배). 글자는 짧고 촘촘하고, 화살표는 길고 성기다.
+_MIN_INK_SIDE = 6       # 이보다 얇으면 점·스캔 잡티
+_MAX_TEXT_SIDE = 330    # 300dpi에서 ≈80pt — 이보다 긴 획은 화살표로 본다
+_MIN_INK_FILL = 0.12    # 외곽상자 대비 채움 — 성긴 곡선(화살표) 배제
+_LINE_RATIO = 0.75      # 이 비율 이상 채우는 행/열 = 시트 인쇄 괘선
 # 배치 크기 = **구독 쿼터의 주된 소비 단위**. CLI 세션 1개당 쿼터가 깎이므로
 # (A1 전량 실측에서 20장 배치 235세션이 개인 쿼터를 소진시켜 전사가 8%에서
 # 멈췄다) 세션 수를 줄이는 게 최우선이다. 20 → 60으로 올리면 세션이 1/3로
@@ -134,43 +139,84 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
             py1 = min(int((y1 + _MARGIN_PT) * scale), h)
             if px1 <= px0 or py1 <= py0:
                 continue
-            py0, py1 = _expand_to_ink(arr, px0, py0, px1, py1)
+            px0, py0, px1, py1 = _expand_to_ink(arr, px0, py0, px1, py1)
             Image.fromarray(arr[py0:py1, px0:px1]).save(dest)
 
 
 def _expand_to_ink(arr, px0: int, py0: int, px1: int,
-                   py1: int) -> tuple[int, int]:
-    """위·아래 변에 **잘린 글자**가 걸쳐 있으면 그만큼만 넓힌다.
+                   py1: int) -> tuple[int, int, int, int]:
+    """상자에 걸친 **잉크 덩어리를 통째로** 담도록 넓힌 상자를 돌려준다.
 
-    RapidOCR 텍스트 줄 상자는 글리프에 딱 붙는 데다 흐린 줄은 짧게 잡혀,
-    고정 여백 5pt로는 마지막 줄이 잘린다(실측: `CONT, TREMBLE CYCLE` 노트가
-    `TREMBLE`까지만 남아 전사도 한 단어를 잃었다 — claude/agy 불일치의 실제
-    원인). 여백을 일괄로 키우면 크롭 면적이 배로 늘어 토큰을 그만큼 더 쓰므로,
-    **필요한 크롭만** 잉크가 끊길 때까지 넓힌다.
+    ⛔손글씨가 잘린 크롭은 번역 이전에 원문이 사라진 것이라 절대 허용하지
+    않는다(사용자 확정 2026-08-20). RapidOCR 줄 상자는 글리프에 딱 붙는 데다
+    흐린 줄은 짧게 잡혀, 고정 여백 5pt로는 마지막 줄이 잘린다(실측:
+    `CONT, TREMBLE CYCLE` → `TREMBLE`, 작은 크롭 20장 중 5장이 아랫줄 잘림).
 
-    시트의 인쇄 괘선은 변 폭을 거의 다 채우므로(_LINE_RATIO 이상) 성장
-    신호에서 제외한다 — 그러지 않으면 모든 크롭이 상한까지 자란다."""
-    for _ in range(_MAX_GROW_PX // _GROW_STEP_PX):
-        if not _edge_is_cut(arr, px0, py0, px1):
-            break
-        py0 = max(py0 - _GROW_STEP_PX, 0)
-    for _ in range(_MAX_GROW_PX // _GROW_STEP_PX):
-        if not _edge_is_cut(arr, px0, py1 - 1, px1):
-            break
-        py1 = min(py1 + _GROW_STEP_PX, arr.shape[0])
-    return py0, py1
+    변에 잉크가 닿았는지로 한 픽셀씩 넓히는 방식은 실패했다 — 시트 인쇄
+    괘선과 그 흐린 경계가 늘 '글자 걸침'으로 읽혀, 300장 중 44%가 좌우
+    상한까지 부풀고도(면적 1.35배) 여전히 잘림 판정이었다. 덩어리(연결
+    성분) 단위로 보면 "내 노트의 획"과 "옆 노트·괘선"이 구조적으로 갈린다.
+    """
+    return ink_bounds(arr, px0, py0, px1, py1)[0]
 
 
-def _edge_is_cut(arr, px0: int, row: int, px1: int) -> bool:
-    """그 행의 잉크 비율이 '글자 일부'로 보이는 구간이면 True(괘선·여백 제외)."""
-    if row <= 0 or row >= arr.shape[0] - 1:
+def ink_bounds(arr, px0: int, py0: int, px1: int, py1: int,
+               ) -> tuple[tuple[int, int, int, int], bool]:
+    """(잉크 덩어리를 포함하도록 넓힌 상자, 상한에 걸려 잘림이 남았나).
+
+    상자와 **겹치는** 덩어리만 내 노트의 획으로 본다 — 옆 노트는 별개
+    성분이라 겹치지 않아 자연히 배제된다. 인쇄 괘선은 미리 지운다(남기면
+    페이지 전체가 한 덩어리로 이어져 판정이 무의미해진다)."""
+    import cv2
+    import numpy as np
+
+    h, w = arr.shape[:2]
+    nx0, ny0 = max(px0 - _MAX_GROW_PX, 0), max(py0 - _MAX_GROW_PX, 0)
+    nx1, ny1 = min(px1 + _MAX_GROW_PX, w), min(py1 + _MAX_GROW_PX, h)
+    region = _dark(arr[ny0:ny1, nx0:nx1])
+    if region.size == 0:
+        return (px0, py0, px1, py1), False
+    ink = region.astype(np.uint8)
+    ink[region.mean(axis=1) >= _LINE_RATIO, :] = 0   # 가로 프레임 줄
+    ink[:, region.mean(axis=0) >= _LINE_RATIO] = 0   # 세로 칸 구분선
+
+    n, _labels, stats, _c = cv2.connectedComponentsWithStats(ink, connectivity=8)
+    ox0, oy0, ox1, oy1 = px0 - nx0, py0 - ny0, px1 - nx0, py1 - ny0
+    bx0, by0, bx1, by1 = ox0, oy0, ox1, oy1
+    outside = False
+    for i in range(1, n):
+        x, y, cw, ch, area = (int(v) for v in stats[i])
+        if not _is_textlike(cw, ch, area):
+            continue
+        if x >= ox1 or x + cw <= ox0 or y >= oy1 or y + ch <= oy0:
+            continue
+        bx0, by0 = min(bx0, x), min(by0, y)
+        bx1, by1 = max(bx1, x + cw), max(by1, y + ch)
+        # 덩어리가 탐색 구역 끝까지 이어지면(=상한에 닿음) 잘림이 남는다
+        if x <= 0 or y <= 0 or x + cw >= nx1 - nx0 or y + ch >= ny1 - ny0:
+            outside = True
+    bx0, by0 = max(bx0, 0), max(by0, 0)
+    bx1, by1 = min(bx1, nx1 - nx0), min(by1, ny1 - ny0)
+    return (nx0 + bx0, ny0 + by0, nx0 + bx1, ny0 + by1), outside
+
+
+def _is_textlike(cw: int, ch: int, area: int) -> bool:
+    """이 덩어리가 **글자**인가(화살표·잡티가 아니라).
+
+    실측(200장): 이 필터 없이 덩어리를 통째로 담으면 내 노트 글자 잘림은
+    2.0%까지 떨어지지만 화살표를 따라 상자가 상한까지 부푼다. 필터를 넣으면
+    같은 2.0%를 면적 1.17배로 얻는다. 여백만 키우는 대안은 오히려 나빠진다
+    (20pt에서 76% — 상자가 커지며 옆 노트 글자를 반쯤 물기 때문)."""
+    if cw < _MIN_INK_SIDE or ch < _MIN_INK_SIDE:
         return False
-    band = arr[row, px0:px1]
-    if band.size == 0:
+    if max(cw, ch) > _MAX_TEXT_SIDE:
         return False
-    dark = float((band.min(axis=-1) < 128).mean()) if band.ndim > 1 else \
-        float((band < 128).mean())
-    return _INK_MIN_RATIO < dark < _LINE_RATIO
+    return area / float(cw * ch) >= _MIN_INK_FILL
+
+
+def _dark(arr):
+    """RGB든 그레이든 '검은 픽셀' 불리언 배열로."""
+    return (arr.min(axis=-1) if arr.ndim == 3 else arr) < 128
 
 
 def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
