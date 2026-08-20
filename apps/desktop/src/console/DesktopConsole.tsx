@@ -106,6 +106,10 @@ export function DesktopConsole() {
           style={activeView === "pdf" ? consoleStyles.sectionScroll : undefined}>
           <PdfTranslatePanel active={activeView === "pdf"} />
         </section>
+        <section hidden={activeView !== "xsheet"}
+          style={activeView === "xsheet" ? consoleStyles.sectionScroll : undefined}>
+          <PdfTranslatePanel active={activeView === "xsheet"} format="xsheet" />
+        </section>
       </main>
     </div>
   );

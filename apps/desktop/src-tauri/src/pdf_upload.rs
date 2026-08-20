@@ -10,6 +10,7 @@ pub async fn upload_pdf_file(
     title: String,
     translate_provider: Option<String>,
     translate_cli_model: Option<String>,
+    format_hint: Option<String>,
 ) -> Result<String, String> {
     let file = tokio::fs::File::open(&path)
         .await
@@ -42,6 +43,9 @@ pub async fn upload_pdf_file(
     }
     if let Some(m) = translate_cli_model.filter(|s| !s.is_empty()) {
         form = form.text("translate_cli_model", m);
+    }
+    if let Some(f) = format_hint.filter(|s| !s.is_empty()) {
+        form = form.text("format_hint", f);
     }
 
     let resp = reqwest::Client::new()

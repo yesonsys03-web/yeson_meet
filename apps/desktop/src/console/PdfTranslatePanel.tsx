@@ -46,7 +46,26 @@ async function downloadPdf(
   }
 }
 
-export function PdfTranslatePanel({ active }: { active: boolean }) {
+type PdfFormat = "storyboard" | "xsheet";
+
+// 두 탭(스토리보드/Xsheet)은 문구·format_hint·목록 필터만 다르고 화면은
+// 동일하다 — 통일성 요구(2026-08-20)로 패널을 매개변수화해 통째로 공유한다.
+const FORMAT_COPY: Record<PdfFormat, { heading: string; desc: string }> = {
+  storyboard: {
+    heading: "스토리보드 번역",
+    desc: "납품 PDF(스토리보드)를 올리면 Dialog/Action Notes를 번역해 주석으로 "
+      + "입힌 PDF를 만듭니다. 포맷은 자동 감지됩니다.",
+  },
+  xsheet: {
+    heading: "Xsheet 번역",
+    desc: "엑스시트 스캔 PDF를 올리면 손글씨 노트를 판독·번역해 원문 옆에 "
+      + "주석으로 병기합니다. 손글씨 판독(전사)은 서버의 Antigravity CLI를 씁니다.",
+  },
+};
+
+export function PdfTranslatePanel({ active, format = "storyboard" }: {
+  active: boolean; format?: PdfFormat;
+}) {
   const [engines, setEngines] = useState<TranslateEngineInfo[]>([]);
   const [provider, setProvider] = useState<string>("gemini");
   const [jobs, setJobs] = useState<PdfJobSummary[]>([]);
@@ -82,9 +101,10 @@ export function PdfTranslatePanel({ active }: { active: boolean }) {
       await invoke<string>("upload_pdf_file", {
         uploadUrl: pdfUploadUrl(), path: p, title: name,
         translateProvider: provider, translateCliModel: null,
+        formatHint: format,
       });
     }
-  }, [provider]);
+  }, [provider, format]);
 
   const pickAndUpload = useCallback(async () => {
     setMessage("");
@@ -115,7 +135,7 @@ export function PdfTranslatePanel({ active }: { active: boolean }) {
     setBusy(true);
     try {
       for (const f of Array.from(files)) {
-        await uploadPdfJob(f, f.name, provider);
+        await uploadPdfJob(f, f.name, provider, undefined, format);
       }
       await refresh();
     } catch (e) {
@@ -123,14 +143,18 @@ export function PdfTranslatePanel({ active }: { active: boolean }) {
     } finally {
       setBusy(false);
     }
-  }, [provider, refresh]);
+  }, [provider, refresh, format]);
+
+  // 탭별 잡 분리 — format_hint가 업로드 시점에 job.format을 선기록하므로
+  // queued여도 결정적으로 갈린다. 힌트 없는 옛 잡(format null)은 감지 전까지
+  // 스토리보드 탭 몫으로 둔다(이 기능 전 잡은 전부 스토리보드였다).
+  const visibleJobs = jobs.filter((j) => (j.format ?? "storyboard") === format);
 
   return (
     <div>
-      <h2 style={{ fontSize: 16, marginBottom: 4 }}>스토리보드 번역</h2>
+      <h2 style={{ fontSize: 16, marginBottom: 4 }}>{FORMAT_COPY[format].heading}</h2>
       <p style={{ color: "#94a3b8", fontSize: 12, marginBottom: 12 }}>
-        납품 PDF(스토리보드)를 올리면 Dialog/Action Notes를 번역해 주석으로 입힌
-        PDF를 만듭니다. 포맷은 자동 감지됩니다.
+        {FORMAT_COPY[format].desc}
       </p>
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
         <label style={{ fontSize: 12 }}>번역 엔진</label>
@@ -150,7 +174,7 @@ export function PdfTranslatePanel({ active }: { active: boolean }) {
           onChange={(e) => void onBrowserFiles(e.target.files)} />
       </div>
       {message ? <p style={{ color: "#f87171", fontSize: 12 }}>{message}</p> : null}
-      <PdfJobList jobs={jobs} onChanged={refresh} onError={setMessage} />
+      <PdfJobList jobs={visibleJobs} onChanged={refresh} onError={setMessage} />
     </div>
   );
 }
