@@ -494,3 +494,22 @@ def test_transcribe_reports_progress_including_cache(tmp_path, monkeypatch):
     out = ht.transcribe(blocks, tmp_path, on_progress=fracs.append)
     assert len(out) == 4
     assert fracs == [0.75, 1.0]        # 시작점이 이미 0.5, 배치마다 +0.25
+
+
+def test_render_crops_skips_fully_cached_pages(tmp_path):
+    """크롭이 이미 다 있는 페이지는 렌더 자체를 건너뛴다 — A1 전량 실측에서
+    재개 런이 188페이지를 300dpi로 헛렌더하며 10분+를 태웠다."""
+    doc = FakeDoc(pages=2, png=_png_bytes(400, 400))
+    p0 = [_note(0, 2, 2)]
+    p1 = [_note(1, 2, 2)]
+    ht.render_crops(doc, p0 + p1, tmp_path)
+    assert sorted(doc.render_calls) == [(0, ht._CROP_DPI), (1, ht._CROP_DPI)]
+
+    doc.render_calls.clear()
+    ht.render_crops(doc, p0 + p1, tmp_path)
+    assert doc.render_calls == []          # 전부 캐시 → 렌더 0회
+
+    doc.render_calls.clear()
+    (tmp_path / ht._CROPS_DIRNAME / ht.crop_name(p1[0])).unlink()
+    ht.render_crops(doc, p0 + p1, tmp_path)
+    assert doc.render_calls == [(1, ht._CROP_DPI)]   # 빠진 페이지만 렌더

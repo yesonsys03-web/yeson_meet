@@ -92,12 +92,18 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
     for b in blocks:
         by_page.setdefault(b.page, []).append(b)
     for page, page_blocks in by_page.items():
+        missing = [b for b in page_blocks if not (crops / crop_name(b)).exists()]
+        if not missing:
+            # 이 페이지 크롭이 이미 다 있으면 렌더 자체를 건너뛴다. 300dpi
+            # 페이지 렌더는 장당 수 초라, 빠뜨리면 재개·재번역 런이 아무것도
+            # 새로 만들지 않으면서 문서당 10분 넘게 태운다(A1 전량 실측:
+            # 188페이지 재렌더). 예전엔 렌더를 먼저 하고 크롭 단위로만
+            # exists()를 봤다.
+            continue
         arr = _decode_png(doc.render_png(page, dpi=_CROP_DPI))
         h, w = arr.shape[:2]
-        for b in page_blocks:
+        for b in missing:
             dest = crops / crop_name(b)
-            if dest.exists():
-                continue
             x0, y0, x1, y1 = b.bbox
             px0 = max(int((x0 - _MARGIN_PT) * scale), 0)
             py0 = max(int((y0 - _MARGIN_PT) * scale), 0)
