@@ -276,7 +276,7 @@ def test_transcribe_replaces_text_and_drops_unusable(tmp_path, monkeypatch):
     names = [ht.crop_name(b) for b in blocks]
     canned = {names[0]: "WALK\nWEST.", names[1]: "", names[2]: "147"}
     monkeypatch.setattr(ht, "_run_cli",
-                        lambda prompt, cwd: json.dumps(canned))
+                        lambda prompt, cwd, engine=None: json.dumps(canned))
     out = ht.transcribe(blocks, tmp_path)
     # 빈값(마커)·숫자만(셀번호)은 떨어지고 실노트만 남는다
     assert len(out) == 1
@@ -286,7 +286,7 @@ def test_transcribe_replaces_text_and_drops_unusable(tmp_path, monkeypatch):
     cache = json.loads((tmp_path / ht._CACHE_NAME).read_text(encoding="utf-8"))
     assert cache[names[0]] == "WALK\nWEST."
 
-    def _boom(prompt, cwd):
+    def _boom(prompt, cwd, engine=None):
         raise AssertionError("캐시가 있으면 CLI를 부르면 안 된다")
     monkeypatch.setattr(ht, "_run_cli", _boom)
     out2 = ht.transcribe(blocks, tmp_path)
@@ -302,7 +302,7 @@ def test_transcribe_batches_and_survives_one_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(ht, "_workers", lambda: 1)  # 순서 단정은 직렬로
     calls: list[list[str]] = []
 
-    def _fake(prompt, cwd):
+    def _fake(prompt, cwd, engine=None):
         batch = [n for n in (ht.crop_name(b) for b in blocks) if n in prompt]
         calls.append(batch)
         if len(calls) == 1:
@@ -319,7 +319,7 @@ def test_transcribe_cancellation(tmp_path, monkeypatch):
     blocks = [_note(0, 50, 100)]
     _touch_crops(tmp_path, blocks)
     monkeypatch.setattr(ht, "_run_cli",
-                        lambda prompt, cwd: (_ for _ in ()).throw(
+                        lambda prompt, cwd, engine=None: (_ for _ in ()).throw(
                             AssertionError("취소면 CLI를 부르면 안 된다")))
     with pytest.raises(asyncio.CancelledError):
         ht.transcribe(blocks, tmp_path, should_continue=lambda: False)
@@ -493,7 +493,7 @@ def test_transcribe_splits_failed_batch_and_recovers(tmp_path, monkeypatch):
     monkeypatch.setattr(ht, "_workers", lambda: 1)  # 순서 단정은 직렬로
     calls: list[int] = []
 
-    def _fake(prompt, cwd):
+    def _fake(prompt, cwd, engine=None):
         batch = [n for n in (ht.crop_name(b) for b in blocks) if n in prompt]
         calls.append(len(batch))
         if len(batch) > 2:
@@ -516,7 +516,7 @@ def test_transcribe_parallel_workers(tmp_path, monkeypatch):
     seen = set()
     barrier = threading.Barrier(3, timeout=10)
 
-    def _fake(prompt, cwd):
+    def _fake(prompt, cwd, engine=None):
         batch = [n for n in (ht.crop_name(b) for b in blocks) if n in prompt]
         barrier.wait()  # 3배치가 실제로 동시에 떠 있어야 통과한다
         seen.update(batch)
@@ -537,7 +537,7 @@ def test_transcribe_reports_progress_including_cache(tmp_path, monkeypatch):
         json.dumps({names[0]: "OLD A", names[1]: "OLD B"}), encoding="utf-8")
     monkeypatch.setattr(ht, "_BATCH", 1)
     monkeypatch.setattr(ht, "_workers", lambda: 1)
-    monkeypatch.setattr(ht, "_run_cli", lambda prompt, cwd: json.dumps(
+    monkeypatch.setattr(ht, "_run_cli", lambda prompt, cwd, engine=None: json.dumps(
         {n: f"NEW {n}" for n in names if n in prompt}))
     fracs: list[float] = []
     out = ht.transcribe(blocks, tmp_path, on_progress=fracs.append)
@@ -605,7 +605,7 @@ def test_transcribe_fails_loudly_when_mostly_unanswered(tmp_path, monkeypatch):
     monkeypatch.setattr(ht, "_workers", lambda: 1)
     names = [ht.crop_name(b) for b in blocks]
 
-    def _fake(prompt, cwd):
+    def _fake(prompt, cwd, engine=None):
         n = next(x for x in names if x in prompt)
         if names.index(n) < 3:
             return json.dumps({n: "REAL NOTE"})
@@ -782,3 +782,43 @@ def test_transcribe_aborts_on_permission_denial(tmp_path, monkeypatch):
     with pytest.raises(ht.TranscribeFatalError) as err:
         ht.transcribe(blocks, tmp_path)
     assert "권한" in str(err.value)          # 조치 가능한 안내가 붙는다
+
+
+def test_pick_cli_follows_selected_translation_engine(monkeypatch):
+    """화면의 엔진 선택 하나가 번역과 전사 **둘 다**를 정해야 한다 —
+    사용자가 클로드를 고르면 전사도 클로드다(전엔 전사만 agy로 가서
+    '클로드 골랐는데 왜 agy 권한 오류냐'가 됐다)."""
+    monkeypatch.delenv(ht.ENV_CLI, raising=False)
+    assert ht._pick_cli("claude") == "claude"
+    assert ht._pick_cli("agy") == "agy"
+    # 이미지 입력이 안 되는 엔진이면 기본값으로 — 번역만 그 엔진이 맡는다
+    assert ht._pick_cli("apple") == "agy"
+    assert ht._pick_cli("qwen9b") == "agy"
+    assert ht._pick_cli(None) == "agy"
+    # ⛔gemini는 API라 전사에 쓰지 않는다(비용)
+    assert ht._pick_cli("gemini") == "agy"
+    # 운영 오버라이드가 최우선
+    monkeypatch.setenv(ht.ENV_CLI, "codex")
+    assert ht._pick_cli("claude") == "codex"
+
+
+def test_transcribe_passes_engine_to_cli(tmp_path, monkeypatch):
+    blocks = [_note(0, 50, 100)]
+    _touch_crops(tmp_path, blocks)
+    monkeypatch.delenv(ht.ENV_CLI, raising=False)
+    seen: list[str] = []
+
+    def _fake(argv, **kw):
+        seen.append(argv[0])
+        class R:
+            returncode = 0
+            stdout = json.dumps({ht.crop_name(blocks[0]): "WALK WEST."})
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(ht.subprocess, "run", _fake)
+    monkeypatch.setattr(
+        "apps.server.domain.video_captions.translate_cli.resolve_cli",
+        lambda name: f"/usr/bin/{name}")
+    out = ht.transcribe(blocks, tmp_path, engine="claude")
+    assert out and seen == ["/usr/bin/claude"]

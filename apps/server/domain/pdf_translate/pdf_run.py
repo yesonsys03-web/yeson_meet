@@ -237,10 +237,12 @@ async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
                     _set_progress(external_id, int(frac * 100), generation),
                     loop).result(timeout=10)
 
+            # 전사 엔진 = 사용자가 고른 번역 엔진(비전 가능할 때). 화면에는
+            # 엔진 선택이 하나뿐이라 전사만 딴 엔진을 쓰면 설명이 안 된다.
             blocks = await asyncio.to_thread(
                 profile.transcribe_blocks, blocks, job_dir,
                 lambda: generation == _current_generation(external_id),
-                _tx_progress)
+                _tx_progress, provider)
             if not blocks:
                 raise PdfTranslateError(
                     "판독 가능한 손글씨 노트를 찾지 못했습니다 — "

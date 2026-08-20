@@ -45,7 +45,12 @@ class TranscribeFatalError(RuntimeError):
     """재시도가 무의미한 CLI 거절(쿼터 소진·미로그인). 메시지가 그대로
     잡 오류로 노출되므로 사람이 읽고 조치할 수 있는 문장이어야 한다."""
 
-ENV_CLI = "YESON_PDF_XSHEET_CLI"            # 기본 agy — 비전 지원 CLI만 의미 있음
+ENV_CLI = "YESON_PDF_XSHEET_CLI"            # 환경변수 오버라이드(운영용)
+# 이미지를 읽을 수 있고 실측으로 검증된 CLI. 잡이 고른 번역 엔진이 여기
+# 있으면 전사도 그 엔진으로 한다 — 사용자는 화면의 엔진 하나만 고르는데
+# 전사가 딴 엔진을 쓰면 "클로드 골랐는데 왜 agy 권한 오류냐"가 된다.
+# gemini는 API라 제외(⛔비용, 2026-08-20 확정), apple/qwen은 이미지 입력 불가.
+VISION_CLIS = ("claude", "agy")
 ENV_EXTRA_ARGS = "YESON_PDF_XSHEET_CLI_ARGS"  # shlex 분해되어 argv 뒤에 붙는다
 ENV_WORKERS = "YESON_PDF_XSHEET_CLI_WORKERS"  # 동시 CLI 세션 수(기본 3)
 
@@ -227,7 +232,7 @@ def _dark(arr):
 def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
                should_continue: Callable[[], bool] | None = None,
                on_progress: Callable[[float], None] | None = None,
-               ) -> list[PdfBlock]:
+               engine: str | None = None) -> list[PdfBlock]:
     """크롭들을 배치 전사해 블록 text를 교체하고, 번역할 거리가 없는
     블록(마커·숫자·판독 불가)은 버린다. 취소가 감지되면
     asyncio.CancelledError를 던진다(pdf_run의 on_progress와 같은 규약).
@@ -272,7 +277,7 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
         def _pump() -> None:
             while queue and len(futures) < workers:
                 b = queue.popleft()
-                futures[ex.submit(_run_cli, _build_prompt(b), crops)] = b
+                futures[ex.submit(_run_cli, _build_prompt(b), crops, engine)] = b
 
         while queue or futures:
             # 취소 검사는 반드시 제출(_pump)보다 먼저 — 취소가 이미 도착한
@@ -339,6 +344,16 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
     return out
 
 
+def _pick_cli(engine: str | None) -> str:
+    """전사에 쓸 CLI: 환경변수 > 잡이 고른 엔진(비전 가능할 때) > agy."""
+    override = os.environ.get(ENV_CLI, "").strip()
+    if override:
+        return override
+    if engine and engine.strip().lower() in VISION_CLIS:
+        return engine.strip().lower()
+    return "agy"
+
+
 def _argv_for(name: str, path: str, prompt: str) -> list[str]:
     """CLI별 호출 형태 — 플래그가 서로 다르다(translate_cli._BACKENDS와 같은
     이유로 표를 둔다). `--print-timeout`은 agy 전용이라 claude에 넘기면
@@ -368,10 +383,10 @@ def _build_prompt(batch: list[str]) -> str:
     )
 
 
-def _run_cli(prompt: str, cwd: Path) -> str:
+def _run_cli(prompt: str, cwd: Path, engine: str | None = None) -> str:
     from apps.server.domain.video_captions.translate_cli import resolve_cli
 
-    name = os.environ.get(ENV_CLI, "agy").strip() or "agy"
+    name = _pick_cli(engine)
     path = resolve_cli(name)
     if path is None:
         raise RuntimeError(
