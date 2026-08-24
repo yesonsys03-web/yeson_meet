@@ -225,6 +225,25 @@ def test_geometry_follows_a_different_studio_layout(monkeypatch):
     assert xs._is_template((550, 300, 590, 310), "HARRIS", g) is False
 
 
+def test_handwritten_dial_exp_survive_below_header():
+    """⛔DIAL/EXP 텍스트 필터는 머리글 줄에만 — 본문 손글씨를 죽이면 안 된다.
+
+    A2 실측(2026-08-24): 사람이 번역한 `EYES EXP`(→시선.표정)·`#78 DIAL`
+    (→78,대화)을 위치 무관 필터가 템플릿으로 오인해 지웠다(누락 286건 중
+    33건). p47에서 RapidOCR이 (177,215) 'EXP'를 **잡았는데** 필터가 죽이는
+    것을 직접 확인했다."""
+    labels = [("ACTION", 126, 165), ("DIALO", 299, 329), ("EXP", 338, 359),
+              ("TRUCK", 638, 668)]
+    items = [((x0, 160.0, x1, 172.0), text, 1.0) for text, x0, x1 in labels]
+    g = xs._derive_geometry(items, 841.92, 1189.92)
+    assert g is not None
+    # 머리글 줄의 인쇄 라벨은 여전히 템플릿이다
+    assert xs._is_template((338, 160, 359, 172), "EXP", g) is True
+    # 본문(머리글 아래)의 손글씨 EXP·DIAL은 노트다 — 대사 밴드 밖 좌표
+    assert xs._is_template((177, 215, 208, 229), "EXP", g) is False
+    assert xs._is_template((180, 300, 220, 315), "DIAL", g) is False
+
+
 # ---------------------------------------------------------------- place
 
 
@@ -313,6 +332,61 @@ def test_transcribe_batches_and_survives_one_failure(tmp_path, monkeypatch):
     out = ht.transcribe(blocks, tmp_path)
     assert len(calls) == 5                      # 실패해도 다음 배치는 돈다
     assert len(out) == 8                        # 실패 배치 몫만 떨어진다
+
+
+def test_transcribe_retries_empty_reads_with_upscale(tmp_path, monkeypatch):
+    """빈 전사("")는 확답이 아니라 판독 실패다 — 2배 확대본으로 한 번 더
+    묻는다(A2 실측 2026-08-24: 빈 전사 304장 중 114장이 사람이 번역한 노트
+    자리. 슬레이트 2×/0.6× 재판독과 같은 계보). 재판독이 읽히면 채택한다."""
+    blocks = [_note(0, 50, 200), _note(0, 50, 300)]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    crops.mkdir(parents=True)
+    names = [ht.crop_name(b) for b in blocks]
+    for n in names:
+        (crops / n).write_bytes(_png_bytes())
+    calls: list[str] = []
+
+    def _fake(prompt, cwd, engine=None):
+        calls.append(prompt)
+        if len(calls) == 1:
+            return json.dumps({names[0]: "", names[1]: "WALK IN"})
+        assert ht._RETRY_PREFIX + names[0] in prompt
+        return json.dumps({ht._RETRY_PREFIX + names[0]: "HANK BLINKS"})
+
+    monkeypatch.setattr(ht, "_run_cli", _fake)
+    out = ht.transcribe(blocks, tmp_path)
+    assert len(calls) == 2
+    assert sorted(b.text for b in out) == ["HANK BLINKS", "WALK IN"]
+    cache = json.loads((tmp_path / ht._CACHE_NAME).read_text(encoding="utf-8"))
+    assert cache[names[0]] == "HANK BLINKS"   # 캐시도 원래 이름으로 갱신
+    assert not (crops / (ht._RETRY_PREFIX + names[0])).exists()  # 확대본 정리
+
+
+def test_transcribe_retries_cached_empty_once(tmp_path, monkeypatch):
+    """이전 런이 캐시에 남긴 ""도 재판독한다 — 이 경로가 없으면 실물 잡의
+    빈 전사(A2: 304장)는 재번역을 해도 영원히 안 읽힌다. 여전히 ""이면
+    그대로 두고(같은 런에서 무한 재시도 없음) 블록은 떨어진다."""
+    blocks = [_note(0, 50, 200), _note(0, 50, 300)]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    crops.mkdir(parents=True)
+    names = [ht.crop_name(b) for b in blocks]
+    for n in names:
+        (crops / n).write_bytes(_png_bytes())
+    (tmp_path / ht._CACHE_NAME).write_text(
+        json.dumps({names[0]: "WALK", names[1]: ""}), encoding="utf-8")
+    calls: list[str] = []
+
+    def _fake(prompt, cwd, engine=None):
+        calls.append(prompt)
+        assert names[0] not in prompt          # 확답 캐시는 다시 묻지 않는다
+        return json.dumps({ht._RETRY_PREFIX + names[1]: ""})   # 여전히 빈값
+
+    monkeypatch.setattr(ht, "_run_cli", _fake)
+    out = ht.transcribe(blocks, tmp_path)
+    assert len(calls) == 1                     # 재판독 한 번만
+    assert [b.text for b in out] == ["WALK"]
+    cache = json.loads((tmp_path / ht._CACHE_NAME).read_text(encoding="utf-8"))
+    assert cache[names[1]] == ""               # 실패 기록은 남는다
 
 
 def test_transcribe_cancellation(tmp_path, monkeypatch):

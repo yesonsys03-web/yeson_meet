@@ -196,8 +196,10 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
 # 여기 넣지 않는다. 작품마다 다를뿐더러, 로고는 머리글 줄 위라 유도된
 # header_y로 이미 걸러진다.
 _TEMPLATE_WORDS = {
-    "PRODNO", "FOOTAGE", "ANIMATOR", "SCENENO", "SHEETNO", "DIALOG",
-    "EXP", "CAMERANOTES", "ACTION", "CONT", "SCENEDIRECTOR", "APPROVED",
+    # DIALOG·EXP는 여기 넣지 않는다 — _DIALOG_RE가 받되 **머리글 줄에
+    # 한정**해서 거른다(_is_template). 본문에 같은 낱말의 손글씨가 있다.
+    "PRODNO", "FOOTAGE", "ANIMATOR", "SCENENO", "SHEETNO",
+    "CAMERANOTES", "ACTION", "CONT", "SCENEDIRECTOR", "APPROVED",
     "PRODUCTIONNO", "ACT", "TRUCK", "BG", "LEVEL",
 }
 # 감지 토큰도 특정 양식에 매지 않는다 — 엑스시트라면 어느 하우스 것이든
@@ -579,7 +581,14 @@ def _is_template(rect: tuple[float, float, float, float], text: str,
     if y1 < geom.header_y or y0 > geom.footer_y:
         return True
     n = _norm(text)
-    if n in _TEMPLATE_WORDS or n in _FOOTER_LABELS or _DIALOG_RE.match(n):
+    if n in _TEMPLATE_WORDS or n in _FOOTER_LABELS:
+        return True
+    # DIAL/EXP 텍스트 매치는 **머리글 줄에 한정**한다 — 본문에도 같은 낱말의
+    # 손글씨가 있다(`EYES EXP`→시선.표정, `#78 DIAL`→78,대화. A2 실측: 위치
+    # 무관 필터가 사람이 번역한 노트 33건을 지웠고, p47 (177,215) 'EXP'는
+    # OCR이 잡은 것을 필터가 죽이는 걸 직접 확인). 인쇄 라벨은 머리글 줄
+    # 안에 있어 y0가 header_y(줄의 최대 y1)보다 작다.
+    if _DIALOG_RE.match(n) and y0 <= geom.header_y:
         return True
     cx = (x0 + x1) / 2
     for lo, hi in geom.num_bands:

@@ -97,6 +97,13 @@ _FATAL_RE = re.compile(
     re.IGNORECASE)
 _CROPS_DIRNAME = "xsheet_crops"
 _CACHE_NAME = "transcripts.json"
+
+# 빈 전사("") 재판독: 원본 크롭의 2배 확대본으로 딱 한 번 더 묻는다.
+# A2 실측(2026-08-24): 빈 전사 304장 중 114장이 사람이 번역한 노트 자리 —
+# 사람 눈에는 읽히는(`OVS`·`STL`·`UP`) 작은 파편이 대부분이었다. 슬레이트
+# 2×/0.6× 재판독과 같은 계보(원본 0/17→축소 17/17 선례).
+_RETRY_PREFIX = "2x_"
+_RETRY_SCALE = 2
 # 전사에서 살아남는 기준: 영문 단어(2자+)가 하나라도 있어야 번역할 거리가
 # 있다 — 셀 번호·서클 마커·화살표는 빈값/숫자만 나와 여기서 떨어진다.
 # (refine_ko의 [A-Za-z]{2,} 기준과 같은 근거: FL104 사람 주석 실측)
@@ -229,6 +236,22 @@ def _dark(arr):
     return (arr.min(axis=-1) if arr.ndim == 3 else arr) < 128
 
 
+def _render_retry(crops: Path, name: str) -> str | None:
+    """빈 전사 크롭의 확대본을 만들고 그 파일명을 돌려준다(실패 시 None —
+    손상 크롭 한 장이 전사 전체를 죽이면 안 된다)."""
+    from PIL import Image
+    try:
+        with Image.open(crops / name) as im:
+            up = im.resize((im.width * _RETRY_SCALE, im.height * _RETRY_SCALE),
+                           Image.LANCZOS)
+        dest = crops / (_RETRY_PREFIX + name)
+        up.save(dest)
+        return dest.name
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("xsheet-transcribe: 재판독 확대 실패(%s): %s", name, exc)
+        return None
+
+
 def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
                should_continue: Callable[[], bool] | None = None,
                on_progress: Callable[[float], None] | None = None,
@@ -252,6 +275,24 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
     names = [crop_name(b) for b in blocks]
     all_names = {n for n in names if (crops / n).exists()}
     todo = sorted(n for n in all_names if n not in done)
+
+    # 빈 전사 재판독 준비 — 이전 런이 캐시에 남긴 ""도 대상이다(이 경로가
+    # 없으면 실물 잡의 빈 전사는 재번역을 해도 영원히 안 읽힌다). 같은 런
+    # 안에서는 이름당 한 번만 — retried가 막는다.
+    retried: set[str] = set()
+    retry_ready: list[str] = []
+
+    def _queue_retry(name: str) -> None:
+        if name in retried:
+            return
+        retried.add(name)
+        up = _render_retry(crops, name)
+        if up is not None:
+            retry_ready.append(up)
+
+    for n in sorted(all_names):
+        if n in done and not (done[n] or "").strip():
+            _queue_retry(n)
     # 동시 워커 + 실패 배치 반토막 재시도.
     #
     # 동시성: A1 전량 실측(2026-08-20)에서 크롭이 4,700장(=배치 235개)
@@ -269,6 +310,9 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
     from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
     queue = deque(todo[i:i + _BATCH] for i in range(0, len(todo), _BATCH))
+    while retry_ready:                      # 캐시의 빈 전사 몫 재판독 배치
+        queue.append(retry_ready[:_BATCH])
+        del retry_ready[:_BATCH]
     failed_batches = 0
     workers = _workers()
     with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -294,8 +338,18 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
                 try:
                     parsed = _extract_json_object(fut.result())
                     for k, v in parsed.items():
-                        if k in batch and isinstance(v, str):
-                            done[k] = v
+                        if k not in batch or not isinstance(v, str):
+                            continue
+                        if k.startswith(_RETRY_PREFIX):
+                            # 확대 재판독은 **읽어냈을 때만** 채택 — 빈값이면
+                            # 원래의 "" 기록이 남는다(같은 런 재시도 없음).
+                            orig = k[len(_RETRY_PREFIX):]
+                            if orig in all_names and v.strip():
+                                done[orig] = v
+                            continue
+                        done[k] = v
+                        if not v.strip():
+                            _queue_retry(k)
                 except TranscribeFatalError:
                     # 쿼터·인증 거절은 재시도가 무의미 — 남은 세션을 접고
                     # 그대로 올린다. 여기까지의 전사는 캐시에 남아 있어
@@ -317,6 +371,9 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
                         failed_batches += 1
                         logger.warning("xsheet-transcribe: 배치 실패(%s): %s",
                                        batch[0], exc)
+            while retry_ready:              # 이번 런에서 새로 나온 빈 전사 몫
+                queue.append(retry_ready[:_BATCH])
+                del retry_ready[:_BATCH]
             if finished:
                 cache_path.write_text(
                     json.dumps(done, ensure_ascii=False, indent=1),
@@ -325,6 +382,8 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
                     on_progress(
                         sum(1 for n in all_names if n in done) / len(all_names))
             _pump()
+    for n in retried:                       # 임시 확대본 정리(캐시 키는 원본명)
+        (crops / (_RETRY_PREFIX + n)).unlink(missing_ok=True)
     if failed_batches:
         logger.warning("xsheet-transcribe: %d개 배치 실패 — 해당 노트는 "
                        "주석이 빠진다(편집기 수동 추가 대상)", failed_batches)
@@ -372,13 +431,19 @@ def _argv_for(name: str, path: str, prompt: str) -> list[str]:
 
 
 def _build_prompt(batch: list[str]) -> str:
+    # "셸 명령 금지" 지시는 헤드리스 권한 방어다 — agy 1.1.17이 파일을 읽기
+    # 전에 `find`·`pwd`부터 실행하려다 권한 거부로 즉사하는 것을 실측
+    # (2026-08-24, 08-21 런은 정상이었으니 CLI 업데이트로 인한 행동 드리프트).
+    # read_file 허용 규칙과 함께 걸어야 한다(둘 중 하나만으론 불충분).
     return (
         "Open each of these PNG files in this directory and transcribe the "
         "handwritten all-caps English text in each, exactly as written. They "
         "are director notes from animation exposure sheets; a crop may contain "
         "circled single letters, arrows or stray marks - transcribe the "
-        "readable words only, use \"\" if nothing readable. Reply ONLY as a "
-        "JSON object mapping each filename to its transcription (\\n for "
+        "readable words only, use \"\" if nothing readable. Read each file "
+        "directly with your file-reading tool using the exact filename given "
+        "below; do NOT run shell commands (no ls, find or pwd). Reply ONLY as "
+        "a JSON object mapping each filename to its transcription (\\n for "
         "line breaks). Files: " + ", ".join(batch)
     )
 
