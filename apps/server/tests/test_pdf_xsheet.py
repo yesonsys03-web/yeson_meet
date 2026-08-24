@@ -206,6 +206,81 @@ def test_extract_filters_template_and_clusters(monkeypatch):
     assert stacked.bbox == (50.0, 200.0, 100.0, 221.0)
 
 
+class FakePagedEngine:
+    """페이지마다 다른 항목을 주는 RapidOCR 시늉 — extract가 페이지 순서로
+    _ocr_page를 부르므로 호출 순번 = 페이지 번호로 대응한다."""
+
+    def __init__(self, pages_items):
+        self._pages = pages_items
+        self.calls = 0
+
+    def __call__(self, arr):
+        items = self._pages[min(self.calls, len(self._pages) - 1)]
+        self.calls += 1
+        boxes = []
+        for (x0, y0, x1, y1), text, conf in items:
+            boxes.append(([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], text, conf))
+        return boxes, 0.0
+
+
+def test_extract_recovers_handwritten_name_above_header(monkeypatch):
+    """머리글 위 구역의 손글씨 이름을 회수한다 — A2 실측(2026-08-24): 사람이
+    번역한 페이지 상단 빨간 원 이름(HANK 등) 27건이 `y1 < header_y` 일괄
+    컷에 죽었다. p71에서 RapidOCR이 (409,22) 'HANK'를 잡았는데도 버려지는
+    것을 확인. 인쇄 타이틀·고정 칸 번호와의 구분은 **페이지 간 위치 반복**
+    (인쇄물은 매 페이지 같은 자리) + 알파벳 3자 미만 배제로 한다 — 작품
+    종속 어휘를 박지 않기 위해서다."""
+    dpi = xs._OCR_DPI
+    header = [
+        ((166, 105, 201, 117), "ACTION", 1.0),
+        ((369, 99, 410, 116), "DIALOG", 1.0),
+        ((408, 102, 429, 116), "EXP", 1.0),
+        ((100, 1150, 160, 1162), "PROD NO", 1.0),   # footer_y 근거
+    ]
+    printed = [
+        ((33, 8, 89, 30), "KONG", 1.0),             # 인쇄 타이틀(매 페이지 동일 자리)
+        ((36, 51, 88, 72), "HILLZ.", 1.0),
+        ((582, 83, 620, 99), "354", 1.0),           # 손글씨 씬 번호(고정 칸) — 숫자
+        ((54, 81, 90, 104), "(QH)", 1.0),           # 낙서 코드 — 알파벳 2자
+    ]
+    pages = []
+    for p in range(10):
+        items = [(_box_px(r, dpi), t, c) for r, t, c in header + printed]
+        if p == 3:   # 손글씨 이름은 일부 페이지에만, 자리도 조금씩 다르다
+            items.append((_box_px((409, 22, 460, 53), dpi), "HANK", 0.8))
+        if p == 5:
+            items.append((_box_px((402, 31, 455, 60), dpi), "DALE", 0.8))
+        if p == 7:
+            # A2 실측 누수: OCR이 머리글 두 라벨을 한 덩어리로 읽으면
+            # 어휘·반복 게이트를 다 피한다(분절이 페이지마다 달라 반복
+            # 계수가 분산). 머리글 줄 밴드에 걸친 항목은 텍스트 무관 배제.
+            items.append((_box_px((370, 101, 429, 116), dpi), "DIALOG EXP", 0.9))
+        pages.append(items)
+    _install_engine(monkeypatch, FakePagedEngine(pages))
+    blocks = xs.XsheetProfile().extract(FakeDoc(pages=10))
+    texts = sorted(b.text for b in blocks)
+    assert texts == ["DALE", "HANK"]                 # 타이틀·번호·코드는 안 샌다
+    assert [b.page for b in blocks] == sorted(b.page for b in blocks)
+    assert all(b.kind == xs.NOTE_KIND for b in blocks)
+
+
+def test_extract_header_recovery_needs_multiple_pages(monkeypatch):
+    """1페이지 문서는 위치 반복 판별이 불가능하다 — 회수를 끄고 옛 동작을
+    유지한다(인쇄 타이틀이 통째로 새는 것보다 낫다)."""
+    dpi = xs._OCR_DPI
+    items = [(_box_px(r, dpi), t, c) for r, t, c in [
+        ((166, 105, 201, 117), "ACTION", 1.0),
+        ((369, 99, 410, 116), "DIALOG", 1.0),
+        ((408, 102, 429, 116), "EXP", 1.0),
+        ((100, 1150, 160, 1162), "PROD NO", 1.0),
+        ((33, 8, 89, 30), "KONG", 1.0),
+        ((409, 22, 460, 53), "HANK", 0.8),
+    ]]
+    _install_engine(monkeypatch, FakeEngine(items))
+    blocks = xs.XsheetProfile().extract(FakeDoc(pages=1))
+    assert [b.text for b in blocks] == []            # 머리글 위는 전부 보류
+
+
 def test_geometry_follows_a_different_studio_layout(monkeypatch):
     """⛔양식은 작품마다 다르다 — 좌표를 박지 않는다. BM802(titmouse) 실측
     배치처럼 대사 칸이 5쌍이면 그 **전체 구간**이 음소 칸으로 잡혀야 한다."""

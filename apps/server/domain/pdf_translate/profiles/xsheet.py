@@ -96,6 +96,17 @@ _RULE_FILL = 0.45     # 행·열의 이 비율 이상이 어두우면 인쇄 괘
 # 53.7pt였다 — 사다리를 그 분포 안에 가둔다.
 _DY_LADDER = (0.0, 16.0, -16.0, 32.0, -32.0, 52.0, -52.0)
 
+# 머리글 위 손글씨 회수(A2 실측 2026-08-24: 사람이 번역한 상단 빨간 원
+# 이름 27건이 `y1 < header_y` 일괄 컷에 죽었다 — p71 (409,22) 'HANK'를
+# RapidOCR이 잡고도 버림). 인쇄 타이틀·고정 칸 번호와의 구분은 어휘가
+# 아니라 **페이지 간 위치 반복**으로 한다 — 인쇄물은 매 페이지 같은
+# 자리에 찍히고, 손글씨는 자리가 흔들린다. 작품 종속 어휘 금지 원칙.
+_HDR_MIN_ALPHA = 3       # 알파벳 3자 미만 = 씬 번호·낙서 코드(354·(QH))
+_HDR_POS_QUANT = 8.0     # 위치 양자화(pt) — 인쇄물의 OCR 흔들림 흡수
+_HDR_REPEAT_FRAC = 0.2   # 이 비율 이상의 페이지에서 같은 자리 = 인쇄물
+_HDR_REPEAT_MIN = 2      # 최소 반복 페이지 수(짧은 문서 하한)
+_ALPHA_RE = re.compile(r"[A-Za-z]")
+
 
 def _ink_ratio(ink, rect: tuple[float, float, float, float],
                page_h: float) -> float:
@@ -381,6 +392,10 @@ class XsheetProfile:
         디버깅 단서로 쓰기 위해서다."""
         blocks: list[PdfBlock] = []
         geom: _Geometry | None = None
+        # (page, rect, raw_text, limit_x1) — 머리글 위 손글씨 회수 후보
+        header_pool: list[tuple[int, tuple[float, float, float, float],
+                                str, float | None]] = []
+        pages_with_geom = 0
         for page in range(doc.page_count):
             page_w, page_h = doc.page_size(page)
             items = _ocr_page(doc, page, _OCR_DPI)
@@ -389,8 +404,27 @@ class XsheetProfile:
             geom = _derive_geometry(items, page_w, page_h) or geom
             if geom is None:
                 continue
+            pages_with_geom += 1
             candidates = []
             for rect, text, _conf in items:
+                if rect[3] < geom.header_y:
+                    # 머리글 위 — 본문이 아니라 회수 후보 풀로 보낸다.
+                    # (옛 동작은 _is_template의 y-컷으로 전량 폐기였다.)
+                    # 머리글 줄 밴드에 걸친 항목은 텍스트 무관 배제 — OCR이
+                    # `DIALOG EXP`를 한 덩어리로 읽으면 어휘도 반복 게이트도
+                    # 피한다(A2 실측 17건: 분절이 페이지마다 달라 반복
+                    # 계수가 분산).
+                    n = _norm(text)
+                    if (rect[3] < geom.header_y - _HEADER_ROW_TOL
+                            and n not in _TEMPLATE_WORDS
+                            and n not in _FOOTER_LABELS
+                            and not _DIALOG_RE.match(n)
+                            and len(_ALPHA_RE.findall(text)) >= _HDR_MIN_ALPHA
+                            and not has_hangul(text)):
+                        header_pool.append(
+                            (page, rect, text,
+                             geom.limit_x1((rect[0] + rect[2]) / 2, page_w)))
+                    continue
                 if _is_template(rect, text, geom):
                     continue
                 candidates.append((rect, text))
@@ -409,6 +443,10 @@ class XsheetProfile:
                 blocks.append(PdfBlock(
                     page=page, kind=NOTE_KIND, text=raw, bbox=(x0, y0, x1, y1),
                     limit_x1=geom.limit_x1((x0 + x1) / 2, page_w)))
+        blocks.extend(_recover_header_notes(header_pool, pages_with_geom))
+        # 페이지 순서 불변식 복원 — place_with_doc의 잉크 캐시(_ink_cache)가
+        # 페이지당 1회 렌더로 성립하는 전제다.
+        blocks.sort(key=lambda b: b.page)
         return blocks
 
     # ---- 전사 훅(pdf_run이 getattr로 발견하는 optional 계약) ------------
@@ -602,6 +640,32 @@ def _is_template(rect: tuple[float, float, float, float], text: str,
         if lo <= cx <= hi and len(n) <= _PHONETIC_MAX_LEN:
             return True
     return False
+
+
+def _recover_header_notes(pool, pages_with_geom: int) -> list[PdfBlock]:
+    """머리글 위 손글씨(페이지 상단 캐릭터 이름 등)를 회수한다.
+
+    구분 원리: 인쇄 타이틀·고정 칸의 글은 **매 페이지 같은 자리**에 찍히고
+    손글씨는 자리가 흔들린다. 같은 양자화 위치가 문턱 이상의 페이지에서
+    반복되면 서식으로 보고 버린다. 1페이지 문서는 반복 판별이 불가능하므로
+    회수를 끈다(타이틀이 통째로 새는 것보다 옛 동작 유지가 낫다)."""
+    if pages_with_geom < 2:
+        return []
+
+    def qkey(rect):
+        return tuple(round(v / _HDR_POS_QUANT) for v in rect)
+
+    pages_by_pos: dict[tuple, set[int]] = {}
+    for page, rect, _text, _lx in pool:
+        pages_by_pos.setdefault(qkey(rect), set()).add(page)
+    thresh = max(_HDR_REPEAT_MIN, round(pages_with_geom * _HDR_REPEAT_FRAC))
+    out: list[PdfBlock] = []
+    for page, rect, text, lx in pool:
+        if len(pages_by_pos[qkey(rect)]) >= thresh:
+            continue
+        out.append(PdfBlock(page=page, kind=NOTE_KIND, text=text,
+                            bbox=rect, limit_x1=lx))
+    return out
 
 
 def _cluster(items: list[tuple[tuple[float, float, float, float], str]],
