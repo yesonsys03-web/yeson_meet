@@ -410,6 +410,7 @@ def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
     사람이 일부러 친 라틴 라벨(`CAM`·`BG`)을 통째로 지운다.
     """
     refine_ko = getattr(profile, "refine_ko", None)
+    place_with_doc = getattr(profile, "place_with_doc", None)
 
     # ⚠ 자동 항목의 `panel_index`는 **여기서 계산하지 않는다**(항상 None).
     #
@@ -440,7 +441,12 @@ def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
                 # 다듬고 나니 붙일 게 없다 — 주석을 만들지 않는다.
                 continue
         page_size = doc.page_size(block.page)
-        ov = profile.place(block, ko, page_size)
+        # `place_with_doc`는 `refine_ko`와 같은 **선택** 훅이다(Protocol에
+        # 없다). 페이지 그림이 있어야 후보 자리 중 빈 곳을 고를 수 있는
+        # 프로파일(엑스시트: 손글씨를 피해 앉아야 한다)만 구현한다.
+        ov = (place_with_doc(block, ko, page_size, doc)
+              if place_with_doc is not None
+              else profile.place(block, ko, page_size))
         if not is_usable_rect(ov.rect, page_size):
             # 방어선(2026-07-30 리뷰 Finding 1b) — 그 한 블록 때문에 이미 끝낸
             # 번역까지 잃을 수는 없으니 이 블록만 건너뛰고 경고를 남긴다.

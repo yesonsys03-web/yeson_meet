@@ -822,3 +822,128 @@ def test_transcribe_passes_engine_to_cli(tmp_path, monkeypatch):
         lambda name: f"/usr/bin/{name}")
     out = ht.transcribe(blocks, tmp_path, engine="claude")
     assert out and seen == ["/usr/bin/claude"]
+
+
+def _ko_note(src: str) -> PdfBlock:
+    return PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                    bbox=(0.0, 0.0, 10.0, 10.0), limit_x1=None)
+
+
+@pytest.mark.parametrize(("src", "ko", "want"), [
+    # 무조건 규칙 — KOTH_1401_A2 사람 납품본 전수 대조(2026-08-21)
+    ("BLINK", "눈 깜빡", "눈깜박"),
+    ("BLINK", "깜빡임", "눈깜박"),
+    ("BLINK", "눈을 깜빡인다", "눈깜박"),
+    ("DIAL", "대사", "대화"),
+    ("DIAL", "다이얼", "대화"),          # DIAL=dialogue를 dial로 읽은 오역
+    ("TURNS", "바비가 돈다", "바비가 턴한다"),
+    ("STEPS", "뒤로 걸음", "뒤로 스텝"),
+    ("GESTURE", "제스처로", "제스쳐로"),
+    ("OVERSHOOT", "오버슈트", "오버슛"),
+    ("HEAD", "머리", "고개"),
+    # 원문 조건부 — 같은 한국어라도 원문이 무엇이냐로 사람 표기가 갈린다
+    ("HEAD TILT", "머리 기울임", "고개 기웃"),
+    ("TILT", "틸트", "기웃"),            # 음역 오역
+    ("LEANS", "기댄다", "기울인다"),
+    ("LEAN", "기댐", "기울인다"),
+    ("STL", "정지", "안착"),
+    ("STL & SETTLE", "스틸", "안착"),    # STL=settle을 still로 읽은 오역
+])
+def test_refine_ko_applies_house_terms(src, ko, want):
+    assert xs.XsheetProfile().refine_ko(_ko_note(src), ko) == want
+
+
+@pytest.mark.parametrize(("src", "ko"), [
+    # `머리카락`은 사람·우리 4건씩 일치하는 정상 낱말 — `고개카락`이 되면 안 된다
+    ("HAIR O/LAP", "머리카락 오버랩"),
+    ("WALK", "걸음걸이"),                # `스텝걸이`가 되면 안 된다
+    # STL 단어 경계: 부분 문자열로 찾으면 이것들이 settle 노트로 오인된다
+    ("HUSTLE", "정지"),
+    ("CASTLE", "스틸"),
+    # 원문이 TILT/LEAN이 아니면 건드리지 않는다
+    ("BOBBY UP", "기울임"),
+    ("LEANS", "기울임"),
+])
+def test_refine_ko_leaves_unrelated_text(src, ko):
+    assert xs.XsheetProfile().refine_ko(_ko_note(src), ko) == ko
+
+
+def _ink_png(w: int, h: int, bands: list[tuple[int, int, int, int]]) -> bytes:
+    """흰 바탕 + 지정한 사각형만 검게 칠한 PNG(손글씨 자리 흉내)."""
+    from PIL import Image, ImageDraw
+    im = Image.new("RGB", (w, h), "white")
+    d = ImageDraw.Draw(im)
+    for x0, y0, x1, y1 in bands:
+        d.rectangle([x0, y0, x1, y1], fill="black")
+    buf = io.BytesIO()
+    im.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _place_note(bbox, ko, limit_x1=None):
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="SRC", bbox=bbox,
+                 limit_x1=limit_x1)
+    return xs.XsheetProfile().place(b, ko, (792.0, 1224.0))
+
+
+def test_place_fits_box_to_text_not_to_available_space():
+    """상자는 남은 자리가 아니라 글에 맞춘다.
+
+    A2 전수에서 옛 코드는 가용 폭을 통째로 먹어 폭 중앙값이 104.8pt였다
+    (사람 30pt). 넓은 상자에 글이 왼쪽 정렬로 앉으면서 번역문이 원문에서
+    떨어지거나 옆 노트 위로 올라탔다."""
+    ov = _place_note((150.0, 360.0, 190.0, 400.0), "SO\nSMU\n남자",
+                     limit_x1=560.0)
+    width = ov.rect[2] - ov.rect[0]
+    assert width < 45.0, width           # 가용 폭은 370pt였다
+    assert ov.rect[0] == pytest.approx(193.0)   # 원문 오른쪽에 붙는다
+
+
+def test_place_left_anchors_to_the_note_not_the_page_edge():
+    """왼쪽 배치는 원문에 붙인다 — 페이지 좌단(8.0) 고정이 아니다.
+
+    옛 코드는 상자를 늘 x=8.0에서 시작해, 원문이 오른쪽에 있을수록 번역문이
+    멀어졌다(전수 45.4%가 페이지 가장자리, 사람은 0.1%)."""
+    # 오른쪽이 칸 경계로 막혀 왼쪽으로 밀리는 노트
+    ov = _place_note((300.0, 700.0, 350.0, 740.0), "고개\n기웃", limit_x1=352.0)
+    assert ov.rect[2] == pytest.approx(297.0)   # 원문 시작 바로 왼쪽
+    assert ov.rect[0] > 100.0                   # 페이지 끝에 붙지 않았다
+
+
+def test_place_vertical_ladder_is_absolute_not_note_height():
+    """세로 탐색은 절대값이다 — 노트 높이에 비례시키면 긴 노트에서 번역문이
+    통째로 떨어져 나간다(개발 중 실측: y362 노트의 번역이 y530으로)."""
+    tall = (150.0, 360.0, 190.0, 690.0)      # 높이 330pt짜리 긴 노트
+    rects = [r for r, _fs in xs.XsheetProfile()._candidates(
+        PdfBlock(page=0, kind=xs.NOTE_KIND, text="S", bbox=tall,
+                 limit_x1=560.0), "고개\n기웃", (792.0, 1224.0))]
+    # 노트 **상자**와의 세로 간격으로 잰다 — 마지막 후보(아래 배치)는 노트
+    # 하단에 붙으므로 상단 기준으로 재면 노트 높이만큼이 그대로 편차로 잡힌다.
+    gaps = [max(tall[1] - r[3], r[1] - tall[3], 0.0) for r in rects]
+    assert max(gaps) <= 52.0, max(gaps)      # 사람 9분위(53.7pt) 안
+
+
+def test_place_with_doc_moves_off_the_handwriting():
+    """빈 자리가 있으면 손글씨를 피해 앉는다."""
+    # 100dpi 기준: 원문 오른쪽(x193~240pt ≈ 268~333px)에 잉크를 깔아 둔다
+    png = _ink_png(1100, 1700, [(260, 480, 345, 560)])
+    doc = FakeDoc(png=png)
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(150.0, 360.0, 190.0, 400.0), limit_x1=560.0)
+    prof = xs.XsheetProfile()
+    plain = prof.place(b, "고개\n기웃", (792.0, 1224.0))
+    avoided = prof.place_with_doc(b, "고개\n기웃", (792.0, 1224.0), doc)
+    assert xs._ink_ratio(prof._page_ink(doc, 0), plain.rect, 1224.0) > xs._INK_OK
+    assert xs._ink_ratio(prof._page_ink(doc, 0), avoided.rect, 1224.0) <= xs._INK_OK
+
+
+def test_place_with_doc_falls_back_when_render_fails(monkeypatch):
+    """페이지 그림을 못 얻으면 기본 배치로 — 주석을 잃지 않는다."""
+    class Broken(FakeDoc):
+        def render_png(self, page, *, dpi=120, annots=True):
+            raise RuntimeError("render 실패")
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(150.0, 360.0, 190.0, 400.0), limit_x1=560.0)
+    prof = xs.XsheetProfile()
+    ov = prof.place_with_doc(b, "고개\n기웃", (792.0, 1224.0), Broken())
+    assert ov.rect == prof.place(b, "고개\n기웃", (792.0, 1224.0)).rect

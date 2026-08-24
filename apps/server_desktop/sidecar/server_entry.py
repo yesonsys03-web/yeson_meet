@@ -233,6 +233,19 @@ def _pdf_selftest_mode() -> int:
             assert callable(_ht.transcribe)
             import cv2  # 잉크 덩어리 판정에 쓴다
             assert hasattr(cv2, "connectedComponentsWithStats")
+            # 엑스시트 하우스 용어(refine_ko)가 동결본에 실려 있는지. 이 훅은
+            # overlay_plan이 `getattr`로 찾는 **선택** 훅이라, 빠져도 예외가
+            # 나지 않고 조용히 건너뛴다 — 번역은 멀쩡히 나오는데 용어만 옛날
+            # 것인 PDF가 납품되고, 원인을 잡으려면 출력물을 사람 납품본과
+            # 대조하는 수밖에 없다. 여기서 빌드를 세우는 게 낫다.
+            from apps.server.domain.pdf_translate.profiles.base import PdfBlock
+            from apps.server.domain.pdf_translate.profiles.xsheet import (
+                XsheetProfile,
+            )
+            _probe = PdfBlock(page=0, kind="note", text="HEAD TILT",
+                              bbox=(0.0, 0.0, 10.0, 10.0), limit_x1=None)
+            _ko = XsheetProfile().refine_ko(_probe, "머리 기울임")
+            assert _ko == "고개 기웃", _ko
     except Exception as exc:  # noqa: BLE001
         print(f"PDF_SELFTEST_RESULT=FAIL {exc}", file=sys.stderr, flush=True)
         return 1
