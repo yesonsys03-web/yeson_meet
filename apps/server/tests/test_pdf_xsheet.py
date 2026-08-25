@@ -1253,7 +1253,7 @@ def test_place_vertical_ladder_is_absolute_not_note_height():
     """세로 탐색은 절대값이다 — 노트 높이에 비례시키면 긴 노트에서 번역문이
     통째로 떨어져 나간다(개발 중 실측: y362 노트의 번역이 y530으로)."""
     tall = (150.0, 360.0, 190.0, 690.0)      # 높이 330pt짜리 긴 노트
-    rects = [r for r, _fs in xs.XsheetProfile()._candidates(
+    rects = [r for r, _fs, _d in xs.XsheetProfile()._candidates(
         PdfBlock(page=0, kind=xs.NOTE_KIND, text="S", bbox=tall,
                  limit_x1=560.0), "고개\n기웃", (792.0, 1224.0))]
     # 노트 **상자**와의 세로 간격으로 잰다 — 마지막 후보(아래 배치)는 노트
@@ -1295,6 +1295,66 @@ def test_place_with_doc_avoids_existing_annotations():
     inter = max(ix, 0) * max(iy, 0)
     smaller = min((a[2]-a[0])*(a[3]-a[1]), (c[2]-c[0])*(c[3]-c[1]))
     assert inter / smaller <= 0.05, (a, c)   # 심한 겹침 금지
+
+
+def test_place_with_doc_prefers_near_ink_over_far_flight():
+    """옅은 잉크의 곁자리 > 멀리 떨어진 빈자리 — 배치 전수 감사(2026-08-25)의
+    핵심 수정. 옛 코드는 "잉크 2% 이하인 첫 후보"라 원문 옆이 조금만
+    지저분해도 사다리 끝(-52pt)으로 도망갔다(사람 above 9% 대 우리 16%,
+    30pt 이내 일치 21.5%). 사람은 주석 밑 잉크 중앙값 6.34%를 감수하며
+    원문 곁에 남는다."""
+    # 오른쪽 dy0 자리(≈y500~538px)에 가는 빗금 ~8%, dy-52 자리(424~472px)만
+    # 깨끗, 나머지 오른쪽 사다리·왼쪽·아래는 진하게.
+    png = _ink_png(1100, 1700, [
+        (260, 340, 310, 423), (260, 473, 310, 495), (260, 545, 310, 700),
+        (260, 505, 310, 505), (260, 517, 310, 517), (260, 529, 310, 529),
+        (150, 340, 210, 700),          # 왼쪽 막힘
+        (200, 550, 250, 700),          # 아래 막힘
+    ])
+    doc = FakeDoc(png=png)
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(150.0, 360.0, 190.0, 400.0), limit_x1=560.0)
+    ov = xs.XsheetProfile().place_with_doc(b, "고개\n기웃", (792.0, 1224.0), doc)
+    assert ov.rect[1] == pytest.approx(360.0)    # dy0에 남는다(-52 도주 금지)
+    assert ov.rect[0] == pytest.approx(193.0)    # 원문 오른쪽
+    assert ov.fontsize == xs._FONTSIZE
+
+
+def test_place_with_doc_below_is_first_class():
+    """아래 배치는 최후 예비가 아니라 정식 후보다 — 양옆이 막히면 제
+    크기(9pt)로 원문 바로 아래에 앉는다(전수 감사: 사람 below 13% 대
+    우리 5%, 옛 코드는 아래를 최소 폰트 한 자리만 만들었다)."""
+    png = _ink_png(1100, 1700, [
+        (260, 340, 470, 620),          # 오른쪽 막힘
+        (140, 340, 205, 620),          # 왼쪽 막힘 (아래 자리는 비워 둔다)
+    ])
+    doc = FakeDoc(png=png)
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(150.0, 360.0, 190.0, 400.0), limit_x1=560.0)
+    ov = xs.XsheetProfile().place_with_doc(b, "고개\n기웃", (792.0, 1224.0), doc)
+    assert ov.rect[1] == pytest.approx(402.0)    # 원문 바로 아래
+    assert ov.rect[0] == pytest.approx(150.0)    # 원문 좌단 정렬
+    assert ov.fontsize == xs._FONTSIZE           # 7pt 축소 없이
+
+
+def test_place_with_doc_tall_stack_prefers_side_over_below():
+    """긴 세로 스택은 아래보다 옆이 낫다 — 실물 지적(2026-08-25, p5 SMU
+    9줄 노트): 옆의 작화 웨이브 선(옅은 잉크) 탓에 번역이 스택 아래로
+    밀려 읽기 시작점에서 150pt 떨어졌다. 사람은 선 위에 겹쳐 왼쪽에
+    병기한다. 아래 변위는 블록 상단 기준(틈 + 높이 절반)이라 긴 노트
+    에서 자연히 밀린다."""
+    # 왼쪽 후보 지대(x≈357~412px)에 세로 작화선 흉내 2줄(~4% 잉크)
+    png = _ink_png(1100, 1700, [
+        (380, 600, 380, 820), (395, 600, 395, 820),
+    ])
+    doc = FakeDoc(png=png)
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(300.0, 500.0, 340.0, 650.0), limit_x1=352.0)  # 우측 막힘
+    ov = xs.XsheetProfile().place_with_doc(
+        b, "SMU\n학생들이\n걷는다", (792.0, 1224.0), doc)
+    assert ov.rect[2] == pytest.approx(297.0)    # 원문 왼쪽에 병기
+    assert ov.rect[1] == pytest.approx(500.0)    # 스택 상단 높이 그대로
+    assert ov.fontsize == xs._FONTSIZE
 
 
 def test_place_with_doc_falls_back_when_render_fails(monkeypatch):

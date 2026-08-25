@@ -78,8 +78,9 @@ _ALNUM_RE = re.compile(r"[A-Za-z0-9]")
 
 # 놓을 자리로 인정하는 최소 폭. 사람 납품본 실측(KOTH_1401_A2 전수, 주석
 # 2,015개)에서 상자 폭은 중앙값 30pt·1분위 21pt였다 — 사람은 이만한 틈에도
-# 끼워 넣는다. 옛 값 45pt는 그 틈을 통째로 버리고 더 먼 자리로 밀어냈다.
-_MIN_BOX_W = 24.0
+# 끼워 넣는다. 옛 값 45pt는 그 틈을 통째로 버리고 더 먼 자리로 밀어냈고,
+# 24pt도 사람이 실제 쓴 21pt 틈(p23 '바비', 원문 오른쪽 +13pt)을 버렸다.
+_MIN_BOX_W = 18.0
 # 빈 자리 판정(place_with_doc). 사람 납품본 실측에서 주석 밑 손글씨 면적
 # 비율은 중앙값 6.34%였다 — 사람도 여백이 없으면 겹쳐 쓴다. 2%는 "글자
 # 위는 아니다"에 해당하는 선이고, 여기 못 미치는 자리가 없으면 가장 덜
@@ -96,6 +97,36 @@ _RULE_FILL = 0.45     # 행·열의 이 비율 이상이 어두우면 인쇄 괘
 # 원문 상단 대비 주석 상단의 세로 편차는 중앙 15.6pt·8분위 38.7·9분위
 # 53.7pt였다 — 사다리를 그 분포 안에 가둔다.
 _DY_LADDER = (0.0, 16.0, -16.0, 32.0, -32.0, 52.0, -52.0)
+# 아래 배치의 세로 틈 사다리 — 원문 하단에서 이만큼 띄워 본다. 사다리와
+# 같은 분포 안(최대 50pt)에 가둔다.
+_BELOW_GAPS = (2.0, 18.0, 34.0, 50.0)
+
+# 배치 채점(2026-08-25 전수 감사 근거). 옛 방식은 "잉크 2% 이하인 첫
+# 후보"라서 원문 옆이 조금만 지저분해도 사다리 끝(±52pt)이나 최후의
+# 아래 자리로 도망갔다 — 사람 대비 above 16%/9%·left 22%/10%로 몰리고
+# 사람과 같은 자리(30pt 이내)는 21.5%뿐이었다. 사람은 주석 밑 잉크
+# 중앙값 6.34%를 감수하면서 원문 곁에 남는다(잉크에 겹쳐 쓰되 주석
+# 끼리는 절대 안 겹침). 그래서 잉크 회피를 하드 게이트에서 **거리와
+# 교환 가능한 비용**으로 강등한다: 잉크 1% ≈ 2.5pt 도주와 등가(500에서
+# 시작해 시뮬 벤치로 낮췄다 — 클수록 옆 잉크 몇 %p 차이가 방향을 뒤집어
+# left 쏠림이 생긴다: rework1 실측 left 481 대 사람 153).
+_W_INK = 250.0
+# 폰트 한 단계 축소(9→8→7)의 비용 — 근처에 옅은 잉크 자리가 있으면
+# 글자를 줄여 먼 빈자리로 가느니 제 크기로 곁에 앉는 게 사람 관례다.
+_W_FS = 12.0
+# 아래 배치의 변위는 블록 **상단** 기준이다 — 읽기는 위에서 시작하므로
+# 긴 세로 스택(대사 노트)의 아래 자리는 틈이 2pt여도 사실상 멀다(A2
+# 실물 지적: SMU 9줄 스택의 번역이 아래로 밀려 사람(좌측 병기)과 어긋남).
+# 블록 높이의 일부를 변위로 치되, 짧은 노트가 손해 보지 않게 상한을 둔다.
+_BELOW_H_W = 0.25
+_BELOW_H_CAP = 100.0
+# 넓은(문장형·과병합) 클러스터의 왼쪽 배치 페널티. 사람은 가로로 긴
+# 원문에는 **끝(오른쪽)이나 그 아래**에 단다 — 시작점 왼쪽 바깥은 내용어
+# 에서 원문 폭만큼 떨어진 자리다(rework2 최악 꼬리 실측: 폭 336pt 클러스터
+# 의 번역이 x20에 앉아 사람(x250~410)과 245~384pt 어긋남, p127·p23·p15).
+# 폭이 이 기준을 넘는 만큼만 비율로 얹는다 — 좁은 노트는 영향 없다.
+_WIDE_FROM = 80.0
+_WIDE_L_W = 0.25
 
 # 머리글 위 손글씨 회수(A2 실측 2026-08-24: 사람이 번역한 상단 빨간 원
 # 이름 27건이 `y1 < header_y` 일괄 컷에 죽었다 — p71 (409,22) 'HANK'를
@@ -150,20 +181,25 @@ _ASSIGN_MAX_PT = 150.0   # 런 위 이름이 이보다 멀면 배정하지 않�
 # 빈자리를 골라 심한 겹침 91쌍(사람 0쌍)을 만들었다 — 배치 이력을 점유
 # 공간으로 넘겨 받아 피한다.
 _OCC_OK = 0.05        # 후보 면적의 이 비율까지는 겹침 허용
-_OCC_WEIGHT = 3.0     # 폴백 채점에서 주석 겹침을 잉크의 3배 무게로
 
 
 def _occupied_frac(rect: tuple[float, float, float, float],
                    occupied) -> float:
-    """후보 상자가 이미 놓인 주석들과 겹치는 면적 비율(0~1)."""
+    """후보가 기존 주석과 겹치는 정도 — **작은 쪽 면적 기준 최대값**(0~1).
+
+    후보 면적 기준으로 재면 큰 후보가 작은 주석(합성 화자 '행크' 22×17pt)
+    을 통째로 삼켜도 비율이 낮게 나와 게이트를 통과한다(rework1 시뮬에서
+    심한 겹침 1쌍 실측 — p80 행크 60% 잠식이 후보 기준 7%로 위장). 사람
+    관례의 "안 겹친다"는 작은 주석이 먹히지 않는다는 뜻이다."""
     area = max((rect[2] - rect[0]) * (rect[3] - rect[1]), 1e-6)
-    total = 0.0
+    worst = 0.0
     for o in occupied or ():
         ix = min(rect[2], o[2]) - max(rect[0], o[0])
         iy = min(rect[3], o[3]) - max(rect[1], o[1])
         if ix > 0 and iy > 0:
-            total += ix * iy
-    return min(total / area, 1.0)
+            o_area = max((o[2] - o[0]) * (o[3] - o[1]), 1e-6)
+            worst = max(worst, ix * iy / min(area, o_area))
+    return min(worst, 1.0)
 
 
 def _ink_ratio(ink, rect: tuple[float, float, float, float],
@@ -568,13 +604,15 @@ class XsheetProfile:
                        page_size: tuple[float, float],
                        doc: PdfDocument,
                        occupied: tuple | list = ()) -> Overlay:
-        """`place`의 후보 중 **손글씨가 없는 자리**를 고른다(선택 훅).
+        """전 후보를 (변위 + 잉크 + 폰트축소) 비용으로 채점해 최소를 고른다.
 
-        왜 필요한가: 상자를 글에 맞춰 좁히는 것만으로는 겹침이 풀리지
-        않는다 — A2 전수 시뮬레이션에서 폭은 사람과 같아졌지만(중앙 31 대
-        30pt) 손글씨 위 비율은 93.1%→90.6%로 거의 그대로였다(사람 78.1%).
-        좁아진 만큼 세로로 길어져 여전히 글자 위에 앉기 때문이다. 사람은
-        그럴 때 **옆의 빈 칸으로 옮겨 쓴다** — 그걸 재현한다.
+        사람 관례의 우선순위를 그대로 옮긴 것(2026-08-25 배치 전수 감사):
+        ① 주석끼리는 **절대** 안 겹친다(하드 게이트 — 사람 심한 겹침 0쌍)
+        ② 원문 곁이 최우선 — 옅은 잉크(작화선·괘선 흔적)는 감수한다(사람
+           주석 밑 잉크 중앙 6.34%). "잉크 없는 첫 자리" 방식은 곁이 조금만
+           지저분해도 사다리 끝으로 도망가 사람과 같은 자리 비율이 21.5%에
+           그쳤다 — 채점 전환 + 아래 정식 후보로 39%(단독 크롭 쌍)로 올랐다.
+        ③ 폰트 축소보다 옅은 잉크 위가 낫다(_W_FS).
 
         `place`(문서 없이)는 그대로 남긴다: 첫 후보를 돌려주므로 기존
         호출자·테스트의 계약이 바뀌지 않는다."""
@@ -586,21 +624,24 @@ class XsheetProfile:
                            block.page)
             return self.place(block, ko_text, page_size)
         best: tuple[float, Overlay] | None = None
-        for rect, fontsize in self._candidates(block, ko_text, page_size):
+        for rect, fontsize, dpen in self._candidates(block, ko_text, page_size):
             ink_score = _ink_ratio(ink, rect, page_h)
             occ = _occupied_frac(rect, occupied)
-            if ink_score <= _INK_OK and occ <= _OCC_OK:
-                return Overlay(page=block.page, rect=rect,
-                               text=ko_text, fontsize=fontsize)
-            # 주석끼리 겹침은 잉크보다 무겁게 — 사람은 잉크엔 겹쳐 써도
-            # 주석끼리는 절대 안 겹친다(A2 실측: 사람 심한 겹침 0쌍 대
-            # 우리 91쌍, 2026-08-25).
-            ov = Overlay(page=block.page, rect=rect,
-                         text=ko_text, fontsize=fontsize)
-            combined = ink_score + occ * _OCC_WEIGHT
-            if best is None or combined < best[0]:
-                best = (combined, ov)
-        # 전부 막혔다면 그중 가장 덜 겹치는 자리(사람도 여백이 없으면 겹쳐 쓴다)
+            # 전 후보 채점 후 전역 최소를 고른다 — "잉크 없는 첫 자리"로
+            # 즉시 반환하던 옛 방식은 원문 곁이 조금만 지저분해도 사다리
+            # 끝으로 도망갔다(전수 감사: 30pt 이내 21.5%·above 2배 과다).
+            # 잉크는 _INK_OK까지 공짜, 그 위는 거리와 교환(_W_INK 근거 참조).
+            score = (dpen + _W_INK * max(ink_score - _INK_OK, 0.0)
+                     + _W_FS * (_FONTSIZE - fontsize))
+            if occ > _OCC_OK:
+                # 주석끼리 겹침은 **하드 게이트** — 사람은 잉크엔 겹쳐 써도
+                # 주석끼리는 절대 안 겹친다(A2 실측: 사람 심한 겹침 0쌍 대
+                # 우리 91쌍). 겹침 없는 후보가 하나라도 있으면 절대 못 이기는
+                # 크기의 벽을 세우고, 전멸일 때만 가장 덜 겹치는 자리로.
+                score += 100000.0 + occ * 1000.0
+            if best is None or score < best[0]:
+                best = (score, Overlay(page=block.page, rect=rect,
+                                       text=ko_text, fontsize=fontsize))
         return best[1] if best else self.place(block, ko_text, page_size)
 
     def _page_ink(self, doc: PdfDocument, page: int):
@@ -636,23 +677,33 @@ class XsheetProfile:
         `8.0`에 고정해서, 원문이 오른쪽에 있을수록 번역문이 멀어졌다 —
         전수에서 우리 주석의 45.4%가 페이지 가장자리에 붙었고 사람은
         0.1%(2,015개 중 2개)뿐이었다."""
-        rect, fontsize = next(iter(self._candidates(block, ko_text, page_size)))
+        rect, fontsize, _dpen = next(iter(
+            self._candidates(block, ko_text, page_size)))
         return Overlay(page=block.page, rect=rect, text=ko_text,
                        fontsize=fontsize)
 
     def _candidates(self, block: PdfBlock, ko_text: str,
                     page_size: tuple[float, float]):
-        """놓을 만한 자리를 **선호 순서로** 흘린다 — 오른쪽·왼쪽·아래.
+        """놓을 만한 자리를 (rect, fontsize, 변위pt)로 흘린다 — 오른쪽·왼쪽·아래.
 
-        `place`는 첫 후보를 쓰고, `place_with_doc`는 이 중 손글씨가 없는
-        자리를 고른다. 한 곳에서 만들어야 두 경로가 갈라지지 않는다.
+        `place`는 첫 후보를 쓰고, `place_with_doc`는 변위·잉크·겹침을
+        묶어 채점한다. 한 곳에서 만들어야 두 경로가 갈라지지 않는다.
 
-        같은 변에서도 세로로 조금씩 밀어 본다: 엑스시트는 노트가 세로로
-        빽빽해서, 옆자리가 막혀도 반 줄 아래는 비어 있는 경우가 흔하다.
+        변위 = 원문 **상단** 기준 이동량. 옆 배치는 |dy|, 아래 배치는
+        틈 + 블록 높이 절반(`_BELOW_H_W` 근거 참조) — 읽기 시작점에서
+        얼마나 떨어졌는지가 사람 관례의 축이다.
+
+        아래 배치는 최후 예비가 아니라 **정식 후보**다(전수 감사: 사람
+        below 13% 대 우리 5% — 옛 코드는 아래를 최소 폰트 딱 한 자리만
+        만들었다). 같은 변에서도 세로로 조금씩 밀어 본다: 엑스시트는
+        노트가 세로로 빽빽해서, 옆자리가 막혀도 반 줄 아래는 흔히 빈다.
         """
         page_w, page_h = page_size
         bx0, by0, bx1, by1 = block.bbox
         limit_x1 = block.limit_x1 if block.limit_x1 is not None else page_w - 8.0
+        below_pen = _BELOW_H_W * min(by1 - by0, _BELOW_H_CAP)
+        # 넓은 클러스터의 좌단 바깥은 내용어에서 원문 폭만큼 먼 자리다
+        wide_pen = _WIDE_L_W * max((bx1 - bx0) - _WIDE_FROM, 0.0)
 
         for fontsize in (_FONTSIZE, 8.0, _MIN_FONTSIZE):
             want = _natural_width(ko_text, fontsize)
@@ -668,7 +719,7 @@ class XsheetProfile:
                     if top + height <= page_h - 8.0:
                         yield (_clamp_nondegenerate(
                             bx1 + 3.0, top, bx1 + 3.0 + width, top + height,
-                            page_h), fontsize)
+                            page_h), fontsize, abs(dy))
                 # 왼쪽: 원문 시작에 붙여 왼쪽으로 필요한 만큼만
                 avail = (bx0 - 3.0) - 8.0
                 if avail >= _MIN_BOX_W:
@@ -678,14 +729,35 @@ class XsheetProfile:
                     if top + height <= page_h - 8.0:
                         yield (_clamp_nondegenerate(
                             right - width, top, right, top + height,
-                            page_h), fontsize)
-        # 아래: 글에 맞춘 폭(원문 폭을 넘지 않되 최소 _MIN_BOX_W)
+                            page_h), fontsize, abs(dy) + wide_pen)
+            # 아래: 좌단 정렬 + (넓은 원문은) 우단 정렬 변형, 글에 맞춘 폭
+            avail = limit_x1 - bx0
+            if avail >= _MIN_BOX_W:
+                width = min(want, avail)
+                height = _estimate_height(ko_text, width, fontsize)
+                right_x1 = min(bx1, limit_x1)
+                for gap in _BELOW_GAPS:
+                    top = by1 + gap
+                    if top + height > page_h - 8.0:
+                        continue
+                    yield (_clamp_nondegenerate(
+                        bx0, top, bx0 + width, top + height,
+                        page_h), fontsize, gap + below_pen)
+                    # 우단 정렬: 사람은 문장형 원문의 끝자락 아래에 단다
+                    if bx1 - bx0 > _WIDE_FROM and right_x1 - width > bx0:
+                        yield (_clamp_nondegenerate(
+                            right_x1 - width, top, right_x1, top + height,
+                            page_h), fontsize, gap + below_pen)
+        # 최후 예비 — 양옆·아래가 전부 성립 안 해도(좁은 칸·페이지 끝) 후보
+        # 0개가 되면 안 된다(place는 첫 후보를 무조건 쓴다). 옛 꼬리 배치
+        # 그대로, 변위 페널티만 뒤로 밀어 정상 후보가 있으면 절대 안 이긴다.
         width = max(_MIN_BOX_W, min(_natural_width(ko_text, _MIN_FONTSIZE),
                                     max(bx1 - bx0, _MIN_BOX_W)))
         x1 = min(limit_x1, bx0 + width)
         height = _estimate_height(ko_text, x1 - bx0, _MIN_FONTSIZE)
         yield (_clamp_nondegenerate(bx0, by1 + 2.0, x1, by1 + 2.0 + height,
-                                    page_h), _MIN_FONTSIZE)
+                                    page_h), _MIN_FONTSIZE,
+               _BELOW_GAPS[-1] + below_pen + 1.0)
 
     def refine_ko(self, block: PdfBlock, ko_text: str) -> str:
         """엑스시트 하우스 용어로 KO→KO 교정(`_HOUSE_KO_XSHEET` 근거 참조).

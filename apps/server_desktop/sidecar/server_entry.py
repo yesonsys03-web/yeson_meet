@@ -246,6 +246,17 @@ def _pdf_selftest_mode() -> int:
                               bbox=(0.0, 0.0, 10.0, 10.0), limit_x1=None)
             _ko = XsheetProfile().refine_ko(_probe, "머리 기울임")
             assert _ko == "고개 기웃", _ko
+            # 배치 채점(2026-08-25 재설계)이 동결본에 실려 있는지. place_with_doc
+            # 도 같은 **선택** 훅이라 빠지면 예외 없이 옛 배치(잉크 우선 도주)로
+            # 조용히 돌아간다. 새 코드의 지문 = 후보가 (rect, fontsize, 변위pt)
+            # 3튜플이고, 양옆이 막힌 블록에 9pt '아래' 후보가 정식으로 나온다
+            # (옛 코드는 아래를 최소 폰트 하나만 만들었다).
+            _pb = PdfBlock(page=0, kind="note", text="X",
+                           bbox=(10.0, 200.0, 340.0, 210.0), limit_x1=351.6)
+            _cands = list(XsheetProfile()._candidates(_pb, "확인", (792.0, 1224.0)))
+            assert len(_cands[0]) == 3, _cands[0]
+            assert any(fs == 9.0 and r[1] >= 210.0 for r, fs, _d in _cands), \
+                "9pt 아래 후보 없음 — 옛 배치 코드"
     except Exception as exc:  # noqa: BLE001
         print(f"PDF_SELFTEST_RESULT=FAIL {exc}", file=sys.stderr, flush=True)
         return 1
