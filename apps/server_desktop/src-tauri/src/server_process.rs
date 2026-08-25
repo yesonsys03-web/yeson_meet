@@ -306,6 +306,27 @@ pub fn start_server_inner(
         // subtitle source. Code already defaults to AUDIO; pin it so a future SDK
         // default change can't silently break subtitles.
         .env("GEMINI_RESPONSE_MODALITY", "AUDIO")
+        // X-sheet PDF pipeline concurrency. Both stages spawn subscription-CLI
+        // sessions and spend nearly all their wall-clock waiting on the API, so
+        // concurrency buys time without extra tokens (total token cost is per
+        // crop / per chunk, not per session).
+        //
+        // Measured on KOTH_1401_A3 (116 pages, 2,294 crops, 2026-08-25):
+        // transcription with 6 workers ran 72 min at a median 60 crops/min;
+        // translation ran 42 min on the default 3. The code defaults are 3 and
+        // 3, and a GUI-launched app inherits no shell env — so the app was
+        // silently running the slow path. Pinned here like the subtitle tuning
+        // above, but an explicit shell value still wins so the setting can be
+        // tuned without a rebuild. 8 is the transcription cap
+        // (handwriting_transcribe._workers clamps it).
+        .env(
+            "YESON_PDF_XSHEET_CLI_WORKERS",
+            std::env::var("YESON_PDF_XSHEET_CLI_WORKERS").unwrap_or_else(|_| "6".into()),
+        )
+        .env(
+            "YESON_PDF_TRANSLATE_WORKERS",
+            std::env::var("YESON_PDF_TRANSLATE_WORKERS").unwrap_or_else(|_| "6".into()),
+        )
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUTF8", "1")
         .stdin(Stdio::null())
