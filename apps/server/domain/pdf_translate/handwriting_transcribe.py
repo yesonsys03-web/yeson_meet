@@ -160,6 +160,106 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
             Image.fromarray(arr[py0:py1, px0:px1]).save(dest)
 
 
+_STRIP_DPI = 200      # 화자 스트립 렌더 — 세로로 길어 300은 과하다
+_STRIP_BATCH = 20     # 스트립은 크므로 배치를 작게
+
+
+def render_strips(doc: PdfDocument, strips: list[PdfBlock],
+                  job_dir: Path) -> None:
+    """화자 스트립 크롭 렌더(잉크 확장 없이 bbox 그대로) — 이름·위치는
+    비전 CLI가 통째로 읽는다(scan_speaker_strips). doc 락 단계."""
+    if not strips:
+        return
+    from PIL import Image
+
+    from .profiles.xsheet import _decode_png  # 지연 import(순환 방지)
+
+    crops = job_dir / _CROPS_DIRNAME
+    crops.mkdir(parents=True, exist_ok=True)
+    scale = _STRIP_DPI / 72.0
+    for b in strips:
+        dest = crops / crop_name(b)
+        if dest.exists():
+            continue
+        arr = _decode_png(doc.render_png(b.page, dpi=_STRIP_DPI, annots=False))
+        h, w = arr.shape[:2]
+        x0, y0, x1, y1 = b.bbox
+        px0, py0 = max(int(x0 * scale), 0), max(int(y0 * scale), 0)
+        px1, py1 = min(int(x1 * scale), w), min(int(y1 * scale), h)
+        if px1 <= px0 or py1 <= py0:
+            continue
+        Image.fromarray(arr[py0:py1, px0:px1]).save(dest)
+
+
+def _build_strip_prompt(batch: list[str]) -> str:
+    return (
+        "Each PNG file in this directory is a tall vertical strip cut from "
+        "the dialog-column area of an animation exposure sheet. Find every "
+        "handwritten character NAME (often written inside a drawn pencil "
+        "circle, e.g. HANK, DALE, SAUDI GUY) and any circled production "
+        "note. Do NOT list lip-sync phonetic letters (EE, OH, AH, HU...), "
+        "frame numbers, timing lines, or printed text. Read each file "
+        "directly with your file-reading tool; do NOT run shell commands. "
+        "Reply ONLY as a JSON object mapping each filename to an array of "
+        "{\"text\": \"...\", \"y\": <0..1 fraction of the item's vertical "
+        "position from the top of that strip>}; use [] when none. "
+        "Files: " + ", ".join(batch)
+    )
+
+
+def scan_speaker_strips(strips: list[PdfBlock], job_dir: Path, *,
+                        engine: str | None = None) -> dict[str, list]:
+    """스트립들을 비전 CLI로 스캔해 {크롭명: [{text, y}, ...]}를 돌려준다.
+
+    결과는 transcripts.json에 **JSON 문자열 값**으로 캐시한다 — 기존
+    캐시 로더가 str만 남기므로 형식이 살아남고, 재번역이 재스캔 비용을
+    내지 않는다. 실패한 배치는 빈 결과로 둔다(다음 런이 다시 시도)."""
+    crops = job_dir / _CROPS_DIRNAME
+    cache_path = job_dir / _CACHE_NAME
+    done: dict[str, str] = {}
+    if cache_path.exists():
+        try:
+            done = {k: v for k, v in json.loads(
+                cache_path.read_text(encoding="utf-8")).items()
+                if isinstance(v, str)}
+        except (json.JSONDecodeError, OSError):
+            done = {}
+    names = [crop_name(b) for b in strips]
+    todo = [n for n in names if n not in done and (crops / n).exists()]
+    changed = False
+    for i in range(0, len(todo), _STRIP_BATCH):
+        batch = todo[i:i + _STRIP_BATCH]
+        try:
+            parsed = _extract_json_object(
+                _run_cli(_build_strip_prompt(batch), crops, engine))
+        except TranscribeFatalError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — 배치 실패는 다음 런 몫
+            logger.warning("xsheet-strip: 스캔 배치 실패(%s): %s",
+                           batch[0], exc)
+            continue
+        for k, v in parsed.items():
+            if k in batch and isinstance(v, list):
+                done[k] = json.dumps(v, ensure_ascii=False)
+                changed = True
+    if changed:
+        cache_path.write_text(json.dumps(done, ensure_ascii=False, indent=1),
+                              encoding="utf-8")
+    out: dict[str, list] = {}
+    for n in names:
+        v = done.get(n, "")
+        parsed_list: list = []
+        if isinstance(v, str) and v.lstrip().startswith("["):
+            try:
+                loaded = json.loads(v)
+                if isinstance(loaded, list):
+                    parsed_list = [x for x in loaded if isinstance(x, dict)]
+            except ValueError:
+                pass
+        out[n] = parsed_list
+    return out
+
+
 def _expand_to_ink(arr, px0: int, py0: int, px1: int,
                    py1: int) -> tuple[int, int, int, int]:
     """상자에 걸친 **잉크 덩어리를 통째로** 담도록 넓힌 상자를 돌려준다.
@@ -440,7 +540,9 @@ def _build_prompt(batch: list[str]) -> str:
         "handwritten all-caps English text in each, exactly as written. They "
         "are director notes from animation exposure sheets; a crop may contain "
         "circled single letters, arrows or stray marks - transcribe the "
-        "readable words only, use \"\" if nothing readable. Read each file "
+        "readable words only, use \"\" if nothing readable. If a word you "
+        "read seems unusual for animation timing notes, re-examine the "
+        "strokes carefully before committing to it. Read each file "
         "directly with your file-reading tool using the exact filename given "
         "below; do NOT run shell commands (no ls, find or pwd). Reply ONLY as "
         "a JSON object mapping each filename to its transcription (\\n for "

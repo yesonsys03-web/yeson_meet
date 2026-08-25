@@ -199,7 +199,8 @@ def test_extract_filters_template_and_clusters(monkeypatch):
     ]
     _install_engine(monkeypatch, FakeEngine(items))
     blocks = xs.XsheetProfile().extract(FakeDoc())
-    texts = sorted(b.text for b in blocks)
+    # 화자 스트립 의사 블록은 전사 단계의 내부 소비물 — 노트만 비교한다
+    texts = sorted(b.text for b in blocks if b.kind != xs.STRIP_KIND)
     assert texts == ["HARRIS", "SUBnE T2Em3LE", "TRUCK UP"]
     stacked = next(b for b in blocks if b.text.startswith("SUBnE"))
     assert stacked.kind == xs.NOTE_KIND
@@ -257,7 +258,8 @@ def test_extract_recovers_handwritten_name_above_header(monkeypatch):
             items.append((_box_px((370, 101, 429, 116), dpi), "DIALOG EXP", 0.9))
         pages.append(items)
     _install_engine(monkeypatch, FakePagedEngine(pages))
-    blocks = xs.XsheetProfile().extract(FakeDoc(pages=10))
+    blocks = [b for b in xs.XsheetProfile().extract(FakeDoc(pages=10))
+              if b.kind != xs.STRIP_KIND]
     texts = sorted(b.text for b in blocks)
     assert texts == ["DALE", "HANK"]                 # 타이틀·번호·코드는 안 샌다
     assert [b.page for b in blocks] == sorted(b.page for b in blocks)
@@ -278,7 +280,8 @@ def test_extract_header_recovery_needs_multiple_pages(monkeypatch):
     ]]
     _install_engine(monkeypatch, FakeEngine(items))
     blocks = xs.XsheetProfile().extract(FakeDoc(pages=1))
-    assert [b.text for b in blocks] == []            # 머리글 위는 전부 보류
+    assert [b.text for b in blocks
+            if b.kind != xs.STRIP_KIND] == []        # 머리글 위는 전부 보류
 
 
 def test_geometry_follows_a_different_studio_layout(monkeypatch):
@@ -484,6 +487,180 @@ def test_render_crops_writes_pngs(tmp_path):
     with Image.open(dest) as im:
         assert im.size[0] > 0 and im.size[1] > 0
     assert doc.render_calls == [(0, ht._CROP_DPI)]
+
+
+def test_extract_emits_speaker_strip_blocks(monkeypatch):
+    """대사 칸에 음소 런이 있는 페이지마다 화자 스트립 의사 블록 1개 —
+    A2 실측(2026-08-25): 화자 이름(연필 원·굵은 연필)을 RapidOCR이 전
+    스케일에서 못 읽어 사람 대비 이름 누락 ~50건. 스트립을 비전 CLI가
+    통째로 읽고(위치 포함) 전사 단계가 화자 블록을 합성한다. 구조는
+    블록 text(JSON)에 실어 보낸다 — 프로파일은 싱글턴이라 인스턴스
+    상태를 두면 잡 간에 샌다."""
+    dpi = xs._OCR_DPI
+    header = [
+        ((166, 105, 201, 117), "ACTION", 1.0),
+        ((369, 99, 410, 116), "DIALOG", 1.0),
+        ((408, 102, 429, 116), "EXP", 1.0),
+        ((100, 1150, 160, 1162), "PROD NO", 1.0),
+    ]
+    phonemes = [((375, 200 + i * 20, 395, 214 + i * 20), "EH", 0.9)
+                for i in range(3)]
+    pages = [
+        [(_box_px(r, dpi), t, c) for r, t, c in header + phonemes],  # 런 있음
+        [(_box_px(r, dpi), t, c) for r, t, c in header],             # 런 없음
+    ]
+    _install_engine(monkeypatch, FakePagedEngine(pages))
+    blocks = xs.XsheetProfile().extract(FakeDoc(pages=2))
+    strips = [b for b in blocks if b.kind == xs.STRIP_KIND]
+    # 밴드가 있으면 런이 없어도 스트립을 낸다(이름은 음소 없이도 쓰인다)
+    assert [s.page for s in strips] == [0, 1]
+    ctx = json.loads(strips[0].text)
+    assert ctx["runs"] and abs(ctx["runs"][0] - 200.0) < 2.0
+    assert ctx["band"][0] < 375 < ctx["band"][1]
+    assert json.loads(strips[1].text)["runs"] == []
+
+
+def test_transcribe_synthesizes_speaker_blocks(tmp_path, monkeypatch):
+    """스트립 스캔 결과(이름+y비율) → 런에 스냅한 화자 블록 합성.
+    스트립 의사 블록 자신은 산출물에서 사라지고, 이름이 없는 연속
+    페이지(페이지-톱 런)는 직전 화자를 이어 기재한다."""
+    strip0 = PdfBlock(page=0, kind=xs.STRIP_KIND,
+                      text=json.dumps({"runs": [200.0], "band": [367.0, 432.0],
+                                       "top": 120.0}),
+                      bbox=(277.0, 120.0, 472.0, 1180.0))
+    strip1 = PdfBlock(page=1, kind=xs.STRIP_KIND,
+                      text=json.dumps({"runs": [125.0], "band": [367.0, 432.0],
+                                       "top": 120.0}),
+                      bbox=(277.0, 120.0, 472.0, 1180.0))
+    note = _note(0, 50, 200)
+    blocks = [note, strip0, strip1]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    crops.mkdir(parents=True)
+    for b in blocks:
+        (crops / ht.crop_name(b)).write_bytes(_png_bytes())
+    s0, s1 = ht.crop_name(strip0), ht.crop_name(strip1)
+
+    def _fake(prompt, cwd, engine=None):
+        if s0 in prompt or s1 in prompt:
+            # p1 스트립: y=0.08 → 120+0.08*1060=204.8 → 런 200에 스냅
+            # p2 스트립: 이름 없음 → 연속 기재 대상
+            return json.dumps({s0: [{"text": "HANK", "y": 0.08}], s1: []})
+        return json.dumps({ht.crop_name(note): "WALKS"})
+
+    monkeypatch.setattr(ht, "_run_cli", _fake)
+    out = xs.XsheetProfile().transcribe_blocks(blocks, tmp_path)
+    assert not [b for b in out if b.kind == xs.STRIP_KIND]   # 의사 블록 소멸
+    speakers = [b for b in out if b.text in ("HANK",)]
+    assert len(speakers) == 2                                # p1 스캔 + p2 연속
+    assert speakers[0].page == 0 and abs(speakers[0].bbox[1] - 200.0) < 1e-6
+    assert speakers[1].page == 1 and abs(speakers[1].bbox[1] - 125.0) < 1e-6
+    assert [b.text for b in out if b.page == 0 and b.kind == xs.NOTE_KIND
+            and b.text == "WALKS"]                           # 일반 노트 무사
+
+
+def test_speaker_assignment_is_precision_capped():
+    """정밀 안전판 — 런 배정은 이름이 150pt 안에 있을 때만. 멀리서
+    전파하면 스캔이 놓친 이름 자리에 엉뚱한 이름이 들어간다(A2 실측:
+    v2 무제한 전파가 사람 대조에서 오표기 10건 — p83 행크 자리에 데일).
+    오표기가 누락보다 나쁘다."""
+    strip = PdfBlock(page=0, kind=xs.STRIP_KIND,
+                     text=json.dumps({"runs": [200.0, 500.0, 900.0],
+                                      "band": [367.0, 432.0], "top": 120.0}),
+                     bbox=(277.0, 120.0, 472.0, 1180.0))
+    # HANK y≈205 → 런 200만(500은 295pt 거리라 배정 금지) · DALE y≈862 → 런 900
+    scans = {ht.crop_name(strip): [{"text": "HANK", "y": 0.08},
+                                   {"text": "DALE", "y": 0.70}]}
+    out = xs._synthesize_speakers([strip], scans, [])
+    got = sorted((round(b.bbox[1]), b.text) for b in out)
+    assert got == [(200, "HANK"), (900, "DALE")]
+
+
+def test_speaker_carry_requires_adjacent_page():
+    """이월은 직전 페이지에서 본 화자만 — 여러 페이지를 건너뛴 이월은
+    화자가 바뀌었을 위험이 커서 하지 않는다(정밀 안전판)."""
+    def _strip(page):
+        return PdfBlock(page=page, kind=xs.STRIP_KIND,
+                        text=json.dumps({"runs": [125.0],
+                                         "band": [367.0, 432.0], "top": 120.0}),
+                        bbox=(277.0, 120.0, 472.0, 1180.0))
+    s0, s2 = _strip(0), _strip(2)          # 1페이지 건너뜀
+    scans = {ht.crop_name(s0): [{"text": "HANK", "y": 0.005}],
+             ht.crop_name(s2): []}
+    out = xs._synthesize_speakers([s0, s2], scans, [])
+    assert [(b.page, b.text) for b in out] == [(0, "HANK")]   # p2 이월 없음
+
+
+def test_decode_code_note_pure_codes_only():
+    """순수 코드 노트만 결정적 해독 — 토큰 하나라도 사전 밖이면 번역기 몫.
+
+    A2 실측(2026-08-24): 번역 LLM이 원문을 그대로 돌려주면(에코) pdf_run이
+    "번역 실패"로 보아 주석을 버린다 — 사람이 오버슛·안착·표정으로 옮긴
+    코드 노트 16건이 그렇게 증발했다. OUS·DVS는 OVS의 전사 오독 실측."""
+    assert xs._decode_code_note("OVS\nSTL") == "오버슛\n안착"
+    assert xs._decode_code_note("OUS") == "오버슛"
+    assert xs._decode_code_note("DVS") == "오버슛"
+    assert xs._decode_code_note("EYES EXP") == "시선 표정"
+    assert xs._decode_code_note("CUSH") == "쿠션"
+    assert xs._decode_code_note("LT ARM") is None      # LT가 사전 밖
+    assert xs._decode_code_note("HANK") is None        # 이름=음역, 재시도 몫
+    assert xs._decode_code_note("") is None
+
+
+def test_transcribe_predecodes_code_notes(tmp_path, monkeypatch):
+    """전사 결과가 순수 코드면 block.ko를 채워 에코-드롭을 우회한다
+    (판넬 약어 predecode와 같은 경로 — pdf_run이 block.ko를 우선한다)."""
+    blocks = [_note(0, 50, 200), _note(0, 50, 300)]
+    _touch_crops(tmp_path, blocks)
+    names = [ht.crop_name(b) for b in blocks]
+    canned = {names[0]: "OVS\nSTL", names[1]: "HANK WALKS"}
+    monkeypatch.setattr(ht, "_run_cli",
+                        lambda prompt, cwd, engine=None: json.dumps(canned))
+    out = xs.XsheetProfile().transcribe_blocks(blocks, tmp_path)
+    by_text = {b.text: b for b in out}
+    assert by_text["OVS\nSTL"].ko == "오버슛\n안착"
+    assert by_text["HANK WALKS"].ko is None
+
+
+async def test_echoed_groups_retried_once_with_dedicated_prompt(monkeypatch):
+    """에코(번역=원문) 그룹은 전용 프롬프트로 **한 번** 재번역한다 — 이름
+    (HANK)은 LLM 기분에 따라 에코되곤 해서 확률적으로 증발했다(A2 실측
+    16건). 음소(HU HU)는 재시도에서도 에코 → 여전히 드롭되어야 한다."""
+    from apps.server.domain.pdf_translate.profiles.base import PdfBlock
+    from apps.server.domain.pdf_translate.utterances import group_utterances
+
+    blocks = [
+        PdfBlock(page=0, kind=xs.NOTE_KIND, text="HANK", bbox=(0, 0, 10, 10)),
+        PdfBlock(page=0, kind=xs.NOTE_KIND, text="HU HU", bbox=(0, 20, 10, 30)),
+        PdfBlock(page=0, kind=xs.NOTE_KIND, text="WALKS", bbox=(0, 40, 10, 50)),
+    ]
+    groups, group_texts = group_utterances(blocks)
+    builders = []
+
+    class First:
+        async def translate_batch(self, texts):
+            return [t if t in ("HANK", "HU HU") else "걷는다" for t in texts]
+
+    class Retry:
+        async def translate_batch(self, texts):
+            return ["행크" if t == "HANK" else t for t in texts]
+
+    def fake_create(provider, cli_model=None, prompt_builder=None):
+        builders.append(prompt_builder)
+        return First() if len(builders) == 1 else Retry()
+
+    monkeypatch.setattr(pdf_run, "create_translator", fake_create)
+    ko = await pdf_run._translate_group_texts(
+        xs.XsheetProfile(), blocks, groups, group_texts,
+        provider="claude", cli_model=None, progress_cb=None)
+    got = {g.merged_text: ko[i] for i, g in enumerate(groups)}
+    assert got["HANK"] == "행크"                        # 재시도가 살림
+    assert got["HU HU"].strip() == "HU HU"             # 음소는 그대로 → 드롭 유지
+    assert got["WALKS"] == "걷는다"                     # 1차 결과 보존
+    assert len(builders) == 2                           # 재시도 딱 한 번
+    from apps.server.domain.pdf_translate.translate_blocks import (
+        build_pdf_retry_prompt,
+    )
+    assert builders[1] is build_pdf_retry_prompt        # 전용 프롬프트 사용
 
 
 # ------------------------------------------------------ pipeline + API
@@ -781,7 +958,8 @@ def test_extract_drops_junk_crops(monkeypatch):
     ]
     _install_engine(monkeypatch, FakeEngine(items))
     blocks = xs.XsheetProfile().extract(FakeDoc())
-    assert sorted(b.text for b in blocks) == ["AD", "X"]
+    assert sorted(b.text for b in blocks
+                  if b.kind != xs.STRIP_KIND) == ["AD", "X"]
 
 
 def test_argv_differs_per_cli():
@@ -997,6 +1175,14 @@ def _ko_note(src: str) -> PdfBlock:
     ("LEAN", "기댐", "기울인다"),
     ("STL", "정지", "안착"),
     ("STL & SETTLE", "스틸", "안착"),    # STL=settle을 still로 읽은 오역
+    # 2026-08-25 품질 전수 대조 추가분(사람 1,942쌍)
+    ("ANTIC", "앤티시페이션 아래로", "준비동작 아래로"),
+    ("STEP", "발스텝", "스텝"),
+    ("ACCENT", "악센트", "액센트"),
+    ("BOOM UP", "붐하우어 위로", "붐 위로"),      # 원문 약칭을 풀네임으로 부풀림
+    ("STOP", "정지", "멈춤"),
+    ("PILLOW W/W ACTION", "베개를 따라 움직임", "베개 액션맞춰 움직임"),
+    ("BLANKETS W/W", "담요와 함께 움직임 & 안착", "담요 액션맞춰 움직임 & 안착"),
 ])
 def test_refine_ko_applies_house_terms(src, ko, want):
     assert xs.XsheetProfile().refine_ko(_ko_note(src), ko) == want
@@ -1012,6 +1198,10 @@ def test_refine_ko_applies_house_terms(src, ko, want):
     # 원문이 TILT/LEAN이 아니면 건드리지 않는다
     ("BOBBY UP", "기울임"),
     ("LEANS", "기울임"),
+    # 원문 조건 밖 — BOOM·STOP·W/W가 없으면 그대로 둔다
+    ("BOOMHAUER", "붐하우어"),           # 원문 자체가 풀네임이면 존중
+    ("FREEZE", "정지"),
+    ("PILLOW ACTION", "베개를 따라 움직임"),
 ])
 def test_refine_ko_leaves_unrelated_text(src, ko):
     assert xs.XsheetProfile().refine_ko(_ko_note(src), ko) == ko
@@ -1084,6 +1274,27 @@ def test_place_with_doc_moves_off_the_handwriting():
     avoided = prof.place_with_doc(b, "고개\n기웃", (792.0, 1224.0), doc)
     assert xs._ink_ratio(prof._page_ink(doc, 0), plain.rect, 1224.0) > xs._INK_OK
     assert xs._ink_ratio(prof._page_ink(doc, 0), avoided.rect, 1224.0) <= xs._INK_OK
+
+
+def test_place_with_doc_avoids_existing_annotations():
+    """이미 놓인 주석 자리도 점유 공간으로 피한다 — A2 실측(2026-08-25):
+    잉크만 피하던 배치가 이웃 블록과 같은 빈자리를 골라 **주석끼리 심한
+    겹침(30%+) 91쌍**(사람 0쌍, p4 `페기 턴`+`돌아서 향한다` 포개짐 실물).
+    사람은 잉크엔 겹쳐 써도 주석끼리는 절대 안 겹친다."""
+    png = _ink_png(1100, 1700, [])           # 빈 페이지 — 잉크 제약 없음
+    doc = FakeDoc(png=png)
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(150.0, 360.0, 190.0, 400.0), limit_x1=560.0)
+    prof = xs.XsheetProfile()
+    ov1 = prof.place_with_doc(b, "고개\n기웃", (792.0, 1224.0), doc)
+    ov2 = prof.place_with_doc(b, "페기\n턴한다", (792.0, 1224.0), doc,
+                              occupied=(ov1.rect,))
+    a, c = ov1.rect, ov2.rect
+    ix = min(a[2], c[2]) - max(a[0], c[0])
+    iy = min(a[3], c[3]) - max(a[1], c[1])
+    inter = max(ix, 0) * max(iy, 0)
+    smaller = min((a[2]-a[0])*(a[3]-a[1]), (c[2]-c[0])*(c[3]-c[1]))
+    assert inter / smaller <= 0.05, (a, c)   # 심한 겹침 금지
 
 
 def test_place_with_doc_falls_back_when_render_fails(monkeypatch):

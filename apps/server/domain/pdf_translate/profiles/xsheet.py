@@ -17,11 +17,12 @@ handwriting_transcribe(비전 CLI, 기본 agy)가 채운다. 번역·배치·굽
 from __future__ import annotations
 
 import io
+import json
 import logging
 import re
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -107,6 +108,63 @@ _HDR_REPEAT_FRAC = 0.2   # 이 비율 이상의 페이지에서 같은 자리 = 
 _HDR_REPEAT_MIN = 2      # 최소 반복 페이지 수(짧은 문서 하한)
 _ALPHA_RE = re.compile(r"[A-Za-z]")
 
+# 순수 코드 노트의 결정적 해독(A2 사람 납품본 관례 근거: 오버슛 18:0·
+# 안착 50:0·표정/시선·쿠션·(CONT'D)=(계속)·머리→고개 다수 통일).
+# 번역 LLM은 이런 코드를 확률적으로 에코(원문 그대로)하고, pdf_run은
+# 에코를 "번역 실패"로 보아 주석을 버린다 — 사전이 있으면 block.ko
+# predecode 경로(판넬 약어와 동일)로 에코-드롭을 원천 우회한다.
+# OUS·DVS는 OVS의 전사 오독 실측(2026-08-24, p78·p111·p125). 업계 공용
+# 엑스시트 용어만 담는다 — 작품 종속 어휘(이름) 금지, 이름은 재시도 몫.
+_CODE_KO = {
+    "OVS": "오버슛", "OUS": "오버슛", "DVS": "오버슛",
+    "STL": "안착", "ST": "안착",
+    "EXP": "표정", "EYES": "시선",
+    "CUSH": "쿠션", "CONT": "계속",
+    "HEAD": "고개",
+}
+
+# 화자 스트립(A2 실측 2026-08-25): 화자 이름은 대사 칸 왼쪽에 연필
+# 원·굵은 글씨로 쓰이는데 RapidOCR이 전 스케일(120~400dpi)에서 못 읽어
+# 사람 대비 이름 누락 ~50건이 남았다. 원형 탐지는 오탐이 지배(후보
+# 19.5~27.6/페이지, 3중 게이트 실측 전부 실패). 해법=대사 칸 좌우
+# 스트립을 페이지당 1크롭으로 잘라 **비전 CLI가 통째로 읽는다**(원 안
+# 손글씨 판독 가능 실증). 위치는 y비율로 받아 음소 런에 스냅한다.
+# 구조 정보는 스트립 의사 블록의 text(JSON)에 싣는다 — 프로파일은
+# 싱글턴이라 인스턴스 상태는 잡 간에 샌다.
+STRIP_KIND = "xsheet_speaker_strip"
+_STRIP_XPAD_L = 90.0   # 밴드 왼쪽 여유(연필 원이 놓이는 마진)
+_STRIP_XPAD_R = 40.0
+_RUN_GAP = 60.0        # 음소 항목 y 간격이 이보다 크면 새 런
+_RUN_PH_MAXLEN = 4     # 음소로 볼 정규화 길이 상한
+_SNAP_PT = 120.0       # 스캔 y를 런 시작에 스냅하는 최대 거리
+_SPK_W, _SPK_H = 55.0, 16.0   # 합성 화자 블록 크기(pt)
+_SPK_DEDUP_PT = 40.0   # 기존 블록과 이 거리 안이면 합성 생략
+_CARRY_TOP_PT = 60.0   # 첫 런이 스트립 상단에서 이 안이면 '연속 런'
+# 정밀 안전판(2026-08-25 실측): 전파를 세게 걸면(런별 무제한 배정+무기한
+# 이월) 스캔이 놓친 이름 자리에 엉뚱한 이름이 들어간다 — 사람 대조에서
+# 오표기 10건 실측(p83 행크 자리에 데일 등). 오표기가 누락보다 나쁘다.
+_ASSIGN_MAX_PT = 150.0   # 런 위 이름이 이보다 멀면 배정하지 않는다
+
+
+# 주석-주석 겹침 게이트(2026-08-25): 잉크만 피하던 배치가 이웃 블록과 같은
+# 빈자리를 골라 심한 겹침 91쌍(사람 0쌍)을 만들었다 — 배치 이력을 점유
+# 공간으로 넘겨 받아 피한다.
+_OCC_OK = 0.05        # 후보 면적의 이 비율까지는 겹침 허용
+_OCC_WEIGHT = 3.0     # 폴백 채점에서 주석 겹침을 잉크의 3배 무게로
+
+
+def _occupied_frac(rect: tuple[float, float, float, float],
+                   occupied) -> float:
+    """후보 상자가 이미 놓인 주석들과 겹치는 면적 비율(0~1)."""
+    area = max((rect[2] - rect[0]) * (rect[3] - rect[1]), 1e-6)
+    total = 0.0
+    for o in occupied or ():
+        ix = min(rect[2], o[2]) - max(rect[0], o[0])
+        iy = min(rect[3], o[3]) - max(rect[1], o[1])
+        if ix > 0 and iy > 0:
+            total += ix * iy
+    return min(total / area, 1.0)
+
 
 def _ink_ratio(ink, rect: tuple[float, float, float, float],
                page_h: float) -> float:
@@ -174,6 +232,11 @@ _HOUSE_KO_XSHEET: tuple[tuple[re.Pattern[str], str], ...] = (
     # `고개` 17 대 `머리` 2로 `고개`가 우세하다.
     # ⚠`머리카락`은 사람·우리 4건씩 정확히 일치하는 정상 낱말이라 반드시 뺀다.
     (re.compile(r"머리(?!카락)"), "고개"),
+    # 2026-08-25 품질 전수 대조(사람 1,942쌍) 추가분 — 채택 기준 동일(관례
+    # 압도·작품 비종속). 유리창↔창문(37:36)·애니(6:6)는 관례가 안 갈려 제외.
+    (re.compile(r"앤티시페이션"), "준비동작"),
+    (re.compile(r"발\s*스텝"), "스텝"),
+    (re.compile(r"악센트"), "액센트"),
 )
 # 원문 코드별 규칙 — 같은 한국어라도 원문이 무엇이냐에 따라 사람 표기가
 # 갈린다(TILT는 `기웃`, LEAN은 `기울인다`). 무조건 치환하면 한쪽이 깨진다.
@@ -199,6 +262,21 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
     (re.compile(r"\bTILTS?\b", re.IGNORECASE), (
         (re.compile(r"기울임"), "기웃"),
         (re.compile(r"틸트"), "기웃"),
+    )),
+    # BOOM: 원문은 `BOOM`(약칭)인데 LLM이 지식으로 `붐하우어`(풀네임)로
+    # 부풀린다 — 작품 어휘가 아니라 **원문 충실성** 규칙이다(사람 29쌍 실측).
+    (re.compile(r"\bBOOM\b", re.IGNORECASE), (
+        (re.compile(r"붐하우어"), "붐"),
+    )),
+    # STOP: 사람 `멈춤` / 우리 `정지`(품질 대조 5쌍). `정지`는 STL 규칙에서
+    # `안착`으로 덮이는 문맥도 있어 원문 조건으로 가른다.
+    (re.compile(r"\bSTOPS?\b", re.IGNORECASE), (
+        (re.compile(r"정지"), "멈춤"),
+    )),
+    # W/W(with action): 사람 `액션맞춰 움직임` 21 / 우리 `따라·함께 움직임` 6.
+    (re.compile(r"\bW/W\b", re.IGNORECASE), (
+        (re.compile(r"(?:를|을)?\s*따라\s*움직"), " 액션맞춰 움직"),
+        (re.compile(r"와\s*함께\s*움직"), " 액션맞춰 움직"),
     )),
 )
 
@@ -443,6 +521,7 @@ class XsheetProfile:
                 blocks.append(PdfBlock(
                     page=page, kind=NOTE_KIND, text=raw, bbox=(x0, y0, x1, y1),
                     limit_x1=geom.limit_x1((x0 + x1) / 2, page_w)))
+            blocks.extend(_make_speaker_strip(page, items, geom, page_w, page_h))
         blocks.extend(_recover_header_notes(header_pool, pages_with_geom))
         # 페이지 순서 불변식 복원 — place_with_doc의 잉크 캐시(_ink_cache)가
         # 페이지당 1회 렌더로 성립하는 전제다.
@@ -457,20 +536,38 @@ class XsheetProfile:
 
     def render_transcribe_crops(self, doc: PdfDocument,
                                 blocks: list[PdfBlock], job_dir: Path) -> None:
-        from ..handwriting_transcribe import render_crops
-        render_crops(doc, blocks, job_dir)
+        from ..handwriting_transcribe import render_crops, render_strips
+        strips = [b for b in blocks if b.kind == STRIP_KIND]
+        render_crops(doc, [b for b in blocks if b.kind != STRIP_KIND], job_dir)
+        render_strips(doc, strips, job_dir)
+
+    # 에코(번역=원문) 그룹을 전용 프롬프트로 한 번 재번역한다(pdf_run이
+    # getattr로 읽는 선택 플래그). 이름(HANK)은 LLM 기분에 따라 에코돼
+    # 확률적으로 증발했다 — A2 실측 16건(2026-08-24).
+    retry_echoed_groups = True
 
     def transcribe_blocks(self, blocks: list[PdfBlock], job_dir: Path,
                           should_continue: Callable[[], bool] | None = None,
                           on_progress: Callable[[float], None] | None = None,
                           engine: str | None = None) -> list[PdfBlock]:
-        from ..handwriting_transcribe import transcribe
-        return transcribe(blocks, job_dir, should_continue=should_continue,
-                          on_progress=on_progress, engine=engine)
+        from ..handwriting_transcribe import scan_speaker_strips, transcribe
+        strips = [b for b in blocks if b.kind == STRIP_KIND]
+        notes = [b for b in blocks if b.kind != STRIP_KIND]
+        out = transcribe(notes, job_dir, should_continue=should_continue,
+                         on_progress=on_progress, engine=engine)
+        if strips:
+            scans = scan_speaker_strips(strips, job_dir, engine=engine)
+            out = out + _synthesize_speakers(strips, scans, out)
+            out.sort(key=lambda b: b.page)
+        # 순수 코드 노트는 번역기 대신 결정적 해독(block.ko predecode 경로,
+        # 판넬 약어와 동일) — 에코-드롭을 원천 우회한다.
+        return [replace(b, ko=decoded) if (decoded := _decode_code_note(b.text))
+                else b for b in out]
 
     def place_with_doc(self, block: PdfBlock, ko_text: str,
                        page_size: tuple[float, float],
-                       doc: PdfDocument) -> Overlay:
+                       doc: PdfDocument,
+                       occupied: tuple | list = ()) -> Overlay:
         """`place`의 후보 중 **손글씨가 없는 자리**를 고른다(선택 훅).
 
         왜 필요한가: 상자를 글에 맞춰 좁히는 것만으로는 겹침이 풀리지
@@ -490,15 +587,20 @@ class XsheetProfile:
             return self.place(block, ko_text, page_size)
         best: tuple[float, Overlay] | None = None
         for rect, fontsize in self._candidates(block, ko_text, page_size):
-            score = _ink_ratio(ink, rect, page_h)
-            if score <= _INK_OK:
+            ink_score = _ink_ratio(ink, rect, page_h)
+            occ = _occupied_frac(rect, occupied)
+            if ink_score <= _INK_OK and occ <= _OCC_OK:
                 return Overlay(page=block.page, rect=rect,
                                text=ko_text, fontsize=fontsize)
+            # 주석끼리 겹침은 잉크보다 무겁게 — 사람은 잉크엔 겹쳐 써도
+            # 주석끼리는 절대 안 겹친다(A2 실측: 사람 심한 겹침 0쌍 대
+            # 우리 91쌍, 2026-08-25).
             ov = Overlay(page=block.page, rect=rect,
                          text=ko_text, fontsize=fontsize)
-            if best is None or score < best[0]:
-                best = (score, ov)
-        # 전부 손글씨 위라면 그중 가장 덜 덮는 자리(사람도 여백이 없으면 겹쳐 쓴다)
+            combined = ink_score + occ * _OCC_WEIGHT
+            if best is None or combined < best[0]:
+                best = (combined, ov)
+        # 전부 막혔다면 그중 가장 덜 겹치는 자리(사람도 여백이 없으면 겹쳐 쓴다)
         return best[1] if best else self.place(block, ko_text, page_size)
 
     def _page_ink(self, doc: PdfDocument, page: int):
@@ -640,6 +742,129 @@ def _is_template(rect: tuple[float, float, float, float], text: str,
         if lo <= cx <= hi and len(n) <= _PHONETIC_MAX_LEN:
             return True
     return False
+
+
+def _make_speaker_strip(page: int, items, geom: _Geometry,
+                        page_w: float, page_h: float) -> list[PdfBlock]:
+    """음소 런이 있는 페이지의 화자 스트립 의사 블록(0 또는 1개).
+
+    text에 구조(JSON: 런 시작 y들·밴드·스트립 상단)를 싣는다 — 전사
+    단계(_consume_speaker_strips)가 읽고 소비한다."""
+    if geom.dialog_band is None:
+        return []
+    lo, hi = geom.dialog_band
+    ph = sorted((r for r, t, _c in items
+                 if lo <= (r[0] + r[2]) / 2 <= hi
+                 and r[1] > geom.header_y + 10
+                 and len(_norm(t)) <= _RUN_PH_MAXLEN),
+                key=lambda r: r[1])
+    runs: list[float] = []
+    last_y1 = None
+    for r in ph:
+        if last_y1 is None or r[1] - last_y1 > _RUN_GAP:
+            runs.append(round(r[1], 1))
+        last_y1 = r[3]
+    # 런이 없어도 스트립은 낸다 — 음소가 OCR에 안 잡힌 페이지에도 이름은
+    # 있을 수 있고(A2 실측: 이름 누락 10건이 런-미검출 페이지), 그때
+    # 합성은 스캔된 이름의 제 위치를 그대로 쓴다.
+    x0 = max(lo - _STRIP_XPAD_L, 0.0)
+    y0 = geom.header_y + 2.0
+    x1 = min(hi + _STRIP_XPAD_R, page_w)
+    y1 = min(geom.footer_y - 2.0, page_h)
+    ctx = {"runs": runs, "band": [lo, hi], "top": round(y0, 1)}
+    return [PdfBlock(page=page, kind=STRIP_KIND, text=json.dumps(ctx),
+                     bbox=(x0, y0, x1, y1), limit_x1=None)]
+
+
+def _synthesize_speakers(strips: list[PdfBlock], scans: dict,
+                         existing: list[PdfBlock]) -> list[PdfBlock]:
+    """스트립 스캔 결과 → 런에 스냅한 화자 노트 블록.
+
+    이름이 없는 페이지의 첫 런이 스트립 상단에 붙어 있으면(=앞 페이지에서
+    이어지는 대사) 직전 화자를 이어 기재한다 — 사람 번역자의 관례를
+    형식화한 것. 새 화자 선언 없이 런이 중간에서 시작하면 추측하지
+    않는다(오표기가 누락보다 나쁘다)."""
+    from ..handwriting_transcribe import crop_name
+
+    by_page_existing: dict[int, list[PdfBlock]] = {}
+    for b in existing:
+        by_page_existing.setdefault(b.page, []).append(b)
+    out: list[PdfBlock] = []
+    last_speaker: str | None = None
+    last_speaker_page = -99
+    for sb in sorted(strips, key=lambda b: b.page):
+        try:
+            ctx = json.loads(sb.text)
+        except (TypeError, ValueError):
+            continue
+        runs = [float(v) for v in ctx.get("runs", [])]
+        lo = float(ctx.get("band", [0, 0])[0])
+        top = float(ctx.get("top", sb.bbox[1]))
+        y0s, y1s = sb.bbox[1], sb.bbox[3]
+        names: list[tuple[str, float]] = []
+        for it in (scans.get(crop_name(sb)) or [])[:6]:
+            t = str(it.get("text") or "").strip()
+            if len(_ALPHA_RE.findall(t)) < 2 or has_hangul(t):
+                continue
+            y_abs = y0s + float(it.get("y") or 0.0) * (y1s - y0s)
+            names.append((t, y_abs))
+        names.sort(key=lambda nv: nv[1])
+        # 런에 화자 배정 — 정밀 안전판: ①이름이 런 위 _ASSIGN_MAX_PT 안에
+        # 있을 때만(멀리서 전파하면 스캔이 놓친 이름 자리에 엉뚱한 이름이
+        # 들어간다 — 오표기 10건 실측) ②이월은 직전 페이지에서 본 화자를
+        # 페이지-톱 연속 런에만.
+        found: list[tuple[str, float]] = []
+        for i, run_y in enumerate(runs):
+            above = [(t, y) for t, y in names if y <= run_y + 30.0]
+            if above and run_y - above[-1][1] <= _ASSIGN_MAX_PT:
+                found.append((above[-1][0], run_y))
+            elif (i == 0 and last_speaker is not None
+                  and last_speaker_page == sb.page - 1
+                  and run_y - top <= _CARRY_TOP_PT):
+                found.append((last_speaker, run_y))
+        # 어느 런에도 안 붙는 이름(런 미검출 페이지 포함)은 제 위치에
+        for t, y in names:
+            if all(abs(y - r) > _SNAP_PT for r in runs):
+                found.append((t, y))
+        if names:
+            last_speaker = names[-1][0]
+            last_speaker_page = sb.page
+        for t, y in found:
+            cx, cy = lo - 70.0 + _SPK_W / 2, y + _SPK_H / 2
+            near = any(
+                abs((b.bbox[0] + b.bbox[2]) / 2 - cx) <= _SPK_DEDUP_PT
+                and abs((b.bbox[1] + b.bbox[3]) / 2 - cy) <= _SPK_DEDUP_PT
+                for b in by_page_existing.get(sb.page, []))
+            last_speaker = t
+            if near:
+                continue
+            out.append(PdfBlock(
+                page=sb.page, kind=NOTE_KIND, text=t,
+                bbox=(lo - 70.0, y, lo - 70.0 + _SPK_W, y + _SPK_H),
+                limit_x1=lo))
+    return out
+
+
+def _decode_code_note(text: str) -> str | None:
+    """노트의 **모든** 토큰이 코드 사전에 있을 때만 결정적 해독을 돌려준다.
+
+    부분 해독 금지 — `LT ARM`처럼 사전 밖 토큰이 섞이면 통째로 번역기
+    몫이다(반쪽 해독은 어순·조사가 깨진다). 줄 구조는 보존한다."""
+    if not (text or "").strip():
+        return None
+    out_lines = []
+    for line in text.splitlines():
+        toks = line.split()
+        if not toks:
+            continue
+        decoded = []
+        for t in toks:
+            ko = _CODE_KO.get(t.strip(".,").upper())
+            if ko is None:
+                return None
+            decoded.append(ko)
+        out_lines.append(" ".join(decoded))
+    return "\n".join(out_lines) if out_lines else None
 
 
 def _recover_header_notes(pool, pages_with_geom: int) -> list[PdfBlock]:

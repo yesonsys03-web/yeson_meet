@@ -174,6 +174,49 @@ async def run_pdf_job(external_id: UUID) -> None:
         await _translate_and_overlay(external_id, slot)
 
 
+async def _translate_group_texts(profile, blocks, groups, group_texts, *,
+                                 provider, cli_model, progress_cb) -> list[str]:
+    """그룹 번역 1차 + (프로파일이 켰으면) 에코 그룹 전용 프롬프트 재시도.
+
+    에코(번역=원문)는 아래 호출부가 "번역 실패 폴백"으로 보아 주석을
+    버린다. 이름·짧은 노트는 LLM이 확률적으로 에코해 증발했다(A2 실측
+    16건, 2026-08-24). 재시도는 딱 한 번이고, 전 멤버 블록이 predecode
+    (block.ko)된 그룹은 건너뛴다 — 결과가 어차피 사전값으로 덮인다."""
+    translator = create_translator(provider, cli_model,
+                                   prompt_builder=build_pdf_prompt)
+    try:
+        ko_group_texts = await translate_texts(group_texts, translator,
+                                               progress_cb=progress_cb)
+    finally:
+        await maybe_aclose_translator(translator)
+    if not getattr(profile, "retry_echoed_groups", False):
+        return ko_group_texts
+    echoed = [
+        i for i, (g, ko) in enumerate(zip(groups, ko_group_texts))
+        if not (ko.strip() and ko.strip() != g.merged_text.strip())
+        and not all(blocks[idx].ko for idx in g.member_indices)
+    ]
+    if not echoed:
+        return ko_group_texts
+    from .translate_blocks import build_pdf_retry_prompt
+    retry = create_translator(provider, cli_model,
+                              prompt_builder=build_pdf_retry_prompt)
+    try:
+        ko_retry = await translate_texts([group_texts[i] for i in echoed],
+                                         retry)
+    finally:
+        await maybe_aclose_translator(retry)
+    recovered = 0
+    for i, ko2 in zip(echoed, ko_retry):
+        s = ko2.strip()
+        if s and s != groups[i].merged_text.strip():
+            ko_group_texts[i] = ko2
+            recovered += 1
+    logger.info("pdf-translate: 에코 그룹 %d개 재시도 → %d개 회수",
+                len(echoed), recovered)
+    return ko_group_texts
+
+
 async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
     generation = slot.generation
     doc_lock = slot.doc_lock
@@ -263,13 +306,9 @@ async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
                 raise asyncio.CancelledError
             await _set_progress(external_id, int(frac * 100), generation)
 
-        translator = create_translator(provider, cli_model,
-                                       prompt_builder=build_pdf_prompt)
-        try:
-            ko_group_texts = await translate_texts(group_texts, translator,
-                                                    progress_cb=on_progress)
-        finally:
-            await maybe_aclose_translator(translator)
+        ko_group_texts = await _translate_group_texts(
+            profile, blocks, groups, group_texts,
+            provider=provider, cli_model=cli_model, progress_cb=on_progress)
 
         # 한글 블록은 추출 단계(has_hangul)에서 이미 걸러지므로, 정상적으로
         # 도는 실행이라면 유효 번역이 0일 수 없다. 0이면 번역 엔진이 전량

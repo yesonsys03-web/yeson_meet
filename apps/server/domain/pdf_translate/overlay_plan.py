@@ -430,6 +430,7 @@ def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
     # 수동 라벨의 `panel_index`는 영향이 없다. 그건 계산값이 아니라 사람이
     # 고른 **주소**이고 편집 파일에 저장된다.
     items: list[PlanItem] = []
+    placed_by_page: dict[int, list] = {}
     for i, block in enumerate(blocks):
         ko = ko_by_block[i]
         # 번역 실패 폴백(원문 복사)·빈 결과는 주석을 달지 않는다
@@ -444,7 +445,10 @@ def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
         # `place_with_doc`는 `refine_ko`와 같은 **선택** 훅이다(Protocol에
         # 없다). 페이지 그림이 있어야 후보 자리 중 빈 곳을 고를 수 있는
         # 프로파일(엑스시트: 손글씨를 피해 앉아야 한다)만 구현한다.
-        ov = (place_with_doc(block, ko, page_size, doc)
+        # 배치 이력(occupied)도 넘긴다 — 잉크만 피하면 이웃 블록끼리 같은
+        # 빈자리를 골라 주석이 포개진다(A2 실측 심한 겹침 91쌍, 사람 0쌍).
+        ov = (place_with_doc(block, ko, page_size, doc,
+                             occupied=placed_by_page.get(block.page, ()))
               if place_with_doc is not None
               else profile.place(block, ko, page_size))
         if not is_usable_rect(ov.rect, page_size):
@@ -458,6 +462,7 @@ def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
             id=uuid4().hex[:12], kind=block.kind, page=ov.page,
             panel_index=None, rect=_rect2(ov.rect),
             fontsize=ov.fontsize, source_text=block.text, text=ov.text))
+        placed_by_page.setdefault(ov.page, []).append(ov.rect)
 
     return OverlayPlan(
         job_id=job_id, profile=getattr(profile, "name", ""),

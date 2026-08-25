@@ -190,6 +190,12 @@ def build_pdf_prompt(texts: list[str]) -> str:
         "Do NOT translate asset IDs, scene/panel codes, or file-name-like "
         "tokens (e.g. TGNO_PizzaBox_CL_V01, 5LBW03_07_01) — copy them "
         "unchanged.\n"
+        "Some source text was machine-transcribed from HANDWRITING and may "
+        "contain small misreads. When a word is clearly implausible in an "
+        "animation-production note and a common production term differing "
+        "by only one or two letters fits the surrounding context, translate "
+        "that intended term instead of the literal misread. Never do this "
+        "when the literal reading makes sense.\n"
         "Short all-caps tokens with periods inside dialogue (e.g. \"M.F.\") "
         "are expletives/initialisms, NOT asset codes — translate them "
         "naturally.\n"
@@ -227,6 +233,36 @@ def build_pdf_prompt(texts: list[str]) -> str:
         "Use this glossary:\n"
         + glossary_block()
         + "\n\nInput:\n" + numbered
+    )
+
+
+def build_pdf_retry_prompt(texts: list[str]) -> str:
+    """에코(번역=원문) 그룹 재시도 전용 프롬프트.
+
+    번역 LLM은 짧은 노트(캐릭터 이름·약어)를 확률적으로 원문 그대로
+    돌려주고, pdf_run은 에코를 "번역 실패"로 보아 주석을 버린다 — A2 실측
+    16건이 그렇게 증발했다(HANK·LT ARM·STAND…). 이 프롬프트는 그 그룹만
+    다시 물으며, 반대로 **립싱크 음소·순수 숫자 코드는 그대로 돌려보내라**고
+    명시한다 — 음소를 억지로 옮기면('HU HU'→'후후') 사람이 안 다는 자리에
+    잡음 주석이 생긴다. 재시도에서도 에코면 기존 규칙대로 드롭된다."""
+    numbered = json.dumps(texts, ensure_ascii=False)
+    return (
+        "These are short handwritten notes from an animation exposure "
+        "sheet (X-sheet) that a first translation pass returned unchanged. "
+        "Translate each into Korean for Korean animation staff:\n"
+        "- Character names are TRANSLITERATED into Hangul (e.g. \"HANK\" "
+        "→ \"행크\", \"DALE\" → \"데일\").\n"
+        "- Action/direction abbreviations and words are translated by "
+        "meaning (e.g. \"LT ARM\" → \"왼 팔\", \"STAND\" → \"선다\", "
+        "\"HEAD\" → \"고개\").\n"
+        "- Lip-sync phonetic notation (vowel/consonant mouth-shape "
+        "sequences like \"HU HU\", \"EE K AH\", \"OH G\") and pure "
+        "number/frame codes are NOT translations targets — return those "
+        "EXACTLY unchanged.\n"
+        "Preserve \\n line breaks. Input is a JSON array of strings; "
+        "return ONLY a JSON array of the same length, same order. "
+        "No prose, no markdown fences.\n"
+        "\nInput:\n" + numbered
     )
 
 
