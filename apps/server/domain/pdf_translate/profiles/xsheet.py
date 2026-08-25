@@ -180,7 +180,12 @@ _ASSIGN_MAX_PT = 150.0   # 런 위 이름이 이보다 멀면 배정하지 않�
 # 주석-주석 겹침 게이트(2026-08-25): 잉크만 피하던 배치가 이웃 블록과 같은
 # 빈자리를 골라 심한 겹침 91쌍(사람 0쌍)을 만들었다 — 배치 이력을 점유
 # 공간으로 넘겨 받아 피한다.
-_OCC_OK = 0.05        # 후보 면적의 이 비율까지는 겹침 허용
+_OCC_OK = 0.05        # 작은 쪽 면적의 이 비율까지는 겹침 허용
+# 겹침 후보에 얹는 벽 — 겹치지 않는 후보가 하나라도 있으면 절대 못 이긴다.
+# 이 값 이상이면 "전 후보가 막혔다"는 신호이기도 하다(_far_candidates 발동).
+_BLOCKED = 100000.0
+# 막힌 경우에만 쓰는 넓은 세로 사다리(pt). 정상 배치에는 관여하지 않는다.
+_FAR_LADDER = (80.0, -80.0, 120.0, -120.0, 180.0, -180.0, 260.0, -260.0)
 
 
 def _occupied_frac(rect: tuple[float, float, float, float],
@@ -272,19 +277,16 @@ _HOUSE_KO_XSHEET: tuple[tuple[re.Pattern[str], str], ...] = (
     # 압도·작품 비종속). 유리창↔창문(37:36)·애니(6:6)는 관례가 안 갈려 제외.
     (re.compile(r"앤티시페이션"), "준비동작"),
     (re.compile(r"악센트"), "액센트"),
-)
-# 원문에 이 코드가 **없을 때만** 적용하는 규칙. 원문이 명시한 정보를 지우지
-# 않기 위한 장치다 — 실측 사고(2026-08-25): `발\s*스텝`→`스텝`이 무조건
-# 규칙이라 `RT|FT|STEP`(오른발 스텝)의 번역 `오른|발|스텝`에서 **`발`이
-# 삭제**됐다(A2 계획 3건 실재). `\s*`가 줄바꿈을 넘어 매칭한 것도 원인 —
-# 실제 잉여 표기는 언제나 단일 토큰 `발스텝`이었다(전수 47건 전부).
-_HOUSE_KO_XSHEET_UNLESS_SRC: tuple[tuple[re.Pattern[str],
-                                         tuple[tuple[re.Pattern[str], str], ...]], ...] = (
-    # FT(foot)가 원문에 있으면 `발`은 정당한 낱말이다(47건 중 9건). 없을 때만
-    # 잉여 음역을 걷는다: 사람 `스텝` 61 / `발스텝` 0.
-    (re.compile(r"\bFT\b", re.IGNORECASE), (
-        (re.compile(r"발스텝"), "스텝"),
-    )),
+    # STEP의 잉여 음역 `발스텝`(사람 `스텝` 61 / `발스텝` 0)만 걷는다.
+    # ⚠경계가 계약이다(2026-08-25 실측): 옛 패턴 `발\s*스텝`은 `\s*`가
+    # 줄바꿈을 넘어, 원문 `RT|FT|STEP`(오른발 스텝)의 번역 `오른|발|스텝`
+    # 에서 **`발`(foot)을 지울 수 있었다**. 실제 잉여 표기는 언제나 붙어
+    # 쓴 단일 토큰이었고(전수 47건 전부 `발스텝`), 사람이 FT를 쓴 자리엔
+    # `발`이 정답이다. 앞의 `오른`·`왼`도 같은 이유로 잠근다 —
+    # `오른발스텝`을 줄이면 `오른스텝`이 되어 발이 사라진다. 반면 LLM이
+    # 흔히 내는 겹말 `오른|발|발스텝`은 이 규칙이 `오른|발|스텝`으로
+    # 정확히 정리한다(옛 규칙이 실제로 하던 일).
+    (re.compile(r"(?<!오른)(?<!왼)발스텝"), "스텝"),
 )
 # 원문 코드별 규칙 — 같은 한국어라도 원문이 무엇이냐에 따라 사람 표기가
 # 갈린다(TILT는 `기웃`, LEAN은 `기울인다`). 무조건 치환하면 한쪽이 깨진다.
@@ -640,15 +642,36 @@ class XsheetProfile:
 
         `place`(문서 없이)는 그대로 남긴다: 첫 후보를 돌려주므로 기존
         호출자·테스트의 계약이 바뀌지 않는다."""
-        page_h = page_size[1]
         try:
             ink = self._page_ink(doc, block.page)
         except Exception:  # noqa: BLE001 — 그림을 못 얻으면 옛 경로로
             logger.warning("pdf-translate: page %d 잉크 마스크 실패 — 기본 배치",
                            block.page)
             return self.place(block, ko_text, page_size)
+        best = self._score_candidates(
+            self._candidates(block, ko_text, page_size),
+            block, ko_text, page_size, ink, occupied)
+        if best is None:
+            return self.place(block, ko_text, page_size)
+        # 전 후보가 이웃 주석을 침범할 때만(=벽 점수) 탐색을 넓힌다. 실측
+        # 계기(A3 116p): 거대 주석(높이 557pt — 과병합 클러스터)이 칸을 메운
+        # 페이지에서 작은 주석의 후보가 전멸해, 폴백이 그 안에 앉으며 심한
+        # 겹침 4쌍이 났다(A2는 0쌍). 이 층은 **막혔을 때만** 켜지므로 정상
+        # 배치(=사람 대조 지표)에는 영향이 없다.
+        if best[0] >= _BLOCKED:
+            wide = self._score_candidates(
+                self._far_candidates(block, ko_text, page_size),
+                block, ko_text, page_size, ink, occupied)
+            if wide is not None and wide[0] < best[0]:
+                best = wide
+        return best[1]
+
+    def _score_candidates(self, candidates, block: PdfBlock, ko_text: str,
+                          page_size: tuple[float, float], ink,
+                          occupied) -> tuple[float, Overlay] | None:
+        page_h = page_size[1]
         best: tuple[float, Overlay] | None = None
-        for rect, fontsize, dpen in self._candidates(block, ko_text, page_size):
+        for rect, fontsize, dpen in candidates:
             ink_score = _ink_ratio(ink, rect, page_h)
             occ = _occupied_frac(rect, occupied)
             # 전 후보 채점 후 전역 최소를 고른다 — "잉크 없는 첫 자리"로
@@ -662,11 +685,32 @@ class XsheetProfile:
                 # 주석끼리는 절대 안 겹친다(A2 실측: 사람 심한 겹침 0쌍 대
                 # 우리 91쌍). 겹침 없는 후보가 하나라도 있으면 절대 못 이기는
                 # 크기의 벽을 세우고, 전멸일 때만 가장 덜 겹치는 자리로.
-                score += 100000.0 + occ * 1000.0
+                score += _BLOCKED + occ * 1000.0
             if best is None or score < best[0]:
                 best = (score, Overlay(page=block.page, rect=rect,
                                        text=ko_text, fontsize=fontsize))
-        return best[1] if best else self.place(block, ko_text, page_size)
+        return best
+
+    def _far_candidates(self, block: PdfBlock, ko_text: str,
+                        page_size: tuple[float, float]):
+        """막힌 경우에만 쓰는 넓은 사다리 — 원문 위아래로 더 멀리 밀어 본다.
+
+        변위를 그대로 비용으로 실어 보내므로(먼 자리는 그만큼 나쁜 점수),
+        겹치지 않는 자리가 있으면 그쪽이 이기고 없으면 원래 후보가 남는다."""
+        bx0, by0, bx1, _by1 = block.bbox
+        page_w, page_h = page_size
+        limit_x1 = block.limit_x1 if block.limit_x1 is not None else page_w - 8.0
+        want = _natural_width(ko_text, _FONTSIZE)
+        height = _estimate_height(ko_text, want, _FONTSIZE)
+        for dy in _FAR_LADDER:
+            top = by0 + dy
+            if top < 8.0 or top + height > page_h - 8.0:
+                continue
+            for x0 in (bx1 + 3.0, bx0 - 3.0 - want, bx0):
+                if x0 < 8.0 or x0 + want > limit_x1:
+                    continue
+                yield (_clamp_nondegenerate(x0, top, x0 + want, top + height,
+                                            page_h), _FONTSIZE, abs(dy))
 
     def _page_ink(self, doc: PdfDocument, page: int):
         """이 페이지의 손글씨 마스크. 블록이 페이지 순서로 오므로 한 장만 캔다."""
@@ -805,11 +849,6 @@ class XsheetProfile:
         for src_pat, rules in _HOUSE_KO_XSHEET_BY_SRC:
             if not src_pat.search(src):
                 continue
-            for pat, rep in rules:
-                out = pat.sub(rep, out)
-        for src_pat, rules in _HOUSE_KO_XSHEET_UNLESS_SRC:
-            if src_pat.search(src):
-                continue      # 원문이 명시한 낱말은 지우지 않는다
             for pat, rep in rules:
                 out = pat.sub(rep, out)
         return out

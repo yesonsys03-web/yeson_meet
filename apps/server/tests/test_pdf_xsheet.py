@@ -1188,8 +1188,10 @@ def _ko_note(src: str) -> PdfBlock:
     ("SHRUG\nGESTURE\nONS", "제스쳐로\n온 원스", "제스쳐로\n1콤마에"),  # 숫자 없는 약칭
     # STLS(복수형)도 settle — 기존 `[&+]\s*세틀` 규칙이 접속사째 걷는다
     ("HAIR\nO'LAP\n& STLS", "머리카락\n오버랩\n& 세틀", "머리카락\n오버랩\n안착"),
-    # 잉여 음역 `발스텝`은 원문에 FT가 없을 때만 걷는다(FT면 `발`이 정답)
+    # 잉여 음역 `발스텝`은 붙어 쓴 단일 토큰일 때만 걷는다
     ("0X\nSTEP", "0X 발스텝", "0X 스텝"),
+    # LLM 겹말 `발 + 발스텝`은 뒤엣것만 줄인다(FT의 `발`은 남는다)
+    ("RT\nFT\nSTEP", "오른\n발\n발스텝", "오른\n발\n스텝"),
     ("ACTION\nON (1)S", "액션 온 원스", "액션 1콤마에"),
     ("WHEELS\nSPIN\nON\n2'S", "바퀴\n회전\n온\n투스", "바퀴\n회전\n2콤마에"),
 ])
@@ -1218,7 +1220,9 @@ def test_refine_ko_applies_house_terms(src, ko, want):
     # `오른|발|스텝`을 `오른|스텝`으로 깎았다(RT FT STEP = 오른발 스텝).
     ("HANK\nLT\nFT\nSTEP", "행크\n왼\n발\n스텝"),
     ("RT\nFT\nSTEP", "오른\n발\n스텝"),
-    ("SLIDES\nRT\nFT\nSTEP", "미끄러짐\n오른\n발스텝"),
+    ("RT\nFT\nSTEP", "오른발\n스텝"),
+    # 붙여 쓴 `오른발스텝`을 줄이면 `오른스텝`이 되어 발이 사라진다 — 잠금
+    ("RT\nFT\nSTEP", "오른발스텝"),
 ])
 def test_refine_ko_leaves_unrelated_text(src, ko):
     assert xs.XsheetProfile().refine_ko(_ko_note(src), ko) == ko
@@ -1372,6 +1376,25 @@ def test_place_with_doc_tall_stack_prefers_side_over_below():
     assert ov.rect[2] == pytest.approx(297.0)    # 원문 왼쪽에 병기
     assert ov.rect[1] == pytest.approx(500.0)    # 스택 상단 높이 그대로
     assert ov.fontsize == xs._FONTSIZE
+
+
+def test_place_with_doc_escapes_when_every_near_slot_is_taken():
+    """이웃 주석이 곁을 다 메우면 **멀리라도** 겹치지 않는 자리로 간다.
+
+    실측 계기(A3 116p): 과병합으로 생긴 거대 주석(높이 557pt)이 칸을 메운
+    페이지에서 작은 주석의 후보가 전멸해, 폴백이 그 안에 앉으며 심한 겹침
+    4쌍이 났다(A2 0쌍). 넓은 사다리는 **막혔을 때만** 켜진다."""
+    png = _ink_png(1100, 1700, [])           # 잉크 제약 없음
+    doc = FakeDoc(png=png)
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(300.0, 500.0, 340.0, 520.0), limit_x1=560.0)
+    # 원문 주변(좌·우·아래 ±52pt)을 통째로 덮는 이웃 주석 하나
+    wall = (200.0, 400.0, 460.0, 640.0)
+    ov = xs.XsheetProfile().place_with_doc(b, "행크", (792.0, 1224.0), doc,
+                                           occupied=(wall,))
+    assert xs._occupied_frac(ov.rect, (wall,)) <= xs._OCC_OK, ov.rect
+    # 그래도 원문에서 멀리 도망가지는 않는다(넓은 사다리 상한 안)
+    assert abs(ov.rect[1] - 500.0) <= 260.0, ov.rect
 
 
 def test_place_with_doc_falls_back_when_render_fails(monkeypatch):
