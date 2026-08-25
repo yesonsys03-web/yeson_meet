@@ -1183,6 +1183,10 @@ def _ko_note(src: str) -> PdfBlock:
     ("STOP", "정지", "멈춤"),
     ("PILLOW W/W ACTION", "베개를 따라 움직임", "베개 액션맞춰 움직임"),
     ("BLANKETS W/W", "담요와 함께 움직임 & 안착", "담요 액션맞춰 움직임 & 안착"),
+    # ON n'S(n콤마) — 사용자 실물 지적(2026-08-25): 음역 `온 원스` 금지
+    ("ACTION\nON 1S", "액션\n온 원스", "액션\n1콤마에"),
+    ("ACTION\nON (1)S", "액션 온 원스", "액션 1콤마에"),
+    ("WHEELS\nSPIN\nON\n2'S", "바퀴\n회전\n온\n투스", "바퀴\n회전\n2콤마에"),
 ])
 def test_refine_ko_applies_house_terms(src, ko, want):
     assert xs.XsheetProfile().refine_ko(_ko_note(src), ko) == want
@@ -1202,6 +1206,8 @@ def test_refine_ko_applies_house_terms(src, ko, want):
     ("BOOMHAUER", "붐하우어"),           # 원문 자체가 풀네임이면 존중
     ("FREEZE", "정지"),
     ("PILLOW ACTION", "베개를 따라 움직임"),
+    # 원문에 ON n'S가 없으면 음역이라도 건드리지 않는다 (ON HIS ≠ ON 1'S)
+    ("HANDS ON HIS HIPS", "온 원스"),
 ])
 def test_refine_ko_leaves_unrelated_text(src, ko):
     assert xs.XsheetProfile().refine_ko(_ko_note(src), ko) == ko
