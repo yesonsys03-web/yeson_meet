@@ -271,8 +271,20 @@ _HOUSE_KO_XSHEET: tuple[tuple[re.Pattern[str], str], ...] = (
     # 2026-08-25 품질 전수 대조(사람 1,942쌍) 추가분 — 채택 기준 동일(관례
     # 압도·작품 비종속). 유리창↔창문(37:36)·애니(6:6)는 관례가 안 갈려 제외.
     (re.compile(r"앤티시페이션"), "준비동작"),
-    (re.compile(r"발\s*스텝"), "스텝"),
     (re.compile(r"악센트"), "액센트"),
+)
+# 원문에 이 코드가 **없을 때만** 적용하는 규칙. 원문이 명시한 정보를 지우지
+# 않기 위한 장치다 — 실측 사고(2026-08-25): `발\s*스텝`→`스텝`이 무조건
+# 규칙이라 `RT|FT|STEP`(오른발 스텝)의 번역 `오른|발|스텝`에서 **`발`이
+# 삭제**됐다(A2 계획 3건 실재). `\s*`가 줄바꿈을 넘어 매칭한 것도 원인 —
+# 실제 잉여 표기는 언제나 단일 토큰 `발스텝`이었다(전수 47건 전부).
+_HOUSE_KO_XSHEET_UNLESS_SRC: tuple[tuple[re.Pattern[str],
+                                         tuple[tuple[re.Pattern[str], str], ...]], ...] = (
+    # FT(foot)가 원문에 있으면 `발`은 정당한 낱말이다(47건 중 9건). 없을 때만
+    # 잉여 음역을 걷는다: 사람 `스텝` 61 / `발스텝` 0.
+    (re.compile(r"\bFT\b", re.IGNORECASE), (
+        (re.compile(r"발스텝"), "스텝"),
+    )),
 )
 # 원문 코드별 규칙 — 같은 한국어라도 원문이 무엇이냐에 따라 사람 표기가
 # 갈린다(TILT는 `기웃`, LEAN은 `기울인다`). 무조건 치환하면 한쪽이 깨진다.
@@ -281,7 +293,8 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
     # STL(settle): 사람 `안착` 50 / 우리 0 ↔ 우리 `세틀` 9·`스틸` 6·`정지` 5.
     # ⚠단어 경계가 계약이다: 부분 문자열로 찾으면 `HUSTLE`·`CASTLE`·`WRESTLE`가
     # STL 노트로 오인돼 멀쩡한 `정지`를 `안착`으로 덮는다(테스트가 잡은 함정).
-    (re.compile(r"\bSTL\b", re.IGNORECASE), (
+    # 복수형 `STLS`도 같은 코드다(A2 계획 실측: `& STLS`의 `세틀` 잔존 1건).
+    (re.compile(r"\bSTLS?\b", re.IGNORECASE), (
         (re.compile(r"[&+]\s*세틀"), "안착"),
         (re.compile(r"세틀"), "안착"),
         (re.compile(r"스틸"), "안착"),
@@ -316,10 +329,12 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
     )),
     # ON n'S(n콤마 작화): 사람 `1콤마에`·`2콤마에` 12 / 음역 0 ↔ 우리
     # `온 원스`·`온 투스` 17 / 콤마 0 (2026-08-25 사용자 실물 지적 + A2 전수
-    # 재확인). 전사 실형태는 `ON 1S`·`ON (1)S`·`ON\n2'S` — 숫자는 음역 쪽이
-    # 이미 담고 있어(원스=1·투스=2) 결정적으로 되돌린다. `온`과 음역이 줄로
-    # 갈라진 실물(`회전|온|투스`)이 있어 공백 매칭은 개행을 포함해야 한다.
-    (re.compile(r"\bON\s*\(?\d\)?\s*'?S\b", re.IGNORECASE), (
+    # 재확인). 전사 실형태는 `ON 1S`·`ON (1)S`·`ON\n2'S`, 그리고 숫자 없는
+    # **`ONS`**(on ones 약칭 — A2 계획에 `온 원스` 잔존 1건으로 드러났다).
+    # 숫자는 음역 쪽이 이미 담고 있어(원스=1·투스=2) 결정적으로 되돌린다.
+    # `온`과 음역이 줄로 갈라진 실물(`회전|온|투스`)이 있어 공백 매칭은
+    # 개행을 포함해야 한다.
+    (re.compile(r"\b(?:ONS|ON\s*\(?\d\)?\s*'?S)\b", re.IGNORECASE), (
         (re.compile(r"온\s*원스"), "1콤마에"),
         (re.compile(r"온\s*투스"), "2콤마에"),
     )),
@@ -790,6 +805,11 @@ class XsheetProfile:
         for src_pat, rules in _HOUSE_KO_XSHEET_BY_SRC:
             if not src_pat.search(src):
                 continue
+            for pat, rep in rules:
+                out = pat.sub(rep, out)
+        for src_pat, rules in _HOUSE_KO_XSHEET_UNLESS_SRC:
+            if src_pat.search(src):
+                continue      # 원문이 명시한 낱말은 지우지 않는다
             for pat, rep in rules:
                 out = pat.sub(rep, out)
         return out

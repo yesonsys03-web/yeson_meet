@@ -1185,6 +1185,11 @@ def _ko_note(src: str) -> PdfBlock:
     ("BLANKETS W/W", "담요와 함께 움직임 & 안착", "담요 액션맞춰 움직임 & 안착"),
     # ON n'S(n콤마) — 사용자 실물 지적(2026-08-25): 음역 `온 원스` 금지
     ("ACTION\nON 1S", "액션\n온 원스", "액션\n1콤마에"),
+    ("SHRUG\nGESTURE\nONS", "제스쳐로\n온 원스", "제스쳐로\n1콤마에"),  # 숫자 없는 약칭
+    # STLS(복수형)도 settle — 기존 `[&+]\s*세틀` 규칙이 접속사째 걷는다
+    ("HAIR\nO'LAP\n& STLS", "머리카락\n오버랩\n& 세틀", "머리카락\n오버랩\n안착"),
+    # 잉여 음역 `발스텝`은 원문에 FT가 없을 때만 걷는다(FT면 `발`이 정답)
+    ("0X\nSTEP", "0X 발스텝", "0X 스텝"),
     ("ACTION\nON (1)S", "액션 온 원스", "액션 1콤마에"),
     ("WHEELS\nSPIN\nON\n2'S", "바퀴\n회전\n온\n투스", "바퀴\n회전\n2콤마에"),
 ])
@@ -1208,6 +1213,12 @@ def test_refine_ko_applies_house_terms(src, ko, want):
     ("PILLOW ACTION", "베개를 따라 움직임"),
     # 원문에 ON n'S가 없으면 음역이라도 건드리지 않는다 (ON HIS ≠ ON 1'S)
     ("HANDS ON HIS HIPS", "온 원스"),
+    # ⛔원문이 FT(foot)면 `발`은 정당한 낱말 — 지우면 내용이 사라진다.
+    # 실측 사고(2026-08-25): 무조건 `발\\s*스텝` 규칙이 A2 계획 3건에서
+    # `오른|발|스텝`을 `오른|스텝`으로 깎았다(RT FT STEP = 오른발 스텝).
+    ("HANK\nLT\nFT\nSTEP", "행크\n왼\n발\n스텝"),
+    ("RT\nFT\nSTEP", "오른\n발\n스텝"),
+    ("SLIDES\nRT\nFT\nSTEP", "미끄러짐\n오른\n발스텝"),
 ])
 def test_refine_ko_leaves_unrelated_text(src, ko):
     assert xs.XsheetProfile().refine_ko(_ko_note(src), ko) == ko
