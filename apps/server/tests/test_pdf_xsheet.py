@@ -890,6 +890,54 @@ def test_render_crops_skips_fully_cached_pages(tmp_path):
     assert doc.render_calls == [(1, ht._CROP_DPI)]   # 빠진 페이지만 렌더
 
 
+def test_blocks_cache_roundtrip_preserves_every_field(tmp_path):
+    """추출 캐시는 블록을 손실 없이 복원한다 — 한 필드만 빠져도 배치·번역이
+    조용히 달라진다(limit_x1이 없으면 열 경계가 풀리고, ko가 없으면 결정적
+    해독이 사라져 에코-드롭이 되살아난다)."""
+    blocks = [
+        PdfBlock(page=3, kind=xs.NOTE_KIND, text="RT FT\nSTEP",
+                 bbox=(1.5, 2.5, 3.5, 4.5), limit_y=9.0, limit_x1=351.6,
+                 ko="오른발 스텝"),
+        PdfBlock(page=0, kind=xs.STRIP_KIND, text='{"band": [1, 2]}',
+                 bbox=(0.0, 0.0, 1.0, 1.0)),
+    ]
+    pdf_run._save_cached_blocks(tmp_path, "k1", blocks)
+    assert pdf_run._load_cached_blocks(tmp_path, "k1") == blocks
+    # 지문이 다르면 무효 — 추출 코드가 바뀐 런이 옛 결과를 쓰면 안 된다
+    assert pdf_run._load_cached_blocks(tmp_path, "k2") is None
+
+
+def test_extract_cache_key_tracks_logic_and_constants():
+    """지문은 상수값과 추출 로직 **둘 다** 따라간다.
+
+    한쪽만 보면 새는 구멍이 있다: 상수는 전역 이름으로 로드되므로 값만
+    바꾸면 바이트코드가 그대로고, 로직만 바꾸면 상수 문자열이 그대로다.
+    지문이 안 바뀌면 수정이 조용히 무시된다(동결본 혼선과 같은 계열)."""
+    prof = xs.XsheetProfile()
+    base = prof.extract_cache_key()
+    assert base == prof.extract_cache_key()          # 결정적
+    original = xs._CLUSTER_PAD
+    try:
+        xs._CLUSTER_PAD = original + 1.0
+        assert prof.extract_cache_key() != base      # 상수 변경 포착
+    finally:
+        xs._CLUSTER_PAD = original
+    assert prof.extract_cache_key() == base          # 원복되면 같은 지문
+
+
+def test_blocks_cache_key_needs_the_profile_hook(tmp_path):
+    """훅이 없는 프로파일(스토리보드)은 캐시를 쓰지 않는다 — 텍스트 레이어
+    추출은 이미 빠르고, 지문 없이 캐시하면 무효화 수단이 사라진다."""
+    src = tmp_path / "src.pdf"
+    src.write_bytes(b"%PDF-1.4\n")
+    assert pdf_run._blocks_cache_key(object(), src) is None
+    key = pdf_run._blocks_cache_key(xs.XsheetProfile(), src)
+    assert key and key.startswith(xs.XsheetProfile().extract_cache_key())
+    # 원본이 바뀌면(크기) 지문도 바뀐다
+    src.write_bytes(b"%PDF-1.4\n%extra\n")
+    assert pdf_run._blocks_cache_key(xs.XsheetProfile(), src) != key
+
+
 def test_transcribe_aborts_on_quota_refusal(tmp_path, monkeypatch):
     """쿼터 소진(rc=0 + 평문 한 줄)은 쪼개기 재시도 대상이 아니라 즉시 중단.
 

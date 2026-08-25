@@ -523,6 +523,39 @@ class XsheetProfile:
                 return True
         return False
 
+    def extract_cache_key(self) -> str:
+        """추출 결과 캐시의 지문(선택 훅 — pdf_run이 `getattr`로 찾는다).
+
+        왜 필요한가: 엑스시트 추출은 전 페이지 RapidOCR이라 문서당 10~17분
+        인데(A3 116p 10.7분·A1 188p 17분), 재번역은 배치·용어·번역만 다시
+        하려는 것이라 같은 원본을 매번 다시 읽는다. 결과는 결정적이므로
+        캐시가 성립한다. 페이지 병렬화는 실측 기각(ONNX가 이미 전 코어를
+        쓴다 — 4스레드가 순차의 0.53배).
+
+        ⚠**지문이 계약이다**. 추출 로직이나 상수가 바뀌었는데 지문이 같으면
+        수정이 조용히 무시된다(오늘 동결본 혼선과 같은 계열의 함정). 그래서
+        ①추출 경로 함수들의 **바이트코드**(로직 변경 포착)와 ②추출을
+        좌우하는 **상수값**(값 변경 포착)을 함께 해시한다. 어느 한쪽만으로는
+        새는 구멍이 있다 — 상수는 전역 이름으로 로드되므로 값만 바꾸면
+        바이트코드가 그대로고, 로직만 바꾸면 상수 문자열이 그대로다.
+        """
+        import hashlib
+        logic = b"".join(
+            fn.__code__.co_code for fn in (
+                XsheetProfile.extract, _ocr_page, _derive_geometry, _cluster,
+                _is_template, _make_speaker_strip, _recover_header_notes,
+            ))
+        values = "|".join(str(v) for v in (
+            _OCR_DPI, _SCAN_COVER, _HEADER_ROW_TOL, _BAND_PAD, _NUM_BIN_PT,
+            _NUM_BIN_MIN, _NUM_BIN_RATIO, _PHONETIC_MAX_LEN, _CLUSTER_PAD,
+            _MIN_NOTE_AREA, _MIN_RAW_ALNUM, _HDR_MIN_ALPHA, _HDR_POS_QUANT,
+            _HDR_REPEAT_FRAC, _HDR_REPEAT_MIN, _STRIP_XPAD_L, _STRIP_XPAD_R,
+            _RUN_GAP, _RUN_PH_MAXLEN, _DIALOG_RE.pattern,
+            sorted(_HEADER_LABELS), sorted(_FOOTER_LABELS),
+            sorted(_TEMPLATE_WORDS),
+        ))
+        return hashlib.sha256(logic + values.encode()).hexdigest()[:16]
+
     def extract(self, doc: PdfDocument) -> list[PdfBlock]:
         """전 페이지 OCR → 템플릿/음소/번호 컬럼 제외 → 근접 클러스터링.
 

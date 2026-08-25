@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -48,6 +49,7 @@ from .pdf_tasks import (
     mark_rebaking,
 )
 from .profiles import detect_profile, profile_by_name
+from .profiles.base import PdfBlock
 from .translate_blocks import build_pdf_prompt, translate_texts
 from .utterances import group_utterances
 
@@ -65,6 +67,60 @@ _INFLIGHT_STATUSES = (
 # 30을 쓰면 상한이 9GB가 된다. 자가호스팅 데스크톱 앱이라 이 디스크는
 # 사용자의 개인 디스크다(2026-07-30 전브랜치 리뷰 I-2).
 RETENTION_KEEP = 10
+
+# 추출 결과 캐시(엑스시트 재번역 가속). 전 페이지 OCR은 문서당 10~17분인데
+# 결정적이라 같은 원본·같은 추출 코드면 결과가 같다 — 재번역은 배치·용어·
+# 번역만 다시 하려는 것이므로 이걸 매번 다시 읽을 이유가 없다. 전사 캐시
+# (transcripts.json)와 같은 자리, 같은 취지다.
+_BLOCKS_CACHE = "blocks_cache.json"
+
+
+def _blocks_cache_key(profile, source: Path) -> str | None:
+    """`(추출코드 지문, 원본 파일 신원)` — 프로파일이 지문을 줄 때만 캐시를 쓴다.
+
+    `extract_cache_key`는 refine_ko·place_with_doc과 같은 **선택** 훅이다
+    (Protocol 미등록). 원본 신원은 크기+mtime으로 본다 — 265MB PDF를 매
+    실행 해시하는 비용을 피하고, 잡 폴더의 원본은 업로드 후 바뀌지 않는다.
+    """
+    hook = getattr(profile, "extract_cache_key", None)
+    if hook is None:
+        return None
+    try:
+        st = source.stat()
+    except OSError:
+        return None
+    return f"{hook()}|{st.st_size}|{int(st.st_mtime)}"
+
+
+def _load_cached_blocks(job_dir: Path, key: str) -> list | None:
+    path = job_dir / _BLOCKS_CACHE
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("key") != key:
+            logger.info("pdf-translate: 추출 캐시 무효(지문 불일치) — 다시 추출")
+            return None
+        return [PdfBlock(page=b["page"], kind=b["kind"], text=b["text"],
+                         bbox=tuple(b["bbox"]), limit_y=b["limit_y"],
+                         limit_x1=b["limit_x1"], ko=b["ko"])
+                for b in data["blocks"]]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        logger.warning("pdf-translate: 추출 캐시를 읽지 못했습니다 (%s) — 다시 추출",
+                       exc)
+        return None
+
+
+def _save_cached_blocks(job_dir: Path, key: str, blocks: list) -> None:
+    payload = {"key": key, "blocks": [
+        {"page": b.page, "kind": b.kind, "text": b.text, "bbox": list(b.bbox),
+         "limit_y": b.limit_y, "limit_x1": b.limit_x1, "ko": b.ko}
+        for b in blocks]}
+    try:
+        (job_dir / _BLOCKS_CACHE).write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:  # 캐시는 편의 기능 — 실패해도 파이프라인은 간다
+        logger.warning("pdf-translate: 추출 캐시 저장 실패 (%s)", exc)
 
 
 class PdfTranslateError(RuntimeError):
@@ -255,14 +311,24 @@ async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
         if profile is None:
             raise PdfTranslateError(
                 "지원하지 않는 PDF 포맷입니다 (현재 지원: 스토리보드형·엑스시트)")
-        blocks = await asyncio.to_thread(_with_doc_lock, doc_lock, profile.extract, doc)
+        # 추출 캐시 — 같은 원본·같은 추출 코드면 결과가 같다(_BLOCKS_CACHE 참조).
+        cache_key = _blocks_cache_key(profile, Path(source_path))
+        job_dir = pdf_job_dir(external_id)
+        blocks = _load_cached_blocks(job_dir, cache_key) if cache_key else None
+        if blocks:
+            logger.info("pdf-translate: 추출 캐시 적중 — %d blocks (OCR 생략)",
+                        len(blocks))
+        else:
+            blocks = await asyncio.to_thread(
+                _with_doc_lock, doc_lock, profile.extract, doc)
+            if blocks and cache_key:
+                _save_cached_blocks(job_dir, cache_key, blocks)
         if not blocks:
             raise PdfTranslateError("번역할 텍스트 블록을 찾지 못했습니다")
         # 손글씨 포맷(xsheet)의 전사 훅 — 크롭 렌더(doc 락 필요·빠름)와
         # CLI 전사(락 불필요·문서당 수십 분)를 반드시 분리한다. 한 훅으로
         # 합치면 전사 내내 페이지 미리보기 라우트가 doc 락에 막힌다.
         if hasattr(profile, "transcribe_blocks"):
-            job_dir = pdf_job_dir(external_id)
             await asyncio.to_thread(
                 _with_doc_lock, doc_lock,
                 profile.render_transcribe_crops, doc, blocks, job_dir)
