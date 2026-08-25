@@ -306,27 +306,6 @@ pub fn start_server_inner(
         // subtitle source. Code already defaults to AUDIO; pin it so a future SDK
         // default change can't silently break subtitles.
         .env("GEMINI_RESPONSE_MODALITY", "AUDIO")
-        // X-sheet PDF pipeline concurrency. Both stages spawn subscription-CLI
-        // sessions and spend nearly all their wall-clock waiting on the API, so
-        // concurrency buys time without extra tokens (total token cost is per
-        // crop / per chunk, not per session).
-        //
-        // Measured on KOTH_1401_A3 (116 pages, 2,294 crops, 2026-08-25):
-        // transcription with 6 workers ran 72 min at a median 60 crops/min;
-        // translation ran 42 min on the default 3. The code defaults are 3 and
-        // 3, and a GUI-launched app inherits no shell env — so the app was
-        // silently running the slow path. Pinned here like the subtitle tuning
-        // above, but an explicit shell value still wins so the setting can be
-        // tuned without a rebuild. 8 is the transcription cap
-        // (handwriting_transcribe._workers clamps it).
-        .env(
-            "YESON_PDF_XSHEET_CLI_WORKERS",
-            std::env::var("YESON_PDF_XSHEET_CLI_WORKERS").unwrap_or_else(|_| "6".into()),
-        )
-        .env(
-            "YESON_PDF_TRANSLATE_WORKERS",
-            std::env::var("YESON_PDF_TRANSLATE_WORKERS").unwrap_or_else(|_| "6".into()),
-        )
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUTF8", "1")
         .stdin(Stdio::null())
@@ -414,6 +393,22 @@ fn inject_secrets(command: &mut Command) -> Result<(), String> {
     let config = crate::server_config::load_ensured()?;
     // JWT_SECRET is guaranteed non-empty by load_ensured (generated-once).
     command.env("JWT_SECRET", &config.jwt_secret); // vibelign: allow-secret
+    // X-sheet PDF 파이프라인 동시성 — 설정 패널에서 고른 값(기기·구독 상태에
+    // 따라 적정값이 다르다). 두 단계 모두 벽시계의 대부분을 API 대기로 쓰므로
+    // 동시성은 시간을 사고 토큰은 그대로다(비용은 크롭·청크 단위).
+    //
+    // 코드 기본값은 3·3이고 **GUI로 띄운 앱은 셸 env를 물려받지 않아** 늘 느린
+    // 경로로 돌고 있었다(2026-08-25 실측 발견). 셸에서 명시한 값이 있으면 그게
+    // 이긴다 — 개발·벤치에서 재빌드 없이 바꿀 수 있어야 한다.
+    for (key, value) in [
+        ("YESON_PDF_XSHEET_CLI_WORKERS", config.transcribe_workers()),
+        ("YESON_PDF_TRANSLATE_WORKERS", config.translate_workers()),
+    ] {
+        command.env(
+            key,
+            std::env::var(key).unwrap_or_else(|_| value.to_string()),
+        );
+    }
     let pairs = [
         ("GEMINI_API_KEY", config.gemini_api_key.trim()),
         (

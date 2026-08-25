@@ -58,6 +58,28 @@ pub struct ServerConfig {
     pub summary_backend: String,
     /// Optional model for summary backends that take one (e.g. opencode/deepseek).
     pub summary_model: String,
+    /// X-sheet PDF 파이프라인이 동시에 띄우는 구독 CLI 세션 수(전사·번역).
+    /// 두 단계 모두 벽시계의 대부분을 API 대기로 쓰므로 동시성은 시간을 사고
+    /// 토큰은 그대로다(비용은 크롭·청크 단위). 다만 적정값은 기기·구독 상태에
+    /// 따라 다르므로 운영자가 고른다. 0 = 미설정 → `*_workers()`가 기본 6을
+    /// 적용한다(디스크의 옛 설정 파일에는 이 필드가 없어 0으로 역직렬화된다).
+    pub pdf_transcribe_workers: u32,
+    pub pdf_translate_workers: u32,
+}
+
+/// 워커 수 상한. 전사는 서버가 8로 클램프하므로(handwriting_transcribe._workers)
+/// 그 위를 UI에서 고르게 해도 조용히 깎인다 — 같은 상한을 여기서도 쓴다.
+pub const MAX_WORKERS: u32 = 8;
+/// 실측 기본값(2026-08-25 A3 116p): 전사 3→6워커 1.55배(22→35크롭/분),
+/// 번역 3→6워커 1.58배(32.0→20.2분).
+pub const DEFAULT_WORKERS: u32 = 6;
+
+fn clamp_workers(value: u32) -> u32 {
+    if value == 0 {
+        DEFAULT_WORKERS
+    } else {
+        value.min(MAX_WORKERS)
+    }
 }
 
 /// Non-secret projection returned to the UI. Carries presence booleans for the
@@ -78,6 +100,8 @@ pub struct ServerConfigMeta {
     pub viewer_base: String,
     pub summary_backend: String,
     pub summary_model: String,
+    pub pdf_transcribe_workers: u32,
+    pub pdf_translate_workers: u32,
 }
 
 /// Fields the operator can edit from the GUI. Submitting a blank string leaves a
@@ -97,6 +121,8 @@ pub struct ServerConfigInput {
     pub viewer_base: String,
     pub summary_backend: String,
     pub summary_model: String,
+    pub pdf_transcribe_workers: u32,
+    pub pdf_translate_workers: u32,
 }
 
 /// Default provider when the operator hasn't picked one. Matches the server
@@ -125,6 +151,16 @@ impl ServerConfig {
         }
     }
 
+    /// 전사 동시 세션 수(0=미설정 → 기본 6, 상한 8).
+    pub fn transcribe_workers(&self) -> u32 {
+        clamp_workers(self.pdf_transcribe_workers)
+    }
+
+    /// 번역 동시 세션 수(0=미설정 → 기본 6, 상한 8).
+    pub fn translate_workers(&self) -> u32 {
+        clamp_workers(self.pdf_translate_workers)
+    }
+
     pub fn to_meta(&self) -> ServerConfigMeta {
         ServerConfigMeta {
             has_gemini_key: !self.gemini_api_key.trim().is_empty(),
@@ -138,6 +174,8 @@ impl ServerConfig {
             viewer_base: self.viewer_base.clone(),
             summary_backend: self.summary_backend(),
             summary_model: self.summary_model.clone(),
+            pdf_transcribe_workers: self.transcribe_workers(),
+            pdf_translate_workers: self.translate_workers(),
         }
     }
 
@@ -161,6 +199,10 @@ impl ServerConfig {
         self.viewer_base = input.viewer_base.trim().to_string();
         self.summary_backend = input.summary_backend.trim().to_string();
         self.summary_model = input.summary_model.trim().to_string();
+        // 0(미설정)은 그대로 저장한다 — 읽을 때 기본값이 적용되므로, 나중에
+        // 기본값을 바꾸면 명시적으로 고르지 않은 사용자에게도 반영된다.
+        self.pdf_transcribe_workers = input.pdf_transcribe_workers.min(MAX_WORKERS);
+        self.pdf_translate_workers = input.pdf_translate_workers.min(MAX_WORKERS);
     }
 }
 
@@ -266,6 +308,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn worker_counts_default_when_unset_and_clamp_at_the_cap() {
+        // 디스크의 옛 설정 파일에는 이 필드가 없어 0으로 역직렬화된다 —
+        // 0을 "미설정"으로 읽어야 기존 사용자가 3워커(코드 기본값)에 갇히지
+        // 않고 실측 권장값을 받는다.
+        let mut config = ServerConfig::default();
+        assert_eq!(config.transcribe_workers(), DEFAULT_WORKERS);
+        assert_eq!(config.translate_workers(), DEFAULT_WORKERS);
+
+        config.pdf_transcribe_workers = 2;
+        config.pdf_translate_workers = 4;
+        assert_eq!(config.transcribe_workers(), 2);
+        assert_eq!(config.translate_workers(), 4);
+
+        // 서버가 전사 워커를 8로 깎으므로(handwriting_transcribe._workers) 여기서
+        // 먼저 같은 상한을 적용한다 — UI가 보여준 값과 실제가 어긋나면 안 된다.
+        config.pdf_transcribe_workers = 99;
+        config.pdf_translate_workers = 99;
+        assert_eq!(config.transcribe_workers(), MAX_WORKERS);
+        assert_eq!(config.translate_workers(), MAX_WORKERS);
+    }
+
+    #[test]
+    fn apply_keeps_zero_as_unset_and_caps_the_rest() {
+        let mut config = ServerConfig::default();
+        config.apply(ServerConfigInput {
+            pdf_transcribe_workers: 0,
+            pdf_translate_workers: 99,
+            ..Default::default()
+        });
+        // 0은 그대로 저장한다 — 나중에 기본값을 올리면 명시적으로 고르지 않은
+        // 사용자에게도 반영된다(저장 시점에 6으로 굳히면 그 길이 막힌다).
+        assert_eq!(config.pdf_transcribe_workers, 0);
+        assert_eq!(config.pdf_translate_workers, MAX_WORKERS);
+        assert_eq!(config.transcribe_workers(), DEFAULT_WORKERS);
+    }
+
+    #[test]
     fn meta_hides_secret_values_and_reports_presence() {
         let config = ServerConfig {
             gemini_api_key: "sk-secret".to_string(), // vibelign: allow-secret
@@ -279,6 +358,8 @@ mod tests {
             viewer_base: "https://viewer".to_string(),
             summary_backend: "claude".to_string(),
             summary_model: String::new(),
+            pdf_transcribe_workers: 0,
+            pdf_translate_workers: 0,
         };
         let meta = config.to_meta();
         // Presence booleans are true...

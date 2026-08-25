@@ -3,8 +3,11 @@ import { useCallback, useEffect, useState } from "react";
 import { append } from "../appLog";
 import { MlxModelPanel } from "./MlxModelPanel";
 import {
+  DEFAULT_PDF_WORKERS,
   DEFAULT_PROVIDER,
   EMPTY_META,
+  MAX_PDF_WORKERS,
+  MIN_PDF_WORKERS,
   type ServerConfigMeta,
   appleTranslateAvailable,
   bootstrapAdmin,
@@ -35,6 +38,11 @@ const PROVIDERS = [
   "apple_mlx_live_translate",
 ] as const;
 const SUMMARY_BACKENDS = ["auto", "claude", "codex"] as const;
+// 1..8 — 상한은 서버가 전사 워커를 클램프하는 값과 같다(MAX_PDF_WORKERS 주석).
+const WORKER_CHOICES = Array.from(
+  { length: MAX_PDF_WORKERS - MIN_PDF_WORKERS + 1 },
+  (_, i) => MIN_PDF_WORKERS + i,
+);
 
 export default function ServerConfigPanel(props: { port: number; running: boolean }) {
   const [meta, setMeta] = useState<ServerConfigMeta>(EMPTY_META);
@@ -55,6 +63,8 @@ export default function ServerConfigPanel(props: { port: number; running: boolea
   const [viewerBase, setViewerBase] = useState("");
   const [summaryBackend, setSummaryBackend] = useState<string>("auto");
   const [summaryModel, setSummaryModel] = useState("");
+  const [transcribeWorkers, setTranscribeWorkers] = useState(DEFAULT_PDF_WORKERS);
+  const [translateWorkers, setTranslateWorkers] = useState(DEFAULT_PDF_WORKERS);
 
   // First-run operator account form.
   const [adminEmail, setAdminEmail] = useState("");
@@ -79,6 +89,9 @@ export default function ServerConfigPanel(props: { port: number; running: boolea
     setViewerBase(next.viewerBase);
     setSummaryBackend(next.summaryBackend || "auto");
     setSummaryModel(next.summaryModel);
+    // Rust가 0(미설정)에 기본값을 적용해 돌려주므로 그대로 받는다.
+    setTranscribeWorkers(next.pdfTranscribeWorkers || DEFAULT_PDF_WORKERS);
+    setTranslateWorkers(next.pdfTranslateWorkers || DEFAULT_PDF_WORKERS);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -110,6 +123,8 @@ export default function ServerConfigPanel(props: { port: number; running: boolea
         viewerBase,
         summaryBackend,
         summaryModel,
+        pdfTranscribeWorkers: transcribeWorkers,
+        pdfTranslateWorkers: translateWorkers,
       });
       syncMeta(next);
       // Clear the secret inputs so stored secrets are never re-shown.
@@ -124,7 +139,7 @@ export default function ServerConfigPanel(props: { port: number; running: boolea
     } finally {
       setBusy(false);
     }
-  }, [geminiApiKey, googleCredsJson, googleProject, sttLanguage, translateTarget, provider, mlxModel, viewerBase, summaryBackend, summaryModel, syncMeta]);
+  }, [geminiApiKey, googleCredsJson, googleProject, sttLanguage, translateTarget, provider, mlxModel, viewerBase, summaryBackend, summaryModel, transcribeWorkers, translateWorkers, syncMeta]);
 
   const onClear = useCallback(async () => {
     setError(null);
@@ -279,6 +294,42 @@ export default function ServerConfigPanel(props: { port: number; running: boolea
           style={styles.input}
         />
       </Field>
+
+      <Field label="PDF 전사 동시 실행 (엑스시트 손글씨 판독)">
+        <select
+          value={transcribeWorkers}
+          onChange={(e) => setTranscribeWorkers(Number(e.target.value))}
+          style={styles.input}
+        >
+          {WORKER_CHOICES.map((n) => (
+            <option key={n} value={n}>
+              {n}개{n === DEFAULT_PDF_WORKERS ? " (권장)" : ""}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <p style={{ ...styles.sub, margin: "-6px 0 10px" }}>
+        동시에 띄우는 판독 세션 수입니다. 늘리면 빨라지고 토큰은 그대로지만
+        (실측 3→6개에서 1.55배), 구독 사용량이 그만큼 빨리 소모됩니다.
+      </p>
+
+      <Field label="PDF 번역 동시 실행">
+        <select
+          value={translateWorkers}
+          onChange={(e) => setTranslateWorkers(Number(e.target.value))}
+          style={styles.input}
+        >
+          {WORKER_CHOICES.map((n) => (
+            <option key={n} value={n}>
+              {n}개{n === DEFAULT_PDF_WORKERS ? " (권장)" : ""}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <p style={{ ...styles.sub, margin: "-6px 0 10px" }}>
+        실측 3→6개에서 1.58배(32분→20분). 사양이 낮거나 사용량을 아끼려면
+        줄이세요.
+      </p>
 
       <Field label="VIEWER_BASE">
         <input
