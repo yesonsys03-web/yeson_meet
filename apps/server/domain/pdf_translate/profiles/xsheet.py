@@ -38,6 +38,9 @@ NOTE_KIND = "xsheet_note"
 
 _DETECT_DPI = 100   # 헤더 토큰만 읽으면 되므로 저해상으로 충분(페이지당 ~1s)
 _OCR_DPI = 200      # panel_ocr._OCR_DPI와 동일 — 손글씨 탐지엔 300 불필요
+_CROP_DPI_CUT = 300  # = handwriting_transcribe._CROP_DPI (경계 절단 회수용
+                     # 렌더). 값이 갈리면 크롭 사각형 판정이 어긋나므로
+                     # 아래 테스트가 두 상수의 일치를 잠근다.
 _DETECT_PAGES = 3
 _SCAN_COVER = 0.5    # 페이지 면적의 이 비율 이상을 덮는 이미지 = 스캔본
 _FONTSIZE = 9.0     # 사람 납품본 9pt 실측
@@ -422,6 +425,168 @@ class _Geometry:
         return page_w - 8.0
 
 
+# ── 크롭 경계 절단 회수 ─────────────────────────────────────────────
+# RapidOCR이 놓친 줄은 어느 크롭에도 안 들어가 **통째로 사라지고**, 번역기가
+# 잘린 원문을 그럴듯하게 완성해 오역까지 만든다(`ANIM PANTS`→`바지/애니메이션`,
+# 사람은 `바지, 액션 맞춰 애니`). 출력에도 커버리지 지표에도 안 잡히는
+# 손실이라 전량 탐침으로 계량했다(2026-08-26): A3 116p에서 크롭의 30.7%가
+# 코앞(≤15pt)에 주인 없는 손글씨를 두고 있고 **그 89%는 탐지 자체가 없었다**
+# (필터 탈락이 아니다). A2 135p도 23.3%로 재현. 회수 실증(무작위 20장을 두
+# 팔로 재전사): 새 낱말 획득 70%·**내용 손실 0**.
+_CUT_MAX_GAP_PT = 15.0     # 이보다 멀면 내 노트의 다음 줄이 아니라 남의 것
+_CUT_MIN_W_PT = 20.0       # 낱말 한 개 이상 — 그 아래는 동그라미 마커·획 조각
+_CUT_H_PT = (7.0, 22.0)    # 대문자 높이 ≈12pt. 위로 벗어나면 작화다
+_CUT_MIN_HOVERLAP = 0.5    # 내 크롭과 이만큼 가로로 겹쳐야 '내 줄'
+_CUT_LINE_GAP_PX = 40      # 글자 사이 가로 틈(≈10pt) — 한 줄로 묶는다
+
+
+def _merge_boxes(boxes: list[list[int]]) -> list[list[int]]:
+    """낱글자 덩어리를 줄 단위로 묶는다 — 낱말 폭 조건은 줄에 걸어야 한다
+    (`POSE`를 글자별로 보면 어느 것도 20pt를 넘지 못한다)."""
+    out = [list(b) for b in boxes]
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(out)):
+            for j in range(i + 1, len(out)):
+                a, b = out[i], out[j]
+                if (min(a[3], b[3]) - max(a[1], b[1]) > 0
+                        and max(a[0], b[0]) - min(a[2], b[2]) <= _CUT_LINE_GAP_PX):
+                    out[i] = [min(a[0], b[0]), min(a[1], b[1]),
+                              max(a[2], b[2]), max(a[3], b[3])]
+                    out.pop(j)
+                    merged = True
+                    break
+            if merged:
+                break
+    return out
+
+
+def _hits(a, b) -> bool:
+    return not (a[0] >= b[2] or a[2] <= b[0] or a[1] >= b[3] or a[3] <= b[1])
+
+
+def _absorb_cut_ink(doc: PdfDocument, page: int, notes: list[PdfBlock],
+                    geom: _Geometry) -> list[PdfBlock]:
+    """크롭 경계에서 잘린 손글씨를 블록 bbox에 되붙인다.
+
+    `_expand_to_ink`는 상자에 **걸친** 덩어리만 담는다 — 옆 노트를 물지
+    않으려는 의도적 설계다. 그래서 바로 아랫줄이 별개 덩어리면 영영 빠진다.
+    여기서는 그 빈틈만 메운다: **어느 크롭에도 안 속한**(=지금은 그냥
+    버려지는) 잉크를, 코앞이고 가로로 겹칠 때만 가져온다. 최악이라야 별개
+    노트 둘이 하나로 합쳐지는 것인데, 지금은 아예 사라지고 오역까지 난다.
+
+    ⚠**bbox를 넓혀야지 렌더 픽셀만 넓히면 안 된다** — 크롭 파일명이
+    `page+int(x0)+int(y0)`이라 bbox가 그대로면 `render_crops`가 `exists()`로
+    건너뛰고 `transcripts.json` 캐시도 낡은 채 살아남는다. bbox를 넓히면
+    바뀐 크롭만 이름이 달라져 **증분 재전사**된다.
+    """
+    if not notes:
+        return notes
+    import cv2
+    import numpy as np
+
+    from ..handwriting_transcribe import (
+        _LINE_RATIO,
+        _MAX_GROW_PX,
+        _dark,
+        _is_textlike,
+        crop_rect,
+    )
+
+    arr = _decode_png(doc.render_png(page, dpi=_CROP_DPI_CUT, annots=False))
+    h, w = arr.shape[:2]
+    scale = _CROP_DPI_CUT / 72.0
+    rects = [crop_rect(arr, b.bbox) for b in notes]
+    claimed = [r for r in rects if r is not None]
+    # 인쇄 숫자 컬럼·대사칸은 아예 지운다 — 프레임 번호(1,2,3…)와 립싱크
+    # 음소가 고아로 잡히고, 옆 손글씨와 한 줄로 병합돼 폭 조건을 통과한다
+    # (실측: `W/W ACTION` 고아가 옆 칸 '4','5'와 붙어 폭 80pt로 잡혔다).
+    page_ink = _dark(arr).astype(np.uint8)
+    for lo, hi in (*geom.num_bands,
+                   *((geom.dialog_band,) if geom.dialog_band else ())):
+        a, b = max(int(lo * scale), 0), min(int(hi * scale), w)
+        if b > a:
+            page_ink[:, a:b] = 0
+
+    out: list[PdfBlock] = []
+    for b, rect in zip(notes, rects):
+        grown = (b.bbox if rect is None
+                 else _grow_over_cut(page_ink, b, rect, claimed, notes,
+                                     geom, scale, w, h,
+                                     cv2=cv2, line_ratio=_LINE_RATIO,
+                                     max_grow=_MAX_GROW_PX,
+                                     textlike=_is_textlike))
+        out.append(b if grown == b.bbox else replace(b, bbox=grown))
+    return out
+
+
+def _grow_over_cut(page_ink, block, rect, claimed, notes, geom, scale, w, h,
+                   *, cv2, line_ratio, max_grow, textlike):
+    """한 크롭이 삼켜야 할 '주인 없는 줄'을 찾아 넓힌 bbox를 돌려준다."""
+    cx0, cy0, cx1, cy1 = rect
+    nx0, ny0 = max(cx0 - max_grow, 0), max(cy0 - max_grow, 0)
+    nx1, ny1 = min(cx1 + max_grow, w), min(cy1 + max_grow, h)
+    region = page_ink[ny0:ny1, nx0:nx1]
+    if region.size == 0:
+        return block.bbox
+    ink = region.copy()
+    ink[region.mean(axis=1) >= line_ratio, :] = 0   # 가로 프레임 줄
+    ink[:, region.mean(axis=0) >= line_ratio] = 0   # 세로 칸 구분선
+    n, _labels, stats, _c = cv2.connectedComponentsWithStats(ink, connectivity=8)
+
+    loose = []
+    for i in range(1, n):
+        x, y, cw, ch, area = (int(v) for v in stats[i])
+        if not textlike(cw, ch, area):
+            continue
+        g = [nx0 + x, ny0 + y, nx0 + x + cw, ny0 + y + ch]
+        if any(_hits(g, o) for o in claimed):
+            continue                       # 주인이 있으면 내 것이 아니다
+        loose.append(g)
+    if not loose:
+        return block.bbox
+
+    x0, y0, x1, y1 = block.bbox
+    for g in _merge_boxes(loose):
+        pt = (g[0] / scale, g[1] / scale, g[2] / scale, g[3] / scale)
+        if not _is_cut_line(pt, rect, scale, geom):
+            continue
+        cand = (min(x0, pt[0]), min(y0, pt[1]), max(x1, pt[2]), max(y1, pt[3]))
+        # ⚠고아 자체는 이웃을 안 물어도 **합집합은 사각형**이라 그 사각형이
+        # 이웃 노트를 덮을 수 있다(A3 p065 실측: 거대 과병합 블록이 이웃 3개를
+        # 새로 물었다). 새로 겹치면 그 흡수만 버린다.
+        before = sum(1 for o in notes
+                     if o.bbox != block.bbox and _hits(block.bbox, o.bbox))
+        after = sum(1 for o in notes
+                    if o.bbox != block.bbox and _hits(cand, o.bbox))
+        if after > before:
+            continue
+        x0, y0, x1, y1 = cand
+    return (x0, y0, x1, y1)
+
+
+def _is_cut_line(pt, rect, scale, geom: _Geometry) -> bool:
+    """이 줄이 '내 크롭에서 잘려나간 줄'로 볼 만한가."""
+    lw, lh = pt[2] - pt[0], pt[3] - pt[1]
+    if lw < _CUT_MIN_W_PT or not (_CUT_H_PT[0] <= lh <= _CUT_H_PT[1]):
+        return False
+    cy = (pt[1] + pt[3]) / 2
+    if not (geom.header_y < cy < geom.footer_y):
+        return False
+    cx0, cy0, cx1, cy1 = (v / scale for v in rect)
+    ox = min(pt[2], cx1) - max(pt[0], cx0)
+    if ox < lw * _CUT_MIN_HOVERLAP:
+        return False
+    if pt[1] >= cy1:
+        gap = pt[1] - cy1
+    elif pt[3] <= cy0:
+        gap = cy0 - pt[3]
+    else:
+        gap = 0.0
+    return gap <= _CUT_MAX_GAP_PT
+
+
 def _is_scanned(doc: PdfDocument, page: int) -> bool:
     """이 페이지가 스캔본인가 — 페이지를 거의 덮는 이미지가 있으면 그렇다."""
     page_w, page_h = doc.page_size(page)
@@ -540,10 +705,18 @@ class XsheetProfile:
         바이트코드가 그대로고, 로직만 바꾸면 상수 문자열이 그대로다.
         """
         import hashlib
+
+        from .. import handwriting_transcribe as ht
+        from ..handwriting_transcribe import _is_textlike, crop_rect, ink_bounds
         logic = b"".join(
             fn.__code__.co_code for fn in (
                 XsheetProfile.extract, _ocr_page, _derive_geometry, _cluster,
                 _is_template, _make_speaker_strip, _recover_header_notes,
+                # 경계 절단 회수도 추출 결과를 바꾼다 — 전사 모듈에서 빌려
+                # 쓰는 것까지 지문에 넣어야 한다(crop_rect가 1픽셀만 달라져도
+                # '주인 있음' 판정이 뒤집혀 블록 bbox가 바뀐다).
+                _absorb_cut_ink, _grow_over_cut, _is_cut_line, _merge_boxes,
+                crop_rect, ink_bounds, _is_textlike,
             ))
         values = "|".join(str(v) for v in (
             _OCR_DPI, _SCAN_COVER, _HEADER_ROW_TOL, _BAND_PAD, _NUM_BIN_PT,
@@ -553,6 +726,10 @@ class XsheetProfile:
             _RUN_GAP, _RUN_PH_MAXLEN, _DIALOG_RE.pattern,
             sorted(_HEADER_LABELS), sorted(_FOOTER_LABELS),
             sorted(_TEMPLATE_WORDS),
+            _CROP_DPI_CUT, _CUT_MAX_GAP_PT, _CUT_MIN_W_PT, _CUT_H_PT,
+            _CUT_MIN_HOVERLAP, _CUT_LINE_GAP_PX,
+            ht._MARGIN_PT, ht._MAX_GROW_PX, ht._LINE_RATIO, ht._MIN_INK_SIDE,
+            ht._MAX_TEXT_SIDE, ht._MIN_INK_FILL,
         ))
         return hashlib.sha256(logic + values.encode()).hexdigest()[:16]
 
@@ -601,6 +778,7 @@ class XsheetProfile:
                 if _is_template(rect, text, geom):
                     continue
                 candidates.append((rect, text))
+            page_notes: list[PdfBlock] = []
             for grp in _cluster(candidates):
                 x0 = min(r[0] for r, _ in grp)
                 y0 = min(r[1] for r, _ in grp)
@@ -613,9 +791,12 @@ class XsheetProfile:
                 if ((x1 - x0) * (y1 - y0) < _MIN_NOTE_AREA
                         and len(_ALNUM_RE.findall(raw)) < _MIN_RAW_ALNUM):
                     continue  # 잡티(서클 마커·셀 번호 한 글자) — 전사 낭비
-                blocks.append(PdfBlock(
+                page_notes.append(PdfBlock(
                     page=page, kind=NOTE_KIND, text=raw, bbox=(x0, y0, x1, y1),
                     limit_x1=geom.limit_x1((x0 + x1) / 2, page_w)))
+            # 크롭 경계에서 잘린 줄을 되붙인다 — 탐지가 놓쳐 어느 크롭에도
+            # 안 들어간 잉크는 지금 그냥 버려진다(전량 실측: 크롭의 23~31%).
+            blocks.extend(_absorb_cut_ink(doc, page, page_notes, geom))
             blocks.extend(_make_speaker_strip(page, items, geom, page_w, page_h))
         blocks.extend(_recover_header_notes(header_pool, pages_with_geom))
         # 페이지 순서 불변식 복원 — place_with_doc의 잉크 캐시(_ink_cache)가

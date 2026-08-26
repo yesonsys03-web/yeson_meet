@@ -1455,3 +1455,117 @@ def test_place_with_doc_falls_back_when_render_fails(monkeypatch):
     prof = xs.XsheetProfile()
     ov = prof.place_with_doc(b, "고개\n기웃", (792.0, 1224.0), Broken())
     assert ov.rect == prof.place(b, "고개\n기웃", (792.0, 1224.0)).rect
+
+
+# ── 크롭 경계 절단 회수 ────────────────────────────────────────────
+# 탐지가 놓친 줄은 어느 크롭에도 안 들어가 통째로 사라지고, 번역기가 잘린
+# 원문을 그럴듯하게 완성해 오역까지 만든다. 전량 실측(A3 116p·A2 135p)에서
+# 크롭의 23~31%가 코앞에 주인 없는 손글씨를 두고 있었다.
+
+def _cut_geom(header_y=20.0, footer_y=1200.0):
+    return xs._Geometry(header_y=header_y, footer_y=footer_y,
+                                dialog_band=None, num_bands=(),
+                                col_edges=(700.0,))
+
+
+def _cut_doc(arr):
+    """이 배열을 300dpi 렌더로 돌려주는 문서."""
+    import io
+
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.fromarray(arr).save(buf, format="PNG")
+    return FakeDoc(png=buf.getvalue())
+
+
+def _cut_block(bbox):
+    return PdfBlock(page=0, kind=xs.NOTE_KIND, text="X", bbox=bbox)
+
+
+def _word(arr, x_pt, y_pt, w_pt, h_pt):
+    """pt 좌표에 글자 덩어리 하나(300dpi 픽셀로 환산해 칠한다)."""
+    s = 300 / 72.0
+    arr[int(y_pt * s):int((y_pt + h_pt) * s),
+        int(x_pt * s):int((x_pt + w_pt) * s)] = 0
+
+
+def test_absorb_cut_ink_recovers_the_line_below():
+    """`ANIM PANTS` 아래 `W/W ACTION`처럼, 주인 없는 아랫줄을 되찾는다."""
+    arr = _canvas(h=1600, w=1600)
+    _word(arr, 100, 100, 40, 12)              # 내 노트
+    _word(arr, 100, 118, 40, 12)              # 잘려나간 아랫줄(틈 6pt)
+    blocks = [_cut_block((100.0, 100.0, 140.0, 112.0))]
+    out = xs._absorb_cut_ink(_cut_doc(arr), 0, blocks, _cut_geom())
+    assert out[0].bbox[3] >= 129.0, "아랫줄까지 상자가 내려와야 한다"
+    assert out[0].bbox[1] <= 100.0, "위쪽은 그대로"
+
+
+def test_absorb_cut_ink_leaves_ink_that_has_an_owner():
+    """옆 노트의 크롭이 이미 물고 있는 잉크는 가져오지 않는다 — 이게 없으면
+    `_expand_to_ink`가 옆 노트를 안 무는 설계가 무너진다."""
+    arr = _canvas(h=1600, w=1600)
+    _word(arr, 100, 100, 40, 12)
+    _word(arr, 100, 118, 40, 12)              # 아래 줄 = 별개 블록의 것
+    blocks = [_cut_block((100.0, 100.0, 140.0, 112.0)),
+              _cut_block((100.0, 118.0, 140.0, 130.0))]
+    out = xs._absorb_cut_ink(_cut_doc(arr), 0, blocks, _cut_geom())
+    assert out[0].bbox == blocks[0].bbox
+    assert out[1].bbox == blocks[1].bbox
+
+
+def test_absorb_cut_ink_refuses_to_swallow_a_neighbour():
+    """고아는 이웃을 안 물어도 **합집합은 사각형**이라 이웃을 덮을 수 있다
+    (A3 p065 실측: 거대 블록이 이웃 3개를 새로 물었다). 그러면 기각한다."""
+    arr = _canvas(h=1600, w=1600)
+    _word(arr, 100, 100, 40, 12)
+    _word(arr, 220, 118, 40, 12)              # 오른쪽 아래 주인 없는 줄
+    _word(arr, 170, 118, 30, 12)              # 그 사이에 있는 이웃 노트
+    blocks = [_cut_block((100.0, 100.0, 140.0, 112.0)),
+              _cut_block((170.0, 118.0, 200.0, 130.0))]
+    out = xs._absorb_cut_ink(_cut_doc(arr), 0, blocks, _cut_geom())
+    assert out[0].bbox == blocks[0].bbox, "이웃을 덮는 확장은 버린다"
+
+
+def test_absorb_cut_ink_ignores_far_and_tiny_ink():
+    """멀거나(>15pt) 낱말이 못 되는(<20pt) 잉크는 남의 것·마커로 본다."""
+    arr = _canvas(h=1600, w=1600)
+    _word(arr, 100, 100, 40, 12)
+    _word(arr, 100, 150, 40, 12)              # 틈 38pt — 남의 노트
+    far = xs._absorb_cut_ink(_cut_doc(arr), 0,
+                                     [_cut_block((100.0, 100.0, 140.0, 112.0))],
+                                     _cut_geom())
+    assert far[0].bbox[3] < 129.0
+
+    arr2 = _canvas(h=1600, w=1600)
+    _word(arr2, 100, 100, 40, 12)
+    _word(arr2, 100, 118, 10, 12)             # 동그라미 마커 크기
+    tiny = xs._absorb_cut_ink(_cut_doc(arr2), 0,
+                                      [_cut_block((100.0, 100.0, 140.0, 112.0))],
+                                      _cut_geom())
+    assert tiny[0].bbox[3] < 129.0
+
+
+def test_absorb_cut_ink_stays_inside_the_note_area():
+    """머리글 위 잉크는 노트가 아니다(양식 활자·로고)."""
+    arr = _canvas(h=1600, w=1600)
+    _word(arr, 100, 100, 40, 12)
+    _word(arr, 100, 82, 40, 12)               # 머리글 위
+    out = xs._absorb_cut_ink(
+        _cut_doc(arr), 0, [_cut_block((100.0, 100.0, 140.0, 112.0))],
+        _cut_geom(header_y=98.0))
+    assert out[0].bbox[1] >= 100.0
+
+
+def test_cut_recovery_render_dpi_matches_the_transcriber():
+    """크롭 사각형 판정은 전사가 굽는 것과 **같은 해상도**여야 한다."""
+    assert xs._CROP_DPI_CUT == ht._CROP_DPI
+
+
+def test_extract_cache_key_covers_cut_recovery(monkeypatch):
+    """⚠지문이 계약이다 — 경계 회수 상수가 바뀌면 추출 캐시가 무효화돼야
+    한다. 안 그러면 수정이 조용히 무시된다."""
+    profile = xs.XsheetProfile()
+    before = profile.extract_cache_key()
+    monkeypatch.setattr(xs, "_CUT_MAX_GAP_PT",
+                        xs._CUT_MAX_GAP_PT + 1.0)
+    assert profile.extract_cache_key() != before

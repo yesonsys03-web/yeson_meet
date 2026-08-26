@@ -121,6 +121,26 @@ def crop_name(block: PdfBlock) -> str:
     return f"p{block.page + 1:03d}_{int(x0)}_{int(y0)}.png"
 
 
+def crop_rect(arr, bbox: tuple[float, float, float, float],
+              ) -> tuple[int, int, int, int] | None:
+    """블록 bbox → **실제로 전사에 들어가는** 300dpi 픽셀 사각형.
+
+    여백 `_MARGIN_PT` + `_expand_to_ink`. 크롭을 굽는 쪽(`render_crops`)과
+    경계 절단을 되찾는 쪽(`xsheet._absorb_cut_ink`)이 **같은 사각형**을 봐야
+    "이 잉크에 주인이 있나" 판정이 성립하므로 산식을 한 군데 둔다. 상자가
+    뒤집히면 None(크롭을 만들 수 없는 블록)."""
+    h, w = arr.shape[:2]
+    scale = _CROP_DPI / 72.0
+    x0, y0, x1, y1 = bbox
+    px0 = max(int((x0 - _MARGIN_PT) * scale), 0)
+    py0 = max(int((y0 - _MARGIN_PT) * scale), 0)
+    px1 = min(int((x1 + _MARGIN_PT) * scale), w)
+    py1 = min(int((y1 + _MARGIN_PT) * scale), h)
+    if px1 <= px0 or py1 <= py0:
+        return None
+    return _expand_to_ink(arr, px0, py0, px1, py1)
+
+
 def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
                  job_dir: Path) -> None:
     """블록 크롭 PNG를 잡 폴더에 렌더한다 — doc 락 안에서 불리는 빠른
@@ -132,7 +152,6 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
 
     crops = job_dir / _CROPS_DIRNAME
     crops.mkdir(parents=True, exist_ok=True)
-    scale = _CROP_DPI / 72.0
     by_page: dict[int, list[PdfBlock]] = {}
     for b in blocks:
         by_page.setdefault(b.page, []).append(b)
@@ -146,18 +165,12 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
             # exists()를 봤다.
             continue
         arr = _decode_png(doc.render_png(page, dpi=_CROP_DPI, annots=False))
-        h, w = arr.shape[:2]
         for b in missing:
-            dest = crops / crop_name(b)
-            x0, y0, x1, y1 = b.bbox
-            px0 = max(int((x0 - _MARGIN_PT) * scale), 0)
-            py0 = max(int((y0 - _MARGIN_PT) * scale), 0)
-            px1 = min(int((x1 + _MARGIN_PT) * scale), w)
-            py1 = min(int((y1 + _MARGIN_PT) * scale), h)
-            if px1 <= px0 or py1 <= py0:
+            rect = crop_rect(arr, b.bbox)
+            if rect is None:
                 continue
-            px0, py0, px1, py1 = _expand_to_ink(arr, px0, py0, px1, py1)
-            Image.fromarray(arr[py0:py1, px0:px1]).save(dest)
+            px0, py0, px1, py1 = rect
+            Image.fromarray(arr[py0:py1, px0:px1]).save(crops / crop_name(b))
 
 
 _STRIP_DPI = 200      # 화자 스트립 렌더 — 세로로 길어 300은 과하다
