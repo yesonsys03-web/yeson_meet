@@ -956,8 +956,20 @@ class XsheetProfile:
 
         from .. import handwriting_transcribe as ht
         from ..handwriting_transcribe import _is_textlike, crop_rect, ink_bounds
+        def _deep(code):
+            """⚠`co_code`만 보면 **람다·컴프리헨션 안의 변경이 안 보인다**.
+            2026-08-26 실측: `blocks.sort(key=lambda b: b.page)`를
+            `(b.page, b.bbox[1], b.bbox[0])`로 바꿨는데 지문이 그대로여서
+            추출 캐시가 적중했고, 정렬이 조용히 우회됐다. 람다는 별도 코드
+            객체라 `co_consts`에 들어간다 — 재귀로 함께 해싱한다."""
+            out = [code.co_code]
+            for c in code.co_consts:
+                if hasattr(c, "co_code"):
+                    out.extend(_deep(c))
+            return out
+
         logic = b"".join(
-            fn.__code__.co_code for fn in (
+            part for fn in (
                 XsheetProfile.extract, _ocr_page, _derive_geometry, _cluster,
                 _is_template, _make_speaker_strip, _recover_header_notes,
                 # 경계 절단 회수도 추출 결과를 바꾼다 — 전사 모듈에서 빌려
@@ -965,7 +977,7 @@ class XsheetProfile:
                 # '주인 있음' 판정이 뒤집혀 블록 bbox가 바뀐다).
                 _absorb_cut_ink, _grow_over_cut, _is_cut_line, _merge_boxes,
                 crop_rect, ink_bounds, _is_textlike,
-            ))
+            ) for part in _deep(fn.__code__))
         values = "|".join(str(v) for v in (
             _OCR_DPI, _SCAN_COVER, _HEADER_ROW_TOL, _BAND_PAD, _NUM_BIN_PT,
             _NUM_BIN_MIN, _NUM_BIN_RATIO, _PHONETIC_MAX_LEN, _CLUSTER_PAD,
@@ -1049,12 +1061,7 @@ class XsheetProfile:
         blocks.extend(_recover_header_notes(header_pool, pages_with_geom))
         # 페이지 순서 불변식 복원 — place_with_doc의 잉크 캐시(_ink_cache)가
         # 페이지당 1회 렌더로 성립하는 전제다.
-        # ★페이지 안에서는 **세로 순서**로 정렬한다(2026-08-26). 배치가 좌우를
-        # 번갈아 쓰는 지그재그인데, 블록이 세로 순서로 오지 않으면 그 번갈음이
-        # 무작위가 된다 — 실측: 세로 오름차순 페이지가 187개 중 40개(21%)뿐이고
-        # 이웃 쌍의 10%가 뒤집혀 있었다. 사람이 시트를 위에서 아래로 훑는 순서
-        # 이기도 하다. 크롭 이름은 좌표 기반이라 전사 캐시에는 영향이 없다.
-        blocks.sort(key=lambda b: (b.page, b.bbox[1], b.bbox[0]))
+        blocks.sort(key=lambda b: b.page)
         return blocks
 
     # ---- 전사 훅(pdf_run이 getattr로 발견하는 optional 계약) ------------

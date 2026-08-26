@@ -431,7 +431,18 @@ def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
     # 고른 **주소**이고 편집 파일에 저장된다.
     items: list[PlanItem] = []
     placed_by_page: dict[int, list] = {}
-    for i, block in enumerate(blocks):
+    # ★배치는 **위에서 아래로** 훑는다(2026-08-26). 엑스시트 배치가 좌우를
+    # 번갈아 쓰는 지그재그라, 블록이 세로 순서로 오지 않으면 그 번갈음이
+    # 무작위가 된다(실측: 세로 오름차순 페이지가 187개 중 40개(21%)뿐).
+    # ⚠추출이 아니라 **여기서** 정렬하는 이유: 추출 결과는 캐시되므로
+    # 추출 쪽에 두면 캐시가 적중한 런에서 조용히 우회된다 — 실제로 그렇게
+    # 우회됐다(추출 캐시 지문이 람다 안의 변경을 못 봐서 적중). 배치 순서는
+    # 배치 단계가 책임진다.
+    order = sorted(range(len(blocks)),
+                   key=lambda i: (blocks[i].page, blocks[i].bbox[1],
+                                  blocks[i].bbox[0]))
+    for i in order:
+        block = blocks[i]
         ko = ko_by_block[i]
         # 번역 실패 폴백(원문 복사)·빈 결과는 주석을 달지 않는다
         if ko is None:
