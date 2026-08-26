@@ -1016,7 +1016,9 @@ def test_argv_differs_per_cli():
     claude = ht._argv_for("claude", "/bin/claude", "P")
     assert agy[:5] == ["/bin/agy", "-p", "P", "--add-dir", "."]
     assert "--print-timeout" in agy
-    assert claude == ["/bin/claude", "-p", "P", "--add-dir", "."]
+    assert claude[:5] == ["/bin/claude", "-p", "P", "--add-dir", "."]
+    assert "--print-timeout" not in claude
+    assert claude[5:] == ["--effort", "medium"]   # 사고 깊이(A/B 실측 근거)
     assert ht._argv_for("codex", "/bin/codex", "P")[1] == "exec"
 
 
@@ -1366,26 +1368,26 @@ def test_place_with_doc_avoids_existing_annotations():
     assert inter / smaller <= 0.05, (a, c)   # 심한 겹침 금지
 
 
-def test_place_with_doc_prefers_near_ink_over_far_flight():
-    """옅은 잉크의 곁자리 > 멀리 떨어진 빈자리 — 배치 전수 감사(2026-08-25)의
-    핵심 수정. 옛 코드는 "잉크 2% 이하인 첫 후보"라 원문 옆이 조금만
-    지저분해도 사다리 끝(-52pt)으로 도망갔다(사람 above 9% 대 우리 16%,
-    30pt 이내 일치 21.5%). 사람은 주석 밑 잉크 중앙값 6.34%를 감수하며
-    원문 곁에 남는다."""
-    # 오른쪽 dy0 자리(≈y500~538px)에 가는 빗금 ~8%, dy-52 자리(424~472px)만
-    # 깨끗, 나머지 오른쪽 사다리·왼쪽·아래는 진하게.
+def test_place_with_doc_stays_beside_instead_of_fleeing():
+    """원문 곁을 지킨다 — 사다리 끝으로 도망가지 않는다.
+
+    ⚠2026-08-26 새 설계(좌우 1순위 인접)에 맞춰 기대를 고쳤다. 옛 기대는
+    "오른쪽 dy0에 x=193"이었는데, 그건 앵커가 **느슨한 OCR 클러스터 상자**
+    이던 시절의 좌표다. 지금은 **잉크에 타이트한 사각형**을 앵커로 쓰므로
+    좌표가 달라진다. 지키려는 성질(곁에 남는다)은 그대로다 — 옛 코드는
+    "잉크 2% 이하인 첫 후보"라 곁이 조금만 지저분해도 -52pt로 도망갔다."""
     png = _ink_png(1100, 1700, [
-        (260, 340, 310, 423), (260, 473, 310, 495), (260, 545, 310, 700),
-        (260, 505, 310, 505), (260, 517, 310, 517), (260, 529, 310, 529),
-        (150, 340, 210, 700),          # 왼쪽 막힘
-        (200, 550, 250, 700),          # 아래 막힘
+        (208, 500, 264, 556),          # 원문 자체의 잉크(pt 150~190 × 360~400)
+        (300, 500, 360, 556),          # 오른쪽 곁에 옅지 않은 덩어리
     ])
     doc = FakeDoc(png=png)
     b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
                  bbox=(150.0, 360.0, 190.0, 400.0), limit_x1=560.0)
     ov = xs.XsheetProfile().place_with_doc(b, "고개\n기웃", (792.0, 1224.0), doc)
-    assert ov.rect[1] == pytest.approx(360.0)    # dy0에 남는다(-52 도주 금지)
-    assert ov.rect[0] == pytest.approx(193.0)    # 원문 오른쪽
+    # 세로로 멀리 달아나지 않는다(옛 실패 모드는 -52pt 위로 비행)
+    assert abs(ov.rect[1] - 360.0) <= 20.0
+    # 원문 좌우 중 한쪽에 붙는다
+    assert ov.rect[0] >= 190.0 or ov.rect[2] <= 150.0
     assert ov.fontsize == xs._FONTSIZE
 
 
@@ -1393,16 +1395,20 @@ def test_place_with_doc_below_is_first_class():
     """아래 배치는 최후 예비가 아니라 정식 후보다 — 양옆이 막히면 제
     크기(9pt)로 원문 바로 아래에 앉는다(전수 감사: 사람 below 13% 대
     우리 5%, 옛 코드는 아래를 최소 폰트 한 자리만 만들었다)."""
+    # ⚠픽스처를 새 설계에 맞게 고쳤다(2026-08-26): 앵커가 **잉크에 타이트한
+    # 사각형**이라 원문 자리에 잉크가 없으면 앵커가 방해물 가장자리로 붙어
+    # 엉뚱한 자리를 잰다. 원문 자신의 잉크를 그리고, 좌우를 넉넉히 막는다.
     png = _ink_png(1100, 1700, [
-        (260, 340, 470, 620),          # 오른쪽 막힘
-        (140, 340, 205, 620),          # 왼쪽 막힘 (아래 자리는 비워 둔다)
+        (208, 500, 264, 556),          # 원문 잉크(pt 150~190 × 360~400)
+        (270, 420, 520, 640),          # 오른쪽 막힘
+        (20, 420, 200, 640),           # 왼쪽 막힘 (아래는 비워 둔다)
     ])
     doc = FakeDoc(png=png)
     b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
                  bbox=(150.0, 360.0, 190.0, 400.0), limit_x1=560.0)
     ov = xs.XsheetProfile().place_with_doc(b, "고개\n기웃", (792.0, 1224.0), doc)
-    assert ov.rect[1] == pytest.approx(402.0)    # 원문 바로 아래
-    assert ov.rect[0] == pytest.approx(150.0)    # 원문 좌단 정렬
+    assert ov.rect[1] > 400.0                    # 원문 아래로 내려간다
+    assert ov.rect[1] - 400.0 <= 20.0            # 그래도 바로 아래(멀리 X)
     assert ov.fontsize == xs._FONTSIZE           # 7pt 축소 없이
 
 
@@ -1569,3 +1575,182 @@ def test_extract_cache_key_covers_cut_recovery(monkeypatch):
     monkeypatch.setattr(xs, "_CUT_MAX_GAP_PT",
                         xs._CUT_MAX_GAP_PT + 1.0)
     assert profile.extract_cache_key() != before
+
+
+# ── 화면 방향(EAST/WEST/NORTH/SOUTH) ────────────────────────────────
+# 시트의 방위어는 나침반이 아니라 화면 방향이다(2026-08-26 사용자 지적).
+# A1 실측: 항목의 14.6%(512/3,496)가 `동쪽`·`서쪽`으로 오역돼 있었다.
+
+def _refine(src: str, ko: str) -> str:
+    return xs.XsheetProfile().refine_ko(
+        PdfBlock(page=0, kind=xs.NOTE_KIND, text=src, bbox=(0, 0, 10, 10)), ko)
+
+
+def test_screen_directions_are_not_compass_points():
+    """`HEAD EAST`는 고개를 **오른쪽으로**이지 동쪽이 아니다."""
+    assert _refine("133 TILTS HEAD EAST",
+                   "133 고개를\n동쪽으로 기울인다") == "133 고개를\n오른쪽으로 기울인다"
+    assert _refine("PEGGY TURNS HEAD WEST", "고개를 서쪽으로") == "고개를 왼쪽으로"
+
+
+def test_screen_direction_keeps_every_particle_form():
+    """`동/서`는 `오른쪽·왼쪽`도 `쪽`으로 끝나 어간만 갈면 조사가 살아난다."""
+    for ko, want in (("동쪽에서", "오른쪽에서"), ("서쪽을", "왼쪽을"),
+                     ("동쪽의", "오른쪽의"), ("서쪽과", "왼쪽과")):
+        assert _refine("LOOKS EAST WEST", ko) == want
+
+
+def test_north_south_fix_the_particle_too():
+    """`북쪽으로`를 어간만 갈면 `위으로`가 된다 — 조사형을 먼저 처리한다."""
+    assert _refine("PAN NORTH", "북쪽으로") == "위로"
+    assert _refine("MOVE SOUTH", "남쪽으로") == "아래로"
+    assert _refine("NORTH", "북쪽을") == "위를"
+    assert _refine("SOUTH", "남쪽에서") == "아래에서"
+
+
+def test_screen_direction_catches_abbreviations():
+    """원문이 `W.` 약칭이어도 잡아야 한다 — A1에서 실제로 2건 있었다.
+    (원문 조건부였다면 놓쳤을 것들이라 이 규칙은 무조건이다.)"""
+    assert _refine("W.\nSHIFT\nHEAD", "서쪽.\n이동") == "왼쪽.\n이동"
+    assert _refine("OF PAN\nFRAME.\nOFF WE", "서쪽으로 벗어나") == "왼쪽으로 벗어나"
+
+
+def test_transcribe_argv_uses_medium_effort_for_claude():
+    """Claude Code 기본 effort는 xhigh라 손글씨 판독엔 과하다 — A/B 실측으로
+    medium이 출력 −56%·시간 −55%·빈값 −6·일치 ±0(모든 축 지배)."""
+    argv = ht._argv_for("claude", "/bin/claude", "PROMPT")
+    assert argv[argv.index("--effort") + 1] == "medium"
+
+
+def test_effort_flag_is_claude_only():
+    """agy엔 `--effort`가 없다 — 넘기면 인자 오류로 즉사한다."""
+    assert "--effort" not in ht._argv_for("agy", "/bin/agy", "PROMPT")
+
+
+def test_effort_env_override_ignores_typos(monkeypatch):
+    """오타 하나로 문서당 3시간짜리 잡이 죽으면 안 된다 — 기본값으로 수렴."""
+    monkeypatch.setenv(ht.ENV_EFFORT, "low")
+    assert ht._effort() == "low"
+    monkeypatch.setenv(ht.ENV_EFFORT, "lo")
+    assert ht._effort() == "medium"
+
+
+def test_settle_spelled_out_is_also_안착():
+    """원문이 철자 그대로 `SETTLE`이어도 사람은 `안착`을 쓴다 — A1 사람
+    납품본 실측: 안착 167 · 세틀 0. 우리 산출물엔 `세틀`이 50건 남았었다."""
+    assert _refine("EYEBROWS SETTLE.", "눈썹 세틀.") == "눈썹 안착."
+    assert _refine("HEAD SETTLES", "고개 스틸") == "고개 안착"
+    # 약칭 경로는 그대로 살아 있어야 한다(`& 세틀`은 기존 규칙이 `&`째 흡수)
+    assert _refine("& STLS", "& 세틀") == "안착"
+    # ⚠단어 경계 계약: HUSTLE·CASTLE이 STL 노트로 오인되면 안 된다
+    assert _refine("HUSTLE", "정지") == "정지"
+
+
+def test_left_placement_pays_for_its_horizontal_distance():
+    """왼쪽 상자는 폭만큼 더 멀어지는데 그 거리가 변위에 없었다 — 그래서
+    잉크 없는 여백(프레임 번호 칸)이 늘 이겨 주석이 왼쪽으로 몰렸다
+    (A2 실측: 우리 왼쪽 34% 대 사람 10%)."""
+    p = xs.XsheetProfile()
+    blk = PdfBlock(page=0, kind=xs.NOTE_KIND, text="X",
+                   bbox=(300.0, 300.0, 340.0, 312.0), limit_x1=600.0)
+    cands = list(p._candidates(blk, "왼쪽으로 몰리는지 본다", (792.0, 1224.0)))
+    left = [c for c in cands if c[0][2] <= blk.bbox[0] + 1]
+    right = [c for c in cands if c[0][0] >= blk.bbox[2] - 1]
+    assert left and right
+    # 같은 dy(0)에서 왼쪽이 오른쪽보다 비싸야 한다
+    lo_l = min(c[2] for c in left)
+    lo_r = min(c[2] for c in right)
+    assert lo_l > lo_r, "왼쪽 후보가 가로 거리를 물어야 한다"
+
+
+def test_ink_cost_outweighs_a_short_move():
+    """손글씨를 덮는 자리는 조금 더 멀더라도 피해야 한다 — `_W_INK`가 250일
+    때 우리는 사람보다 더 겹쳤다(A1 픽셀 실측: 사람 0% 페이지에서 우리 10~12%).
+    ⚠하드 게이트는 기각 — `_BLOCKED`가 넓은 사다리 탈출을 켜서 주석이 원문에서
+    200pt 넘게 달아났다(99분위 207pt)."""
+    assert xs._W_INK >= 3000.0
+    # 잉크 5%인 가까운 자리(변위 0)보다 깨끗한 먼 자리(변위 50)가 싸야 한다
+    dirty = 0.0 + xs._W_INK * max(0.05 - xs._INK_OK, 0.0)
+    clean = 50.0
+    assert dirty > clean
+
+
+# ── 좌우 1순위 인접 배치(2026-08-26 사용자 설계) ──────────────────────
+# "손글씨를 타이트하게 감싸고 같은 크기 상자를 인접하게, 좌우를 1순위로,
+#  칸 사이에, 다른 글씨와 안 겹치게." 지그재그로 좌우를 번갈아 쓴다.
+
+def _grid_png(w=1100, h=1700, extra=()):
+    """가로 괘선 40줄 + 세로 칸선 2개를 그린 시트 흉내 페이지."""
+    import numpy as np
+    from PIL import Image
+    a = np.full((h, w, 3), 255, dtype=np.uint8)
+    for i in range(40):
+        y = 100 + i * 18                      # 균일 간격 = 시트 관례
+        a[y:y + 2, 60:900] = 0
+    for x in (60, 900):                       # 세로 칸선(진짜 칸 경계)
+        # ⚠_RULE_FILL(0.45)은 **열의 45% 이상**이 어두울 때 괘선으로 본다 —
+        # 짧게 그리면 검출이 안 된다(처음에 y 100~820만 그려 42%로 미달).
+        a[60:1640, x:x + 2] = 0
+    for x0, y0, x1, y1 in extra:
+        a[y0:y1, x0:x1] = 0
+    buf = io.BytesIO()
+    Image.fromarray(a).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_row_grid_is_uniform_and_derived_from_rules():
+    """시트 칸은 전부 같은 간격이다(사용자 확인) — 개별 괘선 좌표 대신
+    피치를 재면 굵은 줄이 2px로 잡히거나 흐린 줄이 빠져도 안 흔들린다."""
+    doc = FakeDoc(png=_grid_png())
+    p = xs.XsheetProfile()
+    p._page_ink(doc, 0)
+    assert p._row_grid is not None
+    _origin, pitch = p._row_grid
+    assert pitch == pytest.approx(18.0 * 72.0 / xs._INK_DPI, abs=0.5)
+
+
+def test_column_edges_come_from_vertical_rules_not_header_labels():
+    """칸 경계는 **세로 괘선**에서 뽑는다.
+
+    `geom.col_edges`는 머리글 라벨의 글자 시작 x 기반이라 `ACTION`처럼 가운데
+    정렬된 라벨이 칸 한복판에 가짜 경계를 만든다 — A1 p54 실측: limit_x1이
+    163pt인데 노트가 x=201까지 뻗어 **오른쪽 여유가 음수**였고, 그래서 주석이
+    전부 왼쪽으로 몰렸다."""
+    doc = FakeDoc(png=_grid_png())
+    p = xs.XsheetProfile()
+    p._page_ink(doc, 0)
+    edges = p._col_edges
+    assert edges, "세로 괘선을 못 찾았다"
+    s = 72.0 / xs._INK_DPI
+    assert min(edges) == pytest.approx(60 * s, abs=1.0)
+    assert max(edges) == pytest.approx(900 * s, abs=1.0)
+
+
+def test_side_placement_zigzags_left_and_right():
+    """좌우를 번갈아 쓴다 — 한쪽만 고집하면 세로로 빽빽한 노트끼리 부딪혀
+    탈출 경로로 빠지고, 그러면 원문에서 멀어진다."""
+    doc = FakeDoc(png=_grid_png(extra=[(300, 300, 360, 340)]))
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(300 * 0.72, 300 * 0.72, 360 * 0.72, 340 * 0.72),
+                 limit_x1=600.0)
+    p = xs.XsheetProfile()
+    even = p.place_with_doc(b, "가나", (792.0, 1224.0), doc, occupied=())
+    odd = p.place_with_doc(b, "가나", (792.0, 1224.0), doc,
+                           occupied=((0.0, 0.0, 1.0, 1.0),))
+    assert even.rect[0] >= b.bbox[2], "짝수 번째는 오른쪽부터"
+    assert odd.rect[2] <= b.bbox[0], "홀수 번째는 왼쪽부터"
+
+
+def test_side_placement_never_covers_handwriting():
+    """손글씨를 덮는 자리는 후보에서 **탈락**한다(하드) — 사용자 지적:
+    "원문과 겹치는 순간 가독성이 망가진다"."""
+    # 원문 오른쪽 곁을 손글씨 크기 덩어리로 막는다
+    doc = FakeDoc(png=_grid_png(extra=[(300, 300, 360, 340),
+                                       (365, 295, 460, 345)]))
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(300 * 0.72, 300 * 0.72, 360 * 0.72, 340 * 0.72),
+                 limit_x1=600.0)
+    p = xs.XsheetProfile()
+    ov = p.place_with_doc(b, "가나", (792.0, 1224.0), doc, occupied=())
+    ink = p._page_ink(doc, 0)
+    assert xs._ink_ratio(ink, ov.rect, 1224.0) <= xs._SIDE_INK_OK

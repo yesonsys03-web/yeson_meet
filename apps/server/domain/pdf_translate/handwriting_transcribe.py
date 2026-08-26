@@ -53,6 +53,30 @@ ENV_CLI = "YESON_PDF_XSHEET_CLI"            # 환경변수 오버라이드(운�
 VISION_CLIS = ("claude", "agy")
 ENV_EXTRA_ARGS = "YESON_PDF_XSHEET_CLI_ARGS"  # shlex 분해되어 argv 뒤에 붙는다
 ENV_WORKERS = "YESON_PDF_XSHEET_CLI_WORKERS"  # 동시 CLI 세션 수(기본 3)
+ENV_EFFORT = "YESON_PDF_XSHEET_CLI_EFFORT"    # 사고 깊이(기본 medium — 아래 근거)
+_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# Claude Code의 기본 effort는 **xhigh**(위에서 두 번째)다 — 코딩·에이전트
+# 작업에 맞춘 값이고, "이미지 한 장 열어 손글씨 옮겨적기"에는 과하다. 실측
+# (2026-08-26, A1 세션 해부): **청구 출력의 98%가 로그에 안 보이는 사고
+# 토큰**이었고(턴당 중앙 1,908), 출력은 전사 비용의 **52%**($403/$777)였다.
+# A/B(A2 크롭 120장 동일 집합·팔마다 폴더 분리·배치 60):
+#     base(xhigh) 출력 50,316 · 666초 · 빈값 24 · 정확일치 69
+#     medium      출력 22,375 · 300초 · 빈값 18 · 정확일치 69
+#     low         출력 12,290 · 146초 · 빈값  6 · 정확일치 63
+# medium은 **측정한 모든 축에서 base를 지배**한다(출력 −56%·시간 −55%·빈값
+# −6·일치 ±0). 게다가 정답지가 base 설정으로 만든 것이라 base에 유리하게
+# 편향됐는데도 동점이다. low는 빈값이 24→6으로 더 좋아지지만 판독 **내용**이
+# 달라진다(읽어낸 것만 보면 일치율 71.9%→55.3%) — 사람 눈 검증 전까지 보류.
+# ⚠턴 수는 134→122로 거의 안 줄었다. 절감은 도구 호출 뭉침이 아니라 **순수
+# 사고 깊이**에서 나온다.
+_EFFORT_DEFAULT = "medium"
+
+
+def _effort() -> str:
+    """전사 CLI에 줄 effort. 잘못된 값은 조용히 무시하고 기본값으로 — 오타
+    하나로 문서당 3시간짜리 잡이 인자 오류로 즉사하면 안 된다."""
+    v = os.environ.get(ENV_EFFORT, "").strip().lower()
+    return v if v in _EFFORTS else _EFFORT_DEFAULT
 
 
 def _workers() -> int:
@@ -540,6 +564,10 @@ def _argv_for(name: str, path: str, prompt: str) -> list[str]:
     argv = [path, "-p", prompt, "--add-dir", "."]
     if name == "agy":
         argv += ["--print-timeout", "8m"]
+    if name == "claude":
+        # agy에는 이 플래그가 없다 — 넘기면 인자 오류로 즉사한다
+        # (`--print-timeout`을 claude에 넘길 수 없는 것과 같은 이유).
+        argv += ["--effort", _effort()]
     return argv
 
 

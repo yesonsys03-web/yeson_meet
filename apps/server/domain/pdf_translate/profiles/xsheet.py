@@ -89,6 +89,11 @@ _MIN_BOX_W = 18.0
 # 위는 아니다"에 해당하는 선이고, 여기 못 미치는 자리가 없으면 가장 덜
 # 덮는 자리를 쓴다(무조건 피하려다 원문에서 멀어지는 게 더 나쁘다).
 _INK_OK = 0.02
+# ⛔손글씨 겹침을 **하드 게이트**로 올리는 안은 실측 기각(2026-08-26).
+# 겹침은 13%→3%로 잘 떨어지지만, `_BLOCKED`가 "막힘" 신호를 켜서 넓은
+# 사다리(±80~260pt) 탈출을 유발한다 — A1 실측 거리 99분위 **207pt·최대
+# 249pt**. 원문에서 200pt 떨어진 주석은 겹치는 것보다 나쁘다. 대신
+# 사다리를 건드리지 않는 **강한 소프트 페널티**(_W_INK 상향)를 쓴다.
 _INK_DPI = 100        # 잉크 유무 판정에는 이 정도면 충분하다(OCR용 200과 별개)
 _INK_DARK = 150       # 이보다 어두우면 잉크
 _RULE_FILL = 0.45     # 행·열의 이 비율 이상이 어두우면 인쇄 괘선으로 본다
@@ -113,7 +118,16 @@ _BELOW_GAPS = (2.0, 18.0, 34.0, 50.0)
 # 교환 가능한 비용**으로 강등한다: 잉크 1% ≈ 2.5pt 도주와 등가(500에서
 # 시작해 시뮬 벤치로 낮췄다 — 클수록 옆 잉크 몇 %p 차이가 방향을 뒤집어
 # left 쏠림이 생긴다: rework1 실측 left 481 대 사람 153).
-_W_INK = 250.0
+_W_INK = 3000.0   # ⚠2026-08-26 250→3000 (사용자 지적: "원문과 겹치면 가독성이 망가진다")
+# 250일 때 우리는 **사람보다 더 겹쳤다** — A1 5페이지 픽셀 실측(인쇄 괘선을
+# 지운 손글씨 마스크): 사람 17/0/0/0/0% 대 우리 23/10/0/0/12%. 예전 "사람도
+# 40.9%(사각형)·78.1%(2%+잉크) 겹친다"는 **잣대가 틀린 것**이었다 — 사각형은
+# 여러 줄 노트의 빈칸을 겹침으로 세고, 그 '잉크'엔 인쇄 괘선이 들어간다.
+# 2D 스윕(A1, 표본 447건, **손글씨 전용 마스크**): INK 250→3000·LEFT 0→0.5
+#     손글씨겹침 13%→8% · 왼쪽 37%→12%(사람 9%) · 주석겹침 0 유지
+#     거리 90/99분위 **3/34pt**(대부분 여전히 원문에 딱 붙는다)
+# INK를 10000까지 올려도 겹침은 8%에서 안 내려간다 — 남은 8%는 어느 후보든
+# 글씨를 덮는 자리들이라 후보 생성을 늘려야 풀린다(위 배치·줄 사이 병기).
 # 폰트 한 단계 축소(9→8→7)의 비용 — 근처에 옅은 잉크 자리가 있으면
 # 글자를 줄여 먼 빈자리로 가느니 제 크기로 곁에 앉는 게 사람 관례다.
 _W_FS = 12.0
@@ -128,6 +142,20 @@ _BELOW_H_CAP = 100.0
 # 에서 원문 폭만큼 떨어진 자리다(rework2 최악 꼬리 실측: 폭 336pt 클러스터
 # 의 번역이 x20에 앉아 사람(x250~410)과 245~384pt 어긋남, p127·p23·p15).
 # 폭이 이 기준을 넘는 만큼만 비율로 얹는다 — 좁은 노트는 영향 없다.
+# 왼쪽 배치는 상자가 **폭만큼 더 멀어지는데** 그 가로 거리가 변위에 안 들어
+# 갔다 — 오른쪽은 `bx1+3`에 붙지만 왼쪽은 `bx0-3-폭`에서 시작하므로 읽기
+# 시작점이 폭만큼 떨어진다. 그래서 잉크만으로 승부가 갈려 프레임 번호 여백
+# (잉크 ≈0)이 계속 이겼다(A2 실측: 우리 왼쪽 436 대 오른쪽 3 / 사람은 154 대
+# 167로 고르다. A1 사람 납품본도 오른쪽 352·왼쪽 305). 이 계수로 그 거리를
+# 변위에 되돌린다 — 0이면 옛 동작.
+# **전수 3문서 실측**(A1·A2·A3 전 항목, 블록 bbox 기준 왼쪽 비율):
+#     0.0  A1 37% · A2 34% · A3 35%
+#     0.5  A1  9% · A2 11% · A3 10%      ← 사람 A1 9% · A2 10% · A3 7%
+#     1.0  A1  3% · A2  4% · A3  4%      (과교정)
+# A1은 튜닝에 한 번도 안 쓴 홀드아웃인데 A2와 같은 값이 나왔다 = 과적합 아님.
+# ⚠**상한이 0.5다**: 그 위로 올리면 08-25 사용자 지적으로 만든 "긴 세로 스택은
+# 아래보다 옆에 병기"가 깨진다(0.75부터 아래로 밀림). 테스트가 그 경계를 잠근다.
+_LEFT_FAR_W = 0.5
 _WIDE_FROM = 80.0
 _WIDE_L_W = 0.25
 
@@ -290,6 +318,28 @@ _HOUSE_KO_XSHEET: tuple[tuple[re.Pattern[str], str], ...] = (
     # 흔히 내는 겹말 `오른|발|발스텝`은 이 규칙이 `오른|발|스텝`으로
     # 정확히 정리한다(옛 규칙이 실제로 하던 일).
     (re.compile(r"(?<!오른)(?<!왼)발스텝"), "스텝"),
+    # EAST/WEST/NORTH/SOUTH = **화면 방향**이지 방위가 아니다(2026-08-26 사용자
+    # 지적). 시트에서 `HEAD EAST`는 "고개를 오른쪽으로"이지 동쪽이 아니다.
+    # A1 실측: 원문 EAST 299·WEST 259·NORTH 2·SOUTH 2 = 항목의 **14.6%**가
+    # 방위로 오역됐다(`133 TILTS HEAD EAST`→`고개를 동쪽으로 기울인다`).
+    # ⚠원문 조건부(BY_SRC)가 아니라 **무조건**인 이유: 시트 노트에 나침반
+    # 방위가 정당한 문맥이 없고, 원문이 약칭일 때도 잡아야 한다 — A1에서
+    # 원문에 낱말이 없는데 `서쪽`이 나온 2건은 전부 `W.`·`OFF WE` 약칭이라
+    # 조건부였으면 놓쳤을 것들이다(`정지`처럼 다른 뜻으로 정당한 낱말이
+    # 아니므로 BY_SRC의 근거가 여기엔 없다).
+    # 조사 처리: `동/서`는 `오른쪽·왼쪽`도 `쪽`으로 끝나 어간만 갈면 모든
+    # 조사형이 맞는다(`동쪽으로`→`오른쪽으로`). `북/남`은 받침이 달라져
+    # `북쪽으로`→`위으로`가 되므로 조사형을 먼저 처리한다.
+    (re.compile(r"북쪽으로"), "위로"),
+    (re.compile(r"남쪽으로"), "아래로"),
+    (re.compile(r"북쪽을"), "위를"),
+    (re.compile(r"남쪽을"), "아래를"),
+    (re.compile(r"북쪽과"), "위와"),
+    (re.compile(r"남쪽과"), "아래와"),
+    (re.compile(r"북쪽"), "위"),
+    (re.compile(r"남쪽"), "아래"),
+    (re.compile(r"동쪽"), "오른쪽"),
+    (re.compile(r"서쪽"), "왼쪽"),
 )
 # 원문 코드별 규칙 — 같은 한국어라도 원문이 무엇이냐에 따라 사람 표기가
 # 갈린다(TILT는 `기웃`, LEAN은 `기울인다`). 무조건 치환하면 한쪽이 깨진다.
@@ -299,7 +349,11 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
     # ⚠단어 경계가 계약이다: 부분 문자열로 찾으면 `HUSTLE`·`CASTLE`·`WRESTLE`가
     # STL 노트로 오인돼 멀쩡한 `정지`를 `안착`으로 덮는다(테스트가 잡은 함정).
     # 복수형 `STLS`도 같은 코드다(A2 계획 실측: `& STLS`의 `세틀` 잔존 1건).
-    (re.compile(r"\bSTLS?\b", re.IGNORECASE), (
+    # ⚠원문이 **철자 그대로** `SETTLE`일 때도 사람은 `안착`을 쓴다 — 옛 주석은
+    # "SETTLE 철자면 규칙 대상 아님"으로 넘겼는데 **오판이었다**. A1 사람 납품본
+    # 실측(2026-08-26): 안착 167 · 세틀 0 · 스틸 0인데 우리 산출물엔 `세틀`이
+    # 50건 남았다. 약칭이냐 철자냐는 사람 표기를 가르지 않는다.
+    (re.compile(r"\b(?:STLS?|SETTLES?)\b", re.IGNORECASE), (
         (re.compile(r"[&+]\s*세틀"), "안착"),
         (re.compile(r"세틀"), "안착"),
         (re.compile(r"스틸"), "안착"),
@@ -587,6 +641,200 @@ def _is_cut_line(pt, rect, scale, geom: _Geometry) -> bool:
     return gap <= _CUT_MAX_GAP_PT
 
 
+def _textlike_only(ink):
+    """획 덩어리 중 **글자다운 것만** 남긴 마스크(화살표·작화선 제외).
+
+    판정은 전사 크롭 확장과 같은 `_is_textlike`를 쓴다 — 같은 페이지를 두
+    잣대로 보면 "여기 잉크 있음"의 뜻이 단계마다 달라진다."""
+    import cv2
+    import numpy as np
+
+    from ..handwriting_transcribe import _is_textlike
+
+    u8 = ink.astype(np.uint8)
+    n, _labels, stats, _c = cv2.connectedComponentsWithStats(u8, connectivity=8)
+    out = np.zeros_like(u8)
+    for i in range(1, n):
+        x, y, w, h, area = (int(v) for v in stats[i])
+        if _is_textlike(w, h, area):
+            out[y:y + h, x:x + w] |= u8[y:y + h, x:x + w]
+    return out.astype(bool)
+
+
+# ── 좌우 1순위 인접 배치(2026-08-26 사용자 설계) ────────────────────
+# "손글씨가 있는 영역을 사각형으로 타이트하게 감싸고, 같은 크기 상자를
+#  상하좌우로 인접하게 놓되 좌우를 1순위로. 다른 글씨와 안 겹치게."
+#
+# 왜 이게 맞나(측정 근거):
+#  · 앵커가 지금은 **느슨한 OCR 클러스터 상자**라 '인접'이 인접이 아니었다.
+#    타이트 잉크 상자는 크롭을 굽는 `crop_rect`와 같은 기계로 이미 있다.
+#  · 사람 주석은 원문보다 **작다** — A1 3,271건 실측 면적비 중앙 0.44,
+#    82%가 원문 면적 이하. 그래서 "같은 크기 상자"는 대개 여유가 있다.
+#  · 사람은 대부분 좌 또는 우에 놓는다(사용자 확인). 우리는 위 배치가 0%고
+#    아래가 사람의 두 배였다.
+#  · 같은 크기 인접이라 **멀리 날아갈 수 없다** — 옛 넓은 사다리 탈출이
+#    만들던 99분위 207pt·최대 243pt 꼬리가 구조적으로 사라진다.
+_SIDE_FIRST = True        # 끄면 옛 후보 생성으로 되돌아간다(A/B용)
+_SIDE_GAP = 3.0           # 원문 잉크와의 틈(기존 옆자리 관례와 동일)
+_SIDE_DYS = (0.0, 16.0, -16.0)   # 좌우가 막혔을 때 살짝 위아래로 밀어 본다
+_SIDE_INK_OK = 0.005      # 손글씨를 사실상 안 덮는다(하드) — 사람 관례
+_SIDE_MIN_H = 12.0        # 한 줄은 들어가야 한다
+_SNAP_PAD = 1.0           # 칸 경계 바로 아래 여유
+_GRID_MIN_PX = 8          # 이보다 촘촘하면 괘선 격자가 아니라 검출 잡음
+
+
+def _rule_xs(rule_cols) -> tuple[float, ...]:
+    """세로 괘선 x 좌표(pt) — 연속 픽셀은 한 줄로 뭉친다(굵은 선 대비)."""
+    import numpy as np
+
+    xs_ = np.flatnonzero(rule_cols)
+    if xs_.size == 0:
+        return ()
+    scale = _INK_DPI / 72.0
+    groups = [float(xs_[0])]
+    for x in xs_[1:]:
+        if x - groups[-1] > 1.5:
+            groups.append(float(x))
+        else:
+            groups[-1] = float(x)
+    return tuple(g / scale for g in groups)
+
+
+def _row_grid(rule_rows) -> tuple[float, float] | None:
+    """가로 괘선에서 **균일 격자**(원점 pt, 칸 간격 pt)를 유도한다.
+
+    시트의 한 칸은 전부 같은 간격이다(사용자 확인 2026-08-26). 그래서 개별
+    괘선 좌표를 그대로 쓰는 것보다 피치를 재는 편이 안정적이다 — 굵은 줄이
+    두 행으로 검출되거나 흐린 줄이 빠져도 격자는 흔들리지 않는다.
+    간격은 이웃 괘선 간 거리의 **최빈값**으로 잡는다(중앙값은 굵은 줄이
+    만드는 1px 간격에 끌려간다)."""
+    import numpy as np
+
+    ys = np.flatnonzero(rule_rows)
+    if ys.size < 8:
+        return None
+    scale = _INK_DPI / 72.0
+    # 연속 픽셀은 한 줄로 뭉친다(굵은 괘선이 2~3px로 잡힌다)
+    groups = [float(ys[0])]
+    for y in ys[1:]:
+        if y - groups[-1] > 1.5:
+            groups.append(float(y))
+        else:
+            groups[-1] = float(y)
+    if len(groups) < 8:
+        return None
+    diffs = np.diff(np.array(groups))
+    diffs = diffs[diffs >= _GRID_MIN_PX]
+    if diffs.size < 5:
+        return None
+    pitch = float(np.bincount(np.round(diffs).astype(int)).argmax())
+    if pitch < _GRID_MIN_PX:
+        return None
+    return (groups[0] / scale, pitch / scale)
+
+
+def _snap_to_row(rect, grid, page_h: float):
+    """상자 윗변을 **칸 경계 바로 아래**로 옮긴다 — 괘선이 글자를 가로지르지
+    않게. 반 칸 이내로만 움직인다(멀리 끌어다 맞추면 원문에서 멀어지는
+    대가가 이득보다 크다)."""
+    if not grid:
+        return rect
+    origin, pitch = grid
+    if pitch <= 0:
+        return rect
+    x0, y0, x1, y1 = rect
+    k = round((y0 - origin) / pitch)
+    target = origin + k * pitch + _SNAP_PAD
+    if abs(target - y0) > pitch / 2 + _SNAP_PAD:
+        return rect
+    dy = target - y0
+    if y1 + dy > page_h - 8.0 or y0 + dy < 8.0:
+        return rect
+    return (x0, y0 + dy, x1, y1 + dy)
+
+
+def _tight_anchor(ink, block: PdfBlock) -> tuple[float, float, float, float]:
+    """블록 안에서 **손글씨가 실제로 있는** 구간만 남긴 사각형(pt).
+
+    잉크가 없으면(전부 괘선이었거나 마스크 실패) 블록 상자를 그대로 쓴다."""
+    import numpy as np
+
+    scale = _INK_DPI / 72.0
+    h, w = ink.shape
+    bx0, by0, bx1, by1 = block.bbox
+    x0 = max(0, int(bx0 * scale)); y0 = max(0, int(by0 * scale))
+    x1 = min(w, int(bx1 * scale)); y1 = min(h, int(by1 * scale))
+    if x1 <= x0 or y1 <= y0:
+        return block.bbox
+    sub = ink[y0:y1, x0:x1]
+    rows = np.flatnonzero(sub.any(axis=1))
+    cols = np.flatnonzero(sub.any(axis=0))
+    if rows.size == 0 or cols.size == 0:
+        return block.bbox
+    return ((x0 + int(cols[0])) / scale, (y0 + int(rows[0])) / scale,
+            (x0 + int(cols[-1]) + 1) / scale, (y0 + int(rows[-1]) + 1) / scale)
+
+
+def _side_candidates(anchor, block: PdfBlock, ko_text: str,
+                     page_size: tuple[float, float], right_first: bool = True):
+    """앵커와 **같은 크기**의 인접 상자를 좌우 → 상하 순으로 내놓는다.
+
+    좌우 중 어느 쪽을 먼저 볼지는 **번갈아 간다**(지그재그, 사용자 관찰
+    2026-08-26). 엑스시트는 노트가 세로로 빽빽해서 한쪽만 고집하면 주석끼리
+    부딪히고, 그때마다 탈출 경로로 빠져 원문에서 멀어진다. 좌우를 번갈아
+    쓰면 같은 칸을 두고 다투지 않아 곁에 남는 비율이 올라간다.
+
+    글이 같은 크기에 안 들어가면 폰트를 한 단계씩 줄이고, 그래도 넘치면
+    **원문에서 멀어지는 쪽으로만** 상자를 늘린다(원문 쪽으로 늘리면 덮게 된다).
+    """
+    page_w, page_h = page_size
+    ax0, ay0, ax1, ay1 = anchor
+    aw = max(ax1 - ax0, _MIN_BOX_W)
+    ah = max(ay1 - ay0, _SIDE_MIN_H)
+    limit_x1 = block.limit_x1 if block.limit_x1 is not None else page_w - 8.0
+    g = _SIDE_GAP
+    def box(w):
+        """원문과 같은 폭을 **상한**으로 두되, 자리가 좁으면 줄인다.
+        같은 폭을 강요하면 넓은 노트가 칸 경계에 막혀 오른쪽을 못 쓰고
+        왼쪽으로 밀린다(실측: 왼쪽 30% — 사람은 7~10%). 사람 주석 폭도
+        원문의 0.61배(중앙)로 원문보다 좁다."""
+        return max(min(aw, w), _MIN_BOX_W) if w >= _MIN_BOX_W else 0.0
+
+    for fontsize in (_FONTSIZE, 8.0, _MIN_FONTSIZE):
+        # ⚠오른쪽 자리를 **전부 소진한 뒤** 왼쪽으로 간다. 번갈아 내면
+        # `왼쪽(dy=0)`이 `오른쪽(dy=16)`보다 먼저 걸려, 살짝 밀면 되는 자리를
+        # 두고 왼쪽 빈 여백(프레임 번호 칸)으로 도망간다 — 옛 채점이 왼쪽으로
+        # 몰리던 것과 같은 함정이다(실측: 왼쪽 30%→26%에서 더 안 내려갔다).
+        def right_slots(fontsize=fontsize):
+            w = box(limit_x1 - (ax1 + g))
+            if not w:
+                return
+            h = max(ah, _estimate_height(ko_text, w, fontsize))
+            for dy in _SIDE_DYS:
+                yield (ax1 + g, ay0 + dy, ax1 + g + w, ay0 + dy + h), fontsize
+
+        def left_slots(fontsize=fontsize):
+            w = box((ax0 - g) - 8.0)
+            if not w:
+                return
+            h = max(ah, _estimate_height(ko_text, w, fontsize))
+            for dy in _SIDE_DYS:
+                yield (ax0 - g - w, ay0 + dy, ax0 - g, ay0 + dy + h), fontsize
+
+        first, second = ((right_slots, left_slots) if right_first
+                         else (left_slots, right_slots))
+        yield from first()
+        yield from second()
+        # 아래 → 위 (2순위). 아래는 그대로, 위는 상자 높이만큼 올린다.
+        w = box(limit_x1 - ax0)
+        if w:
+            h = max(ah, _estimate_height(ko_text, w, fontsize))
+            if ay1 + g + h <= page_h - 8.0:
+                yield (ax0, ay1 + g, ax0 + w, ay1 + g + h), fontsize
+            if ay0 - g - h >= 8.0:
+                yield (ax0, ay0 - g - h, ax0 + w, ay0 - g), fontsize
+
+
 def _is_scanned(doc: PdfDocument, page: int) -> bool:
     """이 페이지가 스캔본인가 — 페이지를 거의 덮는 이미지가 있으면 그렇다."""
     page_w, page_h = doc.page_size(page)
@@ -801,7 +1049,12 @@ class XsheetProfile:
         blocks.extend(_recover_header_notes(header_pool, pages_with_geom))
         # 페이지 순서 불변식 복원 — place_with_doc의 잉크 캐시(_ink_cache)가
         # 페이지당 1회 렌더로 성립하는 전제다.
-        blocks.sort(key=lambda b: b.page)
+        # ★페이지 안에서는 **세로 순서**로 정렬한다(2026-08-26). 배치가 좌우를
+        # 번갈아 쓰는 지그재그인데, 블록이 세로 순서로 오지 않으면 그 번갈음이
+        # 무작위가 된다 — 실측: 세로 오름차순 페이지가 187개 중 40개(21%)뿐이고
+        # 이웃 쌍의 10%가 뒤집혀 있었다. 사람이 시트를 위에서 아래로 훑는 순서
+        # 이기도 하다. 크롭 이름은 좌표 기반이라 전사 캐시에는 영향이 없다.
+        blocks.sort(key=lambda b: (b.page, b.bbox[1], b.bbox[0]))
         return blocks
 
     # ---- 전사 훅(pdf_run이 getattr로 발견하는 optional 계약) ------------
@@ -862,6 +1115,11 @@ class XsheetProfile:
             logger.warning("pdf-translate: page %d 잉크 마스크 실패 — 기본 배치",
                            block.page)
             return self.place(block, ko_text, page_size)
+        if _SIDE_FIRST:
+            side = self._first_clean_side(block, ko_text, page_size, ink,
+                                          occupied)
+            if side is not None:
+                return side
         best = self._score_candidates(
             self._candidates(block, ko_text, page_size),
             block, ko_text, page_size, ink, occupied)
@@ -879,6 +1137,38 @@ class XsheetProfile:
             if wide is not None and wide[0] < best[0]:
                 best = wide
         return best[1]
+
+    def _first_clean_side(self, block: PdfBlock, ko_text: str,
+                          page_size: tuple[float, float], ink,
+                          occupied) -> Overlay | None:
+        """좌우(→상하) 인접 자리 중 **아무것도 덮지 않는 첫 자리**.
+
+        점수 최소화가 아니라 순서다 — 사람 관례가 "곁에, 좌우 먼저"라서
+        그 순서를 그대로 따르는 편이 채점보다 재현이 정확하다. 하나도
+        성립하지 않으면 None을 돌려 옛 채점 경로로 넘긴다."""
+        anchor = _tight_anchor(ink, block)
+        page_h = page_size[1]
+        grid = getattr(self, "_row_grid", None)
+        # 지그재그 — 이 페이지에서 지금까지 배치한 수의 홀짝으로 선호 변을
+        # 바꾼다. 블록이 페이지·세로 순서로 오므로 위에서 아래로 좌·우가
+        # 번갈아 잡힌다.
+        right_first = len(occupied or ()) % 2 == 0
+        # 칸 경계는 세로 괘선에서 — geom.col_edges는 머리글 라벨 기반이라
+        # 칸 한복판을 경계로 잡는 경우가 있다(위 _page_ink 주석 참조).
+        edges = [x for x in getattr(self, "_col_edges", ()) if x > anchor[2] + 1]
+        limit = min(edges) - 1.0 if edges else None
+        blk = block if limit is None else replace(block, limit_x1=limit)
+        for rect, fontsize in _side_candidates(anchor, blk, ko_text,
+                                               page_size, right_first):
+            rect = _clamp_nondegenerate(
+                *_snap_to_row(rect, grid, page_h), page_h)
+            if _ink_ratio(ink, rect, page_h) > _SIDE_INK_OK:
+                continue          # 손글씨를 덮으면 탈락(하드)
+            if _occupied_frac(rect, occupied) > _OCC_OK:
+                continue          # 이웃 주석과 겹치면 탈락(하드)
+            return Overlay(page=block.page, rect=rect, text=ko_text,
+                           fontsize=fontsize)
+        return None
 
     def _score_candidates(self, candidates, block: PdfBlock, ko_text: str,
                           page_size: tuple[float, float], ink,
@@ -936,8 +1226,30 @@ class XsheetProfile:
         ink = gray < _INK_DARK
         # 인쇄 괘선(가로 줄·세로 칸선)은 어디에나 있어서 빼지 않으면 모든
         # 자리가 '잉크 있음'이 된다 — 실측에서 우리·사람 모두 100%로 나왔다.
-        ink[ink.mean(axis=1) > _RULE_FILL, :] = False
-        ink[:, ink.mean(axis=0) > _RULE_FILL] = False
+        rule_rows = ink.mean(axis=1) > _RULE_FILL
+        rule_cols = ink.mean(axis=0) > _RULE_FILL
+        ink[rule_rows, :] = False
+        ink[:, rule_cols] = False
+        # 세로 괘선 = **진짜 칸 경계**. `geom.col_edges`는 머리글 라벨의 글자
+        # 시작 x에서 뽑는데 `ACTION` 라벨이 칸 가운데 정렬이라 그 시작점이
+        # 칸 한복판에 가짜 경계를 만든다 — A1 p54 실측: limit_x1이 163pt인데
+        # 노트가 x=201까지 뻗어 **오른쪽 여유가 음수**였다. 그래서 오른쪽
+        # 배치가 구조적으로 막혀 주석이 왼쪽으로 몰렸다.
+        self._col_edges = _rule_xs(rule_cols)
+        # 지우기 전에 가로 괘선 y를 챙겨 둔다 — 주석을 **칸 사이**에 넣으면
+        # 줄이 글자를 가로지르지 않아 읽기 쉬워진다(사용자 지적 2026-08-26).
+        # 시트 행 피치(≈12.5pt)와 9pt 글줄 높이가 거의 같아, 윗변만 괘선
+        # 바로 아래에 맞추면 여러 줄도 자연히 칸마다 한 줄씩 앉는다.
+        self._row_grid = _row_grid(rule_rows)
+        # ★손글씨만 남긴다 — 화살표·작화 웨이브선처럼 길고 성긴 획은 뺀다.
+        # 이걸 안 하면 마스크가 "무엇이든 획"이라, 배치가 **작화 선을 피하는
+        # 것과 남의 손글씨를 덮지 않는 것을 구분하지 못한다**. 두 사용자
+        # 지적이 정확히 그 경계에서 갈렸다:
+        #   08-25 "긴 스택 번역이 아래로 150pt 밀렸다 — 사람은 **작화 선 위에
+        #          겹쳐** 왼쪽에 병기한다"      → 선은 감수해야 한다
+        #   08-26 "원문과 겹치는 순간 가독성이 망가진다" → 글씨는 덮으면 안 된다
+        # 전사 경로(`_is_textlike`)와 같은 잣대를 쓴다.
+        ink = _textlike_only(ink)
         self._ink_cache = (page, ink)
         return ink
 
@@ -1011,7 +1323,8 @@ class XsheetProfile:
                     if top + height <= page_h - 8.0:
                         yield (_clamp_nondegenerate(
                             right - width, top, right, top + height,
-                            page_h), fontsize, abs(dy) + wide_pen)
+                            page_h), fontsize,
+                            abs(dy) + wide_pen + _LEFT_FAR_W * (width + 3.0))
             # 아래: 좌단 정렬 + (넓은 원문은) 우단 정렬 변형, 글에 맞춘 폭
             avail = limit_x1 - bx0
             if avail >= _MIN_BOX_W:
