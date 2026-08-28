@@ -144,10 +144,18 @@ class _Backend:
     argv: list[str]
     prompt_via: str = "stdin"  # "stdin" | "argv"
     model_flag: str | None = None
+    # 잡·env 어느 쪽도 모델을 안 정했을 때의 고정값. ⚠비워 두면 헤드리스
+    # CLI가 **사용자의 인터랙티브 /model 기본값**을 상속한다 — 대화 세션에서
+    # 모델을 바꾸는 순간 번역 단가·거동이 조용히 따라 바뀐다(2026-08-28
+    # 실사고 직전: 기본값이 Fable 5로 저장됨 = opus 등급의 토큰당 2배).
+    # 지금까지의 번역 품질 실측은 전부 opus 등급이라 그 등급에 고정한다.
+    # 전사 쪽 동일 방어 = handwriting_transcribe._MODEL_DEFAULT.
+    default_model: str | None = None
 
 
 _BACKENDS: dict[str, _Backend] = {
-    "claude": _Backend(argv=["claude", "-p"], prompt_via="stdin", model_flag="--model"),
+    "claude": _Backend(argv=["claude", "-p"], prompt_via="stdin", model_flag="--model",
+                       default_model="opus"),
     # --skip-git-repo-check: codex exec는 신뢰된 git 디렉터리 밖에서 실행을 거부한다.
     # 번역은 서버의 임의 작업 폴더에서 돌므로(레포 안이라는 보장 없음) 항상 우회한다.
     "codex": _Backend(argv=["codex", "exec", "--skip-git-repo-check"], prompt_via="stdin", model_flag="-m"),
@@ -330,7 +338,9 @@ def create_translator(
     if provider in _BACKENDS:
         backend = _BACKENDS[provider]
         argv = list(backend.argv)
-        model = (cli_model or "").strip() or os.environ.get(CLI_MODEL_ENV)
+        model = ((cli_model or "").strip()
+                 or (os.environ.get(CLI_MODEL_ENV) or "").strip()
+                 or backend.default_model)
         if model and backend.model_flag:
             argv = argv + [backend.model_flag, model]
         return CliTranslator(argv, prompt_via=backend.prompt_via, timeout=timeout,

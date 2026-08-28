@@ -68,7 +68,8 @@ async function request<T>(url: string, init: RequestInit): Promise<T> {
 }
 
 export function isActivePdfStatus(status: string): boolean {
-  return ["queued", "extracting", "translating", "overlaying"].includes(status);
+  return ["queued", "extracting", "transcribing", "translating", "overlaying"]
+    .includes(status);
 }
 
 export function pdfUploadUrl(): string {
@@ -78,12 +79,14 @@ export function pdfUploadUrl(): string {
 export async function uploadPdfJob(
   file: File, title: string,
   translateProvider?: string, translateCliModel?: string,
+  formatHint?: string,
 ): Promise<{ job_id: string }> {
   const form = new FormData();
   form.append("file", file);
   if (title) form.append("title", title);
   if (translateProvider) form.append("translate_provider", translateProvider);
   if (translateCliModel) form.append("translate_cli_model", translateCliModel);
+  if (formatHint) form.append("format_hint", formatHint);
   return request(pdfUploadUrl(), { method: "POST", body: form });
 }
 

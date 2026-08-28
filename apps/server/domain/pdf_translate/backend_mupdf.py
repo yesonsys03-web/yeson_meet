@@ -133,8 +133,15 @@ class MuPdfDocument:
             fitz.Rect(*rect), text, fontsize=fontsize, text_color=color)
         annot.update()
 
-    def render_png(self, page: int, *, dpi: int = 120) -> bytes:
-        return self._doc[page].get_pixmap(dpi=dpi).tobytes("png")
+    def render_png(self, page: int, *, dpi: int = 120,
+                   annots: bool = True) -> bytes:
+        """annots=False면 **스캔 원본만** 그린다.
+
+        PyMuPDF 기본값은 주석 포함이라, 이미 번역된 시트를 다시 넣으면 사람이
+        단 한글 주석까지 픽셀로 찍혀 OCR에 섞인다 — 그러면 한글과 붙은 영문
+        노트가 has_hangul 규칙에 걸려 통째로 버려진다(재업로드·개정본 경로).
+        손글씨 판독은 스캔만 보면 된다."""
+        return self._doc[page].get_pixmap(dpi=dpi, annots=annots).tobytes("png")
 
     def save(self, dest: Path) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)

@@ -352,6 +352,33 @@ async def test_semaphore_is_released_exactly_once_after_cancel(
     assert _PDF_SEMAPHORE._value == before, "취소 경로에서도 정확히 한 번만 반납"
 
 
+async def test_concurrent_jobs_run_one_at_a_time_in_arrival_order():
+    """여러 클라이언트가 동시에 올린 잡은 **한 번에 하나씩, 도착 순서대로** 돈다.
+
+    겹쳐 돌면 두 잡이 각자 전사·번역 워커를 띄워 구독 세션이 배로 늘고(설정
+    6이면 12), 300dpi 렌더와 OCR이 같은 코어를 두고 싸우며, 진행률·취소가
+    서로를 덮는다. 자막메이커(job_tasks._JOB_SEMAPHORE)와 같은 규칙이다.
+
+    세마포어 **값**만 보는 기존 테스트로는 이걸 못 잡는다 — 반납 회계가
+    맞아도 상호배제가 깨질 수 있어서, 여기서는 실행 구간이 실제로 겹치지
+    않는지를 순서열로 본다.
+    """
+    order: list[str] = []
+
+    async def worker(name: str, hold: float) -> None:
+        async with pdf_run._pdf_job_slot(uuid4()):
+            order.append(f"{name}:start")
+            await asyncio.sleep(hold)
+            order.append(f"{name}:end")
+
+    first = asyncio.create_task(worker("A", 0.05))
+    await asyncio.sleep(0)          # A가 먼저 세마포어를 잡도록 한 틱 양보
+    second = asyncio.create_task(worker("B", 0.0))
+    await asyncio.gather(first, second)
+
+    assert order == ["A:start", "A:end", "B:start", "B:end"], order
+
+
 async def test_late_task_write_is_suppressed_by_generation_guard(
         db_session, admin_user):
     """취소 라우트가 확정한 상태를 뒤늦게 끝난 태스크가 덮어쓰지 않는다.

@@ -410,6 +410,7 @@ def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
     사람이 일부러 친 라틴 라벨(`CAM`·`BG`)을 통째로 지운다.
     """
     refine_ko = getattr(profile, "refine_ko", None)
+    place_with_doc = getattr(profile, "place_with_doc", None)
 
     # ⚠ 자동 항목의 `panel_index`는 **여기서 계산하지 않는다**(항상 None).
     #
@@ -429,7 +430,19 @@ def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
     # 수동 라벨의 `panel_index`는 영향이 없다. 그건 계산값이 아니라 사람이
     # 고른 **주소**이고 편집 파일에 저장된다.
     items: list[PlanItem] = []
-    for i, block in enumerate(blocks):
+    placed_by_page: dict[int, list] = {}
+    # ★배치는 **위에서 아래로** 훑는다(2026-08-26). 엑스시트 배치가 좌우를
+    # 번갈아 쓰는 지그재그라, 블록이 세로 순서로 오지 않으면 그 번갈음이
+    # 무작위가 된다(실측: 세로 오름차순 페이지가 187개 중 40개(21%)뿐).
+    # ⚠추출이 아니라 **여기서** 정렬하는 이유: 추출 결과는 캐시되므로
+    # 추출 쪽에 두면 캐시가 적중한 런에서 조용히 우회된다 — 실제로 그렇게
+    # 우회됐다(추출 캐시 지문이 람다 안의 변경을 못 봐서 적중). 배치 순서는
+    # 배치 단계가 책임진다.
+    order = sorted(range(len(blocks)),
+                   key=lambda i: (blocks[i].page, blocks[i].bbox[1],
+                                  blocks[i].bbox[0]))
+    for i in order:
+        block = blocks[i]
         ko = ko_by_block[i]
         # 번역 실패 폴백(원문 복사)·빈 결과는 주석을 달지 않는다
         if ko is None:
@@ -440,7 +453,15 @@ def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
                 # 다듬고 나니 붙일 게 없다 — 주석을 만들지 않는다.
                 continue
         page_size = doc.page_size(block.page)
-        ov = profile.place(block, ko, page_size)
+        # `place_with_doc`는 `refine_ko`와 같은 **선택** 훅이다(Protocol에
+        # 없다). 페이지 그림이 있어야 후보 자리 중 빈 곳을 고를 수 있는
+        # 프로파일(엑스시트: 손글씨를 피해 앉아야 한다)만 구현한다.
+        # 배치 이력(occupied)도 넘긴다 — 잉크만 피하면 이웃 블록끼리 같은
+        # 빈자리를 골라 주석이 포개진다(A2 실측 심한 겹침 91쌍, 사람 0쌍).
+        ov = (place_with_doc(block, ko, page_size, doc,
+                             occupied=placed_by_page.get(block.page, ()))
+              if place_with_doc is not None
+              else profile.place(block, ko, page_size))
         if not is_usable_rect(ov.rect, page_size):
             # 방어선(2026-07-30 리뷰 Finding 1b) — 그 한 블록 때문에 이미 끝낸
             # 번역까지 잃을 수는 없으니 이 블록만 건너뛰고 경고를 남긴다.
@@ -452,6 +473,7 @@ def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
             id=uuid4().hex[:12], kind=block.kind, page=ov.page,
             panel_index=None, rect=_rect2(ov.rect),
             fontsize=ov.fontsize, source_text=block.text, text=ov.text))
+        placed_by_page.setdefault(ov.page, []).append(ov.rect)
 
     return OverlayPlan(
         job_id=job_id, profile=getattr(profile, "name", ""),

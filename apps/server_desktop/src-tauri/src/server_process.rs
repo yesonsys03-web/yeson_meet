@@ -393,6 +393,22 @@ fn inject_secrets(command: &mut Command) -> Result<(), String> {
     let config = crate::server_config::load_ensured()?;
     // JWT_SECRET is guaranteed non-empty by load_ensured (generated-once).
     command.env("JWT_SECRET", &config.jwt_secret); // vibelign: allow-secret
+    // X-sheet PDF 파이프라인 동시성 — 설정 패널에서 고른 값(기기·구독 상태에
+    // 따라 적정값이 다르다). 두 단계 모두 벽시계의 대부분을 API 대기로 쓰므로
+    // 동시성은 시간을 사고 토큰은 그대로다(비용은 크롭·청크 단위).
+    //
+    // 코드 기본값은 3·3이고 **GUI로 띄운 앱은 셸 env를 물려받지 않아** 늘 느린
+    // 경로로 돌고 있었다(2026-08-25 실측 발견). 셸에서 명시한 값이 있으면 그게
+    // 이긴다 — 개발·벤치에서 재빌드 없이 바꿀 수 있어야 한다.
+    for (key, value) in [
+        ("YESON_PDF_XSHEET_CLI_WORKERS", config.transcribe_workers()),
+        ("YESON_PDF_TRANSLATE_WORKERS", config.translate_workers()),
+    ] {
+        command.env(
+            key,
+            std::env::var(key).unwrap_or_else(|_| value.to_string()),
+        );
+    }
     let pairs = [
         ("GEMINI_API_KEY", config.gemini_api_key.trim()),
         (

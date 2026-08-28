@@ -12,6 +12,7 @@
     "core:window:allow-set-focus",
     "dialog:allow-open",
     "dialog:allow-save",
+    "dialog:allow-ask",
     "opener:allow-open-path",
     { "identifier": "fs:allow-write-file", "allow": [{ "path": "$HOME/**" }] },
     { "identifier": "fs:allow-create", "allow": [{ "path": "$HOME/**" }] }

@@ -219,6 +219,44 @@ def _pdf_selftest_mode() -> int:
             doc.close()
             png = open_pdf(out).render_png(0, dpi=36)
             assert png[:8] == b"\x89PNG\r\n\x1a\n"
+            # 프로파일 레지스트리·엑스시트 경로가 동결본에 살아 있는지.
+            # xsheet는 cv2·rapidocr(네이티브 의존)를 쓰므로 위 uv-cache 함정에
+            # 그대로 노출된다 — 빠지면 앱에서 "지원하지 않는 PDF 포맷"으로만
+            # 보이고 원인을 알 수 없다. 여기서 빌드를 세우는 게 낫다.
+            from apps.server.domain.pdf_translate import (
+                handwriting_transcribe as _ht,
+            )
+            from apps.server.domain.pdf_translate.profiles import (
+                profile_names,
+            )
+            assert "xsheet" in profile_names(), profile_names()
+            assert callable(_ht.transcribe)
+            import cv2  # 잉크 덩어리 판정에 쓴다
+            assert hasattr(cv2, "connectedComponentsWithStats")
+            # 엑스시트 하우스 용어(refine_ko)가 동결본에 실려 있는지. 이 훅은
+            # overlay_plan이 `getattr`로 찾는 **선택** 훅이라, 빠져도 예외가
+            # 나지 않고 조용히 건너뛴다 — 번역은 멀쩡히 나오는데 용어만 옛날
+            # 것인 PDF가 납품되고, 원인을 잡으려면 출력물을 사람 납품본과
+            # 대조하는 수밖에 없다. 여기서 빌드를 세우는 게 낫다.
+            from apps.server.domain.pdf_translate.profiles.base import PdfBlock
+            from apps.server.domain.pdf_translate.profiles.xsheet import (
+                XsheetProfile,
+            )
+            _probe = PdfBlock(page=0, kind="note", text="HEAD TILT",
+                              bbox=(0.0, 0.0, 10.0, 10.0), limit_x1=None)
+            _ko = XsheetProfile().refine_ko(_probe, "머리 기울임")
+            assert _ko == "고개 기웃", _ko
+            # 배치 채점(2026-08-25 재설계)이 동결본에 실려 있는지. place_with_doc
+            # 도 같은 **선택** 훅이라 빠지면 예외 없이 옛 배치(잉크 우선 도주)로
+            # 조용히 돌아간다. 새 코드의 지문 = 후보가 (rect, fontsize, 변위pt)
+            # 3튜플이고, 양옆이 막힌 블록에 9pt '아래' 후보가 정식으로 나온다
+            # (옛 코드는 아래를 최소 폰트 하나만 만들었다).
+            _pb = PdfBlock(page=0, kind="note", text="X",
+                           bbox=(10.0, 200.0, 340.0, 210.0), limit_x1=351.6)
+            _cands = list(XsheetProfile()._candidates(_pb, "확인", (792.0, 1224.0)))
+            assert len(_cands[0]) == 3, _cands[0]
+            assert any(fs == 9.0 and r[1] >= 210.0 for r, fs, _d in _cands), \
+                "9pt 아래 후보 없음 — 옛 배치 코드"
     except Exception as exc:  # noqa: BLE001
         print(f"PDF_SELFTEST_RESULT=FAIL {exc}", file=sys.stderr, flush=True)
         return 1

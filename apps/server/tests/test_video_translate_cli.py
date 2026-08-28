@@ -145,6 +145,22 @@ def test_create_translator_opencode_argv(monkeypatch):
     assert translator._prompt_via == "argv"
 
 
+def test_create_translator_claude_pins_default_model(monkeypatch):
+    """모델 미지정 claude는 opus로 고정 — 비워 두면 헤드리스 CLI가 사용자의
+    인터랙티브 /model 기본값을 상속해, 대화 세션의 모델 변경이 번역 단가를
+    조용히 바꾼다(2026-08-28 Fable 전환 실사고 직전). env·잡 지정이 우선."""
+    monkeypatch.setenv(tc.PROVIDER_ENV, "claude")
+    monkeypatch.delenv(tc.CLI_MODEL_ENV, raising=False)
+    translator = tc.create_translator()
+    assert translator._argv == ["claude", "-p", "--model", "opus"]
+    monkeypatch.setenv(tc.CLI_MODEL_ENV, "sonnet")
+    assert tc.create_translator()._argv == ["claude", "-p", "--model", "sonnet"]
+    # agy는 자기 기본 모델 유지(claude 모델명이 통하지 않는다)
+    monkeypatch.setenv(tc.PROVIDER_ENV, "agy")
+    monkeypatch.delenv(tc.CLI_MODEL_ENV, raising=False)
+    assert "--model" not in tc.create_translator()._argv
+
+
 def test_create_translator_custom(monkeypatch):
     monkeypatch.setenv(tc.PROVIDER_ENV, "custom")
     monkeypatch.setenv(tc.CUSTOM_CLI_ENV, "mycli --x {prompt}")

@@ -16,8 +16,8 @@ from apps.server.db.session import AsyncSessionLocal
 
 logger = logging.getLogger("yeson.pdf.pipeline")
 
-_PROGRESS = {"queued": 0, "extracting": 5, "translating": 0,
-             "overlaying": 95, "done": 100}
+_PROGRESS = {"queued": 0, "extracting": 5, "transcribing": 0,
+             "translating": 0, "overlaying": 95, "done": 100}
 
 _tasks: set[asyncio.Task] = set()
 _PDF_SEMAPHORE = asyncio.Semaphore(1)  # 번역 작업 직렬화 (배치 순서 보장)

@@ -17,6 +17,10 @@ export type ServerConfigInput = {
   viewerBase: string;
   summaryBackend: string;
   summaryModel: string;
+  // 엑스시트 PDF 파이프라인이 동시에 띄우는 CLI 세션 수(전사·번역). 기기·구독
+  // 상태에 따라 적정값이 달라 운영자가 고른다. 0 = 미설정(기본값 사용).
+  pdfTranscribeWorkers: number;
+  pdfTranslateWorkers: number;
 };
 
 export type ServerConfigMeta = {
@@ -31,6 +35,8 @@ export type ServerConfigMeta = {
   viewerBase: string;
   summaryBackend: string;
   summaryModel: string;
+  pdfTranscribeWorkers: number;
+  pdfTranslateWorkers: number;
 };
 
 export type BootstrapAdminResult = {
@@ -39,6 +45,13 @@ export type BootstrapAdminResult = {
 };
 
 export const DEFAULT_PROVIDER = "gemini_live";
+
+// 워커 수 범위 — 상한은 서버가 전사 워커를 8로 클램프하는 값과 같다
+// (handwriting_transcribe._workers). 기본 6은 실측 근거: 3→6에서 전사 1.55배
+// (22→35크롭/분)·번역 1.58배(32.0→20.2분), 2026-08-25 A3 116p.
+export const MIN_PDF_WORKERS = 1;
+export const MAX_PDF_WORKERS = 8;
+export const DEFAULT_PDF_WORKERS = 6;
 
 export const EMPTY_META: ServerConfigMeta = {
   hasGeminiKey: false,
@@ -52,6 +65,8 @@ export const EMPTY_META: ServerConfigMeta = {
   viewerBase: "",
   summaryBackend: "auto",
   summaryModel: "",
+  pdfTranscribeWorkers: DEFAULT_PDF_WORKERS,
+  pdfTranslateWorkers: DEFAULT_PDF_WORKERS,
 };
 
 type TauriWindow = Window & { __TAURI_INTERNALS__?: unknown };

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -48,6 +49,7 @@ from .pdf_tasks import (
     mark_rebaking,
 )
 from .profiles import detect_profile, profile_by_name
+from .profiles.base import PdfBlock
 from .translate_blocks import build_pdf_prompt, translate_texts
 from .utterances import group_utterances
 
@@ -56,7 +58,8 @@ logger = logging.getLogger("yeson.pdf.pipeline")
 # 진행 중 상태 — 프루닝이 절대 건드리면 안 되는 집합이자, 재시작 스윕이
 # error로 정리하는 집합이다. 두 곳이 같은 상수를 봐야 한쪽만 갱신하는
 # 사고가 안 난다(video의 maintenance._INFLIGHT_STATUSES와 같은 취지).
-_INFLIGHT_STATUSES = ("queued", "extracting", "translating", "overlaying")
+_INFLIGHT_STATUSES = (
+    "queued", "extracting", "transcribing", "translating", "overlaying")
 
 # PDF 작업이 무한정 쌓이지 않도록 유지할 최근 작업 수 (개수 상한 정책).
 # 영상 자막(maintenance.RETENTION_KEEP=30)보다 작게 잡는다 — 이 기능의 기준
@@ -64,6 +67,60 @@ _INFLIGHT_STATUSES = ("queued", "extracting", "translating", "overlaying")
 # 30을 쓰면 상한이 9GB가 된다. 자가호스팅 데스크톱 앱이라 이 디스크는
 # 사용자의 개인 디스크다(2026-07-30 전브랜치 리뷰 I-2).
 RETENTION_KEEP = 10
+
+# 추출 결과 캐시(엑스시트 재번역 가속). 전 페이지 OCR은 문서당 10~17분인데
+# 결정적이라 같은 원본·같은 추출 코드면 결과가 같다 — 재번역은 배치·용어·
+# 번역만 다시 하려는 것이므로 이걸 매번 다시 읽을 이유가 없다. 전사 캐시
+# (transcripts.json)와 같은 자리, 같은 취지다.
+_BLOCKS_CACHE = "blocks_cache.json"
+
+
+def _blocks_cache_key(profile, source: Path) -> str | None:
+    """`(추출코드 지문, 원본 파일 신원)` — 프로파일이 지문을 줄 때만 캐시를 쓴다.
+
+    `extract_cache_key`는 refine_ko·place_with_doc과 같은 **선택** 훅이다
+    (Protocol 미등록). 원본 신원은 크기+mtime으로 본다 — 265MB PDF를 매
+    실행 해시하는 비용을 피하고, 잡 폴더의 원본은 업로드 후 바뀌지 않는다.
+    """
+    hook = getattr(profile, "extract_cache_key", None)
+    if hook is None:
+        return None
+    try:
+        st = source.stat()
+    except OSError:
+        return None
+    return f"{hook()}|{st.st_size}|{int(st.st_mtime)}"
+
+
+def _load_cached_blocks(job_dir: Path, key: str) -> list | None:
+    path = job_dir / _BLOCKS_CACHE
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("key") != key:
+            logger.info("pdf-translate: 추출 캐시 무효(지문 불일치) — 다시 추출")
+            return None
+        return [PdfBlock(page=b["page"], kind=b["kind"], text=b["text"],
+                         bbox=tuple(b["bbox"]), limit_y=b["limit_y"],
+                         limit_x1=b["limit_x1"], ko=b["ko"])
+                for b in data["blocks"]]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        logger.warning("pdf-translate: 추출 캐시를 읽지 못했습니다 (%s) — 다시 추출",
+                       exc)
+        return None
+
+
+def _save_cached_blocks(job_dir: Path, key: str, blocks: list) -> None:
+    payload = {"key": key, "blocks": [
+        {"page": b.page, "kind": b.kind, "text": b.text, "bbox": list(b.bbox),
+         "limit_y": b.limit_y, "limit_x1": b.limit_x1, "ko": b.ko}
+        for b in blocks]}
+    try:
+        (job_dir / _BLOCKS_CACHE).write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:  # 캐시는 편의 기능 — 실패해도 파이프라인은 간다
+        logger.warning("pdf-translate: 추출 캐시 저장 실패 (%s)", exc)
 
 
 class PdfTranslateError(RuntimeError):
@@ -173,6 +230,49 @@ async def run_pdf_job(external_id: UUID) -> None:
         await _translate_and_overlay(external_id, slot)
 
 
+async def _translate_group_texts(profile, blocks, groups, group_texts, *,
+                                 provider, cli_model, progress_cb) -> list[str]:
+    """그룹 번역 1차 + (프로파일이 켰으면) 에코 그룹 전용 프롬프트 재시도.
+
+    에코(번역=원문)는 아래 호출부가 "번역 실패 폴백"으로 보아 주석을
+    버린다. 이름·짧은 노트는 LLM이 확률적으로 에코해 증발했다(A2 실측
+    16건, 2026-08-24). 재시도는 딱 한 번이고, 전 멤버 블록이 predecode
+    (block.ko)된 그룹은 건너뛴다 — 결과가 어차피 사전값으로 덮인다."""
+    translator = create_translator(provider, cli_model,
+                                   prompt_builder=build_pdf_prompt)
+    try:
+        ko_group_texts = await translate_texts(group_texts, translator,
+                                               progress_cb=progress_cb)
+    finally:
+        await maybe_aclose_translator(translator)
+    if not getattr(profile, "retry_echoed_groups", False):
+        return ko_group_texts
+    echoed = [
+        i for i, (g, ko) in enumerate(zip(groups, ko_group_texts))
+        if not (ko.strip() and ko.strip() != g.merged_text.strip())
+        and not all(blocks[idx].ko for idx in g.member_indices)
+    ]
+    if not echoed:
+        return ko_group_texts
+    from .translate_blocks import build_pdf_retry_prompt
+    retry = create_translator(provider, cli_model,
+                              prompt_builder=build_pdf_retry_prompt)
+    try:
+        ko_retry = await translate_texts([group_texts[i] for i in echoed],
+                                         retry)
+    finally:
+        await maybe_aclose_translator(retry)
+    recovered = 0
+    for i, ko2 in zip(echoed, ko_retry):
+        s = ko2.strip()
+        if s and s != groups[i].merged_text.strip():
+            ko_group_texts[i] = ko2
+            recovered += 1
+    logger.info("pdf-translate: 에코 그룹 %d개 재시도 → %d개 회수",
+                len(echoed), recovered)
+    return ko_group_texts
+
+
 async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
     generation = slot.generation
     doc_lock = slot.doc_lock
@@ -185,6 +285,7 @@ async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
             source_path = job.source_path
             provider = job.translate_provider
             cli_model = job.translate_cli_model
+            format_hint = job.format
         if not source_path or not Path(source_path).exists():
             raise PdfTranslateError("원본 PDF 파일이 없습니다")
 
@@ -192,13 +293,69 @@ async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
         doc = slot.doc = await asyncio.to_thread(open_pdf, Path(source_path))
         # detect_profile은 최대 3페이지 get_text("dict")를 훑는다(GIL 바운드) —
         # 이벤트 루프에서 직접 돌리면 실시간 자막 WebSocket이 수십ms 멎는다.
-        profile = await asyncio.to_thread(_with_doc_lock, doc_lock, detect_profile, doc)
+        #
+        # 업로드가 format_hint로 포맷을 미리 지정했으면(탭별 업로드) 감지
+        # 대신 그 프로파일을 쓰되, detect로 파일이 실제 그 포맷인지 한 번
+        # 확인한다 — 스토리보드를 엑스시트 탭에 올리는 실수를 조용히
+        # 엉뚱한 결과로 흘리지 않기 위해서다.
+        profile = profile_by_name(format_hint) if format_hint else None
+        if profile is not None:
+            matched = await asyncio.to_thread(
+                _with_doc_lock, doc_lock, profile.detect, doc)
+            if not matched:
+                raise PdfTranslateError(
+                    f"선택한 포맷({profile.label})과 파일이 다릅니다")
+        else:
+            profile = await asyncio.to_thread(
+                _with_doc_lock, doc_lock, detect_profile, doc)
         if profile is None:
             raise PdfTranslateError(
-                "지원하지 않는 PDF 포맷입니다 (현재 지원: 스토리보드형)")
-        blocks = await asyncio.to_thread(_with_doc_lock, doc_lock, profile.extract, doc)
+                "지원하지 않는 PDF 포맷입니다 (현재 지원: 스토리보드형·엑스시트)")
+        # 추출 캐시 — 같은 원본·같은 추출 코드면 결과가 같다(_BLOCKS_CACHE 참조).
+        cache_key = _blocks_cache_key(profile, Path(source_path))
+        job_dir = pdf_job_dir(external_id)
+        blocks = _load_cached_blocks(job_dir, cache_key) if cache_key else None
+        if blocks:
+            logger.info("pdf-translate: 추출 캐시 적중 — %d blocks (OCR 생략)",
+                        len(blocks))
+        else:
+            blocks = await asyncio.to_thread(
+                _with_doc_lock, doc_lock, profile.extract, doc)
+            if blocks and cache_key:
+                _save_cached_blocks(job_dir, cache_key, blocks)
         if not blocks:
             raise PdfTranslateError("번역할 텍스트 블록을 찾지 못했습니다")
+        # 손글씨 포맷(xsheet)의 전사 훅 — 크롭 렌더(doc 락 필요·빠름)와
+        # CLI 전사(락 불필요·문서당 수십 분)를 반드시 분리한다. 한 훅으로
+        # 합치면 전사 내내 페이지 미리보기 라우트가 doc 락에 막힌다.
+        if hasattr(profile, "transcribe_blocks"):
+            await asyncio.to_thread(
+                _with_doc_lock, doc_lock,
+                profile.render_transcribe_crops, doc, blocks, job_dir)
+            # 전사는 문서당 수십 분 — 전용 상태 + 배치 단위 진행률이 없으면
+            # 사용자는 "추출 중"에 멈춘 화면만 본다. format을 여기서 미리
+            # 기록해 탭별 목록 필터도 전사 중에 바로 선다.
+            await _set_status(external_id, "transcribing",
+                              format=profile.name, page_count=doc.page_count)
+            loop = asyncio.get_running_loop()
+
+            def _tx_progress(frac: float) -> None:
+                # 워커 스레드에서 불린다 — 이벤트 루프의 _set_progress(세대
+                # 가드 내장)로 넘긴다. result()로 짧게 기다려 역압을 준다.
+                asyncio.run_coroutine_threadsafe(
+                    _set_progress(external_id, int(frac * 100), generation),
+                    loop).result(timeout=10)
+
+            # 전사 엔진 = 사용자가 고른 번역 엔진(비전 가능할 때). 화면에는
+            # 엔진 선택이 하나뿐이라 전사만 딴 엔진을 쓰면 설명이 안 된다.
+            blocks = await asyncio.to_thread(
+                profile.transcribe_blocks, blocks, job_dir,
+                lambda: generation == _current_generation(external_id),
+                _tx_progress, provider)
+            if not blocks:
+                raise PdfTranslateError(
+                    "판독 가능한 손글씨 노트를 찾지 못했습니다 — "
+                    "전사 CLI 상태를 확인하세요")
         await _set_status(external_id, "translating", format=profile.name,
                           page_count=doc.page_count, block_count=len(blocks))
 
@@ -215,13 +372,9 @@ async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
                 raise asyncio.CancelledError
             await _set_progress(external_id, int(frac * 100), generation)
 
-        translator = create_translator(provider, cli_model,
-                                       prompt_builder=build_pdf_prompt)
-        try:
-            ko_group_texts = await translate_texts(group_texts, translator,
-                                                    progress_cb=on_progress)
-        finally:
-            await maybe_aclose_translator(translator)
+        ko_group_texts = await _translate_group_texts(
+            profile, blocks, groups, group_texts,
+            provider=provider, cli_model=cli_model, progress_cb=on_progress)
 
         # 한글 블록은 추출 단계(has_hangul)에서 이미 걸러지므로, 정상적으로
         # 도는 실행이라면 유효 번역이 0일 수 없다. 0이면 번역 엔진이 전량

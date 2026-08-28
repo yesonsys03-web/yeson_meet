@@ -56,7 +56,10 @@ from apps.server.domain.pdf_translate.pdf_tasks import (
     start_background_task,
     start_pdf_task,
 )
-from apps.server.domain.pdf_translate.profiles import profile_by_name
+from apps.server.domain.pdf_translate.profiles import (
+    profile_by_name,
+    profile_names,
+)
 from apps.server.domain.pdf_translate.profiles.storyboard import PANEL_ADDRESS_REV
 from apps.server.domain.video_captions.ingest import save_upload
 from apps.server.domain.video_captions.translate_cli import list_translate_engines
@@ -66,6 +69,9 @@ router = APIRouter(tags=["pdf-jobs"], prefix="/pdf-jobs")
 # 엔진 목록에서 자동 도출 — video_jobs와 동일 이유(하드코딩 드리프트 방지)
 _PROVIDER_PATTERN = "^(" + "|".join(
     e["value"] for e in list_translate_engines()) + ")$"
+
+# 포맷 힌트도 프로파일 레지스트리에서 자동 도출(같은 드리프트 방지 이유)
+_FORMAT_PATTERN = "^(" + "|".join(profile_names()) + ")$"
 
 _TERMINAL = ("done", "error", "cancelled")
 
@@ -201,6 +207,10 @@ async def create_pdf_job(
     translate_provider: Annotated[
         str | None, Form(pattern=_PROVIDER_PATTERN)] = None,
     translate_cli_model: Annotated[str | None, Form()] = None,
+    # 업로드한 탭이 지정하는 포맷 — 잡 목록의 탭별 필터를 결정적으로 만든다
+    # (감지 전 queued 상태에서도 format이 차 있다). 미지정이면 기존처럼
+    # 파이프라인이 자동 감지한다.
+    format_hint: Annotated[str | None, Form(pattern=_FORMAT_PATTERN)] = None,
 ) -> dict:
     filename = file.filename or "upload.pdf"
     if Path(filename).suffix.lower() != ".pdf":
@@ -215,6 +225,7 @@ async def create_pdf_job(
                      title=title or filename, source_ref=filename,
                      translate_provider=translate_provider,
                      translate_cli_model=translate_cli_model,
+                     format=format_hint,
                      status="queued", source_path=str(dest))
         db.add(job)
         await db.commit()

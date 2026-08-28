@@ -1,9 +1,18 @@
 from ..backend import PdfDocument
 from .base import FormatProfile
 from .storyboard import StoryboardProfile
+from .xsheet import XsheetProfile
 
 # 등록 순서 = 감지 우선순위. 새 포맷은 여기 한 줄 추가.
-_PROFILES: tuple[FormatProfile, ...] = (StoryboardProfile(),)
+# xsheet는 마지막 — detect가 OCR을 돌리므로(스캔 문서 한정이지만) 텍스트
+# 기반 프로파일들이 먼저 싸게 판정하게 둔다.
+_PROFILES: tuple[FormatProfile, ...] = (StoryboardProfile(), XsheetProfile())
+
+
+def profile_names() -> tuple[str, ...]:
+    """API가 format_hint 검증 패턴을 레지스트리에서 자동 도출할 때 쓴다
+    (video_jobs의 엔진 목록 도출과 같은 이유 — 하드코딩 드리프트 방지)."""
+    return tuple(p.name for p in _PROFILES)
 
 
 def detect_profile(doc: PdfDocument) -> FormatProfile | None:
