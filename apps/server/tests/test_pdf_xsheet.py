@@ -1018,7 +1018,8 @@ def test_argv_differs_per_cli():
     assert "--print-timeout" in agy
     assert claude[:5] == ["/bin/claude", "-p", "P", "--add-dir", "."]
     assert "--print-timeout" not in claude
-    assert claude[5:] == ["--effort", "medium"]   # 사고 깊이(A/B 실측 근거)
+    # 모델 고정(인터랙티브 /model 상속 차단) + 사고 깊이(A/B 실측 근거)
+    assert claude[5:] == ["--model", "opus", "--effort", "medium"]
     assert ht._argv_for("codex", "/bin/codex", "P")[1] == "exec"
 
 
@@ -1625,6 +1626,20 @@ def test_transcribe_argv_uses_medium_effort_for_claude():
 def test_effort_flag_is_claude_only():
     """agy엔 `--effort`가 없다 — 넘기면 인자 오류로 즉사한다."""
     assert "--effort" not in ht._argv_for("agy", "/bin/agy", "PROMPT")
+
+
+def test_transcribe_argv_pins_model_for_claude(monkeypatch):
+    """모델을 고정하지 않으면 헤드리스 claude가 사용자의 인터랙티브 /model
+    기본값을 상속한다 — 대화 세션의 모델 변경이 파이프라인 단가를 조용히
+    바꾼다(실측 기준은 전부 opus 등급). env는 운영 오버라이드."""
+    argv = ht._argv_for("claude", "/bin/claude", "PROMPT")
+    assert argv[argv.index("--model") + 1] == "opus"
+    monkeypatch.setenv(ht.ENV_MODEL, "sonnet")
+    argv = ht._argv_for("claude", "/bin/claude", "PROMPT")
+    assert argv[argv.index("--model") + 1] == "sonnet"
+    monkeypatch.setenv(ht.ENV_MODEL, "   ")     # 빈 값은 기본값으로
+    assert ht._model() == "opus"
+    assert "--model" not in ht._argv_for("agy", "/bin/agy", "PROMPT")
 
 
 def test_effort_env_override_ignores_typos(monkeypatch):

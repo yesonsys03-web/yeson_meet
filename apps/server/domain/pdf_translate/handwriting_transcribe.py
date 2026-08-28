@@ -70,6 +70,21 @@ _EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # ⚠턴 수는 134→122로 거의 안 줄었다. 절감은 도구 호출 뭉침이 아니라 **순수
 # 사고 깊이**에서 나온다.
 _EFFORT_DEFAULT = "medium"
+ENV_MODEL = "YESON_PDF_XSHEET_CLI_MODEL"      # claude 전사 모델(운영 오버라이드)
+# ⚠고정하지 않으면 헤드리스 `claude -p`가 **사용자의 인터랙티브 /model 기본값**
+# 을 상속한다 — 대화 세션에서 모델을 바꾸는 순간 파이프라인 단가·거동이 조용히
+# 따라 바뀐다(2026-08-28 실사고 직전: 기본값이 Fable 5로 저장됨 = 토큰당 2배).
+# 지금까지의 실측 기준(effort A/B·엔진 A/B·A1 비용 해부 $777)은 전부 opus
+# 등급($5/$25)에서 잡은 것이라 그 등급에 고정한다. agy는 제 기본 모델을
+# 그대로 쓴다(claude 모델명이 통하지 않고, 실측도 기본 모델로 했다).
+_MODEL_DEFAULT = "opus"
+
+
+def _model() -> str:
+    """전사 claude CLI에 줄 모델. 모델명은 열린 집합이라 effort처럼 오타를
+    거를 수 없다 — 틀린 값은 첫 배치가 인자 오류로 즉사해 _MIN_ANSWERED
+    안전망이 잡는다(빈 값만 기본값으로)."""
+    return os.environ.get(ENV_MODEL, "").strip() or _MODEL_DEFAULT
 
 
 def _effort() -> str:
@@ -565,9 +580,9 @@ def _argv_for(name: str, path: str, prompt: str) -> list[str]:
     if name == "agy":
         argv += ["--print-timeout", "8m"]
     if name == "claude":
-        # agy에는 이 플래그가 없다 — 넘기면 인자 오류로 즉사한다
+        # agy에는 이 플래그들이 없다 — 넘기면 인자 오류로 즉사한다
         # (`--print-timeout`을 claude에 넘길 수 없는 것과 같은 이유).
-        argv += ["--effort", _effort()]
+        argv += ["--model", _model(), "--effort", _effort()]
     return argv
 
 
