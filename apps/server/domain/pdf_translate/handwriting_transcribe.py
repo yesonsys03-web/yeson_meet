@@ -194,9 +194,19 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
     by_page: dict[int, list[PdfBlock]] = {}
     for b in blocks:
         by_page.setdefault(b.page, []).append(b)
+    import numpy as np
+
+    rects = _load_crop_rects(job_dir)
+    stale: list[str] = []
+    touched = False
     for page, page_blocks in by_page.items():
-        missing = [b for b in page_blocks if not (crops / crop_name(b)).exists()]
-        if not missing:
+        # 이 페이지가 **지난번과 같은 블록 집합**인가. 파일 존재만 보면 안
+        # 된다 — 크롭 이름이 (페이지, x0, y0)뿐이라 블록이 쪼개져 같은 이름에
+        # 다른 범위가 되면 파일은 그대로 있는 채로 내용만 낡는다.
+        fresh = all((crops / crop_name(b)).exists()
+                    and rects.get(crop_name(b)) == _rect_key(b)
+                    for b in page_blocks)
+        if fresh:
             # 이 페이지 크롭이 이미 다 있으면 렌더 자체를 건너뛴다. 300dpi
             # 페이지 렌더는 장당 수 초라, 빠뜨리면 재개·재번역 런이 아무것도
             # 새로 만들지 않으면서 문서당 10분 넘게 태운다(A1 전량 실측:
@@ -204,12 +214,91 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
             # exists()를 봤다.
             continue
         arr = _decode_png(doc.render_png(page, dpi=_CROP_DPI, annots=False))
-        for b in missing:
+        # ★이 페이지는 **전부** 다시 굽는다(비싼 건 위의 페이지 렌더 한 번이고
+        # 크롭 자르기는 밀리초다). 이유: 크롭 이름이 (페이지, x0, y0)뿐이라
+        # 블록이 쪼개져 **같은 이름에 다른 범위**가 되면 옛 크롭·옛 전사가
+        # 조용히 재사용된다 — 그러면 지금은 이웃 노트의 것이 된 낱말이 이
+        # 노트의 번역에 섞인다. A2 밀집 10페이지 실측: 클러스터 규칙을 고치자
+        # 302블록 중 6건(2%)이 그런 충돌이었다.
+        for b in page_blocks:
             rect = crop_rect(arr, b.bbox)
             if rect is None:
                 continue
             px0, py0, px1, py1 = rect
-            Image.fromarray(arr[py0:py1, px0:px1]).save(crops / crop_name(b))
+            sub = arr[py0:py1, px0:px1]
+            name = crop_name(b)
+            path = crops / name
+            same = False
+            if path.exists():
+                try:
+                    same = np.array_equal(np.asarray(Image.open(path)), sub)
+                except OSError:
+                    same = False
+                if not same:
+                    # 같은 이름인데 그림이 달라졌다 = 범위가 바뀐 블록
+                    stale.append(name)
+            if not same:
+                Image.fromarray(sub).save(path)
+            rects[name] = _rect_key(b)
+            touched = True
+    if touched:
+        _save_crop_rects(job_dir, rects)
+    _drop_stale_transcripts(job_dir, stale)
+
+
+_RECTS_NAME = "crop_rects.json"
+
+
+def _rect_key(block: PdfBlock) -> list[float]:
+    return [round(v, 1) for v in block.bbox]
+
+
+def _load_crop_rects(job_dir: Path) -> dict[str, list[float]]:
+    """크롭 이름 → 그 크롭을 만든 블록 bbox. 없으면 빈 값(옛 잡 호환).
+
+    빈 값이면 첫 런에서 모든 페이지를 한 번 다시 굽는다 — CPU만 쓰고 토큰은
+    안 쓴다(그림이 같으면 전사 캐시를 그대로 둔다)."""
+    path = job_dir / _RECTS_NAME
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_crop_rects(job_dir: Path, rects: dict[str, list[float]]) -> None:
+    try:
+        (job_dir / _RECTS_NAME).write_text(
+            json.dumps(rects, ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("xsheet-transcribe: 크롭 범위 기록 실패: %s", exc)
+
+
+def _drop_stale_transcripts(job_dir: Path, stale: list[str]) -> None:
+    """범위가 바뀐 크롭의 전사 캐시를 지운다 — 이름은 같지만 그림이 다르다.
+
+    렌더 단계가 이걸 아는 유일한 지점이라 여기서 지운다(전사 단계는 옛 크롭이
+    어떤 그림이었는지 알 길이 없다). 지운 만큼만 다시 읽으므로 비용은
+    바뀐 블록 수에 비례한다."""
+    if not stale:
+        return
+    cache_path = job_dir / _CACHE_NAME
+    if not cache_path.exists():
+        return
+    try:
+        done = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    dropped = [n for n in stale if done.pop(n, None) is not None]
+    for n in stale:                       # 2배 확대 재판독본도 함께
+        done.pop(_RETRY_PREFIX + n, None)
+    if dropped:
+        cache_path.write_text(json.dumps(done, ensure_ascii=False, indent=1),
+                              encoding="utf-8")
+        logger.info("xsheet-transcribe: 범위가 바뀐 크롭 %d건의 전사 캐시를 "
+                    "버렸다", len(dropped))
 
 
 _STRIP_DPI = 200      # 화자 스트립 렌더 — 세로로 길어 300은 과하다

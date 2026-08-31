@@ -32,6 +32,16 @@ from apps.server.domain.pdf_translate.profiles.base import PdfBlock
 # ---------------------------------------------------------------- fakes
 
 
+def _png_marked(w: int, h: int, box: tuple[int, int, int, int]) -> bytes:
+    """지정한 픽셀 사각형만 검은 흰 페이지 — 크롭 그림이 달라지는지 볼 때."""
+    from PIL import Image, ImageDraw
+    im = Image.new("RGB", (w, h), "white")
+    ImageDraw.Draw(im).rectangle(box, fill="black")
+    buf = io.BytesIO()
+    im.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def _png_bytes(w: int = 64, h: int = 64) -> bytes:
     from PIL import Image
     buf = io.BytesIO()
@@ -489,6 +499,101 @@ def test_render_crops_writes_pngs(tmp_path):
     assert doc.render_calls == [(0, ht._CROP_DPI)]
 
 
+def test_changed_crop_range_drops_its_stale_transcript(tmp_path):
+    """같은 이름인데 범위가 바뀐 크롭은 다시 굽고 **전사 캐시를 버린다**.
+
+    크롭 이름은 (페이지, x0, y0)뿐이라, 과병합 블록이 쪼개져 위쪽 조각이
+    같은 x0·y0를 유지하면 옛 크롭 그림과 옛 전사가 조용히 재사용된다 —
+    그러면 지금은 이웃 노트의 것이 된 낱말이 이 노트 번역에 섞인다.
+    A2 밀집 10페이지 실측: 클러스터 규칙을 고치자 302블록 중 6건(2%)이
+    바로 그 충돌이었다."""
+    import json as _json
+
+    from PIL import Image
+    # 큰 범위에만 들어가는 잉크 — 두 크롭 그림이 실제로 달라야 함정이 성립한다
+    doc = FakeDoc(png=_png_marked(400, 400, (250, 250, 300, 300)))
+    big = PdfBlock(page=0, kind=xs.NOTE_KIND, text="raw",
+                   bbox=(20.0, 20.0, 90.0, 90.0), limit_x1=None)
+    ht.render_crops(doc, [big], tmp_path)
+    name = ht.crop_name(big)
+    dest = tmp_path / ht._CROPS_DIRNAME / name
+    with Image.open(dest) as im:
+        before = im.size
+    cache = tmp_path / ht._CACHE_NAME
+    cache.write_text(_json.dumps({name: "BIG NOTE", "other.png": "KEEP"}),
+                     encoding="utf-8")
+
+    # 같은 x0·y0, 더 좁은 범위 = 쪼개진 위쪽 조각
+    small = PdfBlock(page=0, kind=xs.NOTE_KIND, text="raw",
+                     bbox=(20.0, 20.0, 50.0, 40.0), limit_x1=None)
+    assert ht.crop_name(small) == name, "이름이 같아야 이 함정이 성립한다"
+    ht.render_crops(doc, [small], tmp_path)
+    with Image.open(dest) as im:
+        assert im.size != before, "범위가 바뀌었으면 다시 구워야 한다"
+    assert (tmp_path / ht._RECTS_NAME).exists(), "크롭 범위를 기록해 둬야 한다"
+    left = _json.loads(cache.read_text(encoding="utf-8"))
+    assert name not in left, "낡은 전사를 버려야 한다"
+    assert left["other.png"] == "KEEP", "남의 캐시까지 지우면 안 된다"
+
+
+def test_unchanged_crop_keeps_its_transcript(tmp_path):
+    """반대로 그림이 그대로면 전사 캐시를 건드리지 않는다(토큰 재소모 방지)."""
+    import json as _json
+    doc = FakeDoc(png=_png_marked(400, 400, (250, 250, 300, 300)))
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="raw",
+                 bbox=(20.0, 20.0, 90.0, 90.0), limit_x1=None)
+    ht.render_crops(doc, [b], tmp_path)
+    cache = tmp_path / ht._CACHE_NAME
+    cache.write_text(_json.dumps({ht.crop_name(b): "NOTE"}), encoding="utf-8")
+    # 같은 블록으로 한 번 더 — 페이지에 빠진 크롭이 없으니 렌더 자체를 건너뛴다
+    ht.render_crops(doc, [b], tmp_path)
+    assert _json.loads(cache.read_text(encoding="utf-8")) == {
+        ht.crop_name(b): "NOTE"}
+
+
+def test_cluster_does_not_bridge_diagonal_neighbours():
+    """대각선으로만 가까운 것은 잇지 않는다 — 서로 다른 세로 스택이다.
+
+    A2 p36 실측: `DRT`(x135-181)와 `AMBERS`(x76-129)가 가로 6.2pt·세로
+    5.5pt로 비스듬히 붙어, 두 칼럼 13박스가 144×162pt 한 덩어리가 됐다
+    (사람 기준 노트 4개). 그 덩어리는 번역도 13줄 낱말 기둥으로 나온다."""
+    left = ((76.0, 729.0, 129.0, 750.0), "AMBERS")
+    right = ((135.0, 705.0, 181.0, 723.5), "RT")
+    assert len(xs._cluster([left, right])) == 2, "대각선은 다리가 아니다"
+
+    # 같은 세로 스택(가로가 겹침)은 그대로 이어 붙는다
+    stack = [((135.0, 666.0, 183.0, 682.0), "AMBER"),
+             ((137.0, 680.0, 184.0, 697.0), "EYES")]
+    assert len(xs._cluster(stack)) == 1
+    # 같은 줄(세로가 겹침)도 그대로
+    row = [((42.0, 400.0, 64.0, 414.0), "EXP"),
+           ((67.0, 402.0, 79.0, 413.0), "50")]
+    assert len(xs._cluster(row)) == 1
+
+
+def test_xsheet_asks_for_human_line_shaping_storyboard_does_not():
+    """엑스시트만 줄 나누기 규칙을 바꾼다 — 스토리보드는 원문 줄 보존.
+
+    근거(A2 사람 납품본 실측 2026-08-27): 사람 주석 높이 중앙 13pt(=한 줄)·
+    3줄 이상 3%인데 우리는 28pt·26%였다. 원인은 번역문 줄 수가 원문 줄 수를
+    그대로 복사한 것(1/2/3줄 35/35/15% 대 원문 36/33/15%)."""
+    from apps.server.domain.pdf_translate.profiles.storyboard import (
+        StoryboardProfile,
+    )
+    from apps.server.domain.pdf_translate.translate_blocks import (
+        build_pdf_prompt,
+    )
+    rule = xs.XsheetProfile.prompt_line_rule
+    assert rule and "one line" in rule.lower()
+    assert getattr(StoryboardProfile, "prompt_line_rule", None) is None
+
+    xsheet_prompt = build_pdf_prompt(["LT\nHAND"], line_rule=rule)
+    assert "Do NOT mirror that stacking" in xsheet_prompt
+    assert "Preserve \\n line breaks" not in xsheet_prompt
+    default_prompt = build_pdf_prompt(["LT\nHAND"])
+    assert "Preserve \\n line breaks" in default_prompt
+
+
 def test_extract_emits_speaker_strip_blocks(monkeypatch):
     """대사 칸에 음소 런이 있는 페이지마다 화자 스트립 의사 블록 1개 —
     A2 실측(2026-08-25): 화자 이름(연필 원·굵은 연필)을 RapidOCR이 전
@@ -660,7 +765,10 @@ async def test_echoed_groups_retried_once_with_dedicated_prompt(monkeypatch):
     from apps.server.domain.pdf_translate.translate_blocks import (
         build_pdf_retry_prompt,
     )
-    assert builders[1] is build_pdf_retry_prompt        # 전용 프롬프트 사용
+    # 전용 프롬프트 사용 + 프로파일의 줄 규칙이 재시도에도 실린다
+    assert builders[1].func is build_pdf_retry_prompt
+    assert (builders[1].keywords["line_rule"]
+            is xs.XsheetProfile.prompt_line_rule)
 
 
 # ------------------------------------------------------ pipeline + API
@@ -1208,6 +1316,8 @@ def _ko_note(src: str) -> PdfBlock:
 
 
 @pytest.mark.parametrize(("src", "ko", "want"), [
+    # ⚠want의 줄바꿈: 합계 12자 이하 다중줄은 refine_ko가 **한 줄로 접는다**
+    # (2026-08-31, 1603 사람 납품본 2,868건이 전부 1줄 — 근거는 refine_ko 주석)
     # 무조건 규칙 — KOTH_1401_A2 사람 납품본 전수 대조(2026-08-21)
     ("BLINK", "눈 깜빡", "눈깜박"),
     ("BLINK", "깜빡임", "눈깜박"),
@@ -1235,16 +1345,22 @@ def _ko_note(src: str) -> PdfBlock:
     ("PILLOW W/W ACTION", "베개를 따라 움직임", "베개 액션맞춰 움직임"),
     ("BLANKETS W/W", "담요와 함께 움직임 & 안착", "담요 액션맞춰 움직임 & 안착"),
     # ON n'S(n콤마) — 사용자 실물 지적(2026-08-25): 음역 `온 원스` 금지
-    ("ACTION\nON 1S", "액션\n온 원스", "액션\n1콤마에"),
-    ("SHRUG\nGESTURE\nONS", "제스쳐로\n온 원스", "제스쳐로\n1콤마에"),  # 숫자 없는 약칭
+    ("ACTION\nON 1S", "액션\n온 원스", "액션 1콤마에"),
+    ("SHRUG\nGESTURE\nONS", "제스쳐로\n온 원스", "제스쳐로 1콤마에"),  # 숫자 없는 약칭
     # STLS(복수형)도 settle — 기존 `[&+]\s*세틀` 규칙이 접속사째 걷는다
-    ("HAIR\nO'LAP\n& STLS", "머리카락\n오버랩\n& 세틀", "머리카락\n오버랩\n안착"),
+    ("HAIR\nO'LAP\n& STLS", "머리카락\n오버랩\n& 세틀", "머리카락 오버랩 안착"),
     # 잉여 음역 `발스텝`은 붙어 쓴 단일 토큰일 때만 걷는다
     ("0X\nSTEP", "0X 발스텝", "0X 스텝"),
     # LLM 겹말 `발 + 발스텝`은 뒤엣것만 줄인다(FT의 `발`은 남는다)
-    ("RT\nFT\nSTEP", "오른\n발\n발스텝", "오른\n발\n스텝"),
+    ("RT\nFT\nSTEP", "오른\n발\n발스텝", "오른 발 스텝"),
     ("ACTION\nON (1)S", "액션 온 원스", "액션 1콤마에"),
-    ("WHEELS\nSPIN\nON\n2'S", "바퀴\n회전\n온\n투스", "바퀴\n회전\n2콤마에"),
+    # ⛔원문이 FT(foot)면 `발`은 정당한 낱말 — 지우면 내용이 사라진다.
+    # 실측 사고(2026-08-25): 무조건 `발\\s*스텝` 규칙이 A2 계획 3건에서
+    # `오른|발|스텝`을 `오른|스텝`으로 깎았다. 접혀도 `발`은 남아야 한다.
+    ("HANK\nLT\nFT\nSTEP", "행크\n왼\n발\n스텝", "행크 왼 발 스텝"),
+    ("RT\nFT\nSTEP", "오른\n발\n스텝", "오른 발 스텝"),
+    ("RT\nFT\nSTEP", "오른발\n스텝", "오른발 스텝"),
+    ("WHEELS\nSPIN\nON\n2'S", "바퀴\n회전\n온\n투스", "바퀴 회전 2콤마에"),
 ])
 def test_refine_ko_applies_house_terms(src, ko, want):
     assert xs.XsheetProfile().refine_ko(_ko_note(src), ko) == want
@@ -1266,12 +1382,6 @@ def test_refine_ko_applies_house_terms(src, ko, want):
     ("PILLOW ACTION", "베개를 따라 움직임"),
     # 원문에 ON n'S가 없으면 음역이라도 건드리지 않는다 (ON HIS ≠ ON 1'S)
     ("HANDS ON HIS HIPS", "온 원스"),
-    # ⛔원문이 FT(foot)면 `발`은 정당한 낱말 — 지우면 내용이 사라진다.
-    # 실측 사고(2026-08-25): 무조건 `발\\s*스텝` 규칙이 A2 계획 3건에서
-    # `오른|발|스텝`을 `오른|스텝`으로 깎았다(RT FT STEP = 오른발 스텝).
-    ("HANK\nLT\nFT\nSTEP", "행크\n왼\n발\n스텝"),
-    ("RT\nFT\nSTEP", "오른\n발\n스텝"),
-    ("RT\nFT\nSTEP", "오른발\n스텝"),
     # 붙여 쓴 `오른발스텝`을 줄이면 `오른스텝`이 되어 발이 사라진다 — 잠금
     ("RT\nFT\nSTEP", "오른발스텝"),
 ])
@@ -1385,10 +1495,12 @@ def test_place_with_doc_stays_beside_instead_of_fleeing():
     b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
                  bbox=(150.0, 360.0, 190.0, 400.0), limit_x1=560.0)
     ov = xs.XsheetProfile().place_with_doc(b, "고개\n기웃", (792.0, 1224.0), doc)
-    # 세로로 멀리 달아나지 않는다(옛 실패 모드는 -52pt 위로 비행)
-    assert abs(ov.rect[1] - 360.0) <= 20.0
-    # 원문 좌우 중 한쪽에 붙는다
-    assert ov.rect[0] >= 190.0 or ov.rect[2] <= 150.0
+    # ⚠2026-08-27: 오른쪽이 막힌 이 픽스처의 정답이 **왼쪽에서 아래로** 바뀌었다
+    # (사람 실측 왼쪽 8% 대 아래 26%). 이 테스트가 지키는 성질은 방향이 아니라
+    # "곁에 남는다"이므로, 어느 변이든 **인접**만 확인한다.
+    gap_x = max(150.0 - ov.rect[2], ov.rect[0] - 190.0, 0.0)
+    gap_y = max(360.0 - ov.rect[3], ov.rect[1] - 400.0, 0.0)
+    assert (gap_x ** 2 + gap_y ** 2) ** 0.5 <= 20.0, "사다리 끝으로 도망갔다"
     assert ov.fontsize == xs._FONTSIZE
 
 
@@ -1431,6 +1543,8 @@ def test_place_with_doc_tall_stack_prefers_side_over_below():
     assert ov.rect[2] == pytest.approx(297.0)    # 원문 왼쪽에 병기
     assert ov.rect[1] == pytest.approx(500.0)    # 스택 상단 높이 그대로
     assert ov.fontsize == xs._FONTSIZE
+    # 이 예외를 지탱하는 상수 — 이보다 높은 노트에서만 왼쪽이 아래보다 앞선다
+    assert b.bbox[3] - b.bbox[1] > xs._TALL_H
 
 
 def test_place_with_doc_escapes_when_every_near_slot_is_taken():
@@ -1612,7 +1726,7 @@ def test_north_south_fix_the_particle_too():
 def test_screen_direction_catches_abbreviations():
     """원문이 `W.` 약칭이어도 잡아야 한다 — A1에서 실제로 2건 있었다.
     (원문 조건부였다면 놓쳤을 것들이라 이 규칙은 무조건이다.)"""
-    assert _refine("W.\nSHIFT\nHEAD", "서쪽.\n이동") == "왼쪽.\n이동"
+    assert _refine("W.\nSHIFT\nHEAD", "서쪽.\n이동") == "왼쪽. 이동"
     assert _refine("OF PAN\nFRAME.\nOFF WE", "서쪽으로 벗어나") == "왼쪽으로 벗어나"
 
 
@@ -1741,19 +1855,41 @@ def test_column_edges_come_from_vertical_rules_not_header_labels():
     assert max(edges) == pytest.approx(900 * s, abs=1.0)
 
 
-def test_side_placement_zigzags_left_and_right():
-    """좌우를 번갈아 쓴다 — 한쪽만 고집하면 세로로 빽빽한 노트끼리 부딪혀
-    탈출 경로로 빠지고, 그러면 원문에서 멀어진다."""
-    doc = FakeDoc(png=_grid_png(extra=[(300, 300, 360, 340)]))
+def test_blocked_right_falls_to_below_not_left():
+    """오른쪽이 막히면 **아래**로 간다 — 왼쪽은 맨 뒤다.
+
+    2026-08-27 사람 대조(A2 1,577건, 블록 bbox 기준): 사람은 오른쪽 27% ·
+    아래 26% · 위 14% · **왼쪽 8%**를 쓴다. 우리는 왼쪽이 27%였는데, 원인은
+    좌우를 번갈아 보던 지그재그였다(블록의 절반이 왼쪽부터 탐색). 지그재그를
+    빼고 왼쪽을 맨 뒤로 미루자 사람과 같은 자리가 22.8→30.8%로 올랐고,
+    지그재그가 막으려던 주석끼리 충돌은 A2 전 구간 0쌍 그대로였다."""
+    doc = FakeDoc(png=_grid_png(extra=[(300, 300, 360, 340),
+                                       (365, 295, 460, 345)]))
     b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
                  bbox=(300 * 0.72, 300 * 0.72, 360 * 0.72, 340 * 0.72),
                  limit_x1=600.0)
     p = xs.XsheetProfile()
-    even = p.place_with_doc(b, "가나", (792.0, 1224.0), doc, occupied=())
-    odd = p.place_with_doc(b, "가나", (792.0, 1224.0), doc,
-                           occupied=((0.0, 0.0, 1.0, 1.0),))
-    assert even.rect[0] >= b.bbox[2], "짝수 번째는 오른쪽부터"
-    assert odd.rect[2] <= b.bbox[0], "홀수 번째는 왼쪽부터"
+    ov = p.place_with_doc(b, "가나", (792.0, 1224.0), doc, occupied=())
+    assert ov.rect[1] >= b.bbox[3], "오른쪽이 막혔으면 아래여야 한다"
+    assert ov.rect[2] > b.bbox[0], "왼쪽 여백으로 도망가지 않는다"
+
+
+def test_narrow_side_slot_is_skipped_for_long_text():
+    """좁은 틈에 번역문을 세로로 흘리지 않는다 — 사람은 그때 아래로 간다.
+
+    옆자리는 **번역문 가장 긴 줄이 줄바꿈 없이 들어갈 때만** 쓴다
+    (`_SIDE_MIN_W`, 글이 더 짧으면 그 글 폭까지만 요구). 스윕 실측: 18pt
+    허용에서 60pt 요구로 올리며 같은 자리 29.1→30.2%로 단조 개선."""
+    # 원문 오른쪽 18pt 지점에 진짜 칸 경계(세로 괘선)를 세운다
+    doc = FakeDoc(png=_grid_png(extra=[(300, 300, 360, 340),
+                                       (390, 60, 392, 1640)]))
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(300 * 0.72, 300 * 0.72, 360 * 0.72, 340 * 0.72),
+                 limit_x1=600.0)
+    p = xs.XsheetProfile()
+    ov = p.place_with_doc(b, "가나다라마바사아", (792.0, 1224.0), doc,
+                          occupied=())
+    assert ov.rect[1] >= b.bbox[3], "좁은 오른쪽에 끼워 넣지 않는다"
 
 
 def test_side_placement_never_covers_handwriting():
