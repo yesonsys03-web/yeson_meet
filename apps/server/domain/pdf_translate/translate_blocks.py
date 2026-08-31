@@ -167,7 +167,16 @@ def _style_examples_block() -> str:
     )
 
 
-def build_pdf_prompt(texts: list[str]) -> str:
+# 줄 나누기 규칙 — 포맷마다 정답이 다르다. 스토리보드는 원문 줄 구조가
+# 의미 단위라 그대로 두는 게 맞지만, 엑스시트는 손글씨를 세로로 한두 낱말씩
+# 쌓아 쓴 것이라 그대로 옮기면 번역이 낱말 기둥이 된다(A2 실측: 우리 상자
+# 높이 중앙 28pt·3줄 이상 26% 대 사람 13pt·3%). 프로파일이 자기 규칙을
+# `prompt_line_rule`로 들고 있고, 없으면 기존 동작 그대로다.
+_LINE_RULE_DEFAULT = (
+    "Preserve \\n line breaks from the source in your translation.\n")
+
+
+def build_pdf_prompt(texts: list[str], line_rule: str | None = None) -> str:
     """제작 문서(스토리보드 대사·액션 노트) 배열 → KO 번역 지시 프롬프트."""
     numbered = json.dumps(texts, ensure_ascii=False)
     return (
@@ -225,7 +234,7 @@ def build_pdf_prompt(texts: list[str]) -> str:
         "Copy every digit sequence (scene/shot references like sc103, "
         "counts, codes) EXACTLY as in the source — never alter, swap, or "
         "invent digits.\n"
-        "Preserve \\n line breaks from the source in your translation.\n"
+        + (line_rule or _LINE_RULE_DEFAULT) +
         "Input is a JSON array of strings; return ONLY a JSON array of the "
         "same length with the Korean translations in the same order.\n"
         "Return ONLY the JSON array. No prose, no markdown fences.\n"
@@ -236,7 +245,8 @@ def build_pdf_prompt(texts: list[str]) -> str:
     )
 
 
-def build_pdf_retry_prompt(texts: list[str]) -> str:
+def build_pdf_retry_prompt(texts: list[str],
+                           line_rule: str | None = None) -> str:
     """에코(번역=원문) 그룹 재시도 전용 프롬프트.
 
     번역 LLM은 짧은 노트(캐릭터 이름·약어)를 확률적으로 원문 그대로
@@ -259,7 +269,8 @@ def build_pdf_retry_prompt(texts: list[str]) -> str:
         "sequences like \"HU HU\", \"EE K AH\", \"OH G\") and pure "
         "number/frame codes are NOT translations targets — return those "
         "EXACTLY unchanged.\n"
-        "Preserve \\n line breaks. Input is a JSON array of strings; "
+        + (line_rule or _LINE_RULE_DEFAULT) +
+        "Input is a JSON array of strings; "
         "return ONLY a JSON array of the same length, same order. "
         "No prose, no markdown fences.\n"
         "\nInput:\n" + numbered

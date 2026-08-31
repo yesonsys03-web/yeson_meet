@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .base import Overlay, PdfBlock, has_hangul
-from .storyboard import _clamp_nondegenerate, _estimate_height
+from .storyboard import _clamp_nondegenerate
 
 if TYPE_CHECKING:
     from ..backend import PdfDocument
@@ -67,6 +67,7 @@ _NUM_BIN_MIN = 12        # 이 개수 이상이 모여야 컬럼으로 인정
 _NUM_BIN_RATIO = 0.8     # 그중 숫자 비율
 _PHONETIC_MAX_LEN = 3    # 대사 칸에서 이 길이 이하는 립싱크 음소(번역 안 함)
 _CLUSTER_PAD = 6.0   # 세로로 쌓인 손글씨 단어들을 노트 하나로 묶는 근접 반경
+_AXIS_TOL = 2.0      # 같은 스택·같은 줄로 볼 축 방향 허용 오차(대각선 배제)
 # 전사 보내기 전에 버리는 잡티 크롭 기준. 전사는 CLI 세션(=구독 쿼터)을
 # 쓰므로 어차피 버려질 것을 보내지 않는 게 곧 처리량이다.
 #
@@ -215,6 +216,13 @@ _OCC_OK = 0.05        # 작은 쪽 면적의 이 비율까지는 겹침 허용
 # 겹침 후보에 얹는 벽 — 겹치지 않는 후보가 하나라도 있으면 절대 못 이긴다.
 # 이 값 이상이면 "전 후보가 막혔다"는 신호이기도 하다(_far_candidates 발동).
 _BLOCKED = 100000.0
+# 폴백 채점 경로의 잉크 상한(하드). 옆자리 경로는 _SIDE_INK_OK(0.5%)로 손글씨를
+# 안 덮는데, 폴백은 잉크가 비용일 뿐 벽이 아니었다 — 1603 실측: 손글씨 위에
+# 앉은 주석 28/28건 전부 폴백 경로였고(우리 5.9% 대 사람 2.3%), 큰 다중줄
+# 상자가 빈자리에 못 들어가면 작화선·타이밍 곡선 위를 "감수"해 버렸다.
+# 이 값을 넘으면 _BLOCKED 벽을 세운다 → place_with_doc이 넓은 사다리
+# (_far_candidates)로 탐색을 넓히는 기존 경로가 그대로 발동한다.
+_FB_INK_HARD = 0.02
 # 막힌 경우에만 쓰는 넓은 세로 사다리(pt). 정상 배치에는 관여하지 않는다.
 _FAR_LADDER = (80.0, -80.0, 120.0, -120.0, 180.0, -180.0, 260.0, -260.0)
 
@@ -674,11 +682,87 @@ def _textlike_only(ink):
 #    아래가 사람의 두 배였다.
 #  · 같은 크기 인접이라 **멀리 날아갈 수 없다** — 옛 넓은 사다리 탈출이
 #    만들던 99분위 207pt·최대 243pt 꼬리가 구조적으로 사라진다.
+# ★페이지 크기 정규화(2026-08-31 정식화). 배치·글꼴의 pt 상수는 전부
+# 1401 시트(너비 792pt) 실측에서 왔는데, 1603 시트는 같은 양식을 2200pt로
+# 스캔한 것이라(행 격자 36.7pt = 12.96의 2.83배 ≈ 너비비 2.78) 9pt 글씨가
+# 티끌이 됐다. 페이지 너비 비율로 아래 상수들을 일괄 스케일한다.
+# ⚠추출 상수(_CLUSTER_PAD·_CUT_* 등)는 **안 건드린다** — 스케일하면 추출
+# 캐시 지문·크롭 이름이 흔들려 전사 캐시(토큰)가 전멸한다. 배치·글꼴만.
+# ⚠잡은 한 번에 하나씩 돌므로(전역 세마포어) 모듈 전역 재조정이 안전하다.
+_REF_PAGE_W = 792.0
+_SCALED_NAMES = ("_FONTSIZE", "_MIN_FONTSIZE", "_MIN_BOX_W", "_BELOW_H_CAP",
+                 "_WIDE_FROM", "_SIDE_GAP", "_SIDE_MIN_H", "_SNAP_PAD",
+                 "_SIDE_MIN_W", "_WRAP_PAD", "_BELOW_GAP", "_ABOVE_GAP",
+                 "_TALL_H", "_DY_LADDER", "_BELOW_GAPS", "_SIDE_DYS",
+                 "_FAR_LADDER")
+_BASE_PT = None            # 최초 호출 때 현재값(=1401 기준)을 원본으로 저장
+_CUR_SCALE = 1.0
+
+
+def _apply_page_scale(page_w: float) -> None:
+    """배치·글꼴 상수를 이 페이지 너비 기준으로 맞춘다(멱등)."""
+    global _BASE_PT, _CUR_SCALE
+    g = globals()
+    if _BASE_PT is None:
+        _BASE_PT = {n: g[n] for n in _SCALED_NAMES}
+    scale = max(page_w, 1.0) / _REF_PAGE_W
+    if abs(scale - _CUR_SCALE) < 0.02:
+        return
+    _CUR_SCALE = scale
+    for n, base in _BASE_PT.items():
+        g[n] = (tuple(v * scale for v in base) if isinstance(base, tuple)
+                else base * scale)
+
+
 _SIDE_FIRST = True        # 끄면 옛 후보 생성으로 되돌아간다(A/B용)
 _SIDE_GAP = 3.0           # 원문 잉크와의 틈(기존 옆자리 관례와 동일)
 _SIDE_DYS = (0.0, 16.0, -16.0)   # 좌우가 막혔을 때 살짝 위아래로 밀어 본다
 _SIDE_INK_OK = 0.005      # 손글씨를 사실상 안 덮는다(하드) — 사람 관례
 _SIDE_MIN_H = 12.0        # 한 줄은 들어가야 한다
+# ★인접 후보를 보는 순서 = 사람 관례(2026-08-27 A2 전수 실측으로 재확정).
+# 사람 납품본 1,577건을 **블록 bbox 기준**으로 세어 보면 오른쪽 27% · 아래
+# 26% · 원문 안쪽 26% · 위 14% · **왼쪽 8%**다. 우리는 왼쪽이 27%였다 —
+# 오른쪽이 막히면 곧장 왼쪽 여백(프레임 번호 칸)으로 갔기 때문이다.
+# 왼쪽을 맨 뒤로 미루고 그 자리를 아래·위에 주는 것이 이 순서다.
+_SIDE_ORDER = ("right", "below", "above", "left")
+# 좌우 선호를 블록마다 번갈아(사용자 설계 2026-08-26). 켜면 홀수 번째 블록은
+# 위 순서에서 right↔left를 맞바꿔 본다.
+_ZIGZAG = False
+# 좌우 자리는 **번역문이 줄바꿈 없이 들어갈 폭**이 있을 때만 쓴다(글이 그보다
+# 짧으면 그 글 폭까지만 요구한다 — "붐."은 20pt면 충분하다). 좁은 틈에 세로로
+# 길게 흘리느니 사람처럼 아래로 간다. 실측 스윕에서 18→45pt까지 단조 개선,
+# 60pt 이상은 사실상 "자연폭"과 같아져 포화했다(같은 자리 29.1→30.2%).
+_SIDE_MIN_W = 60.0
+_SI_ONLY_RE = re.compile(r"^SI$")
+# SI가 프레임 번호와 한 블록으로 병합된 변형(`2\nSI`→`2 슬로우 인`) — 토큰이
+# 전부 {숫자, SI}뿐이면 통째로 타이밍 표기다(1603 실측, 사람은 SI 미번역).
+_SI_TOKEN_RE = re.compile(r"^(?:\d+|SI)$")
+# 인쇄 서식 문구 — 번역 대상이 아니다(사용자 지정 2026-08-31: 로고·판권·
+# PROD NO·FOOTAGE 류 고정 용어). 추출 단계 _is_template이 머리글 밴드로
+# 거르지만, 밴드 밖(로고 옆 판권줄 등)이나 손글씨와 병합된 것이 샌다
+# (1603 실측 59건: © 13·KING OF THE HILL 22·PRODUCTION NO 6…). 여기(굽기
+# 경로)서 지우면 추출 캐시를 건드리지 않는다. ⚠낱말 하나짜리(ACTION·CONT)는
+# 실제 노트에도 나오므로 **여러 낱말 문구·단독 매치만** 싣는다.
+_TEMPLATE_PHRASE_RES = tuple(re.compile(r) for r in (
+    r"(?:C)?20TH\s*TELEVISION\s*ANIMATION",
+    r"ALL\s*RIGHTS\s*RESERVED",
+    r"(?:KING\s*)?OF\s*THE\s*HILL", r"KING\s*OF(?:\s*THE)?",
+    r"PROD(?:UCTION)?\s*N[O0]\.?", r"CAMERA\s*NOTES", r"SCENE\s*DIRECTOR",
+    r"SHEET\s*N[O0]\.?", r"SCENE\s*N[O0]\.?", r"DIALOG\s*EXP",
+    r"^ANIMATOR$", r"^APPROVED$", r"^FOOTAGE$", r"^S?C\.?\s*\d+\)?$",
+))
+_JOIN_MAX_CHARS = 12   # 이 길이까지는 한 줄이 상자도 작고 읽기도 낫다
+_WRAP_PAD = 4.0           # MuPDF 어피어런스가 rect 안쪽으로 먹는 여백
+# 위·아래로 갈 때 원문에서 띄우는 거리. 사람은 아래를 넉넉히 띄운다(실측 중앙
+# 21.9pt 대 위 8.9pt). 다만 그대로 22pt를 쓰면 다음 노트 영역까지 내려가
+# 오히려 어긋난다 — 스윕 최적은 **아래 14pt · 위 6pt**(22pt는 −1.3%p).
+_BELOW_GAP = 14.0
+_ABOVE_GAP = 6.0
+# ★긴 세로 스택은 예외 — 아래로 보내면 **읽기 시작점**에서 노트 높이만큼
+# 멀어진다. 사용자 실물 지적(2026-08-25, p5 SMU 9줄 노트): "옆의 작화선
+# 때문에 번역이 스택 아래로 150pt 밀렸다, 사람은 선 위에 겹쳐 왼쪽에
+# 병기한다." 그래서 이보다 높은 노트에서만 왼쪽이 아래보다 앞선다.
+_TALL_H = 60.0
 _SNAP_PAD = 1.0           # 칸 경계 바로 아래 여유
 _GRID_MIN_PX = 8          # 이보다 촘촘하면 괘선 격자가 아니라 검출 잡음
 
@@ -775,14 +859,94 @@ def _tight_anchor(ink, block: PdfBlock) -> tuple[float, float, float, float]:
             (x0 + int(cols[-1]) + 1) / scale, (y0 + int(rows[-1]) + 1) / scale)
 
 
+def _wrap_ko(text: str, width: float, fontsize: float) -> list[str]:
+    """상자 폭에 맞춰 **우리가 직접, 균형 있게** 줄을 접는다.
+
+    ⚠MuPDF에게 맡기면 욕심껏 채워 접는다(greedy) — 마지막 낱말 하나가
+    상자 오른쪽 끝에 홀로 걸리고, 그 자리가 이웃 주석과 나란하면 **그쪽
+    것처럼 읽힌다**(2026-08-27 사용자 신고: `일어나 앉으며, 표정 변화.`가
+    `일어나 / 앉으며, 표정 / 변화.`로 접혀 `표정`이 옆 노트 번역에 붙어
+    보였다). 줄 수는 그대로 두되 **가장 긴 줄을 최소화**해 나누면
+    `일어나 / 앉으며, / 표정 변화.`가 되어 낱말이 줄 첫머리에 온다.
+
+    원문의 개행은 하드 브레이크로 지킨다(노트의 줄 구조가 의미 단위다).
+    폭 근사는 `_natural_width`·`_estimate_height`와 같은 CJK 근사다."""
+    usable = max(fontsize, width - _WRAP_PAD)
+
+    def w_pt(n: int) -> float:
+        return n * fontsize
+
+    def pack(words: list[str], limit: float) -> list[str]:
+        lines, cur = [], ""
+        for word in words:
+            cand = word if not cur else f"{cur} {word}"
+            if not cur or w_pt(len(cand)) <= limit:
+                cur = cand
+            else:
+                lines.append(cur)
+                cur = word
+        if cur:
+            lines.append(cur)
+        return lines
+
+    out: list[str] = []
+    for para in text.split("\n"):
+        words = para.split()
+        if not words:
+            continue
+        greedy = pack(words, usable)
+        if len(greedy) <= 1:
+            out.extend(greedy)
+            continue
+        # 같은 줄 수를 유지하는 가장 좁은 폭을 찾는다 = 가장 긴 줄 최소화
+        lo = max(w_pt(len(w)) for w in words)
+        hi = usable
+        best = greedy
+        while lo <= hi:
+            mid = (lo + hi) / 2.0
+            trial = pack(words, mid)
+            if len(trial) <= len(greedy):
+                best = trial
+                hi = mid - 0.5
+            else:
+                lo = mid + 0.5
+        out.extend(best)
+    return out or [text]
+
+
+def _wrapped_height(text: str, width: float, fontsize: float) -> float:
+    """`_wrap_ko`가 실제로 만드는 줄 수로 높이를 잰다.
+
+    옛 `_estimate_height`는 `chars_per_line = max(8, width/fontsize)`라
+    좁은 상자에서 줄 수를 **과소 추정**했다 — 그래서 상자가 글보다 짧아
+    마지막 줄이 밖으로 흘렀다."""
+    return (len(_wrap_ko(text, width, fontsize)) + 0.5) * fontsize * 1.25
+
+
+def _min_usable_w(ko_text: str, fontsize: float) -> float:
+    """이 글을 넣어도 낱말이 안 쪼개지는 **최소 상자 폭**.
+
+    글이 짧으면 그 글 폭까지만 요구한다("표정"은 18pt면 충분). 길면
+    `_SIDE_MIN_W`(≈6~7자)까지 요구하고, 그보다 좁은 자리는 후보에서 뺀다.
+
+    ⚠2026-08-27 실물 결함 2건의 공통 원인: A1 재번역 주석 3,618개 중
+    **22.9%가 글 길이의 절반도 안 되는 폭**이었다(2.8%는 1/4 미만).
+    p5 `인시덴탈 134 & 142가 오른쪽으로 드러난다.`(24자≈216pt)가 **폭 26pt**
+    상자에 들어가 3자씩 여덟 줄로 흘러 이웃 주석과 겹쳤고, p9
+    `일어나 앉으며, 표정 변화.`는 폭 67pt에서 `일어나/앉으며, 표정/변화.`로
+    접히며 `표정`이 상자 오른쪽 끝에 걸려 **옆 주석에 붙어** 보였다."""
+    return max(_MIN_BOX_W, min(_SIDE_MIN_W, _natural_width(ko_text, fontsize)))
+
+
 def _side_candidates(anchor, block: PdfBlock, ko_text: str,
                      page_size: tuple[float, float], right_first: bool = True):
-    """앵커와 **같은 크기**의 인접 상자를 좌우 → 상하 순으로 내놓는다.
+    """앵커와 **같은 크기**의 인접 상자를 `_SIDE_ORDER` 순서로 내놓는다.
 
-    좌우 중 어느 쪽을 먼저 볼지는 **번갈아 간다**(지그재그, 사용자 관찰
-    2026-08-26). 엑스시트는 노트가 세로로 빽빽해서 한쪽만 고집하면 주석끼리
-    부딪히고, 그때마다 탈출 경로로 빠져 원문에서 멀어진다. 좌우를 번갈아
-    쓰면 같은 칸을 두고 다투지 않아 곁에 남는 비율이 올라간다.
+    ⛔좌우를 번갈아 보던 지그재그(2026-08-26)는 **뺐다**. 사람 대조로 재보니
+    그것이 왼쪽 과다(27% 대 사람 8%)의 주범이었다 — 블록의 절반을 왼쪽부터
+    보게 만드니 오른쪽에 자리가 있어도 왼쪽 여백이 먼저 걸렸다. 끄자 같은
+    자리 비율이 22.8→28.4%로 올랐고, 지그재그가 막으려던 **주석끼리 충돌은
+    늘지 않았다**(A2 전 구간 0쌍 유지).
 
     글이 같은 크기에 안 들어가면 폰트를 한 단계씩 줄이고, 그래도 넘치면
     **원문에서 멀어지는 쪽으로만** 상자를 늘린다(원문 쪽으로 늘리면 덮게 된다).
@@ -793,12 +957,16 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
     ah = max(ay1 - ay0, _SIDE_MIN_H)
     limit_x1 = block.limit_x1 if block.limit_x1 is not None else page_w - 8.0
     g = _SIDE_GAP
-    def box(w):
+    def box(w, min_w=_MIN_BOX_W):
         """원문과 같은 폭을 **상한**으로 두되, 자리가 좁으면 줄인다.
         같은 폭을 강요하면 넓은 노트가 칸 경계에 막혀 오른쪽을 못 쓰고
         왼쪽으로 밀린다(실측: 왼쪽 30% — 사람은 7~10%). 사람 주석 폭도
         원문의 0.61배(중앙)로 원문보다 좁다."""
-        return max(min(aw, w), _MIN_BOX_W) if w >= _MIN_BOX_W else 0.0
+        return max(min(aw, w), min_w) if w >= min_w else 0.0
+
+    # 네 변 모두 같은 최소 폭을 요구한다 — 아래·위만 빠져 있던 탓에 18pt
+    # 상자가 통과해 낱말이 쪼개졌다(_min_usable_w 근거 참조).
+    side_min_w = _min_usable_w(ko_text, _FONTSIZE)
 
     for fontsize in (_FONTSIZE, 8.0, _MIN_FONTSIZE):
         # ⚠오른쪽 자리를 **전부 소진한 뒤** 왼쪽으로 간다. 번갈아 내면
@@ -806,33 +974,50 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
         # 두고 왼쪽 빈 여백(프레임 번호 칸)으로 도망간다 — 옛 채점이 왼쪽으로
         # 몰리던 것과 같은 함정이다(실측: 왼쪽 30%→26%에서 더 안 내려갔다).
         def right_slots(fontsize=fontsize):
-            w = box(limit_x1 - (ax1 + g))
+            w = box(limit_x1 - (ax1 + g), side_min_w)
             if not w:
                 return
-            h = max(ah, _estimate_height(ko_text, w, fontsize))
+            h = max(ah, _wrapped_height(ko_text, w, fontsize))
             for dy in _SIDE_DYS:
                 yield (ax1 + g, ay0 + dy, ax1 + g + w, ay0 + dy + h), fontsize
 
         def left_slots(fontsize=fontsize):
-            w = box((ax0 - g) - 8.0)
+            w = box((ax0 - g) - 8.0, side_min_w)
             if not w:
                 return
-            h = max(ah, _estimate_height(ko_text, w, fontsize))
+            h = max(ah, _wrapped_height(ko_text, w, fontsize))
             for dy in _SIDE_DYS:
                 yield (ax0 - g - w, ay0 + dy, ax0 - g, ay0 + dy + h), fontsize
 
-        first, second = ((right_slots, left_slots) if right_first
-                         else (left_slots, right_slots))
-        yield from first()
-        yield from second()
-        # 아래 → 위 (2순위). 아래는 그대로, 위는 상자 높이만큼 올린다.
-        w = box(limit_x1 - ax0)
-        if w:
-            h = max(ah, _estimate_height(ko_text, w, fontsize))
-            if ay1 + g + h <= page_h - 8.0:
-                yield (ax0, ay1 + g, ax0 + w, ay1 + g + h), fontsize
-            if ay0 - g - h >= 8.0:
-                yield (ax0, ay0 - g - h, ax0 + w, ay0 - g), fontsize
+        # 아래·위는 원문과 **같은 왼쪽 끝**에서 시작한다(사람 관례: 세로로
+        # 쌓아 쓴다). 아래는 그대로, 위는 상자 높이만큼 올린다.
+        def below_slots(fontsize=fontsize):
+            w = box(limit_x1 - ax0, side_min_w)
+            if not w:
+                return
+            h = max(ah, _wrapped_height(ko_text, w, fontsize))
+            gb = _BELOW_GAP
+            if ay1 + gb + h <= page_h - 8.0:
+                yield (ax0, ay1 + gb, ax0 + w, ay1 + gb + h), fontsize
+
+        def above_slots(fontsize=fontsize):
+            w = box(limit_x1 - ax0, side_min_w)
+            if not w:
+                return
+            h = max(ah, _wrapped_height(ko_text, w, fontsize))
+            ga = _ABOVE_GAP
+            if ay0 - ga - h >= 8.0:
+                yield (ax0, ay0 - ga - h, ax0 + w, ay0 - ga), fontsize
+
+        gens = {"right": right_slots, "left": left_slots,
+                "below": below_slots, "above": above_slots}
+        order = (_SIDE_ORDER if ah <= _TALL_H
+                 else ("right", "left", "below", "above"))
+        if not right_first:                      # 지그재그 — 좌우만 맞바꾼다
+            swap = {"right": "left", "left": "right"}
+            order = tuple(swap.get(n, n) for n in order)
+        for name in order:
+            yield from gens[name]()
 
 
 def _is_scanned(doc: PdfDocument, page: int) -> bool:
@@ -905,9 +1090,28 @@ def _derive_geometry(items, page_w: float, page_h: float) -> _Geometry | None:
                      col_edges=tuple(e for e in edges if e > 0))
 
 
+# 엑스시트 줄 나누기 규칙(2026-08-27 사람 납품본 실측). 손글씨는 세로로 한두
+# 낱말씩 쌓아 쓴 것이라 그 줄 구조를 그대로 옮기면 번역이 낱말 기둥이 된다 —
+# 우리 주석 높이 중앙 28pt·3줄 이상 26% 대 **사람 13pt(=한 줄)·3%**, 2,105개
+# 중 589개(28%)가 "3줄 이상 × 줄당 4자 이하"였다. 사람은 한 구를 이루는
+# 연속 줄을 합치고(`LT`+`HAND`→`왼 손.`) 대상·동작이 바뀔 때만 줄을 바꾼다.
+_XSHEET_LINE_RULE = (
+    "These sources are handwritten X-sheet notes stacked VERTICALLY, one or "
+    "two words per line. Do NOT mirror that stacking. Write the Korean the "
+    "way a Korean animation staffer writes it on the sheet:\n"
+    "- Merge consecutive source lines that form ONE Korean phrase onto a "
+    "single line (e.g. \"LT\\nHAND\" → \"왼 손.\", \"NOD HEAD\\nUP\" → "
+    "\"고개 위로 끄덕.\", \"RT\\nARM\\nUP\" → \"오른 팔 올린다.\").\n"
+    "- Keep a line break ONLY between separate subjects or separate actions "
+    "(e.g. \"AMBER\\nLEANS\" → \"앰버,\\n기울인다.\").\n"
+    "- NEVER use more lines than the source. Most notes become ONE line; two "
+    "lines is common; three or more is rare.\n")
+
+
 class XsheetProfile:
     name = "xsheet"
     label = "엑스시트 (Exposure Sheet)"
+    prompt_line_rule = _XSHEET_LINE_RULE
 
     def detect(self, doc: PdfDocument) -> bool:
         """텍스트 레이어가 없고(스캔) 저해상 OCR에서 시트 헤더 활자가 2개
@@ -981,6 +1185,7 @@ class XsheetProfile:
         values = "|".join(str(v) for v in (
             _OCR_DPI, _SCAN_COVER, _HEADER_ROW_TOL, _BAND_PAD, _NUM_BIN_PT,
             _NUM_BIN_MIN, _NUM_BIN_RATIO, _PHONETIC_MAX_LEN, _CLUSTER_PAD,
+            _AXIS_TOL,
             _MIN_NOTE_AREA, _MIN_RAW_ALNUM, _HDR_MIN_ALPHA, _HDR_POS_QUANT,
             _HDR_REPEAT_FRAC, _HDR_REPEAT_MIN, _STRIP_XPAD_L, _STRIP_XPAD_R,
             _RUN_GAP, _RUN_PH_MAXLEN, _DIALOG_RE.pattern,
@@ -1100,6 +1305,16 @@ class XsheetProfile:
         return [replace(b, ko=decoded) if (decoded := _decode_code_note(b.text))
                 else b for b in out]
 
+    @staticmethod
+    def _finalize(ov: Overlay) -> Overlay:
+        """고른 상자에 맞춰 **우리 줄바꿈을 텍스트에 박아** 돌려준다.
+
+        MuPDF에게 접기를 맡기면 접는 자리를 우리가 모른다(_wrap_ko 근거).
+        이미 그렇게 접힐 줄 수로 높이를 잡았으므로 상자는 그대로 둔다."""
+        lines = _wrap_ko(ov.text, ov.rect[2] - ov.rect[0], ov.fontsize)
+        text = "\n".join(lines)
+        return ov if text == ov.text else replace(ov, text=text)
+
     def place_with_doc(self, block: PdfBlock, ko_text: str,
                        page_size: tuple[float, float],
                        doc: PdfDocument,
@@ -1116,6 +1331,7 @@ class XsheetProfile:
 
         `place`(문서 없이)는 그대로 남긴다: 첫 후보를 돌려주므로 기존
         호출자·테스트의 계약이 바뀌지 않는다."""
+        _apply_page_scale(page_size[0])
         try:
             ink = self._page_ink(doc, block.page)
         except Exception:  # noqa: BLE001 — 그림을 못 얻으면 옛 경로로
@@ -1126,7 +1342,7 @@ class XsheetProfile:
             side = self._first_clean_side(block, ko_text, page_size, ink,
                                           occupied)
             if side is not None:
-                return side
+                return self._finalize(side)
         best = self._score_candidates(
             self._candidates(block, ko_text, page_size),
             block, ko_text, page_size, ink, occupied)
@@ -1143,7 +1359,7 @@ class XsheetProfile:
                 block, ko_text, page_size, ink, occupied)
             if wide is not None and wide[0] < best[0]:
                 best = wide
-        return best[1]
+        return self._finalize(best[1])
 
     def _first_clean_side(self, block: PdfBlock, ko_text: str,
                           page_size: tuple[float, float], ink,
@@ -1156,15 +1372,12 @@ class XsheetProfile:
         anchor = _tight_anchor(ink, block)
         page_h = page_size[1]
         grid = getattr(self, "_row_grid", None)
-        # 지그재그 — 이 페이지에서 지금까지 배치한 수의 홀짝으로 선호 변을
-        # 바꾼다. 블록이 페이지·세로 순서로 오므로 위에서 아래로 좌·우가
-        # 번갈아 잡힌다.
-        right_first = len(occupied or ()) % 2 == 0
         # 칸 경계는 세로 괘선에서 — geom.col_edges는 머리글 라벨 기반이라
         # 칸 한복판을 경계로 잡는 경우가 있다(위 _page_ink 주석 참조).
         edges = [x for x in getattr(self, "_col_edges", ()) if x > anchor[2] + 1]
         limit = min(edges) - 1.0 if edges else None
         blk = block if limit is None else replace(block, limit_x1=limit)
+        right_first = (not _ZIGZAG) or len(occupied or ()) % 2 == 0
         for rect, fontsize in _side_candidates(anchor, blk, ko_text,
                                                page_size, right_first):
             rect = _clamp_nondegenerate(
@@ -1191,6 +1404,10 @@ class XsheetProfile:
             # 잉크는 _INK_OK까지 공짜, 그 위는 거리와 교환(_W_INK 근거 참조).
             score = (dpen + _W_INK * max(ink_score - _INK_OK, 0.0)
                      + _W_FS * (_FONTSIZE - fontsize))
+            if ink_score > _FB_INK_HARD:
+                # 손글씨를 이만큼 덮는 자리는 겹침과 같은 급의 벽 — 깨끗한
+                # 자리가 하나라도 있으면 절대 못 이기고, 전멸일 때만 남는다.
+                score += _BLOCKED + ink_score * 1000.0
             if occ > _OCC_OK:
                 # 주석끼리 겹침은 **하드 게이트** — 사람은 잉크엔 겹쳐 써도
                 # 주석끼리는 절대 안 겹친다(A2 실측: 사람 심한 겹침 0쌍 대
@@ -1212,7 +1429,7 @@ class XsheetProfile:
         page_w, page_h = page_size
         limit_x1 = block.limit_x1 if block.limit_x1 is not None else page_w - 8.0
         want = _natural_width(ko_text, _FONTSIZE)
-        height = _estimate_height(ko_text, want, _FONTSIZE)
+        height = _wrapped_height(ko_text, want, _FONTSIZE)
         for dy in _FAR_LADDER:
             top = by0 + dy
             if top < 8.0 or top + height > page_h - 8.0:
@@ -1299,6 +1516,7 @@ class XsheetProfile:
         만들었다). 같은 변에서도 세로로 조금씩 밀어 본다: 엑스시트는
         노트가 세로로 빽빽해서, 옆자리가 막혀도 반 줄 아래는 흔히 빈다.
         """
+        _apply_page_scale(page_size[0])
         page_w, page_h = page_size
         bx0, by0, bx1, by1 = block.bbox
         limit_x1 = block.limit_x1 if block.limit_x1 is not None else page_w - 8.0
@@ -1308,25 +1526,26 @@ class XsheetProfile:
 
         for fontsize in (_FONTSIZE, 8.0, _MIN_FONTSIZE):
             want = _natural_width(ko_text, fontsize)
+            need = _min_usable_w(ko_text, fontsize)
             for dy in _DY_LADDER:
                 top = by0 + dy
                 if top < 8.0:
                     continue
                 # 오른쪽: 원문 끝에 붙여 필요한 만큼만
                 avail = limit_x1 - (bx1 + 3.0)
-                if avail >= _MIN_BOX_W:
+                if avail >= need:
                     width = min(want, avail)
-                    height = _estimate_height(ko_text, width, fontsize)
+                    height = _wrapped_height(ko_text, width, fontsize)
                     if top + height <= page_h - 8.0:
                         yield (_clamp_nondegenerate(
                             bx1 + 3.0, top, bx1 + 3.0 + width, top + height,
                             page_h), fontsize, abs(dy))
                 # 왼쪽: 원문 시작에 붙여 왼쪽으로 필요한 만큼만
                 avail = (bx0 - 3.0) - 8.0
-                if avail >= _MIN_BOX_W:
+                if avail >= need:
                     width = min(want, avail)
                     right = bx0 - 3.0
-                    height = _estimate_height(ko_text, width, fontsize)
+                    height = _wrapped_height(ko_text, width, fontsize)
                     if top + height <= page_h - 8.0:
                         yield (_clamp_nondegenerate(
                             right - width, top, right, top + height,
@@ -1334,9 +1553,9 @@ class XsheetProfile:
                             abs(dy) + wide_pen + _LEFT_FAR_W * (width + 3.0))
             # 아래: 좌단 정렬 + (넓은 원문은) 우단 정렬 변형, 글에 맞춘 폭
             avail = limit_x1 - bx0
-            if avail >= _MIN_BOX_W:
+            if avail >= need:
                 width = min(want, avail)
-                height = _estimate_height(ko_text, width, fontsize)
+                height = _wrapped_height(ko_text, width, fontsize)
                 right_x1 = min(bx1, limit_x1)
                 for gap in _BELOW_GAPS:
                     top = by1 + gap
@@ -1353,10 +1572,12 @@ class XsheetProfile:
         # 최후 예비 — 양옆·아래가 전부 성립 안 해도(좁은 칸·페이지 끝) 후보
         # 0개가 되면 안 된다(place는 첫 후보를 무조건 쓴다). 옛 꼬리 배치
         # 그대로, 변위 페널티만 뒤로 밀어 정상 후보가 있으면 절대 안 이긴다.
+        # ⚠블록 폭으로 자르지 않는다(2026-08-31): 좁은 원문(세로 손글씨) 폭에
+        # 맞추면 긴 번역이 낱말 기둥으로 흘렀다(1603 `손끝으로/털실을/…` 7줄).
         width = max(_MIN_BOX_W, min(_natural_width(ko_text, _MIN_FONTSIZE),
-                                    max(bx1 - bx0, _MIN_BOX_W)))
+                                    _min_usable_w(ko_text, _FONTSIZE) * 2.0))
         x1 = min(limit_x1, bx0 + width)
-        height = _estimate_height(ko_text, x1 - bx0, _MIN_FONTSIZE)
+        height = _wrapped_height(ko_text, x1 - bx0, _MIN_FONTSIZE)
         yield (_clamp_nondegenerate(bx0, by1 + 2.0, x1, by1 + 2.0 + height,
                                     page_h), _MIN_FONTSIZE,
                _BELOW_GAPS[-1] + below_pen + 1.0)
@@ -1376,6 +1597,25 @@ class XsheetProfile:
         따라 사람 표기가 갈린다(TILT는 `기웃`, LEAN은 `기울인다`). `정지`·`스틸`
         처럼 다른 문맥에선 정당한 낱말도 있어서, 원문 없이 무조건 치환하면
         멀쩡한 말을 덮는다."""
+        # ★SI(slow-in)는 번역하지 않는다 — 1603 사람 납품본 실측(2026-08-31):
+        # STL→안착 81·OVS→오버슛 56·REF→참고 53은 꼬박꼬박 옮기면서 **SI는
+        # 2,868건 중 0건**. 타이밍 기호로 보고 남겨 두는 관례다. 우리는 75건
+        # 전부 `슬로우 인`으로 달아 B서클 옆 좁은 자리를 어지럽혔다. 빈 문자열
+        # 반환 = build_plan이 주석을 만들지 않는 설계된 드롭 경로.
+        src_norm = _norm(block.text or "")
+        if _SI_ONLY_RE.match(src_norm):
+            return ""
+        tokens = [t for t in re.split(r"[^A-Za-z0-9]+", (block.text or "").upper()) if t]
+        if tokens and any(t == "SI" for t in tokens) and all(
+                _SI_TOKEN_RE.match(t) for t in tokens):
+            return ""          # `2 SI`류 — 프레임 번호+타이밍 표기 묶음
+        # 인쇄 서식 문구를 걷어내고 알파벳·숫자가 3자 미만 남으면 서식이다.
+        # (문구 "일부"만 서식이면 남은 손글씨는 살린다 — `FOOTAGE WALK CONT.`)
+        stripped = " ".join((block.text or "").upper().split())
+        for pat in _TEMPLATE_PHRASE_RES:
+            stripped = pat.sub(" ", stripped)
+        if len(_ALNUM_RE.findall(stripped)) < 3:
+            return ""
         out = ko_text
         for pat, rep in _HOUSE_KO_XSHEET:
             out = pat.sub(rep, out)
@@ -1385,6 +1625,14 @@ class XsheetProfile:
                 continue
             for pat, rep in rules:
                 out = pat.sub(rep, out)
+        # ★짧은 번역은 한 줄로 — 사람은 주석을 사실상 전부 한 줄로 쓴다
+        # (1603 실측 2,868건 중 **1줄 100%**, 상자 높이 중앙 9pt). 우리는 원문
+        # 세로 쌓기를 따라 41%만 1줄이라 상자가 3배 높았고, 큰 상자는 빈자리에
+        # 못 들어가 폴백으로 밀리며 손글씨를 덮었다. 합쳐서 낱말 몇 개 수준
+        # (_JOIN_MAX_CHARS)이면 개행을 공백으로 접는다.
+        lines = [ln.strip() for ln in out.split("\n") if ln.strip()]
+        if len(lines) > 1 and sum(len(ln) for ln in lines) <= _JOIN_MAX_CHARS:
+            out = " ".join(lines)
         return out
 
 
@@ -1569,9 +1817,18 @@ def _recover_header_notes(pool, pages_with_geom: int) -> list[PdfBlock]:
 
 def _cluster(items: list[tuple[tuple[float, float, float, float], str]],
              pad: float = _CLUSTER_PAD):
-    """패딩 rect가 겹치는 것끼리 연결 요소로 묶는다 — 엑스시트 노트는
-    세로로 단어를 쌓아 쓰는 관례라(SUBTLE/TREMBLE/ON/HANK…) 줄 단위 OCR
-    박스를 노트 하나로 재조립해야 사람 주석 1개와 1:1이 된다."""
+    """줄 단위 OCR 박스를 노트 하나로 재조립한다 — 엑스시트 노트는 세로로
+    단어를 쌓아 쓰는 관례라(SUBTLE/TREMBLE/ON/HANK…) 그래야 사람 주석 1개와
+    1:1이 된다.
+
+    ★**대각선으로만 가까운 것은 잇지 않는다**(2026-08-27). 옛 규칙은 패딩
+    rect 겹침이라 세로로도 가로로도 안 겹치면서 비스듬히 가까운 다른 칼럼의
+    글자를 체인으로 끌어왔다 — A2 p36 실측: `DRT`(x135-181)와
+    `AMBERS`(x76-129)가 가로 6.2pt·세로 5.5pt 대각선으로 붙어, 서로 다른
+    두 세로 스택 13박스가 144×162pt 한 덩어리가 됐다(사람 기준 노트 4개).
+    그 덩어리는 번역도 13줄짜리 한 뭉치로 나와 여백에 낱말 기둥으로 쌓인다.
+    이제는 **같은 세로 스택**(가로가 겹침)이나 **같은 줄**(세로가 겹침)만
+    잇는다. 비용은 거의 없다(밀집 10페이지 실측 블록 294→302)."""
     n = len(items)
     parent = list(range(n))
 
@@ -1581,12 +1838,16 @@ def _cluster(items: list[tuple[tuple[float, float, float, float], str]],
             i = parent[i]
         return i
 
+    span = 2.0 * pad          # 이어 붙일 수 있는 최대 틈(옛 규칙과 동일)
     for i in range(n):
         xi0, yi0, xi1, yi1 = items[i][0]
         for j in range(i + 1, n):
             xj0, yj0, xj1, yj1 = items[j][0]
-            if (xi0 - pad < xj1 + pad and xj0 - pad < xi1 + pad
-                    and yi0 - pad < yj1 + pad and yj0 - pad < yi1 + pad):
+            gx = max(xj0 - xi1, xi0 - xj1, 0.0)
+            gy = max(yj0 - yi1, yi0 - yj1, 0.0)
+            same_col = gx <= _AXIS_TOL and gy <= span
+            same_row = gy <= _AXIS_TOL and gx <= span
+            if same_col or same_row:
                 parent[find(i)] = find(j)
     groups: dict[int, list] = {}
     for i in range(n):

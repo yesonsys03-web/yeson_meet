@@ -9,6 +9,7 @@ import shutil
 import threading
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from uuid import UUID
 
@@ -238,8 +239,11 @@ async def _translate_group_texts(profile, blocks, groups, group_texts, *,
     버린다. 이름·짧은 노트는 LLM이 확률적으로 에코해 증발했다(A2 실측
     16건, 2026-08-24). 재시도는 딱 한 번이고, 전 멤버 블록이 predecode
     (block.ko)된 그룹은 건너뛴다 — 결과가 어차피 사전값으로 덮인다."""
-    translator = create_translator(provider, cli_model,
-                                   prompt_builder=build_pdf_prompt)
+    # 줄 나누기 규칙은 프로파일이 정한다(엑스시트는 낱말 기둥을 막아야 한다).
+    line_rule = getattr(profile, "prompt_line_rule", None)
+    translator = create_translator(
+        provider, cli_model,
+        prompt_builder=partial(build_pdf_prompt, line_rule=line_rule))
     try:
         ko_group_texts = await translate_texts(group_texts, translator,
                                                progress_cb=progress_cb)
@@ -255,8 +259,9 @@ async def _translate_group_texts(profile, blocks, groups, group_texts, *,
     if not echoed:
         return ko_group_texts
     from .translate_blocks import build_pdf_retry_prompt
-    retry = create_translator(provider, cli_model,
-                              prompt_builder=build_pdf_retry_prompt)
+    retry = create_translator(
+        provider, cli_model,
+        prompt_builder=partial(build_pdf_retry_prompt, line_rule=line_rule))
     try:
         ko_retry = await translate_texts([group_texts[i] for i in echoed],
                                          retry)
