@@ -707,7 +707,8 @@ def test_decode_code_note_pure_codes_only():
     assert xs._decode_code_note("EYES EXP") == "시선 표정"
     assert xs._decode_code_note("CUSH") == "쿠션"
     assert xs._decode_code_note("LT ARM") is None      # LT가 사전 밖
-    assert xs._decode_code_note("HANK") is None        # 이름=음역, 재시도 몫
+    assert xs._decode_code_note("HANK") == "행크"      # 이름표(2026-09-03)
+    assert xs._decode_code_note("ZORK") is None        # 사전 밖 = 번역기 몫
     assert xs._decode_code_note("") is None
 
 
@@ -768,7 +769,7 @@ async def test_echoed_groups_retried_once_with_dedicated_prompt(monkeypatch):
     # 전용 프롬프트 사용 + 프로파일의 줄 규칙이 재시도에도 실린다
     assert builders[1].func is build_pdf_retry_prompt
     assert (builders[1].keywords["line_rule"]
-            is xs.XsheetProfile.prompt_line_rule)
+            .startswith(xs.XsheetProfile.prompt_line_rule))   # + 이름표(동적 꼬리)
 
 
 # ------------------------------------------------------ pipeline + API
@@ -2396,3 +2397,29 @@ def test_refine_ko_clears_leftover_codes_like_a_human():
     assert r("POSE\nTO\nEYES\nLEAD\nTO\nSI", "눈이 리드하며\n포즈로,\nSI.") == "눈이 리드하며 포즈로."
     assert r("HUSTLE", "허슬 STL") == "허슬 STL"          # 원문에 STL 코드 없음
     assert r("SIT DOWN", "앉는다 SI") == "앉는다 SI"       # SIT는 SI가 아니다
+
+
+# ── 등장인물 이름표(2026-09-03, 1605_A1 사용자 검수) ────────────────────
+
+def test_cast_names_decode_prompt_and_fix(monkeypatch, tmp_path):
+    """이름만 있는 노트는 결정적 해독, 프롬프트엔 이름표, 원문에 이름이 있으면
+    오음역(차네·챈·샌드·에미)을 표기로 교정. 운영자 파일이 내장값을 덮는다."""
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    assert xs._decode_code_note("CHANE") == "체인"
+    assert xs._decode_code_note("EMI") == "에밀리오"
+    assert xs._decode_code_note("SAND\nOVS") == "산드라\n오버슛"
+    assert xs._decode_code_note("CHANE DRIVES") is None            # 낱말 섞이면 번역기 몫
+    rule = xs.XsheetProfile().prompt_line_rule_now()
+    assert "CHANE → 체인" in rule and "SAND → 산드라" in rule and "EMI → 에밀리오" in rule
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("CHANE DRIVES\nCAR", "차네가 차를\n몰고 간다.") == "체인이 차를 몰고 간다."
+    assert r("CHANE\nLOOKS", "차네는 본다.") == "체인은 본다."
+    assert r("EMI\nHANDS", "에미의 두 손.") == "에밀리오의 두 손."
+    assert r("A CHAN\nTURNS", "A 찬\n턴한다.") == "A 체인 턴한다."
+    assert r("SAND\nCLEAN", "샌드\n닦는다.") == "산드라 닦는다."           # 12자 이하 접힘
+    assert r("KICKS", "찬다.") == "찬다."                              # 원문에 이름 없음
+    assert r("CHANE", "찬다.") == "찬다."                              # 한글 낱말 안의 찬은 보존
+    (tmp_path / "xsheet_cast.txt").write_text("# 작품별\nCHANE => 차니\nZOE = 조이\n", encoding="utf-8")
+    assert xs._decode_code_note("CHANE") == "차니" and xs._decode_code_note("ZOE") == "조이"

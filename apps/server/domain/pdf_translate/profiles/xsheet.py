@@ -191,6 +191,70 @@ _CODE_KO = {
     "HEAD": "고개",
 }
 
+# ★등장인물 이름표(2026-09-03, 1605_A1 사용자 검수: `CHANE`→차네·`SAND`→샌드·
+# `EMI`→에미로 직역 음역됐다 — 사람은 작품 인물표로 체인·산드라·에밀리오). 손글씨
+# 이름은 줄여 쓰는 일이 많아(BOB·PEG·JOSE·CHAN) LLM 음역이 흔들린다. 내장값은
+# 1605·1603 사람 납품본에서 캔 것(원문 한 단어 ↔ 사람 주석, 예: HANK 행크 26/38·
+# KAHN 칸 14/14·CHANE 체인 7/8)+사용자 지정 3건. 작품이 바뀌면 운영자가
+# `{STORAGE_ROOT}/xsheet_cast.txt`(`NAME => 이름` 한 줄씩, # 주석)로 덮거나 보탠다.
+# 회의·자막 사전(glossary.py)에 넣지 않는다 — `SAND`→산드라가 회의 자막을 망친다.
+_CAST_KO_DEFAULT = {
+    "HANK": "행크", "BOBBY": "바비", "BOB": "바비", "PEGGY": "페기", "PEG": "페기",
+    "DALE": "데일", "BILL": "빌", "JOSEPH": "죠셉", "JOSE": "죠셉", "KAHN": "칸",
+    "CONNIE": "코니", "NANCY": "낸시", "CHANE": "체인", "CHAN": "체인", "MAX": "맥스",
+    "SAND": "산드라", "SANDRA": "산드라", "EMI": "에밀리오", "EMILIO": "에밀리오",
+    "BOOMHAUER": "붐하우어", "LUANNE": "루앤",
+}
+_CAST_FILENAME = "xsheet_cast.txt"
+# 원문에 그 이름이 있을 때만 고치는 잘못된 음역(1605 실측). 한글 낱말 경계로
+# 감싼다 — `찬`은 `찬다`의 일부일 수 있다.
+_CAST_VARIANTS = {
+    "체인": ("차네", "챈", "찬", "체인지"),
+    "산드라": ("샌드", "샌디"),
+    "에밀리오": ("에미",),          # `이미`는 흔한 낱말이라 뺀다
+}
+# 받침 있는 이름으로 바뀌면 조사도 따라간다(차네가 → 체인이)
+_PARTICLE_AFTER_BATCHIM = {"가": "이", "는": "은", "를": "을", "와": "과"}
+
+
+def _has_batchim(word: str) -> bool:
+    ch = word[-1]
+    return "가" <= ch <= "힣" and (ord(ch) - 0xAC00) % 28 != 0
+
+
+def _cast_table() -> dict[str, str]:
+    """내장 이름표 + 운영자 파일(있으면). 키는 대문자."""
+    import os
+
+    from apps.server.ai.glossary import DEFAULT_STORAGE_ROOT, STORAGE_ROOT_ENV
+
+    table = dict(_CAST_KO_DEFAULT)
+    path = Path(os.environ.get(STORAGE_ROOT_ENV) or DEFAULT_STORAGE_ROOT) / _CAST_FILENAME
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            for sep in ("=>", "\t", "="):
+                if sep in line:
+                    en, ko = line.split(sep, 1)
+                    break
+            else:
+                continue
+            if en.strip() and ko.strip():
+                table[en.strip().upper()] = ko.strip()
+    except OSError:
+        pass
+    return table
+
+
+def _cast_prompt_block() -> str:
+    table = _cast_table()
+    return ("Character names on these sheets (handwritten, often abbreviated) "
+            "and their FIXED Korean renderings - always use exactly these, never "
+            "another transliteration: "
+            + ", ".join(f"{en} → {ko}" for en, ko in sorted(table.items())) + ".\n")
+
 # 화자 스트립(A2 실측 2026-08-25): 화자 이름은 대사 칸 왼쪽에 연필
 # 원·굵은 글씨로 쓰이는데 RapidOCR이 전 스케일(120~400dpi)에서 못 읽어
 # 사람 대비 이름 누락 ~50건이 남았다. 원형 탐지는 오탐이 지배(후보
@@ -1198,6 +1262,12 @@ class XsheetProfile:
     label = "엑스시트 (Exposure Sheet)"
     prompt_line_rule = _XSHEET_LINE_RULE
 
+    @staticmethod
+    def prompt_line_rule_now() -> str:
+        """잡 시작 시점의 줄 규칙 = 고정 규칙 + 등장인물 이름표(운영자 파일 포함).
+        pdf_run이 이 훅을 우선한다 — 정적 `prompt_line_rule`은 계약·테스트용."""
+        return _XSHEET_LINE_RULE + _cast_prompt_block()
+
     def detect(self, doc: PdfDocument) -> bool:
         """텍스트 레이어가 없고(스캔) 저해상 OCR에서 시트 헤더 활자가 2개
         이상 읽히면 엑스시트로 본다. 텍스트가 있는 문서는 OCR 없이 즉시
@@ -1866,6 +1936,7 @@ class XsheetProfile:
             for pat, rep in rules:
                 out = pat.sub(rep, out)
         out = _clean_leftover_codes(src, out)
+        out = _fix_cast_names(src, out)
         # ★짧은 번역은 한 줄로 — 사람은 주석을 사실상 전부 한 줄로 쓴다
         # (1603 실측 2,868건 중 **1줄 100%**, 상자 높이 중앙 9pt). 우리는 원문
         # 세로 쌓기를 따라 41%만 1줄이라 상자가 3배 높았고, 큰 상자는 빈자리에
@@ -1885,6 +1956,26 @@ _LEFT_STL_RE = re.compile(r"(?<![A-Za-z가-힣])STLS?(?![A-Za-z])")
 _LEFT_OVS_RE = re.compile(r"(?<![A-Za-z가-힣])OVS(?![A-Za-z])")
 _LEFT_SI_RE = re.compile(r"[\s,]*\(?(?<![A-Za-z])SI(?![A-Za-z])\)?")
 _DANGLING_RE = re.compile(r"\s+([.,])")
+
+
+def _fix_cast_names(src: str, ko: str) -> str:
+    """원문에 인물 이름이 있으면 그 이름의 알려진 오음역을 표기로 바꾼다.
+
+    두 글자 이상 오음역은 뒤에 조사가 붙을 수 있어(`차네가`) 뒤쪽 경계를 열고,
+    한 글자(`찬`)는 `찬다` 같은 낱말 안을 건드리지 않게 양쪽을 막는다."""
+    for en, canon in _cast_table().items():
+        if not re.search(rf"(?<![A-Za-z]){re.escape(en)}(?![A-Za-z])", src):
+            continue
+        for bad in _CAST_VARIANTS.get(canon, ()):
+            tail = r"(?![가-힣])" if len(bad) == 1 else r"(?!\w*[A-Za-z])"
+            pat = rf"(?<![가-힣]){bad}{tail}"
+            if _has_batchim(canon):
+                pat += r"([가는를와])?"
+                ko = re.sub(pat, lambda m, c=canon: c + _PARTICLE_AFTER_BATCHIM.get(
+                    m.group(1) or "", m.group(1) or ""), ko)
+            else:
+                ko = re.sub(pat, canon, ko)
+    return ko
 
 
 def _clean_leftover_codes(src: str, ko: str) -> str:
@@ -2048,8 +2139,10 @@ def _decode_code_note(text: str) -> str | None:
         if not toks:
             continue
         decoded = []
+        cast = _cast_table()
         for t in toks:
-            ko = _CODE_KO.get(t.strip(".,").upper())
+            key = t.strip(".,").upper()
+            ko = _CODE_KO.get(key) or cast.get(key)
             if ko is None:
                 return None
             decoded.append(ko)

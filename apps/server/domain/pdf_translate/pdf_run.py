@@ -241,6 +241,10 @@ async def _translate_group_texts(profile, blocks, groups, group_texts, *,
     (block.ko)된 그룹은 건너뛴다 — 결과가 어차피 사전값으로 덮인다."""
     # 줄 나누기 규칙은 프로파일이 정한다(엑스시트는 낱말 기둥을 막아야 한다).
     line_rule = getattr(profile, "prompt_line_rule", None)
+    # 잡 시점에 계산되는 규칙(엑스시트: 이름표 운영자 파일)이 있으면 그것을 쓴다
+    dynamic_rule = getattr(profile, "prompt_line_rule_now", None)
+    if callable(dynamic_rule):
+        line_rule = dynamic_rule()
     translator = create_translator(
         provider, cli_model,
         prompt_builder=partial(build_pdf_prompt, line_rule=line_rule))
