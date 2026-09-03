@@ -2423,3 +2423,16 @@ def test_cast_names_decode_prompt_and_fix(monkeypatch, tmp_path):
     assert r("CHANE", "찬다.") == "찬다."                              # 한글 낱말 안의 찬은 보존
     (tmp_path / "xsheet_cast.txt").write_text("# 작품별\nCHANE => 차니\nZOE = 조이\n", encoding="utf-8")
     assert xs._decode_code_note("CHANE") == "차니" and xs._decode_code_note("ZOE") == "조이"
+
+
+def test_refine_ko_handles_s1_variant_underscore_and_miguel():
+    """전사가 SI를 `S1`로 읽어도 지우고, 밑줄 연결은 `&`로, MIGUEL은 미구엘."""
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("CHANE\nLT. HAND\nS1", "체인 왼손\nS1.") == "체인 왼손"
+    assert r("S1", "슬로우 인") == ""                       # S1 단독 = SI 단독
+    assert r("2\nS1", "2 슬로우 인") == ""
+    assert r("SAND_CLOTH", "산드라_옷") == "산드라&옷"
+    assert r("MIGUEL_PHONE", "미겔_전화") == "미구엘&전화"
+    assert xs._decode_code_note("MIGUEL") == "미구엘"
