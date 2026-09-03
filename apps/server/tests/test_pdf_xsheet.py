@@ -2530,3 +2530,13 @@ def test_refine_ko_ovs_misread_as_overlap():
     assert r("OVS\nSUBTLE", "오버랩\n미세하게.") == "오버슛 은근하게."
     assert r("OVS\nO.LAP", "오버슛\n오버랩.") == "오버슛 오버랩."   # 진짜 오버랩은 보존
     assert xs._decode_code_note("C DROPS") == "C 방울"
+
+
+def test_refine_ko_fifth_pass_rules():
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("CHAN,\nSAC\nHP", "체인,\n산드라 HP") == "체인, 포대"
+    assert r("SAND\nSAC", "산드라, 포대") == "산드라, 포대"          # SAND가 있으면 보존
+    assert r("(OUS)\nHOLD", "(화면 밖)\n홀드.") == "오버슛 홀드."
+    assert r("LIQUID\nW/W\nACTION", "액체 웨이브\n액션.") == "액체 액션맞춰 움직인다."

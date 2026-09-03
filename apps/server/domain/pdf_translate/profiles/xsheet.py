@@ -510,6 +510,10 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
     )),
     (re.compile(r"\bPENCIL\b", re.IGNORECASE), ((re.compile(r"펜슬"), "연필"),)),
     (re.compile(r"\bNOTEBOOK\b", re.IGNORECASE), ((re.compile(r"노트북|노트"), "공책"),)),
+    # SAC(포대)를 이름표의 SAND(산드라)로 오인한 LLM — 원문에 SAND가 없을 때만
+    (re.compile(r"^(?![\s\S]*\bSAND)[\s\S]*\bSAC\b", re.IGNORECASE), ((re.compile(r"산드라"), "포대"),)),
+    # OUS/DVS(OVS 오독 변형)를 "화면 밖"으로 번역한 오역
+    (re.compile(r"\b(?:OUS|DVS)\b"), ((re.compile(r"\(?화면\s*밖\)?|\(?OUS\)?"), "오버슛"),)),
     (re.compile(r"\bENTERS?\b", re.IGNORECASE), ((re.compile(r"등장한다|등장"), "들어온다"),)),
     (re.compile(r"\bEXP\.?(?![A-Za-z])", re.IGNORECASE), (
         (re.compile(r"익스포저|익스포즈"), "표정"),
@@ -552,6 +556,7 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
     (re.compile(r"\bW/W\b", re.IGNORECASE), (
         (re.compile(r"(?:를|을)?\s*따라\s*움직"), " 액션맞춰 움직"),
         (re.compile(r"와\s*함께\s*움직"), " 액션맞춰 움직"),
+        (re.compile(r"웨이브\s*액션"), "액션맞춰 움직인다"),   # W/W를 wave로 오독(1605)
     )),
     # ON n'S(n콤마 작화): 사람 `1콤마에`·`2콤마에` 12 / 음역 0 ↔ 우리
     # `온 원스`·`온 투스` 17 / 콤마 0 (2026-08-25 사용자 실물 지적 + A2 전수
