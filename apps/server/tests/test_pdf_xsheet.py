@@ -1513,13 +1513,13 @@ def _ko_note(src: str) -> PdfBlock:
     # 잉여 음역 `발스텝`은 붙어 쓴 단일 토큰일 때만 걷는다
     ("0X\nSTEP", "0X 발스텝", "0X 스텝"),
     # LLM 겹말 `발 + 발스텝`은 뒤엣것만 줄인다(FT의 `발`은 남는다)
-    ("RT\nFT\nSTEP", "오른\n발\n발스텝", "오른 발 스텝"),
+    ("RT\nFT\nSTEP", "오른\n발\n발스텝", "오른발 스텝"),     # 사람 두 문서 모두 붙여 씀(왼발 28·왼 발 0)
     ("ACTION\nON (1)S", "액션 온 원스", "액션 1콤마에"),
     # ⛔원문이 FT(foot)면 `발`은 정당한 낱말 — 지우면 내용이 사라진다.
     # 실측 사고(2026-08-25): 무조건 `발\\s*스텝` 규칙이 A2 계획 3건에서
     # `오른|발|스텝`을 `오른|스텝`으로 깎았다. 접혀도 `발`은 남아야 한다.
-    ("HANK\nLT\nFT\nSTEP", "행크\n왼\n발\n스텝", "행크 왼 발 스텝"),
-    ("RT\nFT\nSTEP", "오른\n발\n스텝", "오른 발 스텝"),
+    ("HANK\nLT\nFT\nSTEP", "행크\n왼\n발\n스텝", "행크 왼발 스텝"),
+    ("RT\nFT\nSTEP", "오른\n발\n스텝", "오른발 스텝"),
     ("RT\nFT\nSTEP", "오른발\n스텝", "오른발 스텝"),
     ("WHEELS\nSPIN\nON\n2'S", "바퀴\n회전\n온\n투스", "바퀴 회전 2콤마에"),
 ])
@@ -2495,6 +2495,16 @@ def test_refine_ko_markers_and_second_pass_terms():
     assert r("C UP", "C 업") == "C 위로"
     assert r("NEXT\nCANDLE", "다음\n초.") == "다음 양초."
     assert r("CANDLE FLAME FX", "촛불 불꽃 효과") == "양초불꽃 효과"
-    assert r("RT. ARM &\nPENCIL UP", "오른 팔과\n펜슬 위로.") == "오른 팔과 연필 위로."
+    assert r("RT. ARM &\nPENCIL UP", "오른 팔과\n펜슬 위로.") == "오른팔과 연필 위로."
     assert r("ENTER\nBOBBY", "바비 등장.") == "바비 들어온다."
     assert r("EYES\nTO", "두눈\n~쪽으로.") == "두눈."
+
+
+def test_refine_ko_up_rule_respects_word_boundary_and_joins_left_right():
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("LT. ARM\nUP", "왼 팔 들어올린다.") == "왼팔 들어올린다."     # `들어위로` 금지
+    assert r("ARMS\nUP", "팔 올린다.") == "두팔 위로."
+    assert r("RT. HAND\nKNIFE", "오른 손, 칼.") == "오른손, 칼."
+    assert r("NOTEBOOK", "노트북") == "공책"

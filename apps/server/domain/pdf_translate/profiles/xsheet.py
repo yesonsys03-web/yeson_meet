@@ -381,6 +381,8 @@ _HOUSE_KO_XSHEET: tuple[tuple[re.Pattern[str], str], ...] = (
     # 1605 실측 인공물: 원문 끝의 홀로 선 `TO`가 `~로`(96건)·`안착로`(37건)로 남는다
     # — 사람은 무시한다(`STL TO`→`안착`). `시프트`는 사람 0/우리 72 → `이동`.
     (re.compile(r"\s*~[가-힣]+"), ""),
+    # 왼/오른 + 신체 부위는 붙여 쓴다 — 사람 `왼팔`·`왼손`(1605·A2 동일), 우리 `왼 팔` 196건
+    (re.compile(r"(왼|오른)\s+(손|팔|발|다리|눈|어깨|무릎|귀)"), r"\1\2"),
     (re.compile(r"안착로"), "안착"),
     (re.compile(r"시프트"), "이동"),
     # `걸음걸이`는 사람도 쓰는 정상 낱말이라 건드리지 않는다.
@@ -492,7 +494,8 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
         (re.compile(r"(?:발로\s*)?찬다"), "발찬다"),
     )),
     (re.compile(r"\bUP\b", re.IGNORECASE), (
-        (re.compile(r"올린다|올리며|올림|(?<![가-힣])업(?![가-힣])"), "위로"),
+        # ⚠낱말 경계 — `들어올린다`의 `올린다`를 바꾸면 `들어위로`가 된다(4차 실측 7건)
+        (re.compile(r"(?<![가-힣])(?:올린다|올리며|올림)|(?<![가-힣])업(?![가-힣])"), "위로"),
     )),
     (re.compile(r"\bDN\b|\bDOWN\b", re.IGNORECASE), (
         (re.compile(r"(?<![가-힣])다운(?![가-힣])"), "아래로"),
@@ -505,6 +508,7 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
         (re.compile(r"(?<![가-힣])초(?![가-힣])"), "양초"),
     )),
     (re.compile(r"\bPENCIL\b", re.IGNORECASE), ((re.compile(r"펜슬"), "연필"),)),
+    (re.compile(r"\bNOTEBOOK\b", re.IGNORECASE), ((re.compile(r"노트북|노트"), "공책"),)),
     (re.compile(r"\bENTERS?\b", re.IGNORECASE), ((re.compile(r"등장한다|등장"), "들어온다"),)),
     (re.compile(r"\bEXP\.?(?![A-Za-z])", re.IGNORECASE), (
         (re.compile(r"익스포저"), "표정"),
