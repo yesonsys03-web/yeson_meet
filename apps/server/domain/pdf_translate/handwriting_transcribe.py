@@ -185,6 +185,25 @@ _CACHE_NAME = "transcripts.json"
 # 2×/0.6× 재판독과 같은 계보(원본 0/17→축소 17/17 선례).
 _RETRY_PREFIX = "2x_"
 _RETRY_SCALE = 2
+# ★과병합 분리(S3, 2026-09-03): 크롭 하나에 **별개 노트**가 여럿 들어 있으면
+# (1603 사람 대조: 블록 2.9%에 사람 주석 6.9% — 80/92가 세로 적층) 전사가
+# 노트 사이를 빈 줄로 나누고, 그 조각을 크롭의 **잉크 행**에 매핑해 하위
+# 블록으로 쪼갠다 — 사람처럼 노트마다 번역·배치가 붙는다. 실험(1603 과병합
+# 92장·대조 92장, split_prompt_ab.py): 분할 48·사람 수 정확 일치 35, 대조군
+# "거짓 분할" 33은 대부분 `SO`·`OVS`·`B.`·`(REF.)` 타이밍 기호 분리 — 사람도
+# `오버슛`·`안착`을 따로 단다. ⚠모델이 노트 순서를 뒤집는 사례 실측(위 상자
+# 노트를 뒤에 출력) → 위→아래 지시 + 행 폭·글자 수 대응으로 순서 검증.
+_SEG_SPLIT_RE = re.compile(r"\n[ \t]*\n")
+_ROW_GAP_PX = 9          # 300dpi 크롭에서 행 사이 최소 틈(≈2pt)
+_ROW_MIN_PX = 9          # 이보다 얇은 행은 잡티
+_RULE_MAX_PX = 5         # 이보다 두꺼운 꽉 찬 줄은 괘선이 아니라 글씨
+_MAX_ORDER_SEGS = 4      # 순서 검증 순열 상한(4! = 24)
+_CROP_META_KEY = "yeson_crop_pt"   # PNG 텍스트 청크: 크롭의 페이지 좌표(pt)
+# 옛 캐시(빈 줄 분리 이전 프롬프트) 재전사 대상 = 잉크 행이 이만큼 이상인
+# 노트 크롭. 캐시에 마커가 없으면 그 크롭들만 버리고 다시 묻는다(1603 실측
+# 노트 크롭의 ~45%, 단일턴이라 문서당 수 분·수 달러).
+_CACHE_VERSION_KEY = "__notes_v2__"
+_REASK_MIN_ROWS = 3
 # 전사에서 살아남는 기준: 영문 단어(2자+)가 하나라도 있어야 번역할 거리가
 # 있다 — 셀 번호·서클 마커·화살표는 빈값/숫자만 나와 여기서 떨어진다.
 # (refine_ko의 [A-Za-z]{2,} 기준과 같은 근거: FL104 사람 주석 실측)
@@ -280,7 +299,7 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
                     # 같은 이름인데 그림이 달라졌다 = 범위가 바뀐 블록
                     stale.append(name)
             if not same:
-                Image.fromarray(sub).save(path)
+                Image.fromarray(sub).save(path, pnginfo=_crop_meta(rect))
             rects[name] = _rect_key(b)
             touched = True
     if touched:
@@ -289,6 +308,17 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
 
 
 _RECTS_NAME = "crop_rects.json"
+
+
+def _crop_meta(rect: tuple[int, int, int, int]):
+    """크롭 PNG에 페이지 좌표(pt)를 박는다 — 과병합 분할이 행 위치를 페이지
+    좌표로 되돌릴 때 쓴다(잉크 확장으로 원점이 블록 bbox와 다르다)."""
+    from PIL import PngImagePlugin
+    scale = _CROP_DPI / 72.0
+    info = PngImagePlugin.PngInfo()
+    info.add_text(_CROP_META_KEY, ",".join(
+        f"{v / scale:.2f}" for v in rect))
+    return info
 
 
 def _rect_key(block: PdfBlock) -> list[float]:
@@ -562,6 +592,17 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
 
     names = [crop_name(b) for b in blocks]
     all_names = {n for n in names if (crops / n).exists()}
+    if done and _CACHE_VERSION_KEY not in done:
+        # 빈 줄 분리 이전 프롬프트의 답 — 노트가 여럿일 수 있는 크롭만 다시 묻는다
+        stale = [n for n in all_names
+                 if (done.get(n) or "").strip()
+                 and not done[n].lstrip().startswith("[")
+                 and len(_crop_ink_rows(crops / n)[0]) >= _REASK_MIN_ROWS]
+        for n in stale:
+            done.pop(n, None)
+        logger.info("xsheet-transcribe: 노트 분리 프롬프트로 %d장 재전사(캐시 %d)",
+                    len(stale), len(done))
+    done[_CACHE_VERSION_KEY] = "2"
     todo = sorted(n for n in all_names if n not in done)
 
     # 빈 전사 재판독 준비 — 이전 런이 캐시에 남긴 ""도 대상이다(이 경로가
@@ -627,8 +668,9 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
                 batch = futures.pop(fut)
                 try:
                     parsed = _extract_json_object(fut.result())
-                    for k, v in parsed.items():
-                        if k not in batch or not isinstance(v, str):
+                    for k, raw in parsed.items():
+                        v = _as_text(raw)
+                        if k not in batch or v is None:
                             continue
                         if k.startswith(_RETRY_PREFIX):
                             # 확대 재판독은 **읽어냈을 때만** 채택 — 빈값이면
@@ -688,8 +730,158 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
     out: list[PdfBlock] = []
     for b, name in zip(blocks, names):
         text = (done.get(name) or "").strip()
-        if _USABLE.search(text):
-            out.append(replace(b, text=text))
+        for part in _split_multinote(b, text, crops / name):
+            if _USABLE.search(part.text):
+                out.append(part)
+    return out
+
+
+def _crop_ink_rows(path: Path):
+    """크롭 PNG의 손글씨 **행**들 — (rows_px, (width_px, height_px)).
+
+    rows_px = [(x0, y0, x1, y1)] 크롭 픽셀 좌표(300dpi). 인쇄 괘선(행·열의
+    _LINE_RATIO 이상이 어두운 줄)은 지우고 가로 투영의 연속 구간을 행으로
+    본다. 열 수 없으면 ([], (0, 0))."""
+    import numpy as np
+    from PIL import Image
+
+    try:
+        with Image.open(path) as im:
+            arr = np.asarray(im.convert("L"))
+    except (OSError, ValueError):
+        return [], (0, 0)
+    h, w = arr.shape
+    ink = (arr < 128).copy()
+    # 인쇄 괘선 = 꽉 찬 **얇은** 줄만 지운다. 타이트한 크롭(`STL` 한 낱말)은
+    # 손글씨 행이 폭의 75%를 넘기도 하므로 비율만 보면 글씨를 지운다.
+    for axis in (1, 0):
+        full = np.flatnonzero(ink.mean(axis=axis) >= _LINE_RATIO)
+        start = prev = None
+        for i in [*full, None]:
+            if start is not None and (i is None or i - prev > 1):
+                if prev - start + 1 <= _RULE_MAX_PX:
+                    if axis == 1:
+                        ink[start:prev + 1, :] = False
+                    else:
+                        ink[:, start:prev + 1] = False
+                start = None
+            if i is not None:
+                if start is None:
+                    start = i
+                prev = i
+    ys = np.flatnonzero(ink.any(axis=1))
+    if ys.size == 0:
+        return [], (w, h)
+    runs: list[tuple[int, int]] = []
+    start = prev = int(ys[0])
+    for y in ys[1:]:
+        y = int(y)
+        if y - prev > _ROW_GAP_PX:
+            runs.append((start, prev))
+            start = y
+        prev = y
+    runs.append((start, prev))
+    rows = []
+    for a, b in runs:
+        if b - a + 1 < _ROW_MIN_PX:
+            continue
+        cols = np.flatnonzero(ink[a:b + 1].any(axis=0))
+        rows.append((int(cols[0]), a, int(cols[-1]) + 1, b + 1))
+    return rows, (w, h)
+
+
+def _crop_origin(path: Path, block: PdfBlock, size_px: tuple[int, int],
+                 ) -> tuple[float, float]:
+    """크롭 픽셀 (0,0)의 페이지 좌표(pt). 메타데이터가 있으면 정확하고, 없으면
+    (옛 잡) 블록 bbox 둘레에 크롭이 대칭으로 자랐다고 보는 근사."""
+    from PIL import Image
+
+    try:
+        with Image.open(path) as im:
+            meta = (im.text or {}).get(_CROP_META_KEY)
+    except (OSError, ValueError, AttributeError):
+        meta = None
+    if meta:
+        try:
+            x0, y0, _x1, _y1 = (float(v) for v in meta.split(","))
+            return x0, y0
+        except ValueError:
+            pass
+    scale = _CROP_DPI / 72.0
+    bw = block.bbox[2] - block.bbox[0]
+    bh = block.bbox[3] - block.bbox[1]
+    return (block.bbox[0] - (size_px[0] / scale - bw) / 2.0,
+            block.bbox[1] - (size_px[1] / scale - bh) / 2.0)
+
+
+def _row_bounds(counts: list[int], m: int) -> list[tuple[int, int]]:
+    """조각별 줄 수 → 행 구간. 줄 수 합이 행 수와 같으면 정확히, 아니면 비례."""
+    total = sum(counts)
+    bounds = []
+    cum = 0
+    for c in counts:
+        if total == m:
+            a, b = cum, cum + c
+        else:
+            a = round(cum / total * m)
+            b = max(round((cum + c) / total * m), a + 1)
+        cum += c
+        bounds.append((min(a, m - 1), min(b, m)))
+    return bounds
+
+
+def _order_segments(segs: list[str], rows) -> list[str]:
+    """조각 순서 검증 — 행의 잉크 폭과 조각 줄의 글자 수가 대응하는 순열을 고른다.
+
+    모델이 위 상자 노트를 뒤에 쓰는 사례가 실측됐다(1603 p4: `L. FOOT…`을
+    `*MATCH CUT…`보다 먼저). 조각이 _MAX_ORDER_SEGS를 넘으면 순서를 믿는다."""
+    if len(segs) > _MAX_ORDER_SEGS:
+        return segs
+    from itertools import permutations
+
+    widths = [r[2] - r[0] for r in rows]
+    max_w = max(widths) or 1
+    m = len(rows)
+
+    def cost(order):
+        lines = [ln for seg in order for ln in seg.split("\n")]
+        counts = [seg.count("\n") + 1 for seg in order]
+        max_len = max((len(ln) for ln in lines), default=1) or 1
+        total = 0.0
+        for seg, (a, b) in zip(order, _row_bounds(counts, m)):
+            seg_lines = seg.split("\n")
+            for i, ln in enumerate(seg_lines):
+                ri = min(a + i, b - 1)
+                total += abs(widths[ri] / max_w - len(ln) / max_len)
+        return total
+
+    return list(min(permutations(segs), key=cost))
+
+
+def _split_multinote(block: PdfBlock, text: str, path: Path) -> list[PdfBlock]:
+    """빈 줄로 나뉜 전사를 크롭의 잉크 행에 매핑해 하위 블록으로 쪼갠다.
+
+    행이 조각보다 적거나(좌우 병렬 노트) 크롭을 못 읽으면 쪼개지 않고 한
+    블록(빈 줄은 개행 하나로)으로 돌려준다 — 잘못 쪼개는 것보다 안전하다."""
+    segs = _join_continuations(
+        [sg.strip() for sg in _SEG_SPLIT_RE.split(text) if sg.strip()])
+    if len(segs) < 2:
+        return [replace(block, text="\n".join(segs) if segs else text)]
+    rows, size = _crop_ink_rows(path)
+    if len(rows) < len(segs):
+        return [replace(block, text="\n".join(segs))]
+    segs = _order_segments(segs, rows)
+    ox, oy = _crop_origin(path, block, size)
+    scale = _CROP_DPI / 72.0
+    counts = [sg.count("\n") + 1 for sg in segs]
+    out: list[PdfBlock] = []
+    for sg, (a, b) in zip(segs, _row_bounds(counts, len(rows))):
+        rs = rows[a:b]
+        if not rs:
+            return [replace(block, text="\n".join(segs))]
+        bbox = (ox + min(r[0] for r in rs) / scale, oy + rs[0][1] / scale,
+                ox + max(r[2] for r in rs) / scale, oy + rs[-1][3] / scale)
+        out.append(replace(block, text=sg, bbox=bbox))
     return out
 
 
@@ -747,9 +939,49 @@ def _build_prompt(batch: list[str], inline: bool = False) -> str:
         "readable words only, use \"\" if nothing readable. If a word you "
         "read seems unusual for animation timing notes, re-examine the "
         "strokes carefully before committing to it. " + how +
-        "Reply ONLY as a JSON object mapping each filename to its "
-        "transcription (\\n for line breaks). Files: " + ", ".join(batch)
+        _SEPARATE_NOTES +
+        "Reply ONLY as a JSON object mapping each filename to its array. "
+        "Files: " + ", ".join(batch)
     )
+
+
+# 별개 노트 분리 지시(S3) — **파일당 배열**. 빈 줄 표기(선택적)는 회수율이
+# 낮고 확률적이었다(1603 과병합 92장: 실험 48 → 실전 8~32). 노트 수를 배열
+# 길이로 명시하게 하면 60/92. 대조군(사람 주석 1개·행 3+) 91장 중 53장이 2+
+# 조각이 되지만 대부분 `OVS`·`SO`·원문자 같은 기호 분리(사람도 따로 단다)이고,
+# 구절 절단(`… / TO` | `H EXP.`)은 `_join_continuations`가 되붙인다. "위→아래
+# 순서"는 행 매핑의 전제 — 어겨도 `_order_segments`가 폭 대응으로 바로잡는다.
+_SEPARATE_NOTES = (
+    "A crop often contains MORE THAN ONE separate note: a different subject "
+    "or action, a timing mark (OVS, STL, SI, SO, S1), a circled letter with a "
+    "word, or text set apart by a larger gap, a bracket or a different pen. "
+    "For each file return an ARRAY of strings - one string per separate note, "
+    "in order from TOP to BOTTOM, each keeping its own line breaks (\\n). A "
+    "crop with a single note is a one-element array; use [] if nothing is "
+    "readable. Never split one phrase or sentence into two elements. ")
+# 조각이 구절의 이어짐이면 이웃에 되붙인다 — 앞에 `/`·`+`·`&`로 시작하면
+# 앞 조각의 계속, `/`·`+`·`&`·`TO`·`W/`로 끝나면 뒤 조각의 시작이 필요하다.
+_CONT_HEAD_RE = re.compile(r"^\s*[/+&]")
+_CONT_TAIL_RE = re.compile(r"(?:[/+&]|\bTO|\bW/|\bWITH|\bAND)\s*$", re.IGNORECASE)
+
+
+def _join_continuations(segs: list[str]) -> list[str]:
+    out: list[str] = []
+    for sg in segs:
+        if out and (_CONT_HEAD_RE.search(sg) or _CONT_TAIL_RE.search(out[-1])):
+            out[-1] = out[-1] + "\n" + sg
+        else:
+            out.append(sg)
+    return out
+
+
+def _as_text(v) -> str | None:
+    """CLI 응답 값 → 캐시 문자열. 배열이면 조각을 빈 줄로 잇는다(캐시 형식은
+    문자열 하나 — 옛 캐시와 같은 모양, 분할은 `_split_multinote`가 다시 한다)."""
+    if isinstance(v, list):
+        parts = [str(x).strip() for x in v if str(x).strip()]
+        return "\n\n".join(parts)
+    return v if isinstance(v, str) else None
 
 
 def _run_cli(prompt: str, cwd: Path, engine: str | None = None) -> str:

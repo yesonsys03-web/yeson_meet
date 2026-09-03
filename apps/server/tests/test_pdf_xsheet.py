@@ -1098,7 +1098,7 @@ def test_transcribe_fails_loudly_when_mostly_unanswered(tmp_path, monkeypatch):
         ht.transcribe(blocks, tmp_path)
     # 캐시는 남아 재번역이 이어받는다
     cache = json.loads((tmp_path / ht._CACHE_NAME).read_text(encoding="utf-8"))
-    assert len(cache) == 3
+    assert len([k for k in cache if k != ht._CACHE_VERSION_KEY]) == 3
 
 
 def test_extract_drops_junk_crops(monkeypatch):
@@ -2231,3 +2231,131 @@ def test_build_plan_accepts_several_overlays_per_block():
     assert [it.text for it in plan.items] == ["앰버,", "기울인다.", "표정"]
     assert {it.source_text for it in plan.items[:2]} == {"raw"}
     assert len(seen_occupied[1]) == 2            # 두 줄 다 점유로 넘어갔다
+
+
+# ── 과병합 분리 S3(2026-09-03): 빈 줄 조각 → 크롭 잉크 행 → 하위 블록 ──────
+
+def _rows_png(path: Path, rows_px: list[tuple[int, int, int, int]], size=(300, 260),
+              origin_pt: tuple[float, float] | None = None) -> None:
+    """흰 크롭에 검은 '행' 사각형들을 그린 300dpi PNG(+원점 메타데이터)."""
+    from PIL import Image, ImageDraw, PngImagePlugin
+    im = Image.new("RGB", size, "white")
+    d = ImageDraw.Draw(im)
+    for x0, y0, x1, y1 in rows_px:
+        d.rectangle([x0, y0, x1, y1], fill="black")
+    info = PngImagePlugin.PngInfo()
+    if origin_pt is not None:
+        info.add_text(ht._CROP_META_KEY, f"{origin_pt[0]:.2f},{origin_pt[1]:.2f},0,0")
+    im.save(path, pnginfo=info)
+
+
+def test_crop_ink_rows_ignores_ruled_lines_and_specks(tmp_path):
+    p = tmp_path / "c.png"
+    _rows_png(p, [(20, 20, 200, 50), (0, 70, 300, 72),      # 행 + 가로 괘선
+                  (20, 100, 120, 130), (150, 200, 152, 203)])  # 행 + 잡티
+    rows, size = ht._crop_ink_rows(p)
+    assert size == (300, 260)
+    assert [(r[0], r[1], r[2]) for r in rows] == [(20, 20, 201), (20, 100, 121)]
+
+
+def test_split_multinote_maps_segments_to_rows_and_page_coords(tmp_path):
+    """빈 줄 조각 2개 ↔ 잉크 행 3개(2+1): 줄 수 합이 행 수와 같으니 정확 매핑.
+    하위 bbox는 메타데이터 원점 + 행 픽셀/300dpi 로 페이지 좌표가 된다."""
+    p = tmp_path / "c.png"
+    _rows_png(p, [(20, 20, 200, 50), (20, 70, 180, 100), (20, 150, 100, 180)],
+              origin_pt=(100.0, 200.0))
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="raw", bbox=(105.0, 205.0, 150.0, 240.0))
+    parts = ht._split_multinote(b, "HEAD\nTURN\n\nOVS", p)
+    assert [x.text for x in parts] == ["HEAD\nTURN", "OVS"]
+    s = 72.0 / 300.0
+    assert parts[0].bbox == pytest.approx((100 + 20 * s, 200 + 20 * s, 100 + 201 * s, 200 + 101 * s))
+    assert parts[1].bbox == pytest.approx((100 + 20 * s, 200 + 150 * s, 100 + 101 * s, 200 + 181 * s))
+    assert all(x.page == 0 and x.kind == xs.NOTE_KIND for x in parts)
+
+
+def test_split_multinote_reorders_by_row_width(tmp_path):
+    """모델이 위 노트를 뒤에 쓴 경우(1603 p4 실측) 행 폭↔글자 수 대응으로 바로잡는다:
+    윗행 2개는 길고(넓은 잉크) 아랫행 1개는 짧다."""
+    p = tmp_path / "c.png"
+    _rows_png(p, [(20, 20, 280, 50), (20, 70, 260, 100), (20, 150, 60, 180)],
+              origin_pt=(0.0, 0.0))
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="raw", bbox=(0, 0, 60, 40))
+    parts = ht._split_multinote(b, "SO\n\nMATCH CUT\nTV/BG/CHYRON", p)
+    assert [x.text for x in parts] == ["MATCH CUT\nTV/BG/CHYRON", "SO"]
+    assert parts[0].bbox[1] < parts[1].bbox[1]
+
+
+def test_split_multinote_refuses_when_rows_are_fewer_than_segments(tmp_path):
+    """좌우 병렬 노트(행 1개에 조각 2개)는 쪼개지 않고 개행 하나로 합친다."""
+    p = tmp_path / "c.png"
+    _rows_png(p, [(20, 20, 280, 50)], origin_pt=(0.0, 0.0))
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="raw", bbox=(0, 0, 60, 12))
+    parts = ht._split_multinote(b, "SI\n\nOVS", p)
+    assert [x.text for x in parts] == ["SI\nOVS"] and parts[0].bbox == b.bbox
+    # 조각이 하나면 그대로
+    assert ht._split_multinote(b, "HEAD\nTURN", p)[0].text == "HEAD\nTURN"
+
+
+def test_split_multinote_without_metadata_centres_on_block(tmp_path):
+    """옛 잡의 크롭(원점 메타데이터 없음)은 블록 bbox 둘레 대칭 성장으로 근사."""
+    p = tmp_path / "c.png"
+    _rows_png(p, [(20, 20, 200, 50), (20, 150, 100, 180)], size=(300, 260))
+    s = 72.0 / 300.0
+    # 크롭 300×260px = 72×62.4pt; 블록 52×42.4pt → 좌우·상하 10pt씩 자란 셈
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="raw", bbox=(110.0, 210.0, 162.0, 252.4))
+    parts = ht._split_multinote(b, "A B\n\nC", p)
+    assert parts[0].bbox[0] == pytest.approx(100.0 + 20 * s)
+    assert parts[0].bbox[1] == pytest.approx(200.0 + 20 * s)
+
+
+def test_transcribe_splits_multinote_and_reasks_old_cache(tmp_path, monkeypatch):
+    """전사 결과에 빈 줄이 있으면 하위 블록 2개가 나오고, 마커 없는 옛 캐시는
+    행 3+ 크롭만 다시 묻는다(행 1개짜리 캐시는 그대로)."""
+    blocks = [_note(0, 50, 100), _note(0, 50, 300)]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    crops.mkdir(parents=True)
+    names = [ht.crop_name(b) for b in blocks]
+    _rows_png(crops / names[0], [(20, 20, 200, 50), (20, 70, 180, 100), (20, 150, 100, 180)],
+              origin_pt=(45.0, 95.0))                       # 행 3 → 재전사 대상
+    _rows_png(crops / names[1], [(20, 20, 200, 50)], origin_pt=(45.0, 295.0))  # 행 1 → 유지
+    (tmp_path / ht._CACHE_NAME).write_text(
+        json.dumps({names[0]: "HEAD\nTURN\nOVS", names[1]: "BLINK"}), encoding="utf-8")
+    asked: list[str] = []
+
+    def _fake(prompt, cwd, engine=None):
+        asked.extend(n for n in names if n in prompt)
+        return json.dumps({names[0]: ["HEAD\nTURN", "OVS"]})   # 파일당 배열
+
+    monkeypatch.setattr(ht, "_run_cli", _fake)
+    out = ht.transcribe(blocks, tmp_path)
+    assert asked == [names[0]]                              # 행 1 크롭은 안 물었다
+    assert [b.text for b in out] == ["HEAD\nTURN", "OVS", "BLINK"]
+    assert out[0].bbox[3] < out[1].bbox[1]                  # 위·아래로 나뉘었다
+    cache = json.loads((tmp_path / ht._CACHE_NAME).read_text(encoding="utf-8"))
+    assert cache[ht._CACHE_VERSION_KEY] == "2"
+    # 마커가 있으면 다시 묻지 않는다
+    asked.clear()
+    out2 = ht.transcribe(blocks, tmp_path)
+    assert asked == [] and [b.text for b in out2] == ["HEAD\nTURN", "OVS", "BLINK"]
+
+
+def test_render_crops_writes_origin_metadata(tmp_path):
+    from PIL import Image
+    doc = FakeDoc(png=_png_bytes(400, 400))
+    blocks = [_note(0, 20, 20)]
+    ht.render_crops(doc, blocks, tmp_path)
+    with Image.open(tmp_path / ht._CROPS_DIRNAME / ht.crop_name(blocks[0])) as im:
+        meta = im.text[ht._CROP_META_KEY]
+    x0, y0, x1, y1 = (float(v) for v in meta.split(","))
+    assert x0 <= 20.0 and y0 <= 20.0 and x1 >= 60.0 and y1 >= 30.0   # 여백 포함
+
+
+def test_join_continuations_keeps_phrases_together():
+    """`/`·`+`로 시작하거나 `TO`·`/`로 끝나는 조각은 구절의 이어짐 — 되붙인다
+    (대조군 실측: `BODY +HEAD / TO` | `H EXP.`, `TURN + STEP` | `/ STOP`)."""
+    assert ht._join_continuations(["BODY\n+HEAD\n/ TO", "H EXP."]) == ["BODY\n+HEAD\n/ TO\nH EXP."]
+    assert ht._join_continuations(["TURN +\nSTEP", "/ STOP"]) == ["TURN +\nSTEP\n/ STOP"]
+    assert ht._join_continuations(["IN", "/ BODY\nSHIFT", "H"]) == ["IN\n/ BODY\nSHIFT", "H"]
+    assert ht._join_continuations(["ARMS\nCONT.\nUP", "OVS"]) == ["ARMS\nCONT.\nUP", "OVS"]
+    assert ht._as_text(["A", " ", "B"]) == "A\n\nB" and ht._as_text("X") == "X"
+    assert ht._as_text(3) is None
