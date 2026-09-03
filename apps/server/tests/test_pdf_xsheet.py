@@ -2371,7 +2371,7 @@ def test_font_ladder_middle_step_scales_with_page():
                  limit_x1=600.0)
     sizes = sorted({fs for _r, fs, _d in xs.XsheetProfile()._candidates(
         b, "가나다라마바사아자차카타", (792.0, 1224.0))}, reverse=True)
-    assert sizes == [9.0, 8.0, 7.0]
+    assert sizes == [9.0, 8.0, 7.2]
     big = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S", bbox=(300.0, 300.0, 400.0, 330.0),
                    limit_x1=1600.0)
     sizes = sorted({round(fs, 1) for _r, fs, _d in xs.XsheetProfile()._candidates(
@@ -2389,11 +2389,11 @@ def test_refine_ko_clears_leftover_codes_like_a_human():
                                                 bbox=(0, 0, 40, 10)), ko)
     # (12자 이하 다중줄은 기존 규칙대로 한 줄로 접힌다)
     assert r("STL\nBACK", "STL\n뒤로.") == "안착 뒤로."
-    assert r("OVS\nSLIGHT", "OVS 약간") == "오버슛 약간"
+    assert r("OVS\nSLIGHT", "OVS 약간") == "오버슛 작게"       # SLIGHT→작게(1605)
     assert r("LEAN.\nTURNS\nHEAD\n(SI", "기울이며 고개\n돌린다 (SI") == "기울이며 고개 돌린다"
-    assert r("HANDS\nGEST\nOUT\nSI", "양손 밖으로\n제스쳐, SI.") == "양손 밖으로 제스쳐."
+    assert r("HANDS\nGEST\nOUT\nSI", "양손 밖으로\n제스쳐, SI.") == "두손 밖으로 제스쳐."
     assert r("SI\nHEAD\nDN", "SI 고개\n아래로.") == "고개 아래로."
-    assert r("RT. HAND\nBRUSH\nLACQUER\nSI\n(H)", "오른손,\n브러시로 락커\n칠한다.\nSI\n(H)") == "오른손,\n브러시로 락커\n칠한다.\n(H)"
+    assert r("RT. HAND\nBRUSH\nLACQUER\nSI\n(H)", "오른손,\n브러시로 락커\n칠한다.\nSI\n(H)") == "오른손,\n붓으로 광택제\n칠한다.\n(H)"
     assert r("POSE\nTO\nEYES\nLEAD\nTO\nSI", "눈이 리드하며\n포즈로,\nSI.") == "눈이 리드하며 포즈로."
     assert r("HUSTLE", "허슬 STL") == "허슬 STL"          # 원문에 STL 코드 없음
     assert r("SIT DOWN", "앉는다 SI") == "앉는다 SI"       # SIT는 SI가 아니다
@@ -2416,10 +2416,10 @@ def test_cast_names_decode_prompt_and_fix(monkeypatch, tmp_path):
                                                 bbox=(0, 0, 40, 10)), ko)
     assert r("CHANE DRIVES\nCAR", "차네가 차를\n몰고 간다.") == "체인이 차를 몰고 간다."
     assert r("CHANE\nLOOKS", "차네는 본다.") == "체인은 본다."
-    assert r("EMI\nHANDS", "에미의 두 손.") == "에밀리오의 두 손."
+    assert r("EMI\nHANDS", "에미의 두 손.") == "에밀리오의 두손."
     assert r("A CHAN\nTURNS", "A 찬\n턴한다.") == "A 체인 턴한다."
     assert r("SAND\nCLEAN", "샌드\n닦는다.") == "산드라 닦는다."           # 12자 이하 접힘
-    assert r("KICKS", "찬다.") == "찬다."                              # 원문에 이름 없음
+    assert r("KICKS", "찬다.") == "발찬다."                            # 이름 없음(KICK 규칙만)
     assert r("CHANE", "찬다.") == "찬다."                              # 한글 낱말 안의 찬은 보존
     (tmp_path / "xsheet_cast.txt").write_text("# 작품별\nCHANE => 차니\nZOE = 조이\n", encoding="utf-8")
     assert xs._decode_code_note("CHANE") == "차니" and xs._decode_code_note("ZOE") == "조이"
@@ -2436,3 +2436,47 @@ def test_refine_ko_handles_s1_variant_underscore_and_miguel():
     assert r("SAND_CLOTH", "산드라_옷") == "산드라&옷"
     assert r("MIGUEL_PHONE", "미겔_전화") == "미구엘&전화"
     assert xs._decode_code_note("MIGUEL") == "미구엘"
+
+
+def test_refine_ko_1605_terms_and_artifacts():
+    """1605 사람 대조 전수(3,156쌍)에서 검증한 원문 조건부 용어 + 인공물 정리."""
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("EYES\nHEAD", "시선\n고개") == "두눈 고개"
+    assert r("EYES\nBLINK", "눈깜박") == "눈깜박"                     # 눈깜박은 보존
+    assert r("HANDS\nUP", "손 올린다.") == "두손 위로."
+    assert r("ARMS\nUP", "팔\n올린다.") == "두팔 위로."
+    assert r("KICK\nLEGS", "다리를\n찬다.") == "두다리를 발찬다."
+    assert r("STL\nTO", "안착로.") == "안착."
+    assert r("EXP.\nTO", "표정\n~로.") == "표정."
+    assert r("SHIFT", "시프트.") == "이동."
+    assert "표정" in r("TO\nEXP.", "익스포저로.")
+    assert "붓" in r("RT. HAND\nMOVES\nBRUSH", "오른손,\n브러시를 옮긴다.")
+    assert r("RIM LIT\nFLICKER\nCYCLE", "림 라이트 눈깜박\n싸이클.") == "림라이트 깜빡임 싸이클."
+    assert r("CAST SHADOW FX", "캐스트 섀도우 효과") == "투영그림자 효과"
+    assert r("* ADLIB\nCLOTH", "* 애드립, 천.") == "* 임의로, 행주."
+    assert r("OVS\nSUBTLE", "오버슛\n약하게.") == "오버슛 은근하게."
+    assert r("OVS\nSLIGHT", "오버슛 약간.") == "오버슛 작게."
+    assert r("PARTY LIGHT\n(C) POP TO\nHP", "파티 조명\n(C) 팝 투 HP.") == "파티조명 (C) 팍"
+    assert r("ALL\nFRAT", "프랫\n전원.") == "협회원 전원."
+    assert r("DROPPER\n& BOTTLE", "드로퍼와\n병.") == "스포이드와 병."
+
+
+def test_decode_passes_circled_letters_and_numbers():
+    """`C BOB`·`(H) BOB`·`2034B`처럼 원문자·번호가 섞여도 해독한다 — 이런 토큰
+    하나 때문에 LLM으로 넘어가 에코로 버려지던 주석 208건(1605)."""
+    assert xs._decode_code_note("C BOB") == "C 바비"
+    assert xs._decode_code_note("(H) BOB") == "(H) 바비"
+    assert xs._decode_code_note("BOB\n2034B") == "바비\n2034B"
+    assert xs._decode_code_note("OS") == "씬밖"
+    assert xs._decode_code_note("C WALKS") is None
+
+
+def test_transcribe_blocks_normalises_wt_to_with(tmp_path, monkeypatch):
+    blocks = [_note(0, 50, 100)]
+    _touch_crops(tmp_path, blocks)
+    monkeypatch.setattr(ht, "_run_cli", lambda prompt, cwd, engine=None: json.dumps(
+        {ht.crop_name(blocks[0]): "INTO\nPOSE\nWT\nFOOD"}))
+    out = xs.XsheetProfile().transcribe_blocks(blocks, tmp_path)
+    assert out[0].text == "INTO\nPOSE\nW/\nFOOD"

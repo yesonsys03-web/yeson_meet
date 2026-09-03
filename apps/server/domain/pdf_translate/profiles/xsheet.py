@@ -45,7 +45,7 @@ _CROP_DPI_CUT = 300  # = handwriting_transcribe._CROP_DPI (경계 절단 회수�
 _DETECT_PAGES = 3
 _SCAN_COVER = 0.5    # 페이지 면적의 이 비율 이상을 덮는 이미지 = 스캔본
 _FONTSIZE = 9.0     # 사람 납품본 9pt 실측
-_MIN_FONTSIZE = 7.0
+_MIN_FONTSIZE = 7.2      # 사람 하한 20pt/24pt(1605 실측: 24pt 87%·22pt 13%·20pt 이하 0)
 # 글꼴 사다리의 가운데 단. ⚠리터럴 8.0을 쓰면 페이지 스케일을 안 탄다 — 2200pt
 # 판형(1605_A1 실측) 계획 3,706건 중 473건(12.8%)이 8pt(정상 25pt)로 굽혀 사실상
 # 안 읽혔다. 스케일 대상 이름으로 두면 792 판형에선 예전과 같은 8pt다.
@@ -189,7 +189,12 @@ _CODE_KO = {
     "EXP": "표정", "EYES": "시선",
     "CUSH": "쿠션", "CONT": "계속",
     "HEAD": "고개",
+    "OS": "씬밖", "O.S": "씬밖", "SAC": "포대",
 }
+# 해독기가 그대로 통과시키는 토큰 — 원문자·프레임/씬 번호(`C BOB`·`(H) BOB`·
+# `2034B`). 1605 실측: 이런 토큰 하나 때문에 해독이 거부되고 LLM이 원문을
+# 되돌려(에코) 주석 208건이 버려졌다.
+_PASS_TOKEN_RE = re.compile(r"^\(?[A-Z]\)?\.?$|^#?\d+[A-Z]?\.?$")
 
 # ★등장인물 이름표(2026-09-03, 1605_A1 사용자 검수: `CHANE`→차네·`SAND`→샌드·
 # `EMI`→에미로 직역 음역됐다 — 사람은 작품 인물표로 체인·산드라·에밀리오). 손글씨
@@ -373,6 +378,11 @@ _HOUSE_KO_XSHEET: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"다이얼"), "대화"),
     (re.compile(r"대사"), "대화"),
     (re.compile(r"돈다"), "턴한다"),
+    # 1605 실측 인공물: 원문 끝의 홀로 선 `TO`가 `~로`(96건)·`안착로`(37건)로 남는다
+    # — 사람은 무시한다(`STL TO`→`안착`). `시프트`는 사람 0/우리 72 → `이동`.
+    (re.compile(r"\s*~로"), ""),
+    (re.compile(r"안착로"), "안착"),
+    (re.compile(r"시프트"), "이동"),
     # `걸음걸이`는 사람도 쓰는 정상 낱말이라 건드리지 않는다.
     (re.compile(r"걸음(?!걸이)"), "스텝"),
     # HEAD: 사람 `고개` 156 / `머리` 9(머리카락 4 제외) ↔ 우리 `머리` 126.
@@ -459,6 +469,64 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
     (re.compile(r"\bSTOPS?\b", re.IGNORECASE), (
         (re.compile(r"정지"), "멈춤"),
     )),
+    # ── 1605_A1 사람 대조(2026-09-03, 3,156쌍 전수) — 원문 조건부 ──
+    # 사람 낱말(우리 0) ↔ 우리 낱말(사람 0)을 짝의 원문 토큰으로 검증한 것.
+    # ⚠A2 번역자는 EYES→시선이었다(사람마다 관례가 다르다). 1603·1605 두 문서가
+    # 두눈이라 다수를 따른다 — 작품별 표기는 xsheet_cast.txt와 같은 방식이 필요.
+    (re.compile(r"\bEYES?\b", re.IGNORECASE), (
+        (re.compile(r"(?<![가-힣])시선"), "두눈"),
+        (re.compile(r"(?<![가-힣])눈(?![가-힣])"), "두눈"),
+    )),
+    (re.compile(r"\bHANDS\b", re.IGNORECASE), (
+        (re.compile(r"(?:양|두)\s*손"), "두손"),
+        (re.compile(r"(?<![가-힣])손(?=[을이,.\s]|$)"), "두손"),
+    )),
+    (re.compile(r"\bARMS\b", re.IGNORECASE), (
+        (re.compile(r"(?:양|두)\s*팔"), "두팔"),
+        (re.compile(r"(?<![가-힣])팔(?=[을이,.\s]|$)"), "두팔"),
+    )),
+    (re.compile(r"\bLEGS\b", re.IGNORECASE), (
+        (re.compile(r"(?:양|두)\s*다리|(?<![가-힣])다리(?=[를이,.\s]|$)"), "두다리"),
+    )),
+    (re.compile(r"\bKICKS?\b", re.IGNORECASE), (
+        (re.compile(r"(?:발로\s*)?찬다"), "발찬다"),
+    )),
+    (re.compile(r"\bUP\b", re.IGNORECASE), (
+        (re.compile(r"올린다|올리며|올림"), "위로"),
+    )),
+    (re.compile(r"\bEXP\.?(?![A-Za-z])", re.IGNORECASE), (
+        (re.compile(r"익스포저"), "표정"),
+    )),
+    (re.compile(r"\bW/\s*EXP", re.IGNORECASE), (
+        (re.compile(r"표정과\s*함께|표정과"), "표정하며"),
+    )),
+    (re.compile(r"\bW/\s*ACTION\b", re.IGNORECASE), (
+        (re.compile(r"(?:액션|동작)과\s*함께|(?:액션|동작)과"), "액션맞춰"),
+    )),
+    (re.compile(r"\bBRUSH\b", re.IGNORECASE), (
+        (re.compile(r"브러시로"), "붓으로"), (re.compile(r"브러시를"), "붓을"),
+        (re.compile(r"브러시"), "붓"),
+    )),
+    (re.compile(r"\bLACQUER\b", re.IGNORECASE), ((re.compile(r"래커|락커"), "광택제"),)),
+    (re.compile(r"\bGLOW\b", re.IGNORECASE), ((re.compile(r"글로우"), "섬광"),)),
+    (re.compile(r"\bPARTY\s*LIGHT", re.IGNORECASE), ((re.compile(r"파티\s*(?:조명|라이트)"), "파티조명"),)),
+    (re.compile(r"\bCAST\s*S(?:HADOW)?\b", re.IGNORECASE), ((re.compile(r"캐스트\s*(?:섀도우|그림자)"), "투영그림자"),)),
+    (re.compile(r"\bSHADOWS?\b", re.IGNORECASE), ((re.compile(r"섀도우"), "그림자"),)),
+    (re.compile(r"\bRIM\s*LI(?:T|GHT)", re.IGNORECASE), ((re.compile(r"림\s*라이트"), "림라이트"),)),
+    (re.compile(r"\bCLOTH\b", re.IGNORECASE), ((re.compile(r"(?<![가-힣])(?:천|옷)(?![가-힣])"), "행주"),)),
+    (re.compile(r"\bAD[- ]?LIB", re.IGNORECASE), ((re.compile(r"애드립"), "임의로"),)),
+    (re.compile(r"\bSUBTLE\b", re.IGNORECASE), ((re.compile(r"약하게|미묘하게|살짝|약간"), "은근하게"),)),
+    (re.compile(r"\bSLIGHT(?:LY)?\b", re.IGNORECASE), ((re.compile(r"약간|살짝|조금"), "작게"),)),
+    (re.compile(r"\bTHRU\b|\bTHROUGHOUT\b", re.IGNORECASE), ((re.compile(r"씬\s*전체(?:에\s*걸쳐)?|전체에\s*걸쳐"), "씬내내"),)),
+    (re.compile(r"\bPLEDGES?\b", re.IGNORECASE), ((re.compile(r"맹세한다|맹세"), "서약자"),)),
+    (re.compile(r"\bFRAT\b", re.IGNORECASE), ((re.compile(r"프랫\s*형제들"), "협회원들"), (re.compile(r"프랫"), "협회원"))),
+    (re.compile(r"\bDROPPER\b", re.IGNORECASE), ((re.compile(r"드로퍼"), "스포이드"),)),
+    (re.compile(r"\bCOVER\b", re.IGNORECASE), ((re.compile(r"커버"), "가리개"),)),
+    # FLICKER는 불빛의 깜빡임 — 전역 `깜빡→눈깜박` 규칙(눈 깜박)을 되돌린다
+    (re.compile(r"\bFLICKER", re.IGNORECASE), ((re.compile(r"눈깜박"), "깜빡임"),)),
+    (re.compile(r"\bPOP\b", re.IGNORECASE), ((re.compile(r"팝\s*투|팝"), "팍"),)),
+    # HP(마커)는 사람이 옮기지 않는다 — 번역문에 남은 `HP`를 지운다
+    (re.compile(r"\bHP\b"), ((re.compile(r"[\s,]*(?<![A-Za-z])HP(?![A-Za-z])\.?"), ""),)),
     # W/W(with action): 사람 `액션맞춰 움직임` 21 / 우리 `따라·함께 움직임` 6.
     (re.compile(r"\bW/W\b", re.IGNORECASE), (
         (re.compile(r"(?:를|을)?\s*따라\s*움직"), " 액션맞춰 움직"),
@@ -1456,6 +1524,9 @@ class XsheetProfile:
             scans = scan_speaker_strips(strips, job_dir, engine=engine)
             out = out + _synthesize_speakers(strips, scans, out)
             out.sort(key=lambda b: b.page)
+        # 손글씨 약어 정규화 — `WT`(with)를 LLM이 wait로 읽어 `대기`가 됐다(1605
+        # 실측 10건, 사람은 `음식들고 포즈로`).
+        out = [replace(b, text=re.sub(r"\bWT\b", "W/", b.text)) for b in out]
         # 순수 코드 노트는 번역기 대신 결정적 해독(block.ko predecode 경로,
         # 판넬 약어와 동일) — 에코-드롭을 원천 우회한다.
         return [replace(b, ko=decoded) if (decoded := _decode_code_note(b.text))
@@ -1941,6 +2012,7 @@ class XsheetProfile:
         if "_" in src:
             # 손글씨의 밑줄 연결(`SAND_CLOTH`)이 번역문에 남는다 — 사람은 `&`로 잇는다
             out = re.sub(r"(?<=\S)\s*_\s*(?=\S)", "&", out)
+        out = _tidy_lines(out)
         # ★짧은 번역은 한 줄로 — 사람은 주석을 사실상 전부 한 줄로 쓴다
         # (1603 실측 2,868건 중 **1줄 100%**, 상자 높이 중앙 9pt). 우리는 원문
         # 세로 쌓기를 따라 41%만 1줄이라 상자가 3배 높았고, 큰 상자는 빈자리에
@@ -1960,6 +2032,17 @@ _LEFT_STL_RE = re.compile(r"(?<![A-Za-z가-힣])STLS?(?![A-Za-z])")
 _LEFT_OVS_RE = re.compile(r"(?<![A-Za-z가-힣])OVS(?![A-Za-z])")
 _LEFT_SI_RE = re.compile(r"[\s,]*\(?(?<![A-Za-z])S[I1](?![A-Za-z0-9])\)?")
 _DANGLING_RE = re.compile(r"\s+([.,])")
+
+
+def _tidy_lines(ko: str) -> str:
+    """규칙이 낱말을 지운 뒤의 찌꺼기 정리 — ` .`→`.`, 부호만 남은 줄 삭제."""
+    lines = []
+    for ln in ko.split("\n"):
+        ln = _DANGLING_RE.sub(r"\1", ln).strip()
+        ln = re.sub(r"^[,.]\s*", "", ln)
+        if ln and not re.fullmatch(r"[.,&/\-\s]+", ln):
+            lines.append(ln)
+    return "\n".join(lines)
 
 
 def _fix_cast_names(src: str, ko: str) -> str:
@@ -2147,6 +2230,8 @@ def _decode_code_note(text: str) -> str | None:
         for t in toks:
             key = t.strip(".,").upper()
             ko = _CODE_KO.get(key) or cast.get(key)
+            if ko is None and _PASS_TOKEN_RE.match(t.strip(",")):
+                ko = t.strip(",.")
             if ko is None:
                 return None
             decoded.append(ko)
