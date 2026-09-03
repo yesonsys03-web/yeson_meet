@@ -46,6 +46,10 @@ _DETECT_PAGES = 3
 _SCAN_COVER = 0.5    # 페이지 면적의 이 비율 이상을 덮는 이미지 = 스캔본
 _FONTSIZE = 9.0     # 사람 납품본 9pt 실측
 _MIN_FONTSIZE = 7.0
+# 글꼴 사다리의 가운데 단. ⚠리터럴 8.0을 쓰면 페이지 스케일을 안 탄다 — 2200pt
+# 판형(1605_A1 실측) 계획 3,706건 중 473건(12.8%)이 8pt(정상 25pt)로 굽혀 사실상
+# 안 읽혔다. 스케일 대상 이름으로 두면 792 판형에선 예전과 같은 8pt다.
+_MID_FONTSIZE = 8.0
 
 # ⛔템플릿 좌표를 박지 않는다(2026-08-20). 작품마다 시트 양식이 다르다 —
 # KOTH(792×1224pt, 대사 컬럼 1쌍)와 BM802(A3 841.92×1189.92pt, titmouse
@@ -695,7 +699,8 @@ _SCALED_NAMES = ("_FONTSIZE", "_MIN_FONTSIZE", "_MIN_BOX_W", "_BELOW_H_CAP",
                  "_WIDE_FROM", "_SIDE_GAP", "_SIDE_MIN_H", "_SNAP_PAD",
                  "_SIDE_MIN_W", "_WRAP_PAD", "_BELOW_GAP", "_ABOVE_GAP",
                  "_TALL_H", "_DY_LADDER", "_BELOW_GAPS", "_SIDE_DYS",
-                 "_FAR_LADDER", "_LINE_DYS", "_LINE_TOP_PAD", "_FREE_RADIUS")
+                 "_FAR_LADDER", "_LINE_DYS", "_LINE_TOP_PAD", "_FREE_RADIUS",
+                 "_MID_FONTSIZE")
 _BASE_PT = None            # 최초 호출 때 현재값(=1401 기준)을 원본으로 저장
 _CUR_SCALE = 1.0
 
@@ -1046,7 +1051,7 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
     # 상자가 통과해 낱말이 쪼개졌다(_min_usable_w 근거 참조).
     side_min_w = _min_usable_w(ko_text, _FONTSIZE)
 
-    for fontsize in (_FONTSIZE, 8.0, _MIN_FONTSIZE):
+    for fontsize in (_FONTSIZE, _MID_FONTSIZE, _MIN_FONTSIZE):
         # ⚠오른쪽 자리를 **전부 소진한 뒤** 왼쪽으로 간다. 번갈아 내면
         # `왼쪽(dy=0)`이 `오른쪽(dy=16)`보다 먼저 걸려, 살짝 밀면 되는 자리를
         # 두고 왼쪽 빈 여백(프레임 번호 칸)으로 도망간다 — 옛 채점이 왼쪽으로
@@ -1759,7 +1764,7 @@ class XsheetProfile:
         # 넓은 클러스터의 좌단 바깥은 내용어에서 원문 폭만큼 먼 자리다
         wide_pen = _WIDE_L_W * max((bx1 - bx0) - _WIDE_FROM, 0.0)
 
-        for fontsize in (_FONTSIZE, 8.0, _MIN_FONTSIZE):
+        for fontsize in (_FONTSIZE, _MID_FONTSIZE, _MIN_FONTSIZE):
             want = _natural_width(ko_text, fontsize)
             need = _min_usable_w(ko_text, fontsize)
             for dy in _DY_LADDER:
@@ -1860,6 +1865,7 @@ class XsheetProfile:
                 continue
             for pat, rep in rules:
                 out = pat.sub(rep, out)
+        out = _clean_leftover_codes(src, out)
         # ★짧은 번역은 한 줄로 — 사람은 주석을 사실상 전부 한 줄로 쓴다
         # (1603 실측 2,868건 중 **1줄 100%**, 상자 높이 중앙 9pt). 우리는 원문
         # 세로 쌓기를 따라 41%만 1줄이라 상자가 3배 높았고, 큰 상자는 빈자리에
@@ -1869,6 +1875,33 @@ class XsheetProfile:
         if len(lines) > 1 and sum(len(ln) for ln in lines) <= _JOIN_MAX_CHARS:
             out = " ".join(lines)
         return out
+
+
+# 번역문에 **원문 코드가 그대로** 남는 경우(1605_A1 실측 117건/3,706: `STL\n뒤로.`,
+# `OVS 약간`, `제스쳐, SI.`). 코드만 있는 노트는 `_decode_code_note`가 해독하지만
+# 낱말과 섞이면 LLM이 코드를 복사한다. 사람은 STL→안착·OVS→오버슛으로 옮기고
+# SI는 아예 쓰지 않는다(1603·1605 납품본 동일).
+_LEFT_STL_RE = re.compile(r"(?<![A-Za-z가-힣])STLS?(?![A-Za-z])")
+_LEFT_OVS_RE = re.compile(r"(?<![A-Za-z가-힣])OVS(?![A-Za-z])")
+_LEFT_SI_RE = re.compile(r"[\s,]*\(?(?<![A-Za-z])SI(?![A-Za-z])\)?")
+_DANGLING_RE = re.compile(r"\s+([.,])")
+
+
+def _clean_leftover_codes(src: str, ko: str) -> str:
+    if re.search(r"\bSTLS?\b", src):
+        ko = _LEFT_STL_RE.sub("안착", ko)
+    if re.search(r"\bOVS\b", src):
+        ko = _LEFT_OVS_RE.sub("오버슛", ko)
+    if re.search(r"\bSI\b", src) and _LEFT_SI_RE.search(ko):
+        lines = []
+        for ln in ko.split("\n"):
+            ln = _DANGLING_RE.sub(r"\1", _LEFT_SI_RE.sub("", ln)).strip()
+            if ln and ln not in (".", ","):
+                lines.append(ln)
+        if lines and lines[-1].endswith(","):       # `포즈로,` + `SI.` → `포즈로.`
+            lines[-1] = lines[-1][:-1] + "."
+        ko = "\n".join(lines)
+    return ko
 
 
 def _is_template(rect: tuple[float, float, float, float], text: str,

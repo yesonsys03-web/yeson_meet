@@ -2359,3 +2359,40 @@ def test_join_continuations_keeps_phrases_together():
     assert ht._join_continuations(["ARMS\nCONT.\nUP", "OVS"]) == ["ARMS\nCONT.\nUP", "OVS"]
     assert ht._as_text(["A", " ", "B"]) == "A\n\nB" and ht._as_text("X") == "X"
     assert ht._as_text(3) is None
+
+
+# ── 1605_A1 실물 결함 2종(2026-09-03) ──────────────────────────────────
+
+def test_font_ladder_middle_step_scales_with_page():
+    """글꼴 사다리 가운데 단이 페이지 스케일을 탄다 — 2200pt 판형에서 8pt(정상 25pt)
+    로 굽힌 항목이 12.8%였다. 792 판형에선 예전 그대로 8pt."""
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S", bbox=(100.0, 100.0, 140.0, 112.0),
+                 limit_x1=600.0)
+    sizes = sorted({fs for _r, fs, _d in xs.XsheetProfile()._candidates(
+        b, "가나다라마바사아자차카타", (792.0, 1224.0))}, reverse=True)
+    assert sizes == [9.0, 8.0, 7.0]
+    big = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S", bbox=(300.0, 300.0, 400.0, 330.0),
+                   limit_x1=1600.0)
+    sizes = sorted({round(fs, 1) for _r, fs, _d in xs.XsheetProfile()._candidates(
+        big, "가나다라마바사아자차카타", (2200.0, 3400.0))}, reverse=True)
+    xs._apply_page_scale(792.0)                          # 다른 테스트를 위해 원복
+    assert min(sizes) > 15.0 and len(sizes) == 3
+    assert sizes[1] == pytest.approx(8.0 * 2200 / 792, abs=0.1)
+
+
+def test_refine_ko_clears_leftover_codes_like_a_human():
+    """낱말과 섞인 STL·OVS는 옮기고 SI는 지운다(사람 납품본 관례). 원문에 그 코드가
+    없으면 건드리지 않는다."""
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    # (12자 이하 다중줄은 기존 규칙대로 한 줄로 접힌다)
+    assert r("STL\nBACK", "STL\n뒤로.") == "안착 뒤로."
+    assert r("OVS\nSLIGHT", "OVS 약간") == "오버슛 약간"
+    assert r("LEAN.\nTURNS\nHEAD\n(SI", "기울이며 고개\n돌린다 (SI") == "기울이며 고개 돌린다"
+    assert r("HANDS\nGEST\nOUT\nSI", "양손 밖으로\n제스쳐, SI.") == "양손 밖으로 제스쳐."
+    assert r("SI\nHEAD\nDN", "SI 고개\n아래로.") == "고개 아래로."
+    assert r("RT. HAND\nBRUSH\nLACQUER\nSI\n(H)", "오른손,\n브러시로 락커\n칠한다.\nSI\n(H)") == "오른손,\n브러시로 락커\n칠한다.\n(H)"
+    assert r("POSE\nTO\nEYES\nLEAD\nTO\nSI", "눈이 리드하며\n포즈로,\nSI.") == "눈이 리드하며 포즈로."
+    assert r("HUSTLE", "허슬 STL") == "허슬 STL"          # 원문에 STL 코드 없음
+    assert r("SIT DOWN", "앉는다 SI") == "앉는다 SI"       # SIT는 SI가 아니다
