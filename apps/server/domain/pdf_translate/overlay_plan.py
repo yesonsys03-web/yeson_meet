@@ -458,22 +458,26 @@ def build_plan(doc: PdfDocument, profile, blocks: list, ko_by_block: list,
         # 프로파일(엑스시트: 손글씨를 피해 앉아야 한다)만 구현한다.
         # 배치 이력(occupied)도 넘긴다 — 잉크만 피하면 이웃 블록끼리 같은
         # 빈자리를 골라 주석이 포개진다(A2 실측 심한 겹침 91쌍, 사람 0쌍).
-        ov = (place_with_doc(block, ko, page_size, doc,
-                             occupied=placed_by_page.get(block.page, ()))
-              if place_with_doc is not None
-              else profile.place(block, ko, page_size))
-        if not is_usable_rect(ov.rect, page_size):
-            # 방어선(2026-07-30 리뷰 Finding 1b) — 그 한 블록 때문에 이미 끝낸
-            # 번역까지 잃을 수는 없으니 이 블록만 건너뛰고 경고를 남긴다.
-            logger.warning(
-                "pdf-translate: page %d %s block의 rect가 유효하지 않아 "
-                "주석을 건너뜀 %r", block.page, block.kind, ov.rect)
-            continue
-        items.append(PlanItem(
-            id=uuid4().hex[:12], kind=block.kind, page=ov.page,
-            panel_index=None, rect=_rect2(ov.rect),
-            fontsize=ov.fontsize, source_text=block.text, text=ov.text))
-        placed_by_page.setdefault(ov.page, []).append(ov.rect)
+        placed = (place_with_doc(block, ko, page_size, doc,
+                                 occupied=placed_by_page.get(block.page, ()))
+                  if place_with_doc is not None
+                  else profile.place(block, ko, page_size))
+        # 엑스시트 줄 단위 배치는 한 블록을 **여러 주석**으로 돌려준다(원문
+        # 행마다 한 줄). 항목마다 source_text는 같은 블록 원문이다.
+        overlays = list(placed) if isinstance(placed, (list, tuple)) else [placed]
+        for ov in overlays:
+            if not is_usable_rect(ov.rect, page_size):
+                # 방어선(2026-07-30 리뷰 Finding 1b) — 그 한 블록 때문에 이미
+                # 끝낸 번역까지 잃을 수는 없으니 이 블록만 건너뛰고 경고를 남긴다.
+                logger.warning(
+                    "pdf-translate: page %d %s block의 rect가 유효하지 않아 "
+                    "주석을 건너뜀 %r", block.page, block.kind, ov.rect)
+                continue
+            items.append(PlanItem(
+                id=uuid4().hex[:12], kind=block.kind, page=ov.page,
+                panel_index=None, rect=_rect2(ov.rect),
+                fontsize=ov.fontsize, source_text=block.text, text=ov.text))
+            placed_by_page.setdefault(ov.page, []).append(ov.rect)
 
     return OverlayPlan(
         job_id=job_id, profile=getattr(profile, "name", ""),

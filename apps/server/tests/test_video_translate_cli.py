@@ -452,3 +452,63 @@ def test_create_translator_no_crash_for_ollama_only_tier_on_silicon(monkeypatch)
         lambda tag: True)
     t = tcli.create_translator("qwen_y")
     assert isinstance(t, OllamaTranslator)
+
+
+async def test_create_translator_claude_runs_with_lean_flags(monkeypatch):
+    """claude 번역 세션은 린 플래그로 뜬다 — 기본 시스템 프롬프트(코딩 에이전트)
+    +도구 스키마+플러그인·CLAUDE.md 주입이 청크당 31K 토큰·사고 9.6K를 먹고
+    있었다(실측 2026-09-03: 컨텍스트 36,419→5,303·$0.52→$0.10). `_argv`에는
+    안 넣는다(모델 고정 단정·로그 그대로) — 실행 시에만 붙는다."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return FakeCompletedProcess(stdout='["가"]')
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(tc.shutil, "which", lambda exe: f"/usr/bin/{exe}")
+    monkeypatch.setenv(tc.PROVIDER_ENV, "claude")
+    monkeypatch.delenv(tc.CLI_MODEL_ENV, raising=False)
+    translator = tc.create_translator()
+    assert translator._argv == ["claude", "-p", "--model", "opus"]
+    await translator.translate_batch(["hi"])
+    cmd = calls[0]
+    assert cmd[:4] == ["/usr/bin/claude", "-p", "--model", "opus"]
+    for flag in ("--tools", "--setting-sources", "--no-session-persistence",
+                 "--system-prompt"):
+        assert flag in cmd
+    assert cmd[cmd.index("--tools") + 1] == ""
+    # 다른 CLI에는 claude 전용 플래그를 넘기지 않는다(인자 오류로 즉사)
+    monkeypatch.setenv(tc.PROVIDER_ENV, "codex")
+    calls.clear()
+    await tc.create_translator().translate_batch(["hi"])
+    assert "--setting-sources" not in calls[0]
+    # 환경변수 0이면 claude도 옛 세션 그대로(비교·회귀 확인용 스위치)
+    monkeypatch.setenv(tc.PROVIDER_ENV, "claude")
+    monkeypatch.setenv(tc.CLI_LEAN_ENV, "0")
+    calls.clear()
+    await tc.create_translator().translate_batch(["hi"])
+    assert "--setting-sources" not in calls[0]
+
+
+async def test_lean_flags_dropped_after_not_logged_in(monkeypatch):
+    """`--setting-sources ""`가 설정 기반 인증(apiKeyHelper)까지 끊는 환경이면
+    미로그인 응답이 온다 — 그 인스턴스는 설정을 적재하는 모드로 재시도한다."""
+    responses = [FakeCompletedProcess(stdout="Not logged in · Please run /login",
+                                      returncode=1),
+                 FakeCompletedProcess(stdout='["가"]')]
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return responses.pop(0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(tc.shutil, "which", lambda exe: f"/usr/bin/{exe}")
+    monkeypatch.setenv(tc.PROVIDER_ENV, "claude")
+    translator = tc.create_translator()
+    assert await translator.translate_batch(["hi"]) == ["가"]
+    assert len(calls) == 2
+    assert "--setting-sources" in calls[0]
+    assert "--setting-sources" not in calls[1]
+    assert translator._lean_args == ()

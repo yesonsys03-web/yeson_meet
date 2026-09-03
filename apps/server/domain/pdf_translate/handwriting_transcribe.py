@@ -18,6 +18,20 @@ trustedWorkspaces에 잡 폴더를 등록하는 게 정석이고, 신뢰 환경 
 전사 결과는 잡 폴더 `transcripts.json`에 배치마다 저장한다 — 재번역
 (retranslate)이 파이프라인을 다시 돌려도 CLI를 재호출하지 않고 캐시로
 이어받는다(크롭 이름이 페이지+좌표 기반이라 재추출에도 안정).
+
+★claude는 **이미지 인라인 단일턴**으로 보낸다(2026-09-03, `_run_claude_inline`).
+옛 방식은 `claude -p <프롬프트> --add-dir .`로 모델이 Read 도구로 크롭을 한
+장씩 열었다 — 배치 60장이 턴 65개가 되고, 턴마다 (시스템 프롬프트+도구 스키마
++앞서 읽은 이미지 전부)를 다시 읽고 턴마다 사고 토큰을 쓴다. 실측(1603_A1
+120장 동일 집합, `.omc/artifacts/xsheet-token-cut/singleturn_ab.py`):
+    도구 루프(medium)  컨텍스트 ~5,900/크롭 · 출력 186/크롭 · 124턴 · 300초
+    인라인 단일턴      컨텍스트   269/크롭 · 출력  18/크롭 ·   2턴 ·  33초
+                       (빈값 18→0, 현행 대비 정확일치 69→94/120)
+`--input-format stream-json`으로 크롭 PNG를 base64 이미지 블록에 실어 한
+메시지로 보내면 도구 0·턴 1이고, `--setting-sources ""`가 플러그인·CLAUDE.md
+주입(세션당 20.5K)을 끊고 `--system-prompt`가 기본 시스템 프롬프트를 대체한다.
+⚠`--bare`는 쓰지 않는다 — 키체인 읽기까지 건너뛰어 macOS에서 미로그인이 된다.
+agy는 stream-json 입력이 없어 옛 도구 루프를 그대로 쓴다.
 """
 from __future__ import annotations
 
@@ -78,6 +92,23 @@ ENV_MODEL = "YESON_PDF_XSHEET_CLI_MODEL"      # claude 전사 모델(운영 오�
 # 등급($5/$25)에서 잡은 것이라 그 등급에 고정한다. agy는 제 기본 모델을
 # 그대로 쓴다(claude 모델명이 통하지 않고, 실측도 기본 모델로 했다).
 _MODEL_DEFAULT = "opus"
+ENV_INLINE = "YESON_PDF_XSHEET_CLI_INLINE"    # "0"이면 옛 도구 루프(파일 읽기)로
+# 크롭 파일명 계약(crop_name·_RETRY_PREFIX) — 프롬프트의 "Files:" 목록에서
+# 첨부할 파일을 되찾는 데 쓴다. 테스트 seam(_run_cli(prompt, cwd, engine))을
+# 유지하기 위해 파일 목록을 별도 인자로 넘기지 않는다.
+_FILE_RE = re.compile(r"(?:2x_)?p\d{3}_\d+_\d+\.png")
+_INLINE_SYSTEM = (
+    "You transcribe handwritten notes from scanned animation exposure "
+    "sheets. Follow the user's instructions exactly and reply only with the "
+    "requested JSON.")
+# 세션 고정비 절감: 도구 스키마 0 + 사용자/프로젝트 설정(플러그인·스킬 목록·
+# CLAUDE.md 자동 탐색) 미적재 + 세션 파일 미저장. 실측 빈 프롬프트 기준
+# 20,571 → 266 토큰.
+_LEAN_ARGS = ("--tools", "", "--setting-sources", "", "--no-session-persistence")
+# `--setting-sources ""`가 인증까지 끊는 환경(apiKeyHelper 등 설정 기반 인증)
+# 이면 "Not logged in"이 온다 — 한 번 감지하면 그 프로세스에선 린 플래그 없이
+# 간다(고정비 20K는 아깝지만 전사가 멈추는 것보단 낫다).
+_lean_ok = True
 
 
 def _model() -> str:
@@ -92,6 +123,15 @@ def _effort() -> str:
     하나로 문서당 3시간짜리 잡이 인자 오류로 즉사하면 안 된다."""
     v = os.environ.get(ENV_EFFORT, "").strip().lower()
     return v if v in _EFFORTS else _EFFORT_DEFAULT
+
+
+def _inline_enabled() -> bool:
+    return os.environ.get(ENV_INLINE, "").strip() != "0"
+
+
+def _inline_for(engine: str | None) -> bool:
+    """이 잡의 전사 CLI가 이미지 인라인 단일턴으로 가는가(claude만)."""
+    return _pick_cli(engine) == "claude" and _inline_enabled()
 
 
 def _workers() -> int:
@@ -116,6 +156,8 @@ _LINE_RATIO = 0.75      # 이 비율 이상 채우는 행/열 = 시트 인쇄 �
 # (A1 전량 실측에서 20장 배치 235세션이 개인 쿼터를 소진시켜 전사가 8%에서
 # 멈췄다) 세션 수를 줄이는 게 최우선이다. 20 → 60으로 올리면 세션이 1/3로
 # 줄고, 커진 배치가 타임아웃 나도 아래 반토막 재시도가 회수한다.
+# 인라인 단일턴(claude)에서는 배치 60이 한 메시지 ≈16K 토큰(이미지 ~270/장)
+# 이라 그대로 둔다 — 더 키워도 절감은 없고(고정비가 266뿐) 실패 반경만 는다.
 _BATCH = 60
 _SPLIT_MIN = 8       # 이 크기 이상의 실패 배치만 반으로 나눠 재시도
 _CALL_TIMEOUT = 900  # 배치 하나당 상한(초) — 배치를 키운 만큼 함께 늘린다
@@ -332,15 +374,19 @@ def render_strips(doc: PdfDocument, strips: list[PdfBlock],
         Image.fromarray(arr[py0:py1, px0:px1]).save(dest)
 
 
-def _build_strip_prompt(batch: list[str]) -> str:
+def _build_strip_prompt(batch: list[str], inline: bool = False) -> str:
+    where = ("Each attached image (preceded by its filename)" if inline
+             else "Each PNG file in this directory")
+    how = ("" if inline else
+           "Read each file directly with your file-reading tool; do NOT run "
+           "shell commands. ")
     return (
-        "Each PNG file in this directory is a tall vertical strip cut from "
+        f"{where} is a tall vertical strip cut from "
         "the dialog-column area of an animation exposure sheet. Find every "
         "handwritten character NAME (often written inside a drawn pencil "
         "circle, e.g. HANK, DALE, SAUDI GUY) and any circled production "
         "note. Do NOT list lip-sync phonetic letters (EE, OH, AH, HU...), "
-        "frame numbers, timing lines, or printed text. Read each file "
-        "directly with your file-reading tool; do NOT run shell commands. "
+        "frame numbers, timing lines, or printed text. " + how +
         "Reply ONLY as a JSON object mapping each filename to an array of "
         "{\"text\": \"...\", \"y\": <0..1 fraction of the item's vertical "
         "position from the top of that strip>}; use [] when none. "
@@ -372,7 +418,8 @@ def scan_speaker_strips(strips: list[PdfBlock], job_dir: Path, *,
         batch = todo[i:i + _STRIP_BATCH]
         try:
             parsed = _extract_json_object(
-                _run_cli(_build_strip_prompt(batch), crops, engine))
+                _run_cli(_build_strip_prompt(batch, inline=_inline_for(engine)),
+                         crops, engine))
         except TranscribeFatalError:
             raise
         except Exception as exc:  # noqa: BLE001 — 배치 실패는 다음 런 몫
@@ -556,13 +603,15 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
         del retry_ready[:_BATCH]
     failed_batches = 0
     workers = _workers()
+    inline = _inline_for(engine)
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures: dict = {}
 
         def _pump() -> None:
             while queue and len(futures) < workers:
                 b = queue.popleft()
-                futures[ex.submit(_run_cli, _build_prompt(b), crops, engine)] = b
+                futures[ex.submit(_run_cli, _build_prompt(b, inline=inline),
+                                  crops, engine)] = b
 
         while queue or futures:
             # 취소 검사는 반드시 제출(_pump)보다 먼저 — 취소가 이미 도착한
@@ -675,23 +724,31 @@ def _argv_for(name: str, path: str, prompt: str) -> list[str]:
     return argv
 
 
-def _build_prompt(batch: list[str]) -> str:
+def _build_prompt(batch: list[str], inline: bool = False) -> str:
     # "셸 명령 금지" 지시는 헤드리스 권한 방어다 — agy 1.1.17이 파일을 읽기
     # 전에 `find`·`pwd`부터 실행하려다 권한 거부로 즉사하는 것을 실측
     # (2026-08-24, 08-21 런은 정상이었으니 CLI 업데이트로 인한 행동 드리프트).
     # read_file 허용 규칙과 함께 걸어야 한다(둘 중 하나만으론 불충분).
+    # 인라인(claude)은 이미지가 메시지에 첨부되므로 파일 읽기 지시가 없다 —
+    # 두 변형 모두 "Files:" 목록으로 끝난다(테스트 seam·_FILE_RE 계약).
+    opener = ("The attached images are PNG crops, each preceded by its "
+              "filename. Transcribe the "
+              if inline else
+              "Open each of these PNG files in this directory and transcribe the ")
+    how = ("" if inline else
+           "Read each file directly with your file-reading tool using the "
+           "exact filename given below; do NOT run shell commands (no ls, "
+           "find or pwd). ")
     return (
-        "Open each of these PNG files in this directory and transcribe the "
+        opener +
         "handwritten all-caps English text in each, exactly as written. They "
         "are director notes from animation exposure sheets; a crop may contain "
         "circled single letters, arrows or stray marks - transcribe the "
         "readable words only, use \"\" if nothing readable. If a word you "
         "read seems unusual for animation timing notes, re-examine the "
-        "strokes carefully before committing to it. Read each file "
-        "directly with your file-reading tool using the exact filename given "
-        "below; do NOT run shell commands (no ls, find or pwd). Reply ONLY as "
-        "a JSON object mapping each filename to its transcription (\\n for "
-        "line breaks). Files: " + ", ".join(batch)
+        "strokes carefully before committing to it. " + how +
+        "Reply ONLY as a JSON object mapping each filename to its "
+        "transcription (\\n for line breaks). Files: " + ", ".join(batch)
     )
 
 
@@ -703,6 +760,10 @@ def _run_cli(prompt: str, cwd: Path, engine: str | None = None) -> str:
     if path is None:
         raise RuntimeError(
             f"전사 CLI({name})를 찾지 못했습니다 — 설치/로그인 후 다시 시도")
+    if name == "claude" and _inline_enabled():
+        names = _FILE_RE.findall(prompt)
+        if names:
+            return _run_claude_inline(path, prompt, names, cwd)
     argv = [*_argv_for(name, path, prompt),
             *shlex.split(os.environ.get(ENV_EXTRA_ARGS, ""))]
     # encoding 명시: Windows 한글 로케일에서 UTF-8 출력이 cp949 디코딩에
@@ -726,6 +787,87 @@ def _run_cli(prompt: str, cwd: Path, engine: str | None = None) -> str:
     if result.returncode != 0 or not out:
         raise RuntimeError(f"전사 CLI 응답 없음(rc={result.returncode}): {detail}")
     return result.stdout
+
+
+def _inline_message(prompt: str, names: list[str], cwd: Path) -> dict:
+    """stream-json 사용자 메시지 — 지시문 + (파일명, 이미지) 쌍의 나열.
+
+    없는 파일은 조용히 건너뛴다(응답에 그 이름이 없으면 호출자가 미응답으로
+    센다 — 옛 루프에서 모델이 파일을 못 찾은 경우와 같은 결과)."""
+    import base64
+    content: list[dict] = [{"type": "text", "text": prompt}]
+    for nm in names:
+        try:
+            raw = (cwd / nm).read_bytes()
+        except OSError:
+            continue
+        content.append({"type": "text", "text": f"filename: {nm}"})
+        content.append({"type": "image", "source": {
+            "type": "base64", "media_type": "image/png",
+            "data": base64.b64encode(raw).decode("ascii")}})
+    return {"type": "user", "message": {"role": "user", "content": content}}
+
+
+def _inline_argv(path: str, lean: bool) -> list[str]:
+    argv = [path, "-p", "--input-format", "stream-json",
+            "--output-format", "stream-json", "--verbose",
+            "--system-prompt", _INLINE_SYSTEM,
+            "--model", _model(), "--effort", _effort()]
+    if lean:
+        argv += list(_LEAN_ARGS)
+    return argv + shlex.split(os.environ.get(ENV_EXTRA_ARGS, ""))
+
+
+def _run_claude_inline(path: str, prompt: str, names: list[str],
+                       cwd: Path) -> str:
+    """크롭을 이미지 블록으로 첨부한 **단일턴** 세션. 결과 텍스트를 돌려준다.
+
+    stream-json 출력의 `result` 이벤트 하나가 답이다(턴이 1이라 하나뿐).
+    `usage`를 로그에 남겨 배치당 토큰이 눈에 보이게 한다 — 이 모듈의 존재
+    이유가 토큰이고, 조용히 되돌아가면(도구 루프로) 아무도 모른다."""
+    global _lean_ok
+    payload = json.dumps(_inline_message(prompt, names, cwd)) + "\n"
+    lean = _lean_ok
+    while True:
+        result = subprocess.run(
+            _inline_argv(path, lean), cwd=cwd, input=payload,
+            capture_output=True, text=True, encoding="utf-8",
+            timeout=_CALL_TIMEOUT, check=False, **_NO_WINDOW)
+        env: dict = {}
+        for line in (result.stdout or "").splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(obj, dict) and obj.get("type") == "result":
+                env = obj
+        text = str(env.get("result") or "")
+        failed = result.returncode != 0 or bool(env.get("is_error")) or not text
+        detail = (text or result.stderr or "").strip()[:200]
+        if failed and lean and re.search(r"not logged in|login", detail,
+                                         re.IGNORECASE):
+            # 린 플래그가 설정 기반 인증을 끊은 환경 — 고정비를 물고 간다
+            logger.warning("xsheet-transcribe: 린 플래그에서 미로그인 응답 — "
+                           "설정을 적재하는 모드로 재시도: %s", detail)
+            _lean_ok = lean = False
+            continue
+        if _FATAL_RE.search(detail):
+            raise TranscribeFatalError(
+                f"전사 CLI(claude)가 요청을 거절했습니다 — {detail}")
+        if failed:
+            raise RuntimeError(
+                f"전사 CLI 응답 없음(rc={result.returncode}): {detail}")
+        u = env.get("usage") or {}
+        logger.info(
+            "xsheet-transcribe: 인라인 배치 %d장 · 컨텍스트 %d · 출력 %d · $%.3f",
+            len(names),
+            (u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
+             + u.get("cache_read_input_tokens", 0)),
+            u.get("output_tokens", 0), float(env.get("total_cost_usd") or 0.0))
+        return text
 
 
 def _extract_json_object(stdout: str) -> dict:

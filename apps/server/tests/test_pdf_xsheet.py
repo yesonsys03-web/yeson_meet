@@ -1298,7 +1298,9 @@ def test_transcribe_passes_engine_to_cli(tmp_path, monkeypatch):
         seen.append(argv[0])
         class R:
             returncode = 0
-            stdout = json.dumps({ht.crop_name(blocks[0]): "WALK WEST."})
+            # claude는 인라인 단일턴(stream-json 출력)으로 간다
+            stdout = _stream_json(
+                json.dumps({ht.crop_name(blocks[0]): "WALK WEST."}))
             stderr = ""
         return R()
 
@@ -1308,6 +1310,164 @@ def test_transcribe_passes_engine_to_cli(tmp_path, monkeypatch):
         lambda name: f"/usr/bin/{name}")
     out = ht.transcribe(blocks, tmp_path, engine="claude")
     assert out and seen == ["/usr/bin/claude"]
+
+
+def _stream_json(result: str, *, is_error: bool = False) -> str:
+    """`claude -p --output-format stream-json`의 출력 흉내 — result 이벤트 하나."""
+    lines = [{"type": "system", "subtype": "init"},
+             {"type": "result", "subtype": "success", "is_error": is_error,
+              "result": result,
+              "usage": {"input_tokens": 1, "cache_creation_input_tokens": 2,
+                        "cache_read_input_tokens": 0, "output_tokens": 3},
+              "total_cost_usd": 0.001}]
+    return "\n".join(json.dumps(x) for x in lines) + "\n"
+
+
+def _inline_env(monkeypatch, responses: list):
+    """subprocess.run 가짜 — argv·stdin을 기록하고 responses를 차례로 돌려준다."""
+    import subprocess as sp
+    calls: list[tuple[list[str], dict]] = []
+
+    def _fake(argv, **kw):
+        calls.append((argv, kw))
+        rc, out = responses.pop(0)
+        return sp.CompletedProcess(argv, rc, stdout=out, stderr="")
+
+    monkeypatch.setattr(ht.subprocess, "run", _fake)
+    monkeypatch.setattr(
+        "apps.server.domain.video_captions.translate_cli.resolve_cli",
+        lambda name: f"/usr/bin/{name}")
+    monkeypatch.delenv(ht.ENV_CLI, raising=False)
+    monkeypatch.delenv(ht.ENV_INLINE, raising=False)
+    monkeypatch.delenv(ht.ENV_EXTRA_ARGS, raising=False)
+    monkeypatch.setattr(ht, "_lean_ok", True)
+    return calls
+
+
+def test_inline_prompt_variants_keep_file_list():
+    """두 프롬프트 변형 모두 "Files:" 목록으로 끝난다 — 테스트 seam(이름 in
+    prompt)과 인라인 첨부(_FILE_RE)가 같은 계약에 기댄다."""
+    names = ["p001_10_20.png", "2x_p002_30_40.png"]
+    for inline in (False, True):
+        assert ht._FILE_RE.findall(ht._build_prompt(names, inline=inline)) == names
+        assert ht._FILE_RE.findall(
+            ht._build_strip_prompt(names, inline=inline)) == names
+    assert "file-reading tool" in ht._build_prompt(names)
+    assert "file-reading tool" not in ht._build_prompt(names, inline=True)
+    assert "shell commands" not in ht._build_strip_prompt(names, inline=True)
+
+
+def test_claude_inline_sends_images_in_one_message(tmp_path, monkeypatch):
+    """claude 전사 = 크롭을 base64 이미지 블록으로 첨부한 **단일턴** —
+    도구 0(`--tools ""`)·설정 0(`--setting-sources ""`)·파일 읽기 경로 없음.
+    실측: 도구 루프 대비 컨텍스트 5,009→269/크롭·출력 156→19(1603 120장)."""
+    blocks = [_note(0, 50, 100), _note(0, 50, 200)]
+    _touch_crops(tmp_path, blocks)
+    names = [ht.crop_name(b) for b in blocks]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    calls = _inline_env(monkeypatch, [
+        (0, _stream_json(json.dumps({n: "WALK" for n in names})))])
+    out = ht._run_cli(ht._build_prompt(names, inline=True), crops, "claude")
+    assert ht._extract_json_object(out) == {n: "WALK" for n in names}
+    argv, kw = calls[0]
+    assert argv[0] == "/usr/bin/claude"
+    assert argv[argv.index("--input-format") + 1] == "stream-json"
+    for flag in ("--tools", "--setting-sources", "--no-session-persistence",
+                 "--system-prompt", "--model", "--effort"):
+        assert flag in argv
+    assert "--add-dir" not in argv
+    msg = json.loads(kw["input"])
+    content = msg["message"]["content"]
+    images = [c for c in content if c["type"] == "image"]
+    assert len(images) == 2
+    assert all(c["source"]["media_type"] == "image/png" for c in images)
+    labels = [c["text"] for c in content if c["type"] == "text"]
+    assert labels[0].startswith("The attached images")
+    assert [f"filename: {n}" for n in names] == labels[1:]
+
+
+def test_transcribe_picks_prompt_variant_by_engine(tmp_path, monkeypatch):
+    """transcribe 루프가 엔진에 맞는 프롬프트를 고른다 — claude는 첨부형,
+    agy(기본)는 파일 읽기형. 환경변수 0이면 claude도 옛 루프로."""
+    blocks = [_note(0, 50, 100)]
+    _touch_crops(tmp_path, blocks)
+    monkeypatch.delenv(ht.ENV_CLI, raising=False)
+    monkeypatch.delenv(ht.ENV_INLINE, raising=False)
+    prompts: list[str] = []
+
+    def _fake(prompt, cwd, engine=None):
+        prompts.append(prompt)
+        return json.dumps({ht.crop_name(blocks[0]): "WALK"})
+
+    monkeypatch.setattr(ht, "_run_cli", _fake)
+    cache = tmp_path / ht._CACHE_NAME          # 캐시가 적중하면 CLI를 안 부른다
+    ht.transcribe(blocks, tmp_path, engine="claude")
+    cache.unlink()
+    ht.transcribe(blocks, tmp_path, engine=None)
+    cache.unlink()
+    monkeypatch.setenv(ht.ENV_INLINE, "0")
+    ht.transcribe(blocks, tmp_path, engine="claude")
+    assert "attached images" in prompts[0]
+    assert "file-reading tool" in prompts[1]
+    assert "file-reading tool" in prompts[2]
+
+
+def test_claude_inline_disabled_by_env_uses_tool_loop(tmp_path, monkeypatch):
+    blocks = [_note(0, 50, 100)]
+    _touch_crops(tmp_path, blocks)
+    names = [ht.crop_name(b) for b in blocks]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    calls = _inline_env(monkeypatch, [(0, json.dumps({names[0]: "WALK"}))])
+    monkeypatch.setenv(ht.ENV_INLINE, "0")
+    out = ht._run_cli(ht._build_prompt(names), crops, "claude")
+    assert ht._extract_json_object(out) == {names[0]: "WALK"}
+    argv, kw = calls[0]
+    assert "--add-dir" in argv and "--input-format" not in argv
+    assert kw.get("input") is None
+
+
+def test_claude_inline_retries_without_lean_flags_when_not_logged_in(
+        tmp_path, monkeypatch):
+    """`--setting-sources ""`가 설정 기반 인증까지 끊는 환경 — 미로그인 응답이면
+    설정을 적재하는 모드로 한 번 재시도하고 이후 세션도 그 모드로 간다."""
+    blocks = [_note(0, 50, 100)]
+    _touch_crops(tmp_path, blocks)
+    names = [ht.crop_name(b) for b in blocks]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    calls = _inline_env(monkeypatch, [
+        (1, _stream_json("Not logged in · Please run /login", is_error=True)),
+        (0, _stream_json(json.dumps({names[0]: "WALK"})))])
+    out = ht._run_cli(ht._build_prompt(names, inline=True), crops, "claude")
+    assert ht._extract_json_object(out) == {names[0]: "WALK"}
+    assert len(calls) == 2
+    assert "--setting-sources" in calls[0][0]
+    assert "--setting-sources" not in calls[1][0]
+    assert "--input-format" in calls[1][0]           # 여전히 인라인 단일턴
+    assert ht._lean_ok is False
+
+
+def test_claude_inline_quota_refusal_is_fatal(tmp_path, monkeypatch):
+    blocks = [_note(0, 50, 100)]
+    _touch_crops(tmp_path, blocks)
+    names = [ht.crop_name(b) for b in blocks]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    _inline_env(monkeypatch, [
+        (1, _stream_json("Error: quota reached. Resets in 2h", is_error=True))])
+    with pytest.raises(ht.TranscribeFatalError, match="quota"):
+        ht._run_cli(ht._build_prompt(names, inline=True), crops, "claude")
+
+
+def test_claude_inline_skips_missing_files(tmp_path, monkeypatch):
+    """없는 크롭은 첨부에서 빠지고 응답에도 없다 — 호출자가 미응답으로 센다."""
+    blocks = [_note(0, 50, 100), _note(0, 50, 200)]
+    _touch_crops(tmp_path, [blocks[0]])
+    names = [ht.crop_name(b) for b in blocks]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    calls = _inline_env(monkeypatch, [
+        (0, _stream_json(json.dumps({names[0]: "WALK"})))])
+    ht._run_cli(ht._build_prompt(names, inline=True), crops, "claude")
+    content = json.loads(calls[0][1]["input"])["message"]["content"]
+    assert sum(1 for c in content if c["type"] == "image") == 1
 
 
 def _ko_note(src: str) -> PdfBlock:
@@ -1905,3 +2065,169 @@ def test_side_placement_never_covers_handwriting():
     ov = p.place_with_doc(b, "가나", (792.0, 1224.0), doc, occupied=())
     ink = p._page_ink(doc, 0)
     assert xs._ink_ratio(ink, ov.rect, 1224.0) <= xs._SIDE_INK_OK
+
+
+# ── 줄 단위 배치·기둥 방지·빈자리 탐색(2026-09-03) ────────────────────
+
+def test_ink_rows_splits_handwriting_rows():
+    """블록 안 손글씨 행을 가로 투영으로 나누고 행마다 x 범위를 잰다."""
+    import numpy as np
+    ink = np.zeros((300, 300), dtype=bool)
+    ink[100:112, 40:120] = True          # 1행: x 40~120px
+    ink[124:136, 40:90] = True           # 2행(12px 틈): x 40~90px
+    ink[145:146, 200:260] = True         # 1px 잡티(10px 떨어짐) — 행이 아니다
+    rows = xs._ink_rows(ink, (20 / (100 / 72.0), 90 / (100 / 72.0),
+                              280 / (100 / 72.0), 150 / (100 / 72.0)))
+    assert len(rows) == 2
+    s = 72.0 / 100
+    assert rows[0][1] == pytest.approx(100 * s) and rows[0][2] == pytest.approx(120 * s)
+    assert rows[1][1] == pytest.approx(124 * s) and rows[1][2] == pytest.approx(90 * s)
+
+
+def test_width_for_lines_widens_only_when_needed():
+    """짧은 글은 자연폭 그대로, 긴 글은 max_lines 줄이 되는 폭까지만 넓힌다."""
+    short = "표정"
+    assert xs._width_for_lines(short, 9.0, 2) <= xs._natural_width(short, 9.0)
+    long = "코니, 조셉, 나무에 새도우 효과 + 나무 드롭 섀도"
+    w2 = xs._width_for_lines(long, 9.0, 2)
+    w4 = xs._width_for_lines(long, 9.0, 4)
+    assert len(xs._wrap_ko(long, w2, 9.0)) <= 2
+    assert len(xs._wrap_ko(long, w4, 9.0)) <= 4
+    assert w4 < w2 <= xs._natural_width(long, 9.0)
+
+
+def test_side_box_widens_to_avoid_a_tower():
+    """원문 폭이 좁고 번역이 길면 옆자리 상자가 max_lines 안에 들도록 넓어진다
+    (실측 기둥: 28자 번역이 40pt 상자에서 7줄). 짧은 번역은 원문 폭 그대로."""
+    anchor = (100.0, 100.0, 140.0, 148.0)          # 폭 40pt·4행 높이
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S", bbox=anchor,
+                 limit_x1=600.0)
+    long = "코니, 조셉, 나무에 새도우 효과 + 나무 드롭 섀도"
+    old = next(iter(xs._side_candidates(anchor, b, long, (792.0, 1224.0))))
+    new = next(iter(xs._side_candidates(anchor, b, long, (792.0, 1224.0),
+                                        max_lines=4)))
+    # 옛 상한 = max(원문 폭 40, _SIDE_MIN_W 60) = 60pt → 28자가 5줄+로 흐른다
+    assert old[0][2] - old[0][0] == pytest.approx(xs._SIDE_MIN_W)
+    assert len(xs._wrap_ko(long, old[0][2] - old[0][0], 9.0)) > 4  # 기둥
+    assert new[0][2] - new[0][0] > old[0][2] - old[0][0]
+    assert len(xs._wrap_ko(long, new[0][2] - new[0][0], 9.0)) <= 4
+    short = next(iter(xs._side_candidates(anchor, b, "표정", (792.0, 1224.0),
+                                          max_lines=4)))
+    assert short[0][2] - short[0][0] == pytest.approx(40.0)      # 짧으면 그대로
+
+
+def _rows_doc(blockers=()):
+    """2행 손글씨 원문(px 300~360, y 300~318 / 330~348) + 방해 잉크."""
+    return FakeDoc(png=_grid_png(extra=[(300, 300, 360, 318), (300, 330, 360, 348),
+                                        *blockers]))
+
+
+def test_place_lines_puts_each_line_beside_its_row():
+    """통상자 곁이 막히면 다중줄 번역을 **행마다 한 줄씩** 곁에 앉힌다(사람
+    관례: `STEPS/BACK` → `뒤로.`·`스텝.`을 각 행 옆에). 행 사이 틈에 잉크를
+    두어 2줄 통상자는 오른쪽에 못 앉지만 행마다의 오른쪽은 비어 있다."""
+    doc = _rows_doc(blockers=[(365, 319, 460, 329),      # 행 사이 틈의 잉크
+                              (200, 290, 295, 360),      # 왼쪽 막힘
+                              (300, 352, 460, 400),      # 아래 막힘
+                              (300, 240, 460, 296)])     # 위 막힘
+    s = 0.72
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="AMBER\nLEANS",
+                 bbox=(300 * s, 300 * s, 360 * s, 348 * s), limit_x1=600.0)
+    p = xs.XsheetProfile()
+    out = p.place_with_doc(b, "앰버,\n기울인다.", (792.0, 1224.0), doc)
+    assert isinstance(out, list) and [o.text for o in out] == ["앰버,", "기울인다."]
+    ink = p._page_ink(doc, 0)
+    for ov, row_top in zip(out, (300 * s, 330 * s)):
+        assert ov.rect[0] >= 360 * s                       # 행 오른쪽 곁
+        assert abs(ov.rect[1] - row_top) <= 8.0            # 제 행에 붙는다
+        assert xs._ink_ratio(ink, ov.rect, 1224.0) <= xs._SIDE_INK_OK
+    a, c = out[0].rect, out[1].rect
+    assert min(a[3], c[3]) - max(a[1], c[1]) <= 0.0 or xs._occupied_frac(c, [a]) <= xs._OCC_OK
+
+
+def test_place_lines_needs_a_row_per_line():
+    """줄이 행보다 많거나 한 줄이라도 자리가 없으면 줄 단위 배치는 포기하고
+    통상자 경로로 간다(반쪽 배치 금지) — 결과는 여전히 Overlay 하나."""
+    doc = _rows_doc()
+    s = 0.72
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="AMBER\nLEANS",
+                 bbox=(300 * s, 300 * s, 360 * s, 348 * s), limit_x1=600.0)
+    p = xs.XsheetProfile()
+    ink = p._page_ink(doc, 0)
+    assert p._place_lines(b, "가\n나\n다", (792.0, 1224.0), ink, ()) is None
+    # 오른쪽 전부를 이웃 주석이 차지 → 행 오른쪽·왼쪽 다 막힘 → None
+    wall = (360 * s + 1.0, 200.0, 600.0, 400.0)
+    assert p._place_lines(b, "앰버,\n기울인다.", (792.0, 1224.0), ink,
+                          [wall, (8.0, 200.0, 300 * s - 1.0, 400.0)]) is None
+    out = p.place_with_doc(b, "앰버,\n기울인다.", (792.0, 1224.0), doc,
+                           occupied=[wall, (8.0, 200.0, 300 * s - 1.0, 400.0)])
+    assert not isinstance(out, list)
+
+
+def test_free_slot_near_finds_the_nearest_clean_rect():
+    """사다리가 전부 막힌 페이지에서 마스크 위의 가까운 빈 사각형을 찾는다."""
+    import numpy as np
+    ink = np.ones((1700, 1100), dtype=bool)         # 전부 잉크
+    ink[520:600, 520:700] = False                   # 원문 오른쪽 아래의 빈 자리
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(300.0, 360.0, 340.0, 380.0), limit_x1=600.0)
+    p = xs.XsheetProfile()
+    got = p._free_slot_near(b, "고개 기웃", (792.0, 1224.0), ink, ())
+    assert got is not None
+    cost, ov = got
+    assert xs._ink_ratio(ink, ov.rect, 1224.0) <= xs._SIDE_INK_OK
+    assert ov.rect[1] >= 520 * 0.72 and ov.rect[3] <= 600 * 0.72
+    assert cost < xs._BLOCKED
+    # 그 빈자리를 이웃 주석이 차지하면 못 찾는다
+    assert p._free_slot_near(b, "고개 기웃", (792.0, 1224.0), ink,
+                             [(520 * 0.72, 520 * 0.72, 700 * 0.72, 600 * 0.72)]) is None
+
+
+def test_place_with_doc_prefers_a_near_free_slot_over_far_ladder():
+    """막힌 블록의 최후 수단 — 넓은 사다리의 먼 자리(±80pt+)보다 반경 안의
+    가까운 빈자리가 이긴다."""
+    import numpy as np
+    s = 0.72
+    # 원문 주변을 손글씨로 빽빽하게 채우고, 원문 바로 오른쪽 아래 한 곳만 비운다
+    blockers = []
+    for y in range(240, 520, 24):
+        for x in range(60, 900, 70):
+            blockers.append((x, y, x + 60, y + 14))
+    blockers = [r for r in blockers
+                if not (410 <= r[0] <= 560 and 380 <= r[1] <= 420)]   # 빈 구멍
+    doc = FakeDoc(png=_grid_png(extra=[(300, 300, 360, 340), *blockers]))
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(300 * s, 300 * s, 360 * s, 340 * s), limit_x1=600.0)
+    p = xs.XsheetProfile()
+    ov = p.place_with_doc(b, "가나다라마바", (792.0, 1224.0), doc, occupied=())
+    assert not isinstance(ov, list)
+    ink = p._page_ink(doc, 0)
+    assert xs._ink_ratio(ink, ov.rect, 1224.0) <= xs._FB_INK_HARD
+    assert abs(ov.rect[1] - b.bbox[1]) <= 80.0            # 먼 사다리로 도망가지 않았다
+    assert isinstance(ink, np.ndarray)
+
+
+def test_build_plan_accepts_several_overlays_per_block():
+    """줄 단위 배치는 한 블록을 여러 주석으로 돌려준다 — 계획은 각각을
+    항목으로 싣고(같은 source_text) 뒤 블록의 점유 판정에도 넣는다."""
+    from apps.server.domain.pdf_translate.overlay_plan import build_plan
+    from apps.server.domain.pdf_translate.profiles.base import Overlay
+    doc = FakeDoc(png=_grid_png())
+    blocks = [_note(0, 100, 300), _note(0, 100, 400)]
+    seen_occupied = []
+
+    class P:
+        name = "xsheet"
+        def refine_ko(self, block, ko): return ko
+        def place(self, block, ko, page_size): raise AssertionError
+        def place_with_doc(self, block, ko, page_size, doc, occupied=()):
+            seen_occupied.append(list(occupied))
+            if block.bbox[1] == 300:
+                return [Overlay(page=0, rect=(150.0, 300.0, 190.0, 312.0), text="앰버,", fontsize=9.0),
+                        Overlay(page=0, rect=(150.0, 314.0, 220.0, 326.0), text="기울인다.", fontsize=9.0)]
+            return Overlay(page=0, rect=(150.0, 400.0, 190.0, 412.0), text=ko, fontsize=9.0)
+
+    plan = build_plan(doc, P(), blocks, ["앰버,\n기울인다.", "표정"], job_id="t")
+    assert [it.text for it in plan.items] == ["앰버,", "기울인다.", "표정"]
+    assert {it.source_text for it in plan.items[:2]} == {"raw"}
+    assert len(seen_occupied[1]) == 2            # 두 줄 다 점유로 넘어갔다

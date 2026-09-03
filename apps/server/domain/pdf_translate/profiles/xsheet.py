@@ -19,6 +19,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import math
 import re
 import threading
 from collections.abc import Callable
@@ -694,7 +695,7 @@ _SCALED_NAMES = ("_FONTSIZE", "_MIN_FONTSIZE", "_MIN_BOX_W", "_BELOW_H_CAP",
                  "_WIDE_FROM", "_SIDE_GAP", "_SIDE_MIN_H", "_SNAP_PAD",
                  "_SIDE_MIN_W", "_WRAP_PAD", "_BELOW_GAP", "_ABOVE_GAP",
                  "_TALL_H", "_DY_LADDER", "_BELOW_GAPS", "_SIDE_DYS",
-                 "_FAR_LADDER")
+                 "_FAR_LADDER", "_LINE_DYS", "_LINE_TOP_PAD", "_FREE_RADIUS")
 _BASE_PT = None            # 최초 호출 때 현재값(=1401 기준)을 원본으로 저장
 _CUR_SCALE = 1.0
 
@@ -733,6 +734,27 @@ _ZIGZAG = False
 # 길게 흘리느니 사람처럼 아래로 간다. 실측 스윕에서 18→45pt까지 단조 개선,
 # 60pt 이상은 사실상 "자연폭"과 같아져 포화했다(같은 자리 29.1→30.2%).
 _SIDE_MIN_W = 60.0
+# ★줄 단위 배치(2026-09-03): 인접 통상자가 전부 막힌 **다중줄** 번역은 원문
+# 손글씨 **행마다 한 줄씩** 곁에 앉힌다 — 사람 관례(A2 사람 납품본: `STEPS/
+# BACK` → `뒤로.`·`스텝.`을 각 행 옆에). 빽빽한 페이지엔 통상자 높이의 빈자리가
+# 없어도 행 옆 작은 틈은 거의 늘 있다. 통상자 곁이 성립하면 손대지 않는다
+# (정상 배치 지표 무영향). 줄이 행보다 많으면 시도하지 않는다(대응 불명).
+_LINE_SPLIT = True
+_ROW_GAP_PX = 3           # 잉크 행 분리 최소 틈(100dpi px) — 획 끊김은 잇는다
+_ROW_MIN_PX = 3           # 이보다 얇은 행은 잡티
+_LINE_DYS = (0.0, 4.0, -4.0)    # 행 기준 미세 이동(pt, 스케일 대상)
+_LINE_TOP_PAD = 2.0             # 상자 윗변을 행보다 살짝 위로(글리프 정렬)
+# ★기둥 방지: 옆자리 상자 폭은 원문 폭이 상한이지만, 그 폭에서 번역이
+# max(_TOWER_LINES_MIN, 원문 행 수) 줄을 넘으면 그만큼만 넓힌다. 실측 기둥
+# (4줄+·폭 40pt 이하) 1603 66건·A2 51건 — 28자 번역이 원문 폭 40pt 상자에서
+# 7줄로 흘렀다. 사람은 4행 원문 옆에 4줄을 넘기지 않는다.
+_TOWER_LINES_MIN = 2
+# ★빈자리 직접 탐색(막혔을 때만): 잉크+주석 마스크의 적분영상으로 원문 주변
+# 반경 안에서 깨끗한 사각형을 찾는다 — 고정 사다리가 전부 막히는 빽빽한
+# 페이지의 최후 수단. 정상 배치에는 관여하지 않는다. 넓은 사다리(±260pt)의
+# 먼 자리보다 가까운 빈자리가 있으면 그쪽이 이긴다.
+_FREE_RADIUS = 120.0      # 탐색 반경(pt, 스케일 대상)
+_FREE_STEP_PX = 3         # 위치 격자(100dpi px)
 _SI_ONLY_RE = re.compile(r"^SI$")
 # SI가 프레임 번호와 한 블록으로 병합된 변형(`2\nSI`→`2 슬로우 인`) — 토큰이
 # 전부 {숫자, SI}뿐이면 통째로 타이밍 표기다(1603 실측, 사람은 SI 미번역).
@@ -859,6 +881,54 @@ def _tight_anchor(ink, block: PdfBlock) -> tuple[float, float, float, float]:
             (x0 + int(cols[-1]) + 1) / scale, (y0 + int(rows[-1]) + 1) / scale)
 
 
+def _ink_rows(ink, bbox: tuple[float, float, float, float],
+              ) -> list[tuple[float, float, float, float]]:
+    """블록 안 손글씨 **행** 사각형들(pt) — 위→아래. 가로 투영의 연속 구간.
+
+    행마다 잉크의 x 범위도 재므로 "이 행의 오른쪽 끝"이 나온다 — 줄 단위
+    배치가 행 옆 틈을 볼 때 쓴다. 잉크가 없으면 빈 목록."""
+    import numpy as np
+
+    scale = _INK_DPI / 72.0
+    h, w = ink.shape
+    x0 = max(0, int(bbox[0] * scale)); y0 = max(0, int(bbox[1] * scale))
+    x1 = min(w, int(bbox[2] * scale) + 1); y1 = min(h, int(bbox[3] * scale) + 1)
+    if x1 <= x0 or y1 <= y0:
+        return []
+    sub = ink[y0:y1, x0:x1]
+    ys = np.flatnonzero(sub.any(axis=1))
+    if ys.size == 0:
+        return []
+    runs: list[tuple[int, int]] = []
+    start = prev = int(ys[0])
+    for y in ys[1:]:
+        y = int(y)
+        if y - prev > _ROW_GAP_PX:
+            runs.append((start, prev))
+            start = y
+        prev = y
+    runs.append((start, prev))
+    out = []
+    for a, b in runs:
+        if b - a + 1 < _ROW_MIN_PX:
+            continue
+        cols = np.flatnonzero(sub[a:b + 1].any(axis=0))
+        out.append(((x0 + int(cols[0])) / scale, (y0 + a) / scale,
+                    (x0 + int(cols[-1]) + 1) / scale, (y0 + b + 1) / scale))
+    return out
+
+
+def _width_for_lines(text: str, fontsize: float, max_lines: int) -> float:
+    """이 글이 max_lines 줄 이하로 접히는 **가장 좁은** 폭(자연폭 상한).
+
+    폭이 넓을수록 줄 수는 단조 감소하므로 글자 폭 단위로 넓혀 가며 찾는다."""
+    want = _natural_width(text, fontsize)
+    w = _MIN_BOX_W
+    while w < want and len(_wrap_ko(text, w, fontsize)) > max_lines:
+        w += fontsize
+    return min(w, want)
+
+
 def _wrap_ko(text: str, width: float, fontsize: float) -> list[str]:
     """상자 폭에 맞춰 **우리가 직접, 균형 있게** 줄을 접는다.
 
@@ -939,7 +1009,9 @@ def _min_usable_w(ko_text: str, fontsize: float) -> float:
 
 
 def _side_candidates(anchor, block: PdfBlock, ko_text: str,
-                     page_size: tuple[float, float], right_first: bool = True):
+                     page_size: tuple[float, float], right_first: bool = True,
+                     max_lines: int | None = None,
+                     only: tuple[str, ...] | None = None):
     """앵커와 **같은 크기**의 인접 상자를 `_SIDE_ORDER` 순서로 내놓는다.
 
     ⛔좌우를 번갈아 보던 지그재그(2026-08-26)는 **뺐다**. 사람 대조로 재보니
@@ -957,12 +1029,18 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
     ah = max(ay1 - ay0, _SIDE_MIN_H)
     limit_x1 = block.limit_x1 if block.limit_x1 is not None else page_w - 8.0
     g = _SIDE_GAP
-    def box(w, min_w=_MIN_BOX_W):
+    def box(w, fontsize, min_w=_MIN_BOX_W):
         """원문과 같은 폭을 **상한**으로 두되, 자리가 좁으면 줄인다.
         같은 폭을 강요하면 넓은 노트가 칸 경계에 막혀 오른쪽을 못 쓰고
         왼쪽으로 밀린다(실측: 왼쪽 30% — 사람은 7~10%). 사람 주석 폭도
-        원문의 0.61배(중앙)로 원문보다 좁다."""
-        return max(min(aw, w), min_w) if w >= min_w else 0.0
+        원문의 0.61배(중앙)로 원문보다 좁다.
+
+        단, 그 폭에서 번역이 max_lines 줄을 넘으면 넘지 않을 만큼만 넓힌다
+        (_TOWER_LINES_MIN 근거) — 짧은 글은 영향 없다."""
+        cap = aw
+        if max_lines:
+            cap = max(aw, _width_for_lines(ko_text, fontsize, max_lines))
+        return max(min(cap, w), min_w) if w >= min_w else 0.0
 
     # 네 변 모두 같은 최소 폭을 요구한다 — 아래·위만 빠져 있던 탓에 18pt
     # 상자가 통과해 낱말이 쪼개졌다(_min_usable_w 근거 참조).
@@ -974,7 +1052,7 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
         # 두고 왼쪽 빈 여백(프레임 번호 칸)으로 도망간다 — 옛 채점이 왼쪽으로
         # 몰리던 것과 같은 함정이다(실측: 왼쪽 30%→26%에서 더 안 내려갔다).
         def right_slots(fontsize=fontsize):
-            w = box(limit_x1 - (ax1 + g), side_min_w)
+            w = box(limit_x1 - (ax1 + g), fontsize, side_min_w)
             if not w:
                 return
             h = max(ah, _wrapped_height(ko_text, w, fontsize))
@@ -982,7 +1060,7 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
                 yield (ax1 + g, ay0 + dy, ax1 + g + w, ay0 + dy + h), fontsize
 
         def left_slots(fontsize=fontsize):
-            w = box((ax0 - g) - 8.0, side_min_w)
+            w = box((ax0 - g) - 8.0, fontsize, side_min_w)
             if not w:
                 return
             h = max(ah, _wrapped_height(ko_text, w, fontsize))
@@ -992,7 +1070,7 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
         # 아래·위는 원문과 **같은 왼쪽 끝**에서 시작한다(사람 관례: 세로로
         # 쌓아 쓴다). 아래는 그대로, 위는 상자 높이만큼 올린다.
         def below_slots(fontsize=fontsize):
-            w = box(limit_x1 - ax0, side_min_w)
+            w = box(limit_x1 - ax0, fontsize, side_min_w)
             if not w:
                 return
             h = max(ah, _wrapped_height(ko_text, w, fontsize))
@@ -1001,7 +1079,7 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
                 yield (ax0, ay1 + gb, ax0 + w, ay1 + gb + h), fontsize
 
         def above_slots(fontsize=fontsize):
-            w = box(limit_x1 - ax0, side_min_w)
+            w = box(limit_x1 - ax0, fontsize, side_min_w)
             if not w:
                 return
             h = max(ah, _wrapped_height(ko_text, w, fontsize))
@@ -1017,6 +1095,8 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
             swap = {"right": "left", "left": "right"}
             order = tuple(swap.get(n, n) for n in order)
         for name in order:
+            if only is not None and name not in only:
+                continue
             yield from gens[name]()
 
 
@@ -1339,8 +1419,21 @@ class XsheetProfile:
                            block.page)
             return self.place(block, ko_text, page_size)
         if _SIDE_FIRST:
+            # 사람 순서: ①통상자를 원문 오른쪽에 → ②행마다 한 줄씩 곁에 →
+            # ③통상자를 아래·위·왼쪽에. 옛 코드는 ①③만 있어서 다중줄 번역이
+            # 오른쪽만 막히면 곧장 위·아래에 기둥으로 쌓였다(A2 p36 실물).
             side = self._first_clean_side(block, ko_text, page_size, ink,
+                                          occupied, only=("right",))
+            if side is not None:
+                return self._finalize(side)
+            if _LINE_SPLIT:
+                split = self._place_lines(block, ko_text, page_size, ink,
                                           occupied)
+                if split:
+                    return [self._finalize(ov) for ov in split]
+            side = self._first_clean_side(block, ko_text, page_size, ink,
+                                          occupied,
+                                          only=("below", "above", "left"))
             if side is not None:
                 return self._finalize(side)
         best = self._score_candidates(
@@ -1359,11 +1452,17 @@ class XsheetProfile:
                 block, ko_text, page_size, ink, occupied)
             if wide is not None and wide[0] < best[0]:
                 best = wide
+            # 사다리 밖의 가까운 빈자리 — 먼 사다리 자리·겹치는 자리보다 낫다
+            free = self._free_slot_near(block, ko_text, page_size, ink,
+                                        occupied)
+            if free is not None and free[0] < best[0]:
+                best = free
         return self._finalize(best[1])
 
     def _first_clean_side(self, block: PdfBlock, ko_text: str,
                           page_size: tuple[float, float], ink,
-                          occupied) -> Overlay | None:
+                          occupied, only: tuple[str, ...] | None = None,
+                          ) -> Overlay | None:
         """좌우(→상하) 인접 자리 중 **아무것도 덮지 않는 첫 자리**.
 
         점수 최소화가 아니라 순서다 — 사람 관례가 "곁에, 좌우 먼저"라서
@@ -1378,8 +1477,11 @@ class XsheetProfile:
         limit = min(edges) - 1.0 if edges else None
         blk = block if limit is None else replace(block, limit_x1=limit)
         right_first = (not _ZIGZAG) or len(occupied or ()) % 2 == 0
+        rows = _ink_rows(ink, block.bbox)
+        max_lines = max(_TOWER_LINES_MIN, len(rows)) if rows else None
         for rect, fontsize in _side_candidates(anchor, blk, ko_text,
-                                               page_size, right_first):
+                                               page_size, right_first,
+                                               max_lines=max_lines, only=only):
             rect = _clamp_nondegenerate(
                 *_snap_to_row(rect, grid, page_h), page_h)
             if _ink_ratio(ink, rect, page_h) > _SIDE_INK_OK:
@@ -1417,6 +1519,139 @@ class XsheetProfile:
             if best is None or score < best[0]:
                 best = (score, Overlay(page=block.page, rect=rect,
                                        text=ko_text, fontsize=fontsize))
+        return best
+
+    def _column_limit(self, block: PdfBlock, page_w: float) -> float:
+        """이 블록이 넘어가면 안 되는 오른쪽 x — 칸 경계는 세로 괘선에서."""
+        limit_x1 = (block.limit_x1 if block.limit_x1 is not None
+                    else page_w - 8.0)
+        edges = [x for x in getattr(self, "_col_edges", ())
+                 if x > block.bbox[2] + 1]
+        return min(limit_x1, min(edges) - 1.0) if edges else limit_x1
+
+    def _place_lines(self, block: PdfBlock, ko_text: str,
+                     page_size: tuple[float, float], ink,
+                     occupied) -> list[Overlay] | None:
+        """다중줄 번역을 원문 **행마다 한 줄씩** 곁에 앉힌다(전부 성립할 때만).
+
+        ko 줄 i ↔ 잉크 행 ⌊i·m/k⌋ (줄이 행보다 적으면 비례로 띄운다 — 번역
+        규칙이 연속 원문 줄을 한 구절로 합치므로 앞 줄부터 순서가 보존된다).
+        행마다 오른쪽 → 왼쪽, 미세 상하 이동, 폰트 한 단계 축소 순으로 손글씨
+        (_SIDE_INK_OK)·이웃 주석(_OCC_OK)을 덮지 않는 첫 자리를 고른다. 한
+        줄이라도 자리가 없으면 None — 반쪽 배치는 통상자 경로보다 못 읽힌다."""
+        lines = [ln.strip() for ln in ko_text.split("\n") if ln.strip()]
+        if len(lines) < 2:
+            return None
+        rows = _ink_rows(ink, block.bbox)
+        if len(rows) < 2 or len(lines) > len(rows):
+            return None
+        page_w, page_h = page_size
+        limit_x1 = self._column_limit(block, page_w)
+        m, k = len(rows), len(lines)
+        picks = [rows[(i * m) // k] for i in range(k)]
+        placed: list[Overlay] = []
+        local = list(occupied or ())
+        for text, (rx0, ry0, rx1, _ry1) in zip(lines, picks):
+            found: Overlay | None = None
+            for fontsize in (_FONTSIZE, _MIN_FONTSIZE):
+                w = _natural_width(text, fontsize)
+                h = _wrapped_height(text, w, fontsize)
+                for dy in _LINE_DYS:
+                    top = ry0 - _LINE_TOP_PAD + dy
+                    if top < 8.0 or top + h > page_h - 8.0:
+                        continue
+                    cands = []
+                    if rx1 + _SIDE_GAP + w <= limit_x1:
+                        cands.append((rx1 + _SIDE_GAP, top,
+                                      rx1 + _SIDE_GAP + w, top + h))
+                    if rx0 - _SIDE_GAP - w >= 8.0:
+                        cands.append((rx0 - _SIDE_GAP - w, top,
+                                      rx0 - _SIDE_GAP, top + h))
+                    for rect in cands:
+                        if _ink_ratio(ink, rect, page_h) > _SIDE_INK_OK:
+                            continue
+                        if _occupied_frac(rect, local) > _OCC_OK:
+                            continue
+                        found = Overlay(page=block.page, rect=rect,
+                                        text=text, fontsize=fontsize)
+                        break
+                    if found is not None:
+                        break
+                if found is not None:
+                    break
+            if found is None:
+                return None
+            placed.append(found)
+            local.append(found.rect)
+        return placed
+
+    def _free_slot_near(self, block: PdfBlock, ko_text: str,
+                        page_size: tuple[float, float], ink,
+                        occupied) -> tuple[float, Overlay] | None:
+        """막혔을 때의 최후 수단 — 마스크 위에서 원문에 가장 가까운 빈 사각형.
+
+        잉크(손글씨)와 기존 주석을 한 마스크에 올리고 적분영상으로 모든
+        위치의 덮임을 한꺼번에 센다(격자 _FREE_STEP_PX). 비용 = 원문 상단과의
+        세로 거리 + 가로 틈(+ 왼쪽이면 폭의 절반 — 기존 왼쪽 후보의 페널티와
+        같은 취지). 돌려주는 비용은 채점 경로의 변위 점수와 같은 자(pt)라
+        `_score_candidates` 결과와 직접 비교할 수 있다."""
+        import numpy as np
+
+        page_w, page_h = page_size
+        scale = _INK_DPI / 72.0
+        bx0, by0, bx1, by1 = block.bbox
+        limit_x1 = self._column_limit(block, page_w)
+        wx0 = max(8.0, bx0 - _FREE_RADIUS); wx1 = min(limit_x1, bx1 + _FREE_RADIUS)
+        wy0 = max(8.0, by0 - _FREE_RADIUS); wy1 = min(page_h - 8.0, by1 + _FREE_RADIUS)
+        ih, iw = ink.shape
+        px0, py0 = max(0, int(wx0 * scale)), max(0, int(wy0 * scale))
+        px1, py1 = min(iw, int(wx1 * scale)), min(ih, int(wy1 * scale))
+        if px1 - px0 < 4 or py1 - py0 < 4:
+            return None
+        mask = ink[py0:py1, px0:px1].astype(np.uint8)
+        for o in occupied or ():
+            ox0 = max(0, int(o[0] * scale) - px0); oy0 = max(0, int(o[1] * scale) - py0)
+            ox1 = min(px1 - px0, int(o[2] * scale) + 1 - px0)
+            oy1 = min(py1 - py0, int(o[3] * scale) + 1 - py0)
+            if ox1 > ox0 and oy1 > oy0:
+                mask[oy0:oy1, ox0:ox1] = 1
+        mh, mw = mask.shape
+        integ = np.zeros((mh + 1, mw + 1), dtype=np.int32)
+        integ[1:, 1:] = mask.cumsum(0).cumsum(1)
+        best: tuple[float, Overlay] | None = None
+        for fontsize in (_FONTSIZE, _MIN_FONTSIZE):
+            widths = {_natural_width(ko_text, fontsize),
+                      _width_for_lines(ko_text, fontsize, 2),
+                      _width_for_lines(ko_text, fontsize, 3)}
+            for wpt in sorted(widths, reverse=True):
+                wpt = max(wpt, _min_usable_w(ko_text, fontsize))
+                hpt = _wrapped_height(ko_text, wpt, fontsize)
+                wp, hp = math.ceil(wpt * scale), math.ceil(hpt * scale)
+                if wp >= mw or hp >= mh:
+                    continue
+                ys = np.arange(0, mh - hp, _FREE_STEP_PX)
+                xs = np.arange(0, mw - wp, _FREE_STEP_PX)
+                total = (integ[np.ix_(ys + hp, xs + wp)] - integ[np.ix_(ys, xs + wp)]
+                         - integ[np.ix_(ys + hp, xs)] + integ[np.ix_(ys, xs)])
+                ok = total <= _SIDE_INK_OK * wp * hp
+                if not ok.any():
+                    continue
+                yy, xx = np.nonzero(ok)
+                tops = (py0 + ys[yy]) / scale
+                lefts = (px0 + xs[xx]) / scale
+                rights = lefts + wpt
+                dx = np.maximum(0.0, np.maximum(bx0 - rights, lefts - bx1))
+                cost = (dx + np.abs(tops - by0)
+                        + np.where(rights <= bx0, 0.5 * wpt, 0.0)
+                        + _W_FS * (_FONTSIZE - fontsize))
+                i = int(cost.argmin())
+                if best is None or cost[i] < best[0]:
+                    rect = _clamp_nondegenerate(
+                        float(lefts[i]), float(tops[i]), float(rights[i]),
+                        float(tops[i]) + hpt, page_h)
+                    best = (float(cost[i]), Overlay(
+                        page=block.page, rect=rect, text=ko_text,
+                        fontsize=fontsize))
         return best
 
     def _far_candidates(self, block: PdfBlock, ko_text: str,
