@@ -380,7 +380,7 @@ _HOUSE_KO_XSHEET: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"돈다"), "턴한다"),
     # 1605 실측 인공물: 원문 끝의 홀로 선 `TO`가 `~로`(96건)·`안착로`(37건)로 남는다
     # — 사람은 무시한다(`STL TO`→`안착`). `시프트`는 사람 0/우리 72 → `이동`.
-    (re.compile(r"\s*~로"), ""),
+    (re.compile(r"\s*~[가-힣]+"), ""),
     (re.compile(r"안착로"), "안착"),
     (re.compile(r"시프트"), "이동"),
     # `걸음걸이`는 사람도 쓰는 정상 낱말이라 건드리지 않는다.
@@ -492,8 +492,20 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
         (re.compile(r"(?:발로\s*)?찬다"), "발찬다"),
     )),
     (re.compile(r"\bUP\b", re.IGNORECASE), (
-        (re.compile(r"올린다|올리며|올림"), "위로"),
+        (re.compile(r"올린다|올리며|올림|(?<![가-힣])업(?![가-힣])"), "위로"),
     )),
+    (re.compile(r"\bDN\b|\bDOWN\b", re.IGNORECASE), (
+        (re.compile(r"(?<![가-힣])다운(?![가-힣])"), "아래로"),
+    )),
+    (re.compile(r"\bBACK\b", re.IGNORECASE), (
+        (re.compile(r"(?<![가-힣])백(?![가-힣])"), "뒤로"),
+    )),
+    (re.compile(r"\bCANDLES?\b", re.IGNORECASE), (
+        (re.compile(r"촛불\s*불꽃"), "양초불꽃"), (re.compile(r"캔들|촛불"), "양초"),
+        (re.compile(r"(?<![가-힣])초(?![가-힣])"), "양초"),
+    )),
+    (re.compile(r"\bPENCIL\b", re.IGNORECASE), ((re.compile(r"펜슬"), "연필"),)),
+    (re.compile(r"\bENTERS?\b", re.IGNORECASE), ((re.compile(r"등장한다|등장"), "들어온다"),)),
     (re.compile(r"\bEXP\.?(?![A-Za-z])", re.IGNORECASE), (
         (re.compile(r"익스포저"), "표정"),
     )),
@@ -893,10 +905,12 @@ _TOWER_LINES_MIN = 2
 # 먼 자리보다 가까운 빈자리가 있으면 그쪽이 이긴다.
 _FREE_RADIUS = 120.0      # 탐색 반경(pt, 스케일 대상)
 _FREE_STEP_PX = 3         # 위치 격자(100dpi px)
-_SI_ONLY_RE = re.compile(r"^S[I1]$")     # 전사가 SI를 `S1`로 읽는 변형 포함
+# 타이밍·훅업 기호는 사람이 옮기지 않는다(1605 실측: SI 123·HP 116·SO 41·HU 37건이
+# 계획 밖 = 정당한 드롭. 반대로 `HU`→`허` 30건·`SO`→`슬로우 아웃` 39건은 우리 오역).
+_SI_ONLY_RE = re.compile(r"^(?:S[I1]|SO|HU|H/U|HP)$")
 # SI가 프레임 번호와 한 블록으로 병합된 변형(`2\nSI`→`2 슬로우 인`) — 토큰이
 # 전부 {숫자, SI}뿐이면 통째로 타이밍 표기다(1603 실측, 사람은 SI 미번역).
-_SI_TOKEN_RE = re.compile(r"^(?:\d+|S[I1])$")
+_SI_TOKEN_RE = re.compile(r"^(?:\d+|S[I1]|SO|HU|H/U|HP)$")
 # 인쇄 서식 문구 — 번역 대상이 아니다(사용자 지정 2026-08-31: 로고·판권·
 # PROD NO·FOOTAGE 류 고정 용어). 추출 단계 _is_template이 머리글 밴드로
 # 거르지만, 밴드 밖(로고 옆 판권줄 등)이나 손글씨와 병합된 것이 샌다
@@ -1988,7 +2002,7 @@ class XsheetProfile:
         if _SI_ONLY_RE.match(src_norm):
             return ""
         tokens = [t for t in re.split(r"[^A-Za-z0-9]+", (block.text or "").upper()) if t]
-        if tokens and any(t in ("SI", "S1") for t in tokens) and all(
+        if tokens and any(t in ("SI", "S1", "SO", "HU", "H/U", "HP") for t in tokens) and all(
                 _SI_TOKEN_RE.match(t) for t in tokens):
             return ""          # `2 SI`류 — 프레임 번호+타이밍 표기 묶음
         # 인쇄 서식 문구를 걷어내고 알파벳·숫자가 3자 미만 남으면 서식이다.
@@ -2068,6 +2082,11 @@ def _fix_cast_names(src: str, ko: str) -> str:
 def _clean_leftover_codes(src: str, ko: str) -> str:
     if re.search(r"\bSTLS?\b", src):
         ko = _LEFT_STL_RE.sub("안착", ko)
+        ko = ko.replace("안착로", "안착")     # `STL TO`→LLM `STL로`(1605 37건)
+    if re.search(r"\bSO\b", src):
+        ko = re.sub(r"[\s,]*슬로우\s*아웃[,.]?", "", ko)
+    if re.search(r"\bH/?U\b", src):
+        ko = re.sub(r"[\s,]*(?<![가-힣])허(?![가-힣])[,.]?", "", ko)
     if re.search(r"\bOVS\b", src):
         ko = _LEFT_OVS_RE.sub("오버슛", ko)
     if re.search(r"\bS[I1]\b", src) and _LEFT_SI_RE.search(ko):

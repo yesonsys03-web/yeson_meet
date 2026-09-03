@@ -2480,3 +2480,21 @@ def test_transcribe_blocks_normalises_wt_to_with(tmp_path, monkeypatch):
         {ht.crop_name(blocks[0]): "INTO\nPOSE\nWT\nFOOD"}))
     out = xs.XsheetProfile().transcribe_blocks(blocks, tmp_path)
     assert out[0].text == "INTO\nPOSE\nW/\nFOOD"
+
+
+def test_refine_ko_markers_and_second_pass_terms():
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("STL\nTO", "STL로.") == "안착."                      # 순서 버그(안착로) 재발 방지
+    assert r("HU\nHU", "허\n허") == ""                           # 훅업 기호 = 드롭
+    assert r("SO", "슬로우 아웃") == "" and r("HP", "HP") == ""
+    assert r("SO\nHEAD\nUP", "슬로우 아웃,\n고개 위로.") == "고개 위로."
+    assert r("STL\nDN", "안착\n다운.") == "안착 아래로."
+    assert r("STL\nBACK", "안착\n백.") == "안착 뒤로."
+    assert r("C UP", "C 업") == "C 위로"
+    assert r("NEXT\nCANDLE", "다음\n초.") == "다음 양초."
+    assert r("CANDLE FLAME FX", "촛불 불꽃 효과") == "양초불꽃 효과"
+    assert r("RT. ARM &\nPENCIL UP", "오른 팔과\n펜슬 위로.") == "오른 팔과 연필 위로."
+    assert r("ENTER\nBOBBY", "바비 등장.") == "바비 들어온다."
+    assert r("EYES\nTO", "두눈\n~쪽으로.") == "두눈."
