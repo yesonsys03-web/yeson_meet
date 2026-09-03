@@ -190,6 +190,7 @@ _CODE_KO = {
     "CUSH": "쿠션", "CONT": "계속",
     "HEAD": "고개",
     "OS": "씬밖", "O.S": "씬밖", "SAC": "포대",
+    "DROP": "방울", "DROPS": "방울",      # 코드만 있는 노트(`C DROPS`) = 액체 방울
 }
 # 해독기가 그대로 통과시키는 토큰 — 원문자·프레임/씬 번호(`C BOB`·`(H) BOB`·
 # `2034B`). 1605 실측: 이런 토큰 하나 때문에 해독이 거부되고 LLM이 원문을
@@ -511,7 +512,11 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
     (re.compile(r"\bNOTEBOOK\b", re.IGNORECASE), ((re.compile(r"노트북|노트"), "공책"),)),
     (re.compile(r"\bENTERS?\b", re.IGNORECASE), ((re.compile(r"등장한다|등장"), "들어온다"),)),
     (re.compile(r"\bEXP\.?(?![A-Za-z])", re.IGNORECASE), (
-        (re.compile(r"익스포저"), "표정"),
+        (re.compile(r"익스포저|익스포즈"), "표정"),
+    )),
+    # OVS를 overlap으로 읽은 오역 — 원문에 OVERLAP/O.LAP이 없을 때만
+    (re.compile(r"\bOVS\b(?![\s\S]*\b(?:O\.?LAP|OVERLAP))", re.IGNORECASE), (
+        (re.compile(r"오버랩"), "오버슛"),
     )),
     (re.compile(r"\bW/\s*EXP", re.IGNORECASE), (
         (re.compile(r"표정과\s*함께|표정과"), "표정하며"),
@@ -531,7 +536,7 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
     (re.compile(r"\bRIM\s*LI(?:T|GHT)", re.IGNORECASE), ((re.compile(r"림\s*라이트"), "림라이트"),)),
     (re.compile(r"\bCLOTH\b", re.IGNORECASE), ((re.compile(r"(?<![가-힣])(?:천|옷)(?![가-힣])"), "행주"),)),
     (re.compile(r"\bAD[- ]?LIB", re.IGNORECASE), ((re.compile(r"애드립"), "임의로"),)),
-    (re.compile(r"\bSUBTLE\b", re.IGNORECASE), ((re.compile(r"약하게|미묘하게|살짝|약간"), "은근하게"),)),
+    (re.compile(r"\bSUBTLE\b", re.IGNORECASE), ((re.compile(r"약하게|미묘하게|미세하게|살짝|약간"), "은근하게"),)),
     (re.compile(r"\bSLIGHT(?:LY)?\b", re.IGNORECASE), ((re.compile(r"약간|살짝|조금"), "작게"),)),
     (re.compile(r"\bTHRU\b|\bTHROUGHOUT\b", re.IGNORECASE), ((re.compile(r"씬\s*전체(?:에\s*걸쳐)?|전체에\s*걸쳐"), "씬내내"),)),
     (re.compile(r"\bPLEDGES?\b", re.IGNORECASE), ((re.compile(r"맹세한다|맹세"), "서약자"),)),
@@ -1536,8 +1541,10 @@ class XsheetProfile:
         from ..handwriting_transcribe import scan_speaker_strips, transcribe
         strips = [b for b in blocks if b.kind == STRIP_KIND]
         notes = [b for b in blocks if b.kind != STRIP_KIND]
+        vocab = [*_CODE_KO, "SI", "SO", "HP", "HU", "W/", "DN", "REF", "ANTIC",
+                 "SHIFT", "BLINK", *_cast_table()]
         out = transcribe(notes, job_dir, should_continue=should_continue,
-                         on_progress=on_progress, engine=engine)
+                         on_progress=on_progress, engine=engine, vocab=vocab)
         if strips:
             scans = scan_speaker_strips(strips, job_dir, engine=engine)
             out = out + _synthesize_speakers(strips, scans, out)

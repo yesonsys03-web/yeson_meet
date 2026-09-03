@@ -202,8 +202,10 @@ _CROP_META_KEY = "yeson_crop_pt"   # PNG 텍스트 청크: 크롭의 페이지 �
 # 옛 캐시(빈 줄 분리 이전 프롬프트) 재전사 대상 = 잉크 행이 이만큼 이상인
 # 노트 크롭. 캐시에 마커가 없으면 그 크롭들만 버리고 다시 묻는다(1603 실측
 # 노트 크롭의 ~45%, 단일턴이라 문서당 수 분·수 달러).
-_CACHE_VERSION_KEY = "__notes_v2__"
-_REASK_MIN_ROWS = 3
+# v3(2026-09-03 저녁): 어휘 힌트(코드·인물 이름) 추가 — 오독(CHANE→HANE·HARE,
+# STL→STU·SR)이 오역 71건의 주원인이라 **전 노트 크롭** 재전사(단일턴 문서당 수십 달러).
+_CACHE_VERSION_KEY = "__notes_v3__"
+_REASK_MIN_ROWS = 1
 # 전사에서 살아남는 기준: 영문 단어(2자+)가 하나라도 있어야 번역할 거리가
 # 있다 — 셀 번호·서클 마커·화살표는 빈값/숫자만 나와 여기서 떨어진다.
 # (refine_ko의 [A-Za-z]{2,} 기준과 같은 근거: FL104 사람 주석 실측)
@@ -573,7 +575,7 @@ def _render_retry(crops: Path, name: str) -> str | None:
 def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
                should_continue: Callable[[], bool] | None = None,
                on_progress: Callable[[float], None] | None = None,
-               engine: str | None = None) -> list[PdfBlock]:
+               engine: str | None = None, vocab=None) -> list[PdfBlock]:
     """크롭들을 배치 전사해 블록 text를 교체하고, 번역할 거리가 없는
     블록(마커·숫자·판독 불가)은 버린다. 취소가 감지되면
     asyncio.CancelledError를 던진다(pdf_run의 on_progress와 같은 규약).
@@ -651,7 +653,7 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
         def _pump() -> None:
             while queue and len(futures) < workers:
                 b = queue.popleft()
-                futures[ex.submit(_run_cli, _build_prompt(b, inline=inline),
+                futures[ex.submit(_run_cli, _build_prompt(b, inline=inline, vocab=vocab),
                                   crops, engine)] = b
 
         while queue or futures:
@@ -916,7 +918,18 @@ def _argv_for(name: str, path: str, prompt: str) -> list[str]:
     return argv
 
 
-def _build_prompt(batch: list[str], inline: bool = False) -> str:
+def _vocab_hint(vocab) -> str:
+    """이 시트에 자주 나오는 어휘(타이밍 코드·인물 이름) — 획이 애매할 때 아는 낱말로
+    수렴시킨다. 1605 사람 대조: 오역 71건 중 다수가 CHANE→HANE/HARE/CHANGE·STL→STU/SR
+    같은 오독. 없는 낱말을 지어내지 말라는 단서를 함께 둔다."""
+    if not vocab:
+        return ""
+    return ("Vocabulary that appears often on these sheets - prefer these exact "
+            "spellings when the strokes plausibly match, but never force them: "
+            + ", ".join(dict.fromkeys(str(v) for v in vocab)) + ". ")
+
+
+def _build_prompt(batch: list[str], inline: bool = False, vocab=None) -> str:
     # "셸 명령 금지" 지시는 헤드리스 권한 방어다 — agy 1.1.17이 파일을 읽기
     # 전에 `find`·`pwd`부터 실행하려다 권한 거부로 즉사하는 것을 실측
     # (2026-08-24, 08-21 런은 정상이었으니 CLI 업데이트로 인한 행동 드리프트).
@@ -939,7 +952,7 @@ def _build_prompt(batch: list[str], inline: bool = False) -> str:
         "readable words only, use \"\" if nothing readable. If a word you "
         "read seems unusual for animation timing notes, re-examine the "
         "strokes carefully before committing to it. " + how +
-        _SEPARATE_NOTES +
+        _vocab_hint(vocab) + _SEPARATE_NOTES +
         "Reply ONLY as a JSON object mapping each filename to its array. "
         "Files: " + ", ".join(batch)
     )

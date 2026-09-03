@@ -2318,18 +2318,19 @@ def test_transcribe_splits_multinote_and_reasks_old_cache(tmp_path, monkeypatch)
     names = [ht.crop_name(b) for b in blocks]
     _rows_png(crops / names[0], [(20, 20, 200, 50), (20, 70, 180, 100), (20, 150, 100, 180)],
               origin_pt=(45.0, 95.0))                       # 행 3 → 재전사 대상
-    _rows_png(crops / names[1], [(20, 20, 200, 50)], origin_pt=(45.0, 295.0))  # 행 1 → 유지
+    _rows_png(crops / names[1], [], origin_pt=(45.0, 295.0))  # 잉크 행 0 → 유지(v3=행 1+ 재전사)
     (tmp_path / ht._CACHE_NAME).write_text(
         json.dumps({names[0]: "HEAD\nTURN\nOVS", names[1]: "BLINK"}), encoding="utf-8")
     asked: list[str] = []
 
     def _fake(prompt, cwd, engine=None):
         asked.extend(n for n in names if n in prompt)
+        assert "Vocabulary" not in prompt                   # vocab 미지정이면 힌트 없음
         return json.dumps({names[0]: ["HEAD\nTURN", "OVS"]})   # 파일당 배열
 
     monkeypatch.setattr(ht, "_run_cli", _fake)
     out = ht.transcribe(blocks, tmp_path)
-    assert asked == [names[0]]                              # 행 1 크롭은 안 물었다
+    assert asked == [names[0]]                              # 잉크 없는 크롭은 안 물었다
     assert [b.text for b in out] == ["HEAD\nTURN", "OVS", "BLINK"]
     assert out[0].bbox[3] < out[1].bbox[1]                  # 위·아래로 나뉘었다
     cache = json.loads((tmp_path / ht._CACHE_NAME).read_text(encoding="utf-8"))
@@ -2508,3 +2509,24 @@ def test_refine_ko_up_rule_respects_word_boundary_and_joins_left_right():
     assert r("ARMS\nUP", "팔 올린다.") == "두팔 위로."
     assert r("RT. HAND\nKNIFE", "오른 손, 칼.") == "오른손, 칼."
     assert r("NOTEBOOK", "노트북") == "공책"
+
+
+def test_transcribe_blocks_passes_vocabulary_hint(tmp_path, monkeypatch):
+    """프로파일이 코드·인물 이름 어휘를 전사 프롬프트 힌트로 넘긴다(오독 수렴)."""
+    blocks = [_note(0, 50, 100)]
+    _touch_crops(tmp_path, blocks)
+    seen = []
+    monkeypatch.setattr(ht, "_run_cli", lambda prompt, cwd, engine=None: (
+        seen.append(prompt), json.dumps({ht.crop_name(blocks[0]): "CHANE"}))[1])
+    out = xs.XsheetProfile().transcribe_blocks(blocks, tmp_path)
+    assert "Vocabulary" in seen[0] and "CHANE" in seen[0] and "STL" in seen[0]
+    assert out[0].ko == "체인"
+
+
+def test_refine_ko_ovs_misread_as_overlap():
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("OVS\nSUBTLE", "오버랩\n미세하게.") == "오버슛 은근하게."
+    assert r("OVS\nO.LAP", "오버슛\n오버랩.") == "오버슛 오버랩."   # 진짜 오버랩은 보존
+    assert xs._decode_code_note("C DROPS") == "C 방울"
