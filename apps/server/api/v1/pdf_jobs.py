@@ -45,8 +45,11 @@ from apps.server.domain.pdf_translate.overlay_plan import (
 )
 from apps.server.domain.pdf_translate.panel_ocr import decode_panel_label_lines
 from apps.server.domain.pdf_translate.pdf_run import (
+    PDF_BLOCKED_PROVIDERS,
+    PDF_DEFAULT_PROVIDER,
     prune_old_pdf_jobs,
     rebake_pdf_job,
+    resolve_pdf_provider,
     run_pdf_job,
 )
 from apps.server.domain.pdf_translate.pdf_store import pdf_job_dir
@@ -57,7 +60,10 @@ from apps.server.domain.pdf_translate.pdf_tasks import (
     start_pdf_task,
 )
 from apps.server.domain.pdf_translate.profiles import (
+    disabled_message,
+    enabled_formats,
     profile_by_name,
+    profile_enabled,
     profile_names,
 )
 from apps.server.domain.pdf_translate.profiles.storyboard import PANEL_ADDRESS_REV
@@ -74,6 +80,9 @@ _PROVIDER_PATTERN = "^(" + "|".join(
 _FORMAT_PATTERN = "^(" + "|".join(profile_names()) + ")$"
 
 _TERMINAL = ("done", "error", "cancelled")
+
+_PROVIDER_BLOCKED_DETAIL = (
+    "Gemini 엔진은 PDF 번역에서 쓸 수 없습니다(API 비용) — 구독 CLI 엔진을 고르세요")
 
 # v1에서 사람이 고칠 수 있는 종류. 명세 Goal이 "**판넬 라벨**을 추가·수정·이동·
 # 삭제"라 정확히 여기까지다 — dialog/action 주석은 목록에 읽기 전용으로 보인다.
@@ -199,6 +208,16 @@ async def decode_panel_label(body: _DecodeBody) -> dict:
     return {"lines": lines}
 
 
+@router.get("/features")
+async def get_pdf_features() -> dict:
+    # 반드시 /{job_id} 동적 라우트보다 먼저 선언 — 선언 순서 매칭이라 뒤에 두면
+    # "features"가 UUID로 파싱 시도되어 422가 난다(video_jobs의 translate-engines와
+    # 같은 이유). 서버가 권위 — 콘솔이 끈 포맷을 클라이언트가 여기서 확인한다.
+    return {"formats": enabled_formats(),
+            "default_provider": PDF_DEFAULT_PROVIDER,
+            "blocked_providers": sorted(PDF_BLOCKED_PROVIDERS)}
+
+
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 async def create_pdf_job(
     db: Annotated[AsyncSession, Depends(get_session)],
@@ -216,6 +235,15 @@ async def create_pdf_job(
     if Path(filename).suffix.lower() != ".pdf":
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             "PDF 파일만 업로드할 수 있습니다")
+    # 운영자가 끈 포맷은 저장 전에 거절 — 디스크에 쓰고 되돌리지 않는다.
+    if format_hint and not profile_enabled(format_hint):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            disabled_message(profile_by_name(format_hint)))
+    # gemini는 API 과금이라 PDF 번역에서 제외 — 포맷 게이트와 같은 이유로
+    # 디스크에 쓰기 전에 거절한다.
+    if (translate_provider or "").strip().lower() in PDF_BLOCKED_PROVIDERS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            _PROVIDER_BLOCKED_DETAIL)
     external_id = uuid4()
     dest = pdf_job_dir(external_id) / "source.pdf"
     try:
@@ -223,7 +251,7 @@ async def create_pdf_job(
         owner_id = await _default_owner_id(db)
         job = PdfJob(external_id=external_id, owner_user_id=owner_id,
                      title=title or filename, source_ref=filename,
-                     translate_provider=translate_provider,
+                     translate_provider=resolve_pdf_provider(translate_provider),
                      translate_cli_model=translate_cli_model,
                      format=format_hint,
                      status="queued", source_path=str(dest))
@@ -411,6 +439,11 @@ async def rebake_pdf(
     if job.status != "done":
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "아직 번역이 끝나지 않았습니다")
+    # 기존 잡의 조회·다운로드는 그대로 두되 재생산만 막는다. 이 버전이 모르는
+    # 포맷(profile None)은 지금까지처럼 통과시킨다 — 스위치와 무관한 잡이다.
+    fmt = profile_by_name(job.format) if job.format else None
+    if fmt is not None and not profile_enabled(fmt.name):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, disabled_message(fmt))
     if not job.source_path or not Path(job.source_path).exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "원본 PDF가 없습니다")
     if load_plan(pdf_job_dir(job_id)) is None:
@@ -736,8 +769,17 @@ async def retranslate_pdf(
     if job.status != "done":
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "완료된 작업만 다시 번역할 수 있습니다")
+    # rebake와 같은 문턱 — 여기서 안 막으면 queued로 바꾼 뒤 파이프라인이
+    # 오류로 끝내고, download·rebake·retranslate가 전부 done을 요구하므로
+    # 완성본이 디스크에 있는데도 잡이 영구 409가 된다.
+    fmt = profile_by_name(job.format) if job.format else None
+    if fmt is not None and not profile_enabled(fmt.name):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, disabled_message(fmt))
     if not job.source_path or not Path(job.source_path).exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "원본 PDF가 없습니다")
+    # 옛 gemini 잡은 기본 엔진으로 바꿔 진행한다 — 사용자 결정(재업로드
+    # 불필요·API 비용 0).
+    job.translate_provider = resolve_pdf_provider(job.translate_provider)
     job.status = "queued"
     job.progress = 0
     job.error = None

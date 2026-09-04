@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // apiBase() → loadValues() throws on the real default ("" serverWsBase) unless
 // a valid ws:// value is mocked in — same pattern as videoApi.test.ts.
@@ -10,7 +10,9 @@ vi.mock("../setup/setupValues", async (importOriginal) => {
   };
 });
 
-import { collectAllLabels, isActivePdfStatus, pdfPageUrl,
+import { ALL_PDF_FEATURES_ENABLED, collectAllLabels, fetchPdfFeatures,
+  isActivePdfStatus, parsePdfFeatures, pdfFormatEnabled, pdfPageUrl,
+  resolvePdfProvider,
   type PdfLabelItem, type PdfLabelsResponse } from "./pdfApi";
 
 function stubItem(i: number): PdfLabelItem {
@@ -118,5 +120,83 @@ describe("pdfApi helpers", () => {
   it("pdfPageUrl encodes variant", () => {
     expect(pdfPageUrl("abc", 3, "translated")).toContain(
       "/api/v1/pdf-jobs/abc/page/3?variant=translated");
+  });
+});
+
+// 서버 운영자가 끈 포맷 — 화면은 회색 처리만 하고, 실제 차단은 서버가 한다.
+describe("pdf feature flags", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("두 깃발과 엔진 정책을 그대로 읽는다", () => {
+    expect(parsePdfFeatures({
+      formats: { storyboard: true, xsheet: false },
+      default_provider: "codex", blocked_providers: ["gemini", "claude"],
+    })).toEqual({
+      storyboard: true, xsheet: false,
+      defaultProvider: "codex", blockedProviders: ["gemini", "claude"],
+    });
+  });
+
+  it("없거나 boolean이 아닌 키는 켜진 것으로 본다", () => {
+    expect(parsePdfFeatures({ formats: { xsheet: false } }))
+      .toEqual({ ...ALL_PDF_FEATURES_ENABLED, xsheet: false });
+    expect(parsePdfFeatures({})).toEqual(ALL_PDF_FEATURES_ENABLED);
+    expect(parsePdfFeatures(null)).toEqual(ALL_PDF_FEATURES_ENABLED);
+    expect(parsePdfFeatures({ formats: { storyboard: "no", xsheet: 0 } }))
+      .toEqual(ALL_PDF_FEATURES_ENABLED);
+  });
+
+  // 정책을 못 읽으면 gemini는 잠긴 채로 둔다 — API 비용이 나가는 쪽이라
+  // 모르는 값을 켜짐으로 읽는 포맷 깃발과 반대 방향이 안전하다.
+  it("엔진 정책이 없거나 형식이 틀리면 claude·gemini 차단으로 본다", () => {
+    expect(parsePdfFeatures({ default_provider: "", blocked_providers: "gemini" }))
+      .toEqual(ALL_PDF_FEATURES_ENABLED);
+    expect(parsePdfFeatures({ default_provider: 7, blocked_providers: [1, 2] }))
+      .toEqual(ALL_PDF_FEATURES_ENABLED);
+    expect(parsePdfFeatures({ blocked_providers: [] }))
+      .toEqual({ ...ALL_PDF_FEATURES_ENABLED, blockedProviders: [] });
+  });
+
+  it("resolvePdfProvider는 막힌·빈 선택만 기본값으로 되돌린다", () => {
+    const f = ALL_PDF_FEATURES_ENABLED;
+    expect(resolvePdfProvider("gemini", f)).toBe("claude");
+    expect(resolvePdfProvider("codex", f)).toBe("codex");
+    expect(resolvePdfProvider("", f)).toBe("claude");
+  });
+
+  it("pdfFormatEnabled는 해당 포맷 깃발을 본다", () => {
+    const f = { ...ALL_PDF_FEATURES_ENABLED, xsheet: false };
+    expect(pdfFormatEnabled(f, "storyboard")).toBe(true);
+    expect(pdfFormatEnabled(f, "xsheet")).toBe(false);
+  });
+
+  it("200이면 서버가 준 값을 쓴다", async () => {
+    let asked = "";
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      asked = url;
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          formats: { storyboard: false, xsheet: true },
+          default_provider: "claude", blocked_providers: ["gemini"],
+        }),
+      };
+    }));
+    expect(await fetchPdfFeatures())
+      .toEqual({ ...ALL_PDF_FEATURES_ENABLED, storyboard: false });
+    expect(asked).toContain("/api/v1/pdf-jobs/features");
+  });
+
+  // 라우트가 없는 옛 서버(404)에서 기능을 숨기면 멀쩡한 서버가 반쪽이 된다.
+  it("404면 둘 다 켜진 것으로 본다", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: false, status: 404, json: async () => ({ detail: "Not Found" }),
+    })));
+    expect(await fetchPdfFeatures()).toEqual(ALL_PDF_FEATURES_ENABLED);
+  });
+
+  it("네트워크 오류에도 던지지 않고 둘 다 켜진 것으로 본다", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
+    expect(await fetchPdfFeatures()).toEqual(ALL_PDF_FEATURES_ENABLED);
   });
 });

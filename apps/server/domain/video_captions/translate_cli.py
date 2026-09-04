@@ -31,6 +31,7 @@ PROVIDER_ENV = "YESON_VIDEO_TRANSLATE_PROVIDER"
 CLI_MODEL_ENV = "YESON_TRANSLATE_CLI_MODEL"
 CUSTOM_CLI_ENV = "YESON_TRANSLATE_CLI"
 CLI_TIMEOUT_ENV = "YESON_TRANSLATE_CLI_TIMEOUT"
+CLI_LEAN_ENV = "YESON_TRANSLATE_CLI_LEAN"      # "0"이면 린 플래그 없이(옛 세션 그대로)
 DEFAULT_CLI_TIMEOUT = 300.0
 
 _PROMPT_PLACEHOLDER = "{prompt}"
@@ -144,6 +145,15 @@ class _Backend:
     argv: list[str]
     prompt_via: str = "stdin"  # "stdin" | "argv"
     model_flag: str | None = None
+    # 세션 고정비를 끊는 플래그(실행 시 argv 뒤에 붙는다 — `_argv`에는 안 넣어
+    # 모델 고정 테스트·로그의 argv가 그대로다). claude 실측(2026-09-03,
+    # 엑스시트 50블록 청크 동일 프롬프트, `.omc/artifacts/xsheet-token-cut/
+    # translate_lean_ab.py`): 컨텍스트 36,419→5,303 · 출력 10,021→1,833(사고
+    # 9,572→1,458) · 128초→23초 · $0.52→$0.10. 기본 시스템 프롬프트(코딩
+    # 에이전트용)+도구 스키마+플러그인·CLAUDE.md 주입이 번역 한 청크당 31K를
+    # 먹고, 그 에이전트 프롬프트가 사고까지 길게 만들고 있었다. 번역은 도구도
+    # 설정도 필요 없다 — `--system-prompt`로 역할만 준다.
+    lean_args: tuple[str, ...] = ()
     # 잡·env 어느 쪽도 모델을 안 정했을 때의 고정값. ⚠비워 두면 헤드리스
     # CLI가 **사용자의 인터랙티브 /model 기본값**을 상속한다 — 대화 세션에서
     # 모델을 바꾸는 순간 번역 단가·거동이 조용히 따라 바뀐다(2026-08-28
@@ -153,9 +163,17 @@ class _Backend:
     default_model: str | None = None
 
 
+_LEAN_SYSTEM_PROMPT = (
+    "You are a professional translator for animation production documents "
+    "and subtitles. Follow the user's instructions exactly and output only "
+    "what is asked.")
+_CLAUDE_LEAN_ARGS = ("--tools", "", "--setting-sources", "",
+                     "--no-session-persistence",
+                     "--system-prompt", _LEAN_SYSTEM_PROMPT)
+
 _BACKENDS: dict[str, _Backend] = {
     "claude": _Backend(argv=["claude", "-p"], prompt_via="stdin", model_flag="--model",
-                       default_model="opus"),
+                       default_model="opus", lean_args=_CLAUDE_LEAN_ARGS),
     # --skip-git-repo-check: codex exec는 신뢰된 git 디렉터리 밖에서 실행을 거부한다.
     # 번역은 서버의 임의 작업 폴더에서 돌므로(레포 안이라는 보장 없음) 항상 우회한다.
     "codex": _Backend(argv=["codex", "exec", "--skip-git-repo-check"], prompt_via="stdin", model_flag="-m"),
@@ -198,11 +216,14 @@ class CliTranslator:
     """TranslationProvider backed by a subscription coding CLI."""
 
     def __init__(self, argv: list[str], *, prompt_via: str = "stdin", timeout: float = DEFAULT_CLI_TIMEOUT,
-                 prompt_builder=None):
+                 prompt_builder=None, lean_args: tuple[str, ...] = ()):
         self._argv = list(argv)
         self._prompt_via = prompt_via
         self._timeout = timeout
         self._checked_bin = False
+        # `--setting-sources ""`가 설정 기반 인증(apiKeyHelper)까지 끊는 환경이면
+        # "Not logged in"이 온다 — 한 번 보면 이 인스턴스는 린 플래그 없이 간다.
+        self._lean_args = tuple(lean_args)
         # PDF 번역 등 다른 도메인이 자기 프롬프트를 주입하는 플러그 지점.
         # 지연 import 순환 방지: 기본값은 translate_batch에서 build_translation_prompt로 대체.
         self._prompt_builder = prompt_builder
@@ -229,8 +250,9 @@ class CliTranslator:
                 cmd = self._argv + [prompt]
             stdin_input = None
         else:
-            cmd = self._argv
+            cmd = list(self._argv)
             stdin_input = prompt
+        cmd = cmd + list(self._lean_args)
 
         try:
             result = subprocess.run(
@@ -247,6 +269,12 @@ class CliTranslator:
             raise TranslationError(f"CLI 번역 시간 초과({self._timeout}s)") from exc
 
         if result.returncode != 0:
+            tail = ((result.stdout or "") + (result.stderr or ""))[-300:]
+            if self._lean_args and "not logged in" in tail.lower():
+                logger.warning("CliTranslator: 린 플래그에서 미로그인 응답 — 설정을 "
+                               "적재하는 모드로 재시도: %s", tail.strip()[:120])
+                self._lean_args = ()
+                return self._run_cli(prompt)
             stderr_tail = (result.stderr or "")[-300:]
             raise TranslationError(
                 f"CLI 번역 실패 (returncode={result.returncode}): {stderr_tail}"
@@ -343,8 +371,10 @@ def create_translator(
                  or backend.default_model)
         if model and backend.model_flag:
             argv = argv + [backend.model_flag, model]
+        lean = (backend.lean_args
+                if os.environ.get(CLI_LEAN_ENV, "").strip() != "0" else ())
         return CliTranslator(argv, prompt_via=backend.prompt_via, timeout=timeout,
-                              prompt_builder=prompt_builder)
+                              prompt_builder=prompt_builder, lean_args=lean)
 
     if provider == "custom":
         custom = os.environ.get(CUSTOM_CLI_ENV)

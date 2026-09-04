@@ -707,7 +707,8 @@ def test_decode_code_note_pure_codes_only():
     assert xs._decode_code_note("EYES EXP") == "시선 표정"
     assert xs._decode_code_note("CUSH") == "쿠션"
     assert xs._decode_code_note("LT ARM") is None      # LT가 사전 밖
-    assert xs._decode_code_note("HANK") is None        # 이름=음역, 재시도 몫
+    assert xs._decode_code_note("HANK") == "행크"      # 이름표(2026-09-03)
+    assert xs._decode_code_note("ZORK") is None        # 사전 밖 = 번역기 몫
     assert xs._decode_code_note("") is None
 
 
@@ -768,7 +769,7 @@ async def test_echoed_groups_retried_once_with_dedicated_prompt(monkeypatch):
     # 전용 프롬프트 사용 + 프로파일의 줄 규칙이 재시도에도 실린다
     assert builders[1].func is build_pdf_retry_prompt
     assert (builders[1].keywords["line_rule"]
-            is xs.XsheetProfile.prompt_line_rule)
+            .startswith(xs.XsheetProfile.prompt_line_rule))   # + 이름표(동적 꼬리)
 
 
 # ------------------------------------------------------ pipeline + API
@@ -1098,7 +1099,7 @@ def test_transcribe_fails_loudly_when_mostly_unanswered(tmp_path, monkeypatch):
         ht.transcribe(blocks, tmp_path)
     # 캐시는 남아 재번역이 이어받는다
     cache = json.loads((tmp_path / ht._CACHE_NAME).read_text(encoding="utf-8"))
-    assert len(cache) == 3
+    assert len([k for k in cache if k != ht._CACHE_VERSION_KEY]) == 3
 
 
 def test_extract_drops_junk_crops(monkeypatch):
@@ -1298,7 +1299,9 @@ def test_transcribe_passes_engine_to_cli(tmp_path, monkeypatch):
         seen.append(argv[0])
         class R:
             returncode = 0
-            stdout = json.dumps({ht.crop_name(blocks[0]): "WALK WEST."})
+            # claude는 인라인 단일턴(stream-json 출력)으로 간다
+            stdout = _stream_json(
+                json.dumps({ht.crop_name(blocks[0]): "WALK WEST."}))
             stderr = ""
         return R()
 
@@ -1308,6 +1311,164 @@ def test_transcribe_passes_engine_to_cli(tmp_path, monkeypatch):
         lambda name: f"/usr/bin/{name}")
     out = ht.transcribe(blocks, tmp_path, engine="claude")
     assert out and seen == ["/usr/bin/claude"]
+
+
+def _stream_json(result: str, *, is_error: bool = False) -> str:
+    """`claude -p --output-format stream-json`의 출력 흉내 — result 이벤트 하나."""
+    lines = [{"type": "system", "subtype": "init"},
+             {"type": "result", "subtype": "success", "is_error": is_error,
+              "result": result,
+              "usage": {"input_tokens": 1, "cache_creation_input_tokens": 2,
+                        "cache_read_input_tokens": 0, "output_tokens": 3},
+              "total_cost_usd": 0.001}]
+    return "\n".join(json.dumps(x) for x in lines) + "\n"
+
+
+def _inline_env(monkeypatch, responses: list):
+    """subprocess.run 가짜 — argv·stdin을 기록하고 responses를 차례로 돌려준다."""
+    import subprocess as sp
+    calls: list[tuple[list[str], dict]] = []
+
+    def _fake(argv, **kw):
+        calls.append((argv, kw))
+        rc, out = responses.pop(0)
+        return sp.CompletedProcess(argv, rc, stdout=out, stderr="")
+
+    monkeypatch.setattr(ht.subprocess, "run", _fake)
+    monkeypatch.setattr(
+        "apps.server.domain.video_captions.translate_cli.resolve_cli",
+        lambda name: f"/usr/bin/{name}")
+    monkeypatch.delenv(ht.ENV_CLI, raising=False)
+    monkeypatch.delenv(ht.ENV_INLINE, raising=False)
+    monkeypatch.delenv(ht.ENV_EXTRA_ARGS, raising=False)
+    monkeypatch.setattr(ht, "_lean_ok", True)
+    return calls
+
+
+def test_inline_prompt_variants_keep_file_list():
+    """두 프롬프트 변형 모두 "Files:" 목록으로 끝난다 — 테스트 seam(이름 in
+    prompt)과 인라인 첨부(_FILE_RE)가 같은 계약에 기댄다."""
+    names = ["p001_10_20.png", "2x_p002_30_40.png"]
+    for inline in (False, True):
+        assert ht._FILE_RE.findall(ht._build_prompt(names, inline=inline)) == names
+        assert ht._FILE_RE.findall(
+            ht._build_strip_prompt(names, inline=inline)) == names
+    assert "file-reading tool" in ht._build_prompt(names)
+    assert "file-reading tool" not in ht._build_prompt(names, inline=True)
+    assert "shell commands" not in ht._build_strip_prompt(names, inline=True)
+
+
+def test_claude_inline_sends_images_in_one_message(tmp_path, monkeypatch):
+    """claude 전사 = 크롭을 base64 이미지 블록으로 첨부한 **단일턴** —
+    도구 0(`--tools ""`)·설정 0(`--setting-sources ""`)·파일 읽기 경로 없음.
+    실측: 도구 루프 대비 컨텍스트 5,009→269/크롭·출력 156→19(1603 120장)."""
+    blocks = [_note(0, 50, 100), _note(0, 50, 200)]
+    _touch_crops(tmp_path, blocks)
+    names = [ht.crop_name(b) for b in blocks]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    calls = _inline_env(monkeypatch, [
+        (0, _stream_json(json.dumps({n: "WALK" for n in names})))])
+    out = ht._run_cli(ht._build_prompt(names, inline=True), crops, "claude")
+    assert ht._extract_json_object(out) == {n: "WALK" for n in names}
+    argv, kw = calls[0]
+    assert argv[0] == "/usr/bin/claude"
+    assert argv[argv.index("--input-format") + 1] == "stream-json"
+    for flag in ("--tools", "--setting-sources", "--no-session-persistence",
+                 "--system-prompt", "--model", "--effort"):
+        assert flag in argv
+    assert "--add-dir" not in argv
+    msg = json.loads(kw["input"])
+    content = msg["message"]["content"]
+    images = [c for c in content if c["type"] == "image"]
+    assert len(images) == 2
+    assert all(c["source"]["media_type"] == "image/png" for c in images)
+    labels = [c["text"] for c in content if c["type"] == "text"]
+    assert labels[0].startswith("The attached images")
+    assert [f"filename: {n}" for n in names] == labels[1:]
+
+
+def test_transcribe_picks_prompt_variant_by_engine(tmp_path, monkeypatch):
+    """transcribe 루프가 엔진에 맞는 프롬프트를 고른다 — claude는 첨부형,
+    agy(기본)는 파일 읽기형. 환경변수 0이면 claude도 옛 루프로."""
+    blocks = [_note(0, 50, 100)]
+    _touch_crops(tmp_path, blocks)
+    monkeypatch.delenv(ht.ENV_CLI, raising=False)
+    monkeypatch.delenv(ht.ENV_INLINE, raising=False)
+    prompts: list[str] = []
+
+    def _fake(prompt, cwd, engine=None):
+        prompts.append(prompt)
+        return json.dumps({ht.crop_name(blocks[0]): "WALK"})
+
+    monkeypatch.setattr(ht, "_run_cli", _fake)
+    cache = tmp_path / ht._CACHE_NAME          # 캐시가 적중하면 CLI를 안 부른다
+    ht.transcribe(blocks, tmp_path, engine="claude")
+    cache.unlink()
+    ht.transcribe(blocks, tmp_path, engine=None)
+    cache.unlink()
+    monkeypatch.setenv(ht.ENV_INLINE, "0")
+    ht.transcribe(blocks, tmp_path, engine="claude")
+    assert "attached images" in prompts[0]
+    assert "file-reading tool" in prompts[1]
+    assert "file-reading tool" in prompts[2]
+
+
+def test_claude_inline_disabled_by_env_uses_tool_loop(tmp_path, monkeypatch):
+    blocks = [_note(0, 50, 100)]
+    _touch_crops(tmp_path, blocks)
+    names = [ht.crop_name(b) for b in blocks]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    calls = _inline_env(monkeypatch, [(0, json.dumps({names[0]: "WALK"}))])
+    monkeypatch.setenv(ht.ENV_INLINE, "0")
+    out = ht._run_cli(ht._build_prompt(names), crops, "claude")
+    assert ht._extract_json_object(out) == {names[0]: "WALK"}
+    argv, kw = calls[0]
+    assert "--add-dir" in argv and "--input-format" not in argv
+    assert kw.get("input") is None
+
+
+def test_claude_inline_retries_without_lean_flags_when_not_logged_in(
+        tmp_path, monkeypatch):
+    """`--setting-sources ""`가 설정 기반 인증까지 끊는 환경 — 미로그인 응답이면
+    설정을 적재하는 모드로 한 번 재시도하고 이후 세션도 그 모드로 간다."""
+    blocks = [_note(0, 50, 100)]
+    _touch_crops(tmp_path, blocks)
+    names = [ht.crop_name(b) for b in blocks]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    calls = _inline_env(monkeypatch, [
+        (1, _stream_json("Not logged in · Please run /login", is_error=True)),
+        (0, _stream_json(json.dumps({names[0]: "WALK"})))])
+    out = ht._run_cli(ht._build_prompt(names, inline=True), crops, "claude")
+    assert ht._extract_json_object(out) == {names[0]: "WALK"}
+    assert len(calls) == 2
+    assert "--setting-sources" in calls[0][0]
+    assert "--setting-sources" not in calls[1][0]
+    assert "--input-format" in calls[1][0]           # 여전히 인라인 단일턴
+    assert ht._lean_ok is False
+
+
+def test_claude_inline_quota_refusal_is_fatal(tmp_path, monkeypatch):
+    blocks = [_note(0, 50, 100)]
+    _touch_crops(tmp_path, blocks)
+    names = [ht.crop_name(b) for b in blocks]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    _inline_env(monkeypatch, [
+        (1, _stream_json("Error: quota reached. Resets in 2h", is_error=True))])
+    with pytest.raises(ht.TranscribeFatalError, match="quota"):
+        ht._run_cli(ht._build_prompt(names, inline=True), crops, "claude")
+
+
+def test_claude_inline_skips_missing_files(tmp_path, monkeypatch):
+    """없는 크롭은 첨부에서 빠지고 응답에도 없다 — 호출자가 미응답으로 센다."""
+    blocks = [_note(0, 50, 100), _note(0, 50, 200)]
+    _touch_crops(tmp_path, [blocks[0]])
+    names = [ht.crop_name(b) for b in blocks]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    calls = _inline_env(monkeypatch, [
+        (0, _stream_json(json.dumps({names[0]: "WALK"})))])
+    ht._run_cli(ht._build_prompt(names, inline=True), crops, "claude")
+    content = json.loads(calls[0][1]["input"])["message"]["content"]
+    assert sum(1 for c in content if c["type"] == "image") == 1
 
 
 def _ko_note(src: str) -> PdfBlock:
@@ -1352,13 +1513,13 @@ def _ko_note(src: str) -> PdfBlock:
     # 잉여 음역 `발스텝`은 붙어 쓴 단일 토큰일 때만 걷는다
     ("0X\nSTEP", "0X 발스텝", "0X 스텝"),
     # LLM 겹말 `발 + 발스텝`은 뒤엣것만 줄인다(FT의 `발`은 남는다)
-    ("RT\nFT\nSTEP", "오른\n발\n발스텝", "오른 발 스텝"),
+    ("RT\nFT\nSTEP", "오른\n발\n발스텝", "오른발 스텝"),     # 사람 두 문서 모두 붙여 씀(왼발 28·왼 발 0)
     ("ACTION\nON (1)S", "액션 온 원스", "액션 1콤마에"),
     # ⛔원문이 FT(foot)면 `발`은 정당한 낱말 — 지우면 내용이 사라진다.
     # 실측 사고(2026-08-25): 무조건 `발\\s*스텝` 규칙이 A2 계획 3건에서
     # `오른|발|스텝`을 `오른|스텝`으로 깎았다. 접혀도 `발`은 남아야 한다.
-    ("HANK\nLT\nFT\nSTEP", "행크\n왼\n발\n스텝", "행크 왼 발 스텝"),
-    ("RT\nFT\nSTEP", "오른\n발\n스텝", "오른 발 스텝"),
+    ("HANK\nLT\nFT\nSTEP", "행크\n왼\n발\n스텝", "행크 왼발 스텝"),
+    ("RT\nFT\nSTEP", "오른\n발\n스텝", "오른발 스텝"),
     ("RT\nFT\nSTEP", "오른발\n스텝", "오른발 스텝"),
     ("WHEELS\nSPIN\nON\n2'S", "바퀴\n회전\n온\n투스", "바퀴 회전 2콤마에"),
 ])
@@ -1905,3 +2066,477 @@ def test_side_placement_never_covers_handwriting():
     ov = p.place_with_doc(b, "가나", (792.0, 1224.0), doc, occupied=())
     ink = p._page_ink(doc, 0)
     assert xs._ink_ratio(ink, ov.rect, 1224.0) <= xs._SIDE_INK_OK
+
+
+# ── 줄 단위 배치·기둥 방지·빈자리 탐색(2026-09-03) ────────────────────
+
+def test_ink_rows_splits_handwriting_rows():
+    """블록 안 손글씨 행을 가로 투영으로 나누고 행마다 x 범위를 잰다."""
+    import numpy as np
+    ink = np.zeros((300, 300), dtype=bool)
+    ink[100:112, 40:120] = True          # 1행: x 40~120px
+    ink[124:136, 40:90] = True           # 2행(12px 틈): x 40~90px
+    ink[145:146, 200:260] = True         # 1px 잡티(10px 떨어짐) — 행이 아니다
+    rows = xs._ink_rows(ink, (20 / (100 / 72.0), 90 / (100 / 72.0),
+                              280 / (100 / 72.0), 150 / (100 / 72.0)))
+    assert len(rows) == 2
+    s = 72.0 / 100
+    assert rows[0][1] == pytest.approx(100 * s) and rows[0][2] == pytest.approx(120 * s)
+    assert rows[1][1] == pytest.approx(124 * s) and rows[1][2] == pytest.approx(90 * s)
+
+
+def test_width_for_lines_widens_only_when_needed():
+    """짧은 글은 자연폭 그대로, 긴 글은 max_lines 줄이 되는 폭까지만 넓힌다."""
+    short = "표정"
+    assert xs._width_for_lines(short, 9.0, 2) <= xs._natural_width(short, 9.0)
+    long = "코니, 조셉, 나무에 새도우 효과 + 나무 드롭 섀도"
+    w2 = xs._width_for_lines(long, 9.0, 2)
+    w4 = xs._width_for_lines(long, 9.0, 4)
+    assert len(xs._wrap_ko(long, w2, 9.0)) <= 2
+    assert len(xs._wrap_ko(long, w4, 9.0)) <= 4
+    assert w4 < w2 <= xs._natural_width(long, 9.0)
+
+
+def test_side_box_widens_to_avoid_a_tower():
+    """원문 폭이 좁고 번역이 길면 옆자리 상자가 max_lines 안에 들도록 넓어진다
+    (실측 기둥: 28자 번역이 40pt 상자에서 7줄). 짧은 번역은 원문 폭 그대로."""
+    anchor = (100.0, 100.0, 140.0, 148.0)          # 폭 40pt·4행 높이
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S", bbox=anchor,
+                 limit_x1=600.0)
+    long = "코니, 조셉, 나무에 새도우 효과 + 나무 드롭 섀도"
+    old = next(iter(xs._side_candidates(anchor, b, long, (792.0, 1224.0))))
+    new = next(iter(xs._side_candidates(anchor, b, long, (792.0, 1224.0),
+                                        max_lines=4)))
+    # 옛 상한 = max(원문 폭 40, _SIDE_MIN_W 60) = 60pt → 28자가 5줄+로 흐른다
+    assert old[0][2] - old[0][0] == pytest.approx(xs._SIDE_MIN_W)
+    assert len(xs._wrap_ko(long, old[0][2] - old[0][0], 9.0)) > 4  # 기둥
+    assert new[0][2] - new[0][0] > old[0][2] - old[0][0]
+    assert len(xs._wrap_ko(long, new[0][2] - new[0][0], 9.0)) <= 4
+    short = next(iter(xs._side_candidates(anchor, b, "표정", (792.0, 1224.0),
+                                          max_lines=4)))
+    assert short[0][2] - short[0][0] == pytest.approx(40.0)      # 짧으면 그대로
+
+
+def _rows_doc(blockers=()):
+    """2행 손글씨 원문(px 300~360, y 300~318 / 330~348) + 방해 잉크."""
+    return FakeDoc(png=_grid_png(extra=[(300, 300, 360, 318), (300, 330, 360, 348),
+                                        *blockers]))
+
+
+def test_place_lines_puts_each_line_beside_its_row():
+    """통상자 곁이 막히면 다중줄 번역을 **행마다 한 줄씩** 곁에 앉힌다(사람
+    관례: `STEPS/BACK` → `뒤로.`·`스텝.`을 각 행 옆에). 행 사이 틈에 잉크를
+    두어 2줄 통상자는 오른쪽에 못 앉지만 행마다의 오른쪽은 비어 있다."""
+    doc = _rows_doc(blockers=[(365, 319, 460, 329),      # 행 사이 틈의 잉크
+                              (200, 290, 295, 360),      # 왼쪽 막힘
+                              (300, 352, 460, 400),      # 아래 막힘
+                              (300, 240, 460, 296)])     # 위 막힘
+    s = 0.72
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="AMBER\nLEANS",
+                 bbox=(300 * s, 300 * s, 360 * s, 348 * s), limit_x1=600.0)
+    p = xs.XsheetProfile()
+    out = p.place_with_doc(b, "앰버,\n기울인다.", (792.0, 1224.0), doc)
+    assert isinstance(out, list) and [o.text for o in out] == ["앰버,", "기울인다."]
+    ink = p._page_ink(doc, 0)
+    for ov, row_top in zip(out, (300 * s, 330 * s)):
+        assert ov.rect[0] >= 360 * s                       # 행 오른쪽 곁
+        assert abs(ov.rect[1] - row_top) <= 8.0            # 제 행에 붙는다
+        assert xs._ink_ratio(ink, ov.rect, 1224.0) <= xs._SIDE_INK_OK
+    a, c = out[0].rect, out[1].rect
+    assert min(a[3], c[3]) - max(a[1], c[1]) <= 0.0 or xs._occupied_frac(c, [a]) <= xs._OCC_OK
+
+
+def test_place_lines_needs_a_row_per_line():
+    """줄이 행보다 많거나 한 줄이라도 자리가 없으면 줄 단위 배치는 포기하고
+    통상자 경로로 간다(반쪽 배치 금지) — 결과는 여전히 Overlay 하나."""
+    doc = _rows_doc()
+    s = 0.72
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="AMBER\nLEANS",
+                 bbox=(300 * s, 300 * s, 360 * s, 348 * s), limit_x1=600.0)
+    p = xs.XsheetProfile()
+    ink = p._page_ink(doc, 0)
+    assert p._place_lines(b, "가\n나\n다", (792.0, 1224.0), ink, ()) is None
+    # 오른쪽 전부를 이웃 주석이 차지 → 행 오른쪽·왼쪽 다 막힘 → None
+    wall = (360 * s + 1.0, 200.0, 600.0, 400.0)
+    assert p._place_lines(b, "앰버,\n기울인다.", (792.0, 1224.0), ink,
+                          [wall, (8.0, 200.0, 300 * s - 1.0, 400.0)]) is None
+    out = p.place_with_doc(b, "앰버,\n기울인다.", (792.0, 1224.0), doc,
+                           occupied=[wall, (8.0, 200.0, 300 * s - 1.0, 400.0)])
+    assert not isinstance(out, list)
+
+
+def test_free_slot_near_finds_the_nearest_clean_rect():
+    """사다리가 전부 막힌 페이지에서 마스크 위의 가까운 빈 사각형을 찾는다."""
+    import numpy as np
+    ink = np.ones((1700, 1100), dtype=bool)         # 전부 잉크
+    ink[520:600, 520:700] = False                   # 원문 오른쪽 아래의 빈 자리
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(300.0, 360.0, 340.0, 380.0), limit_x1=600.0)
+    p = xs.XsheetProfile()
+    got = p._free_slot_near(b, "고개 기웃", (792.0, 1224.0), ink, ())
+    assert got is not None
+    cost, ov = got
+    assert xs._ink_ratio(ink, ov.rect, 1224.0) <= xs._SIDE_INK_OK
+    assert ov.rect[1] >= 520 * 0.72 and ov.rect[3] <= 600 * 0.72
+    assert cost < xs._BLOCKED
+    # 그 빈자리를 이웃 주석이 차지하면 못 찾는다
+    assert p._free_slot_near(b, "고개 기웃", (792.0, 1224.0), ink,
+                             [(520 * 0.72, 520 * 0.72, 700 * 0.72, 600 * 0.72)]) is None
+
+
+def test_place_with_doc_prefers_a_near_free_slot_over_far_ladder():
+    """막힌 블록의 최후 수단 — 넓은 사다리의 먼 자리(±80pt+)보다 반경 안의
+    가까운 빈자리가 이긴다."""
+    import numpy as np
+    s = 0.72
+    # 원문 주변을 손글씨로 빽빽하게 채우고, 원문 바로 오른쪽 아래 한 곳만 비운다
+    blockers = []
+    for y in range(240, 520, 24):
+        for x in range(60, 900, 70):
+            blockers.append((x, y, x + 60, y + 14))
+    blockers = [r for r in blockers
+                if not (410 <= r[0] <= 560 and 380 <= r[1] <= 420)]   # 빈 구멍
+    doc = FakeDoc(png=_grid_png(extra=[(300, 300, 360, 340), *blockers]))
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S",
+                 bbox=(300 * s, 300 * s, 360 * s, 340 * s), limit_x1=600.0)
+    p = xs.XsheetProfile()
+    ov = p.place_with_doc(b, "가나다라마바", (792.0, 1224.0), doc, occupied=())
+    assert not isinstance(ov, list)
+    ink = p._page_ink(doc, 0)
+    assert xs._ink_ratio(ink, ov.rect, 1224.0) <= xs._FB_INK_HARD
+    assert abs(ov.rect[1] - b.bbox[1]) <= 80.0            # 먼 사다리로 도망가지 않았다
+    assert isinstance(ink, np.ndarray)
+
+
+def test_build_plan_accepts_several_overlays_per_block():
+    """줄 단위 배치는 한 블록을 여러 주석으로 돌려준다 — 계획은 각각을
+    항목으로 싣고(같은 source_text) 뒤 블록의 점유 판정에도 넣는다."""
+    from apps.server.domain.pdf_translate.overlay_plan import build_plan
+    from apps.server.domain.pdf_translate.profiles.base import Overlay
+    doc = FakeDoc(png=_grid_png())
+    blocks = [_note(0, 100, 300), _note(0, 100, 400)]
+    seen_occupied = []
+
+    class P:
+        name = "xsheet"
+        def refine_ko(self, block, ko): return ko
+        def place(self, block, ko, page_size): raise AssertionError
+        def place_with_doc(self, block, ko, page_size, doc, occupied=()):
+            seen_occupied.append(list(occupied))
+            if block.bbox[1] == 300:
+                return [Overlay(page=0, rect=(150.0, 300.0, 190.0, 312.0), text="앰버,", fontsize=9.0),
+                        Overlay(page=0, rect=(150.0, 314.0, 220.0, 326.0), text="기울인다.", fontsize=9.0)]
+            return Overlay(page=0, rect=(150.0, 400.0, 190.0, 412.0), text=ko, fontsize=9.0)
+
+    plan = build_plan(doc, P(), blocks, ["앰버,\n기울인다.", "표정"], job_id="t")
+    assert [it.text for it in plan.items] == ["앰버,", "기울인다.", "표정"]
+    assert {it.source_text for it in plan.items[:2]} == {"raw"}
+    assert len(seen_occupied[1]) == 2            # 두 줄 다 점유로 넘어갔다
+
+
+# ── 과병합 분리 S3(2026-09-03): 빈 줄 조각 → 크롭 잉크 행 → 하위 블록 ──────
+
+def _rows_png(path: Path, rows_px: list[tuple[int, int, int, int]], size=(300, 260),
+              origin_pt: tuple[float, float] | None = None) -> None:
+    """흰 크롭에 검은 '행' 사각형들을 그린 300dpi PNG(+원점 메타데이터)."""
+    from PIL import Image, ImageDraw, PngImagePlugin
+    im = Image.new("RGB", size, "white")
+    d = ImageDraw.Draw(im)
+    for x0, y0, x1, y1 in rows_px:
+        d.rectangle([x0, y0, x1, y1], fill="black")
+    info = PngImagePlugin.PngInfo()
+    if origin_pt is not None:
+        info.add_text(ht._CROP_META_KEY, f"{origin_pt[0]:.2f},{origin_pt[1]:.2f},0,0")
+    im.save(path, pnginfo=info)
+
+
+def test_crop_ink_rows_ignores_ruled_lines_and_specks(tmp_path):
+    p = tmp_path / "c.png"
+    _rows_png(p, [(20, 20, 200, 50), (0, 70, 300, 72),      # 행 + 가로 괘선
+                  (20, 100, 120, 130), (150, 200, 152, 203)])  # 행 + 잡티
+    rows, size = ht._crop_ink_rows(p)
+    assert size == (300, 260)
+    assert [(r[0], r[1], r[2]) for r in rows] == [(20, 20, 201), (20, 100, 121)]
+
+
+def test_split_multinote_maps_segments_to_rows_and_page_coords(tmp_path):
+    """빈 줄 조각 2개 ↔ 잉크 행 3개(2+1): 줄 수 합이 행 수와 같으니 정확 매핑.
+    하위 bbox는 메타데이터 원점 + 행 픽셀/300dpi 로 페이지 좌표가 된다."""
+    p = tmp_path / "c.png"
+    _rows_png(p, [(20, 20, 200, 50), (20, 70, 180, 100), (20, 150, 100, 180)],
+              origin_pt=(100.0, 200.0))
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="raw", bbox=(105.0, 205.0, 150.0, 240.0))
+    parts = ht._split_multinote(b, "HEAD\nTURN\n\nOVS", p)
+    assert [x.text for x in parts] == ["HEAD\nTURN", "OVS"]
+    s = 72.0 / 300.0
+    assert parts[0].bbox == pytest.approx((100 + 20 * s, 200 + 20 * s, 100 + 201 * s, 200 + 101 * s))
+    assert parts[1].bbox == pytest.approx((100 + 20 * s, 200 + 150 * s, 100 + 101 * s, 200 + 181 * s))
+    assert all(x.page == 0 and x.kind == xs.NOTE_KIND for x in parts)
+
+
+def test_split_multinote_reorders_by_row_width(tmp_path):
+    """모델이 위 노트를 뒤에 쓴 경우(1603 p4 실측) 행 폭↔글자 수 대응으로 바로잡는다:
+    윗행 2개는 길고(넓은 잉크) 아랫행 1개는 짧다."""
+    p = tmp_path / "c.png"
+    _rows_png(p, [(20, 20, 280, 50), (20, 70, 260, 100), (20, 150, 60, 180)],
+              origin_pt=(0.0, 0.0))
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="raw", bbox=(0, 0, 60, 40))
+    parts = ht._split_multinote(b, "SO\n\nMATCH CUT\nTV/BG/CHYRON", p)
+    assert [x.text for x in parts] == ["MATCH CUT\nTV/BG/CHYRON", "SO"]
+    assert parts[0].bbox[1] < parts[1].bbox[1]
+
+
+def test_split_multinote_refuses_when_rows_are_fewer_than_segments(tmp_path):
+    """좌우 병렬 노트(행 1개에 조각 2개)는 쪼개지 않고 개행 하나로 합친다."""
+    p = tmp_path / "c.png"
+    _rows_png(p, [(20, 20, 280, 50)], origin_pt=(0.0, 0.0))
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="raw", bbox=(0, 0, 60, 12))
+    parts = ht._split_multinote(b, "SI\n\nOVS", p)
+    assert [x.text for x in parts] == ["SI\nOVS"] and parts[0].bbox == b.bbox
+    # 조각이 하나면 그대로
+    assert ht._split_multinote(b, "HEAD\nTURN", p)[0].text == "HEAD\nTURN"
+
+
+def test_split_multinote_without_metadata_centres_on_block(tmp_path):
+    """옛 잡의 크롭(원점 메타데이터 없음)은 블록 bbox 둘레 대칭 성장으로 근사."""
+    p = tmp_path / "c.png"
+    _rows_png(p, [(20, 20, 200, 50), (20, 150, 100, 180)], size=(300, 260))
+    s = 72.0 / 300.0
+    # 크롭 300×260px = 72×62.4pt; 블록 52×42.4pt → 좌우·상하 10pt씩 자란 셈
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="raw", bbox=(110.0, 210.0, 162.0, 252.4))
+    parts = ht._split_multinote(b, "A B\n\nC", p)
+    assert parts[0].bbox[0] == pytest.approx(100.0 + 20 * s)
+    assert parts[0].bbox[1] == pytest.approx(200.0 + 20 * s)
+
+
+def test_transcribe_splits_multinote_and_reasks_old_cache(tmp_path, monkeypatch):
+    """전사 결과에 빈 줄이 있으면 하위 블록 2개가 나오고, 마커 없는 옛 캐시는
+    행 3+ 크롭만 다시 묻는다(행 1개짜리 캐시는 그대로)."""
+    blocks = [_note(0, 50, 100), _note(0, 50, 300)]
+    crops = tmp_path / ht._CROPS_DIRNAME
+    crops.mkdir(parents=True)
+    names = [ht.crop_name(b) for b in blocks]
+    _rows_png(crops / names[0], [(20, 20, 200, 50), (20, 70, 180, 100), (20, 150, 100, 180)],
+              origin_pt=(45.0, 95.0))                       # 행 3 → 재전사 대상
+    _rows_png(crops / names[1], [], origin_pt=(45.0, 295.0))  # 잉크 행 0 → 유지(v3=행 1+ 재전사)
+    (tmp_path / ht._CACHE_NAME).write_text(
+        json.dumps({names[0]: "HEAD\nTURN\nOVS", names[1]: "BLINK"}), encoding="utf-8")
+    asked: list[str] = []
+
+    def _fake(prompt, cwd, engine=None):
+        asked.extend(n for n in names if n in prompt)
+        assert "Vocabulary" not in prompt                   # vocab 미지정이면 힌트 없음
+        return json.dumps({names[0]: ["HEAD\nTURN", "OVS"]})   # 파일당 배열
+
+    monkeypatch.setattr(ht, "_run_cli", _fake)
+    out = ht.transcribe(blocks, tmp_path)
+    assert asked == [names[0]]                              # 잉크 없는 크롭은 안 물었다
+    assert [b.text for b in out] == ["HEAD\nTURN", "OVS", "BLINK"]
+    assert out[0].bbox[3] < out[1].bbox[1]                  # 위·아래로 나뉘었다
+    cache = json.loads((tmp_path / ht._CACHE_NAME).read_text(encoding="utf-8"))
+    assert cache[ht._CACHE_VERSION_KEY] == "2"
+    # 마커가 있으면 다시 묻지 않는다
+    asked.clear()
+    out2 = ht.transcribe(blocks, tmp_path)
+    assert asked == [] and [b.text for b in out2] == ["HEAD\nTURN", "OVS", "BLINK"]
+
+
+def test_render_crops_writes_origin_metadata(tmp_path):
+    from PIL import Image
+    doc = FakeDoc(png=_png_bytes(400, 400))
+    blocks = [_note(0, 20, 20)]
+    ht.render_crops(doc, blocks, tmp_path)
+    with Image.open(tmp_path / ht._CROPS_DIRNAME / ht.crop_name(blocks[0])) as im:
+        meta = im.text[ht._CROP_META_KEY]
+    x0, y0, x1, y1 = (float(v) for v in meta.split(","))
+    assert x0 <= 20.0 and y0 <= 20.0 and x1 >= 60.0 and y1 >= 30.0   # 여백 포함
+
+
+def test_join_continuations_keeps_phrases_together():
+    """`/`·`+`로 시작하거나 `TO`·`/`로 끝나는 조각은 구절의 이어짐 — 되붙인다
+    (대조군 실측: `BODY +HEAD / TO` | `H EXP.`, `TURN + STEP` | `/ STOP`)."""
+    assert ht._join_continuations(["BODY\n+HEAD\n/ TO", "H EXP."]) == ["BODY\n+HEAD\n/ TO\nH EXP."]
+    assert ht._join_continuations(["TURN +\nSTEP", "/ STOP"]) == ["TURN +\nSTEP\n/ STOP"]
+    assert ht._join_continuations(["IN", "/ BODY\nSHIFT", "H"]) == ["IN\n/ BODY\nSHIFT", "H"]
+    assert ht._join_continuations(["ARMS\nCONT.\nUP", "OVS"]) == ["ARMS\nCONT.\nUP", "OVS"]
+    assert ht._as_text(["A", " ", "B"]) == "A\n\nB" and ht._as_text("X") == "X"
+    assert ht._as_text(3) is None
+
+
+# ── 1605_A1 실물 결함 2종(2026-09-03) ──────────────────────────────────
+
+def test_font_ladder_middle_step_scales_with_page():
+    """글꼴 사다리 가운데 단이 페이지 스케일을 탄다 — 2200pt 판형에서 8pt(정상 25pt)
+    로 굽힌 항목이 12.8%였다. 792 판형에선 예전 그대로 8pt."""
+    b = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S", bbox=(100.0, 100.0, 140.0, 112.0),
+                 limit_x1=600.0)
+    sizes = sorted({fs for _r, fs, _d in xs.XsheetProfile()._candidates(
+        b, "가나다라마바사아자차카타", (792.0, 1224.0))}, reverse=True)
+    assert sizes == [9.0, 8.0, 7.2]
+    big = PdfBlock(page=0, kind=xs.NOTE_KIND, text="S", bbox=(300.0, 300.0, 400.0, 330.0),
+                   limit_x1=1600.0)
+    sizes = sorted({round(fs, 1) for _r, fs, _d in xs.XsheetProfile()._candidates(
+        big, "가나다라마바사아자차카타", (2200.0, 3400.0))}, reverse=True)
+    xs._apply_page_scale(792.0)                          # 다른 테스트를 위해 원복
+    assert min(sizes) > 15.0 and len(sizes) == 3
+    assert sizes[1] == pytest.approx(8.0 * 2200 / 792, abs=0.1)
+
+
+def test_refine_ko_clears_leftover_codes_like_a_human():
+    """낱말과 섞인 STL·OVS는 옮기고 SI는 지운다(사람 납품본 관례). 원문에 그 코드가
+    없으면 건드리지 않는다."""
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    # (12자 이하 다중줄은 기존 규칙대로 한 줄로 접힌다)
+    assert r("STL\nBACK", "STL\n뒤로.") == "안착 뒤로."
+    assert r("OVS\nSLIGHT", "OVS 약간") == "오버슛 작게"       # SLIGHT→작게(1605)
+    assert r("LEAN.\nTURNS\nHEAD\n(SI", "기울이며 고개\n돌린다 (SI") == "기울이며 고개 돌린다"
+    assert r("HANDS\nGEST\nOUT\nSI", "양손 밖으로\n제스쳐, SI.") == "두손 밖으로 제스쳐."
+    assert r("SI\nHEAD\nDN", "SI 고개\n아래로.") == "고개 아래로."
+    assert r("RT. HAND\nBRUSH\nLACQUER\nSI\n(H)", "오른손,\n브러시로 락커\n칠한다.\nSI\n(H)") == "오른손,\n붓으로 광택제\n칠한다.\n(H)"
+    assert r("POSE\nTO\nEYES\nLEAD\nTO\nSI", "눈이 리드하며\n포즈로,\nSI.") == "눈이 리드하며 포즈로."
+    assert r("HUSTLE", "허슬 STL") == "허슬 STL"          # 원문에 STL 코드 없음
+    assert r("SIT DOWN", "앉는다 SI") == "앉는다 SI"       # SIT는 SI가 아니다
+
+
+# ── 등장인물 이름표(2026-09-03, 1605_A1 사용자 검수) ────────────────────
+
+def test_cast_names_decode_prompt_and_fix(monkeypatch, tmp_path):
+    """이름만 있는 노트는 결정적 해독, 프롬프트엔 이름표, 원문에 이름이 있으면
+    오음역(차네·챈·샌드·에미)을 표기로 교정. 운영자 파일이 내장값을 덮는다."""
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path))
+    assert xs._decode_code_note("CHANE") == "체인"
+    assert xs._decode_code_note("EMI") == "에밀리오"
+    assert xs._decode_code_note("SAND\nOVS") == "산드라\n오버슛"
+    assert xs._decode_code_note("CHANE DRIVES") is None            # 낱말 섞이면 번역기 몫
+    rule = xs.XsheetProfile().prompt_line_rule_now()
+    assert "CHANE → 체인" in rule and "SAND → 산드라" in rule and "EMI → 에밀리오" in rule
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("CHANE DRIVES\nCAR", "차네가 차를\n몰고 간다.") == "체인이 차를 몰고 간다."
+    assert r("CHANE\nLOOKS", "차네는 본다.") == "체인은 본다."
+    assert r("EMI\nHANDS", "에미의 두 손.") == "에밀리오의 두손."
+    assert r("A CHAN\nTURNS", "A 찬\n턴한다.") == "A 체인 턴한다."
+    assert r("SAND\nCLEAN", "샌드\n닦는다.") == "산드라 닦는다."           # 12자 이하 접힘
+    assert r("KICKS", "찬다.") == "발찬다."                            # 이름 없음(KICK 규칙만)
+    assert r("CHANE", "찬다.") == "찬다."                              # 한글 낱말 안의 찬은 보존
+    (tmp_path / "xsheet_cast.txt").write_text("# 작품별\nCHANE => 차니\nZOE = 조이\n", encoding="utf-8")
+    assert xs._decode_code_note("CHANE") == "차니" and xs._decode_code_note("ZOE") == "조이"
+
+
+def test_refine_ko_handles_s1_variant_underscore_and_miguel():
+    """전사가 SI를 `S1`로 읽어도 지우고, 밑줄 연결은 `&`로, MIGUEL은 미구엘."""
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("CHANE\nLT. HAND\nS1", "체인 왼손\nS1.") == "체인 왼손"
+    assert r("S1", "슬로우 인") == ""                       # S1 단독 = SI 단독
+    assert r("2\nS1", "2 슬로우 인") == ""
+    assert r("SAND_CLOTH", "산드라_옷") == "산드라&옷"
+    assert r("MIGUEL_PHONE", "미겔_전화") == "미구엘&전화"
+    assert xs._decode_code_note("MIGUEL") == "미구엘"
+
+
+def test_refine_ko_1605_terms_and_artifacts():
+    """1605 사람 대조 전수(3,156쌍)에서 검증한 원문 조건부 용어 + 인공물 정리."""
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("EYES\nHEAD", "시선\n고개") == "두눈 고개"
+    assert r("EYES\nBLINK", "눈깜박") == "눈깜박"                     # 눈깜박은 보존
+    assert r("HANDS\nUP", "손 올린다.") == "두손 위로."
+    assert r("ARMS\nUP", "팔\n올린다.") == "두팔 위로."
+    assert r("KICK\nLEGS", "다리를\n찬다.") == "두다리를 발찬다."
+    assert r("STL\nTO", "안착로.") == "안착."
+    assert r("EXP.\nTO", "표정\n~로.") == "표정."
+    assert r("SHIFT", "시프트.") == "이동."
+    assert "표정" in r("TO\nEXP.", "익스포저로.")
+    assert "붓" in r("RT. HAND\nMOVES\nBRUSH", "오른손,\n브러시를 옮긴다.")
+    assert r("RIM LIT\nFLICKER\nCYCLE", "림 라이트 눈깜박\n싸이클.") == "림라이트 깜빡임 싸이클."
+    assert r("CAST SHADOW FX", "캐스트 섀도우 효과") == "투영그림자 효과"
+    assert r("* ADLIB\nCLOTH", "* 애드립, 천.") == "* 임의로, 행주."
+    assert r("OVS\nSUBTLE", "오버슛\n약하게.") == "오버슛 은근하게."
+    assert r("OVS\nSLIGHT", "오버슛 약간.") == "오버슛 작게."
+    assert r("PARTY LIGHT\n(C) POP TO\nHP", "파티 조명\n(C) 팝 투 HP.") == "파티조명 (C) 팍"
+    assert r("ALL\nFRAT", "프랫\n전원.") == "협회원 전원."
+    assert r("DROPPER\n& BOTTLE", "드로퍼와\n병.") == "스포이드와 병."
+
+
+def test_decode_passes_circled_letters_and_numbers():
+    """`C BOB`·`(H) BOB`·`2034B`처럼 원문자·번호가 섞여도 해독한다 — 이런 토큰
+    하나 때문에 LLM으로 넘어가 에코로 버려지던 주석 208건(1605)."""
+    assert xs._decode_code_note("C BOB") == "C 바비"
+    assert xs._decode_code_note("(H) BOB") == "(H) 바비"
+    assert xs._decode_code_note("BOB\n2034B") == "바비\n2034B"
+    assert xs._decode_code_note("OS") == "씬밖"
+    assert xs._decode_code_note("C WALKS") is None
+
+
+def test_transcribe_blocks_normalises_wt_to_with(tmp_path, monkeypatch):
+    blocks = [_note(0, 50, 100)]
+    _touch_crops(tmp_path, blocks)
+    monkeypatch.setattr(ht, "_run_cli", lambda prompt, cwd, engine=None: json.dumps(
+        {ht.crop_name(blocks[0]): "INTO\nPOSE\nWT\nFOOD"}))
+    out = xs.XsheetProfile().transcribe_blocks(blocks, tmp_path)
+    assert out[0].text == "INTO\nPOSE\nW/\nFOOD"
+
+
+def test_refine_ko_markers_and_second_pass_terms():
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("STL\nTO", "STL로.") == "안착."                      # 순서 버그(안착로) 재발 방지
+    assert r("HU\nHU", "허\n허") == ""                           # 훅업 기호 = 드롭
+    assert r("SO", "슬로우 아웃") == "" and r("HP", "HP") == ""
+    assert r("SO\nHEAD\nUP", "슬로우 아웃,\n고개 위로.") == "고개 위로."
+    assert r("STL\nDN", "안착\n다운.") == "안착 아래로."
+    assert r("STL\nBACK", "안착\n백.") == "안착 뒤로."
+    assert r("C UP", "C 업") == "C 위로"
+    assert r("NEXT\nCANDLE", "다음\n초.") == "다음 양초."
+    assert r("CANDLE FLAME FX", "촛불 불꽃 효과") == "양초불꽃 효과"
+    assert r("RT. ARM &\nPENCIL UP", "오른 팔과\n펜슬 위로.") == "오른팔과 연필 위로."
+    assert r("ENTER\nBOBBY", "바비 등장.") == "바비 들어온다."
+    assert r("EYES\nTO", "두눈\n~쪽으로.") == "두눈."
+
+
+def test_refine_ko_up_rule_respects_word_boundary_and_joins_left_right():
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("LT. ARM\nUP", "왼 팔 들어올린다.") == "왼팔 들어올린다."     # `들어위로` 금지
+    assert r("ARMS\nUP", "팔 올린다.") == "두팔 위로."
+    assert r("RT. HAND\nKNIFE", "오른 손, 칼.") == "오른손, 칼."
+    assert r("NOTEBOOK", "노트북") == "공책"
+
+
+def test_transcribe_blocks_passes_vocabulary_hint(tmp_path, monkeypatch):
+    """프로파일이 코드·인물 이름 어휘를 전사 프롬프트 힌트로 넘긴다(오독 수렴)."""
+    blocks = [_note(0, 50, 100)]
+    _touch_crops(tmp_path, blocks)
+    seen = []
+    monkeypatch.setattr(ht, "_run_cli", lambda prompt, cwd, engine=None: (
+        seen.append(prompt), json.dumps({ht.crop_name(blocks[0]): "CHANE"}))[1])
+    out = xs.XsheetProfile().transcribe_blocks(blocks, tmp_path)
+    assert "Vocabulary" in seen[0] and "CHANE" in seen[0] and "STL" in seen[0]
+    assert out[0].ko == "체인"
+
+
+def test_refine_ko_ovs_misread_as_overlap():
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("OVS\nSUBTLE", "오버랩\n미세하게.") == "오버슛 은근하게."
+    assert r("OVS\nO.LAP", "오버슛\n오버랩.") == "오버슛 오버랩."   # 진짜 오버랩은 보존
+    assert xs._decode_code_note("C DROPS") == "C 방울"
+
+
+def test_refine_ko_fifth_pass_rules():
+    p = xs.XsheetProfile()
+    def r(src, ko): return p.refine_ko(PdfBlock(page=0, kind=xs.NOTE_KIND, text=src,
+                                                bbox=(0, 0, 40, 10)), ko)
+    assert r("CHAN,\nSAC\nHP", "체인,\n산드라 HP") == "체인, 포대"
+    assert r("SAND\nSAC", "산드라, 포대") == "산드라, 포대"          # SAND가 있으면 보존
+    assert r("(OUS)\nHOLD", "(화면 밖)\n홀드.") == "오버슛 홀드."
+    assert r("LIQUID\nW/W\nACTION", "액체 웨이브\n액션.") == "액체 액션맞춰 움직인다."

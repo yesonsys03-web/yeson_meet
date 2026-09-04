@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listTranslateEngines, type TranslateEngineInfo } from "./videoApi";
 import {
-  cancelPdfJob, deletePdfJob, isActivePdfStatus, listPdfJobs,
-  pdfDownloadUrl, pdfUploadUrl, uploadPdfJob, type PdfJobSummary,
+  ALL_PDF_FEATURES_ENABLED, cancelPdfJob, deletePdfJob, isActivePdfStatus,
+  listPdfJobs, pdfDownloadUrl, pdfUploadUrl, resolvePdfProvider, uploadPdfJob,
+  type PdfFeatures, type PdfJobSummary,
 } from "./pdfApi";
 import { PdfLabelEditor } from "./PdfLabelEditor";
 import { PdfPreview } from "./PdfPreview";
@@ -64,15 +65,23 @@ const FORMAT_COPY: Record<PdfFormat, { heading: string; desc: string }> = {
   },
 };
 
-export function PdfTranslatePanel({ active, format = "storyboard" }: {
-  active: boolean; format?: PdfFormat;
+export function PdfTranslatePanel({ active, format = "storyboard",
+  enabled = true, features = ALL_PDF_FEATURES_ENABLED }: {
+  active: boolean; format?: PdfFormat; enabled?: boolean;
+  features?: PdfFeatures;
 }) {
   const [engines, setEngines] = useState<TranslateEngineInfo[]>([]);
-  const [provider, setProvider] = useState<string>("gemini");
+  const [provider, setProvider] = useState<string>(
+    ALL_PDF_FEATURES_ENABLED.defaultProvider);
   const [jobs, setJobs] = useState<PdfJobSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>("");
   const fileInput = useRef<HTMLInputElement | null>(null);
+
+  // 정책이 늦게 도착해도 막힌 엔진이 골라진 채로 남지 않게 기본값으로 되돌린다.
+  useEffect(() => {
+    setProvider((p) => resolvePdfProvider(p, features));
+  }, [features]);
 
   const refresh = useCallback(async () => {
     try {
@@ -82,18 +91,19 @@ export function PdfTranslatePanel({ active, format = "storyboard" }: {
     }
   }, []);
 
+  // 꺼진 포맷은 서버에 묻지 않는다 — 목록·엔진 조회도 폴링도 걸지 않는다.
   useEffect(() => {
-    if (!active) return;
+    if (!active || !enabled) return;
     void refresh();
     void listTranslateEngines().then(setEngines).catch(() => {});
-  }, [active, refresh]);
+  }, [active, enabled, refresh]);
 
   // 활성 작업이 있을 때만 1.5초 폴링
   useEffect(() => {
-    if (!active || !jobs.some((j) => isActivePdfStatus(j.status))) return;
+    if (!active || !enabled || !jobs.some((j) => isActivePdfStatus(j.status))) return;
     const t = setInterval(() => void refresh(), 1500);
     return () => clearInterval(t);
-  }, [active, jobs, refresh]);
+  }, [active, enabled, jobs, refresh]);
 
   const uploadPaths = useCallback(async (paths: string[]) => {
     const { invoke } = await import("@tauri-apps/api/core");
@@ -151,6 +161,21 @@ export function PdfTranslatePanel({ active, format = "storyboard" }: {
   // 스토리보드 탭 몫으로 둔다(이 기능 전 잡은 전부 스토리보드였다).
   const visibleJobs = jobs.filter((j) => (j.format ?? "storyboard") === format);
 
+  // 훅을 전부 부른 뒤에만 갈라진다 — 순서가 흔들리면 안 된다.
+  if (!enabled) {
+    return (
+      <div>
+        <h2 style={{ fontSize: 16, marginBottom: 4 }}>
+          {FORMAT_COPY[format].heading}
+        </h2>
+        <p style={{ color: "#fbbf24", fontSize: 12 }}>
+          서버 운영자가 {FORMAT_COPY[format].heading}을(를) 비활성화했습니다.
+          서버 콘솔의 설정 패널에서 다시 켤 수 있습니다.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h2 style={{ fontSize: 16, marginBottom: 4 }}>{FORMAT_COPY[format].heading}</h2>
@@ -161,11 +186,19 @@ export function PdfTranslatePanel({ active, format = "storyboard" }: {
         <label style={{ fontSize: 12 }}>번역 엔진</label>
         <select value={provider} onChange={(e) => setProvider(e.target.value)}
           style={{ fontSize: 12 }}>
-          {engines.map((eng) => (
-            <option key={eng.value} value={eng.value} disabled={!eng.available}>
-              {eng.label}{eng.available ? "" : " (사용 불가)"}
-            </option>
-          ))}
+          {/* PDF 번역만 gemini를 잠근다 — Gemini API로 요금이 나가기 때문이고,
+              자막 메이커는 그대로 쓴다. 숨기지 않고 회색으로 남겨 이유를 보인다. */}
+          {engines.map((eng) => {
+            const blocked = features.blockedProviders.includes(eng.value);
+            return (
+              <option key={eng.value} value={eng.value}
+                disabled={!eng.available || blocked}>
+                {eng.label}
+                {blocked ? " (API 비용 — 비활성)"
+                  : eng.available ? "" : " (사용 불가)"}
+              </option>
+            );
+          })}
         </select>
         <button type="button" onClick={() => void pickAndUpload()} disabled={busy}>
           {busy ? "업로드 중..." : "PDF 업로드"}

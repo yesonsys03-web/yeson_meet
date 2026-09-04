@@ -409,6 +409,19 @@ fn inject_secrets(command: &mut Command) -> Result<(), String> {
             std::env::var(key).unwrap_or_else(|_| value.to_string()),
         );
     }
+    // PDF 번역 기능(스토리보드·엑스시트) 노출 스위치 — 클라이언트 탭 노출과 서버
+    // 업로드 거부의 단일 진실은 서버(Python)이고, 여기서는 설정 패널에서 고른
+    // 값만 넘긴다. 위 워커 수와 같은 규칙으로 셸에서 명시한 값이 이긴다.
+    // 서버를 재시작해야 적용된다(다른 설정 항목과 동일).
+    for (key, enabled) in [
+        ("YESON_PDF_STORYBOARD_ENABLED", config.storyboard_enabled()),
+        ("YESON_PDF_XSHEET_ENABLED", config.xsheet_enabled()),
+    ] {
+        command.env(
+            key,
+            std::env::var(key).unwrap_or_else(|_| if enabled { "1" } else { "0" }.to_string()),
+        );
+    }
     let pairs = [
         ("GEMINI_API_KEY", config.gemini_api_key.trim()),
         (

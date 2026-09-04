@@ -18,6 +18,20 @@ trustedWorkspaces에 잡 폴더를 등록하는 게 정석이고, 신뢰 환경 
 전사 결과는 잡 폴더 `transcripts.json`에 배치마다 저장한다 — 재번역
 (retranslate)이 파이프라인을 다시 돌려도 CLI를 재호출하지 않고 캐시로
 이어받는다(크롭 이름이 페이지+좌표 기반이라 재추출에도 안정).
+
+★claude는 **이미지 인라인 단일턴**으로 보낸다(2026-09-03, `_run_claude_inline`).
+옛 방식은 `claude -p <프롬프트> --add-dir .`로 모델이 Read 도구로 크롭을 한
+장씩 열었다 — 배치 60장이 턴 65개가 되고, 턴마다 (시스템 프롬프트+도구 스키마
++앞서 읽은 이미지 전부)를 다시 읽고 턴마다 사고 토큰을 쓴다. 실측(1603_A1
+120장 동일 집합, `.omc/artifacts/xsheet-token-cut/singleturn_ab.py`):
+    도구 루프(medium)  컨텍스트 ~5,900/크롭 · 출력 186/크롭 · 124턴 · 300초
+    인라인 단일턴      컨텍스트   269/크롭 · 출력  18/크롭 ·   2턴 ·  33초
+                       (빈값 18→0, 현행 대비 정확일치 69→94/120)
+`--input-format stream-json`으로 크롭 PNG를 base64 이미지 블록에 실어 한
+메시지로 보내면 도구 0·턴 1이고, `--setting-sources ""`가 플러그인·CLAUDE.md
+주입(세션당 20.5K)을 끊고 `--system-prompt`가 기본 시스템 프롬프트를 대체한다.
+⚠`--bare`는 쓰지 않는다 — 키체인 읽기까지 건너뛰어 macOS에서 미로그인이 된다.
+agy는 stream-json 입력이 없어 옛 도구 루프를 그대로 쓴다.
 """
 from __future__ import annotations
 
@@ -78,6 +92,23 @@ ENV_MODEL = "YESON_PDF_XSHEET_CLI_MODEL"      # claude 전사 모델(운영 오�
 # 등급($5/$25)에서 잡은 것이라 그 등급에 고정한다. agy는 제 기본 모델을
 # 그대로 쓴다(claude 모델명이 통하지 않고, 실측도 기본 모델로 했다).
 _MODEL_DEFAULT = "opus"
+ENV_INLINE = "YESON_PDF_XSHEET_CLI_INLINE"    # "0"이면 옛 도구 루프(파일 읽기)로
+# 크롭 파일명 계약(crop_name·_RETRY_PREFIX) — 프롬프트의 "Files:" 목록에서
+# 첨부할 파일을 되찾는 데 쓴다. 테스트 seam(_run_cli(prompt, cwd, engine))을
+# 유지하기 위해 파일 목록을 별도 인자로 넘기지 않는다.
+_FILE_RE = re.compile(r"(?:2x_)?p\d{3}_\d+_\d+\.png")
+_INLINE_SYSTEM = (
+    "You transcribe handwritten notes from scanned animation exposure "
+    "sheets. Follow the user's instructions exactly and reply only with the "
+    "requested JSON.")
+# 세션 고정비 절감: 도구 스키마 0 + 사용자/프로젝트 설정(플러그인·스킬 목록·
+# CLAUDE.md 자동 탐색) 미적재 + 세션 파일 미저장. 실측 빈 프롬프트 기준
+# 20,571 → 266 토큰.
+_LEAN_ARGS = ("--tools", "", "--setting-sources", "", "--no-session-persistence")
+# `--setting-sources ""`가 인증까지 끊는 환경(apiKeyHelper 등 설정 기반 인증)
+# 이면 "Not logged in"이 온다 — 한 번 감지하면 그 프로세스에선 린 플래그 없이
+# 간다(고정비 20K는 아깝지만 전사가 멈추는 것보단 낫다).
+_lean_ok = True
 
 
 def _model() -> str:
@@ -92,6 +123,15 @@ def _effort() -> str:
     하나로 문서당 3시간짜리 잡이 인자 오류로 즉사하면 안 된다."""
     v = os.environ.get(ENV_EFFORT, "").strip().lower()
     return v if v in _EFFORTS else _EFFORT_DEFAULT
+
+
+def _inline_enabled() -> bool:
+    return os.environ.get(ENV_INLINE, "").strip() != "0"
+
+
+def _inline_for(engine: str | None) -> bool:
+    """이 잡의 전사 CLI가 이미지 인라인 단일턴으로 가는가(claude만)."""
+    return _pick_cli(engine) == "claude" and _inline_enabled()
 
 
 def _workers() -> int:
@@ -116,6 +156,8 @@ _LINE_RATIO = 0.75      # 이 비율 이상 채우는 행/열 = 시트 인쇄 �
 # (A1 전량 실측에서 20장 배치 235세션이 개인 쿼터를 소진시켜 전사가 8%에서
 # 멈췄다) 세션 수를 줄이는 게 최우선이다. 20 → 60으로 올리면 세션이 1/3로
 # 줄고, 커진 배치가 타임아웃 나도 아래 반토막 재시도가 회수한다.
+# 인라인 단일턴(claude)에서는 배치 60이 한 메시지 ≈16K 토큰(이미지 ~270/장)
+# 이라 그대로 둔다 — 더 키워도 절감은 없고(고정비가 266뿐) 실패 반경만 는다.
 _BATCH = 60
 _SPLIT_MIN = 8       # 이 크기 이상의 실패 배치만 반으로 나눠 재시도
 _CALL_TIMEOUT = 900  # 배치 하나당 상한(초) — 배치를 키운 만큼 함께 늘린다
@@ -143,6 +185,27 @@ _CACHE_NAME = "transcripts.json"
 # 2×/0.6× 재판독과 같은 계보(원본 0/17→축소 17/17 선례).
 _RETRY_PREFIX = "2x_"
 _RETRY_SCALE = 2
+# ★과병합 분리(S3, 2026-09-03): 크롭 하나에 **별개 노트**가 여럿 들어 있으면
+# (1603 사람 대조: 블록 2.9%에 사람 주석 6.9% — 80/92가 세로 적층) 전사가
+# 노트 사이를 빈 줄로 나누고, 그 조각을 크롭의 **잉크 행**에 매핑해 하위
+# 블록으로 쪼갠다 — 사람처럼 노트마다 번역·배치가 붙는다. 실험(1603 과병합
+# 92장·대조 92장, split_prompt_ab.py): 분할 48·사람 수 정확 일치 35, 대조군
+# "거짓 분할" 33은 대부분 `SO`·`OVS`·`B.`·`(REF.)` 타이밍 기호 분리 — 사람도
+# `오버슛`·`안착`을 따로 단다. ⚠모델이 노트 순서를 뒤집는 사례 실측(위 상자
+# 노트를 뒤에 출력) → 위→아래 지시 + 행 폭·글자 수 대응으로 순서 검증.
+_SEG_SPLIT_RE = re.compile(r"\n[ \t]*\n")
+_ROW_GAP_PX = 9          # 300dpi 크롭에서 행 사이 최소 틈(≈2pt)
+_ROW_MIN_PX = 9          # 이보다 얇은 행은 잡티
+_RULE_MAX_PX = 5         # 이보다 두꺼운 꽉 찬 줄은 괘선이 아니라 글씨
+_MAX_ORDER_SEGS = 4      # 순서 검증 순열 상한(4! = 24)
+_CROP_META_KEY = "yeson_crop_pt"   # PNG 텍스트 청크: 크롭의 페이지 좌표(pt)
+# 옛 캐시(빈 줄 분리 이전 프롬프트) 재전사 대상 = 잉크 행이 이만큼 이상인
+# 노트 크롭. 캐시에 마커가 없으면 그 크롭들만 버리고 다시 묻는다(1603 실측
+# 노트 크롭의 ~45%, 단일턴이라 문서당 수 분·수 달러).
+# v3(2026-09-03 저녁): 어휘 힌트(코드·인물 이름) 추가 — 오독(CHANE→HANE·HARE,
+# STL→STU·SR)이 오역 71건의 주원인이라 **전 노트 크롭** 재전사(단일턴 문서당 수십 달러).
+_CACHE_VERSION_KEY = "__notes_v3__"
+_REASK_MIN_ROWS = 1
 # 전사에서 살아남는 기준: 영문 단어(2자+)가 하나라도 있어야 번역할 거리가
 # 있다 — 셀 번호·서클 마커·화살표는 빈값/숫자만 나와 여기서 떨어진다.
 # (refine_ko의 [A-Za-z]{2,} 기준과 같은 근거: FL104 사람 주석 실측)
@@ -238,7 +301,7 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
                     # 같은 이름인데 그림이 달라졌다 = 범위가 바뀐 블록
                     stale.append(name)
             if not same:
-                Image.fromarray(sub).save(path)
+                Image.fromarray(sub).save(path, pnginfo=_crop_meta(rect))
             rects[name] = _rect_key(b)
             touched = True
     if touched:
@@ -247,6 +310,17 @@ def render_crops(doc: PdfDocument, blocks: list[PdfBlock],
 
 
 _RECTS_NAME = "crop_rects.json"
+
+
+def _crop_meta(rect: tuple[int, int, int, int]):
+    """크롭 PNG에 페이지 좌표(pt)를 박는다 — 과병합 분할이 행 위치를 페이지
+    좌표로 되돌릴 때 쓴다(잉크 확장으로 원점이 블록 bbox와 다르다)."""
+    from PIL import PngImagePlugin
+    scale = _CROP_DPI / 72.0
+    info = PngImagePlugin.PngInfo()
+    info.add_text(_CROP_META_KEY, ",".join(
+        f"{v / scale:.2f}" for v in rect))
+    return info
 
 
 def _rect_key(block: PdfBlock) -> list[float]:
@@ -332,15 +406,19 @@ def render_strips(doc: PdfDocument, strips: list[PdfBlock],
         Image.fromarray(arr[py0:py1, px0:px1]).save(dest)
 
 
-def _build_strip_prompt(batch: list[str]) -> str:
+def _build_strip_prompt(batch: list[str], inline: bool = False) -> str:
+    where = ("Each attached image (preceded by its filename)" if inline
+             else "Each PNG file in this directory")
+    how = ("" if inline else
+           "Read each file directly with your file-reading tool; do NOT run "
+           "shell commands. ")
     return (
-        "Each PNG file in this directory is a tall vertical strip cut from "
+        f"{where} is a tall vertical strip cut from "
         "the dialog-column area of an animation exposure sheet. Find every "
         "handwritten character NAME (often written inside a drawn pencil "
         "circle, e.g. HANK, DALE, SAUDI GUY) and any circled production "
         "note. Do NOT list lip-sync phonetic letters (EE, OH, AH, HU...), "
-        "frame numbers, timing lines, or printed text. Read each file "
-        "directly with your file-reading tool; do NOT run shell commands. "
+        "frame numbers, timing lines, or printed text. " + how +
         "Reply ONLY as a JSON object mapping each filename to an array of "
         "{\"text\": \"...\", \"y\": <0..1 fraction of the item's vertical "
         "position from the top of that strip>}; use [] when none. "
@@ -372,7 +450,8 @@ def scan_speaker_strips(strips: list[PdfBlock], job_dir: Path, *,
         batch = todo[i:i + _STRIP_BATCH]
         try:
             parsed = _extract_json_object(
-                _run_cli(_build_strip_prompt(batch), crops, engine))
+                _run_cli(_build_strip_prompt(batch, inline=_inline_for(engine)),
+                         crops, engine))
         except TranscribeFatalError:
             raise
         except Exception as exc:  # noqa: BLE001 — 배치 실패는 다음 런 몫
@@ -496,7 +575,7 @@ def _render_retry(crops: Path, name: str) -> str | None:
 def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
                should_continue: Callable[[], bool] | None = None,
                on_progress: Callable[[float], None] | None = None,
-               engine: str | None = None) -> list[PdfBlock]:
+               engine: str | None = None, vocab=None) -> list[PdfBlock]:
     """크롭들을 배치 전사해 블록 text를 교체하고, 번역할 거리가 없는
     블록(마커·숫자·판독 불가)은 버린다. 취소가 감지되면
     asyncio.CancelledError를 던진다(pdf_run의 on_progress와 같은 규약).
@@ -515,6 +594,17 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
 
     names = [crop_name(b) for b in blocks]
     all_names = {n for n in names if (crops / n).exists()}
+    if done and _CACHE_VERSION_KEY not in done:
+        # 빈 줄 분리 이전 프롬프트의 답 — 노트가 여럿일 수 있는 크롭만 다시 묻는다
+        stale = [n for n in all_names
+                 if (done.get(n) or "").strip()
+                 and not done[n].lstrip().startswith("[")
+                 and len(_crop_ink_rows(crops / n)[0]) >= _REASK_MIN_ROWS]
+        for n in stale:
+            done.pop(n, None)
+        logger.info("xsheet-transcribe: 노트 분리 프롬프트로 %d장 재전사(캐시 %d)",
+                    len(stale), len(done))
+    done[_CACHE_VERSION_KEY] = "2"
     todo = sorted(n for n in all_names if n not in done)
 
     # 빈 전사 재판독 준비 — 이전 런이 캐시에 남긴 ""도 대상이다(이 경로가
@@ -556,13 +646,15 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
         del retry_ready[:_BATCH]
     failed_batches = 0
     workers = _workers()
+    inline = _inline_for(engine)
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures: dict = {}
 
         def _pump() -> None:
             while queue and len(futures) < workers:
                 b = queue.popleft()
-                futures[ex.submit(_run_cli, _build_prompt(b), crops, engine)] = b
+                futures[ex.submit(_run_cli, _build_prompt(b, inline=inline, vocab=vocab),
+                                  crops, engine)] = b
 
         while queue or futures:
             # 취소 검사는 반드시 제출(_pump)보다 먼저 — 취소가 이미 도착한
@@ -578,8 +670,9 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
                 batch = futures.pop(fut)
                 try:
                     parsed = _extract_json_object(fut.result())
-                    for k, v in parsed.items():
-                        if k not in batch or not isinstance(v, str):
+                    for k, raw in parsed.items():
+                        v = _as_text(raw)
+                        if k not in batch or v is None:
                             continue
                         if k.startswith(_RETRY_PREFIX):
                             # 확대 재판독은 **읽어냈을 때만** 채택 — 빈값이면
@@ -639,8 +732,158 @@ def transcribe(blocks: list[PdfBlock], job_dir: Path, *,
     out: list[PdfBlock] = []
     for b, name in zip(blocks, names):
         text = (done.get(name) or "").strip()
-        if _USABLE.search(text):
-            out.append(replace(b, text=text))
+        for part in _split_multinote(b, text, crops / name):
+            if _USABLE.search(part.text):
+                out.append(part)
+    return out
+
+
+def _crop_ink_rows(path: Path):
+    """크롭 PNG의 손글씨 **행**들 — (rows_px, (width_px, height_px)).
+
+    rows_px = [(x0, y0, x1, y1)] 크롭 픽셀 좌표(300dpi). 인쇄 괘선(행·열의
+    _LINE_RATIO 이상이 어두운 줄)은 지우고 가로 투영의 연속 구간을 행으로
+    본다. 열 수 없으면 ([], (0, 0))."""
+    import numpy as np
+    from PIL import Image
+
+    try:
+        with Image.open(path) as im:
+            arr = np.asarray(im.convert("L"))
+    except (OSError, ValueError):
+        return [], (0, 0)
+    h, w = arr.shape
+    ink = (arr < 128).copy()
+    # 인쇄 괘선 = 꽉 찬 **얇은** 줄만 지운다. 타이트한 크롭(`STL` 한 낱말)은
+    # 손글씨 행이 폭의 75%를 넘기도 하므로 비율만 보면 글씨를 지운다.
+    for axis in (1, 0):
+        full = np.flatnonzero(ink.mean(axis=axis) >= _LINE_RATIO)
+        start = prev = None
+        for i in [*full, None]:
+            if start is not None and (i is None or i - prev > 1):
+                if prev - start + 1 <= _RULE_MAX_PX:
+                    if axis == 1:
+                        ink[start:prev + 1, :] = False
+                    else:
+                        ink[:, start:prev + 1] = False
+                start = None
+            if i is not None:
+                if start is None:
+                    start = i
+                prev = i
+    ys = np.flatnonzero(ink.any(axis=1))
+    if ys.size == 0:
+        return [], (w, h)
+    runs: list[tuple[int, int]] = []
+    start = prev = int(ys[0])
+    for y in ys[1:]:
+        y = int(y)
+        if y - prev > _ROW_GAP_PX:
+            runs.append((start, prev))
+            start = y
+        prev = y
+    runs.append((start, prev))
+    rows = []
+    for a, b in runs:
+        if b - a + 1 < _ROW_MIN_PX:
+            continue
+        cols = np.flatnonzero(ink[a:b + 1].any(axis=0))
+        rows.append((int(cols[0]), a, int(cols[-1]) + 1, b + 1))
+    return rows, (w, h)
+
+
+def _crop_origin(path: Path, block: PdfBlock, size_px: tuple[int, int],
+                 ) -> tuple[float, float]:
+    """크롭 픽셀 (0,0)의 페이지 좌표(pt). 메타데이터가 있으면 정확하고, 없으면
+    (옛 잡) 블록 bbox 둘레에 크롭이 대칭으로 자랐다고 보는 근사."""
+    from PIL import Image
+
+    try:
+        with Image.open(path) as im:
+            meta = (im.text or {}).get(_CROP_META_KEY)
+    except (OSError, ValueError, AttributeError):
+        meta = None
+    if meta:
+        try:
+            x0, y0, _x1, _y1 = (float(v) for v in meta.split(","))
+            return x0, y0
+        except ValueError:
+            pass
+    scale = _CROP_DPI / 72.0
+    bw = block.bbox[2] - block.bbox[0]
+    bh = block.bbox[3] - block.bbox[1]
+    return (block.bbox[0] - (size_px[0] / scale - bw) / 2.0,
+            block.bbox[1] - (size_px[1] / scale - bh) / 2.0)
+
+
+def _row_bounds(counts: list[int], m: int) -> list[tuple[int, int]]:
+    """조각별 줄 수 → 행 구간. 줄 수 합이 행 수와 같으면 정확히, 아니면 비례."""
+    total = sum(counts)
+    bounds = []
+    cum = 0
+    for c in counts:
+        if total == m:
+            a, b = cum, cum + c
+        else:
+            a = round(cum / total * m)
+            b = max(round((cum + c) / total * m), a + 1)
+        cum += c
+        bounds.append((min(a, m - 1), min(b, m)))
+    return bounds
+
+
+def _order_segments(segs: list[str], rows) -> list[str]:
+    """조각 순서 검증 — 행의 잉크 폭과 조각 줄의 글자 수가 대응하는 순열을 고른다.
+
+    모델이 위 상자 노트를 뒤에 쓰는 사례가 실측됐다(1603 p4: `L. FOOT…`을
+    `*MATCH CUT…`보다 먼저). 조각이 _MAX_ORDER_SEGS를 넘으면 순서를 믿는다."""
+    if len(segs) > _MAX_ORDER_SEGS:
+        return segs
+    from itertools import permutations
+
+    widths = [r[2] - r[0] for r in rows]
+    max_w = max(widths) or 1
+    m = len(rows)
+
+    def cost(order):
+        lines = [ln for seg in order for ln in seg.split("\n")]
+        counts = [seg.count("\n") + 1 for seg in order]
+        max_len = max((len(ln) for ln in lines), default=1) or 1
+        total = 0.0
+        for seg, (a, b) in zip(order, _row_bounds(counts, m)):
+            seg_lines = seg.split("\n")
+            for i, ln in enumerate(seg_lines):
+                ri = min(a + i, b - 1)
+                total += abs(widths[ri] / max_w - len(ln) / max_len)
+        return total
+
+    return list(min(permutations(segs), key=cost))
+
+
+def _split_multinote(block: PdfBlock, text: str, path: Path) -> list[PdfBlock]:
+    """빈 줄로 나뉜 전사를 크롭의 잉크 행에 매핑해 하위 블록으로 쪼갠다.
+
+    행이 조각보다 적거나(좌우 병렬 노트) 크롭을 못 읽으면 쪼개지 않고 한
+    블록(빈 줄은 개행 하나로)으로 돌려준다 — 잘못 쪼개는 것보다 안전하다."""
+    segs = _join_continuations(
+        [sg.strip() for sg in _SEG_SPLIT_RE.split(text) if sg.strip()])
+    if len(segs) < 2:
+        return [replace(block, text="\n".join(segs) if segs else text)]
+    rows, size = _crop_ink_rows(path)
+    if len(rows) < len(segs):
+        return [replace(block, text="\n".join(segs))]
+    segs = _order_segments(segs, rows)
+    ox, oy = _crop_origin(path, block, size)
+    scale = _CROP_DPI / 72.0
+    counts = [sg.count("\n") + 1 for sg in segs]
+    out: list[PdfBlock] = []
+    for sg, (a, b) in zip(segs, _row_bounds(counts, len(rows))):
+        rs = rows[a:b]
+        if not rs:
+            return [replace(block, text="\n".join(segs))]
+        bbox = (ox + min(r[0] for r in rs) / scale, oy + rs[0][1] / scale,
+                ox + max(r[2] for r in rs) / scale, oy + rs[-1][3] / scale)
+        out.append(replace(block, text=sg, bbox=bbox))
     return out
 
 
@@ -675,24 +918,83 @@ def _argv_for(name: str, path: str, prompt: str) -> list[str]:
     return argv
 
 
-def _build_prompt(batch: list[str]) -> str:
+def _vocab_hint(vocab) -> str:
+    """이 시트에 자주 나오는 어휘(타이밍 코드·인물 이름) — 획이 애매할 때 아는 낱말로
+    수렴시킨다. 1605 사람 대조: 오역 71건 중 다수가 CHANE→HANE/HARE/CHANGE·STL→STU/SR
+    같은 오독. 없는 낱말을 지어내지 말라는 단서를 함께 둔다."""
+    if not vocab:
+        return ""
+    return ("Vocabulary that appears often on these sheets - prefer these exact "
+            "spellings when the strokes plausibly match, but never force them: "
+            + ", ".join(dict.fromkeys(str(v) for v in vocab)) + ". ")
+
+
+def _build_prompt(batch: list[str], inline: bool = False, vocab=None) -> str:
     # "셸 명령 금지" 지시는 헤드리스 권한 방어다 — agy 1.1.17이 파일을 읽기
     # 전에 `find`·`pwd`부터 실행하려다 권한 거부로 즉사하는 것을 실측
     # (2026-08-24, 08-21 런은 정상이었으니 CLI 업데이트로 인한 행동 드리프트).
     # read_file 허용 규칙과 함께 걸어야 한다(둘 중 하나만으론 불충분).
+    # 인라인(claude)은 이미지가 메시지에 첨부되므로 파일 읽기 지시가 없다 —
+    # 두 변형 모두 "Files:" 목록으로 끝난다(테스트 seam·_FILE_RE 계약).
+    opener = ("The attached images are PNG crops, each preceded by its "
+              "filename. Transcribe the "
+              if inline else
+              "Open each of these PNG files in this directory and transcribe the ")
+    how = ("" if inline else
+           "Read each file directly with your file-reading tool using the "
+           "exact filename given below; do NOT run shell commands (no ls, "
+           "find or pwd). ")
     return (
-        "Open each of these PNG files in this directory and transcribe the "
+        opener +
         "handwritten all-caps English text in each, exactly as written. They "
         "are director notes from animation exposure sheets; a crop may contain "
         "circled single letters, arrows or stray marks - transcribe the "
         "readable words only, use \"\" if nothing readable. If a word you "
         "read seems unusual for animation timing notes, re-examine the "
-        "strokes carefully before committing to it. Read each file "
-        "directly with your file-reading tool using the exact filename given "
-        "below; do NOT run shell commands (no ls, find or pwd). Reply ONLY as "
-        "a JSON object mapping each filename to its transcription (\\n for "
-        "line breaks). Files: " + ", ".join(batch)
+        "strokes carefully before committing to it. " + how +
+        _vocab_hint(vocab) + _SEPARATE_NOTES +
+        "Reply ONLY as a JSON object mapping each filename to its array. "
+        "Files: " + ", ".join(batch)
     )
+
+
+# 별개 노트 분리 지시(S3) — **파일당 배열**. 빈 줄 표기(선택적)는 회수율이
+# 낮고 확률적이었다(1603 과병합 92장: 실험 48 → 실전 8~32). 노트 수를 배열
+# 길이로 명시하게 하면 60/92. 대조군(사람 주석 1개·행 3+) 91장 중 53장이 2+
+# 조각이 되지만 대부분 `OVS`·`SO`·원문자 같은 기호 분리(사람도 따로 단다)이고,
+# 구절 절단(`… / TO` | `H EXP.`)은 `_join_continuations`가 되붙인다. "위→아래
+# 순서"는 행 매핑의 전제 — 어겨도 `_order_segments`가 폭 대응으로 바로잡는다.
+_SEPARATE_NOTES = (
+    "A crop often contains MORE THAN ONE separate note: a different subject "
+    "or action, a timing mark (OVS, STL, SI, SO, S1), a circled letter with a "
+    "word, or text set apart by a larger gap, a bracket or a different pen. "
+    "For each file return an ARRAY of strings - one string per separate note, "
+    "in order from TOP to BOTTOM, each keeping its own line breaks (\\n). A "
+    "crop with a single note is a one-element array; use [] if nothing is "
+    "readable. Never split one phrase or sentence into two elements. ")
+# 조각이 구절의 이어짐이면 이웃에 되붙인다 — 앞에 `/`·`+`·`&`로 시작하면
+# 앞 조각의 계속, `/`·`+`·`&`·`TO`·`W/`로 끝나면 뒤 조각의 시작이 필요하다.
+_CONT_HEAD_RE = re.compile(r"^\s*[/+&]")
+_CONT_TAIL_RE = re.compile(r"(?:[/+&]|\bTO|\bW/|\bWITH|\bAND)\s*$", re.IGNORECASE)
+
+
+def _join_continuations(segs: list[str]) -> list[str]:
+    out: list[str] = []
+    for sg in segs:
+        if out and (_CONT_HEAD_RE.search(sg) or _CONT_TAIL_RE.search(out[-1])):
+            out[-1] = out[-1] + "\n" + sg
+        else:
+            out.append(sg)
+    return out
+
+
+def _as_text(v) -> str | None:
+    """CLI 응답 값 → 캐시 문자열. 배열이면 조각을 빈 줄로 잇는다(캐시 형식은
+    문자열 하나 — 옛 캐시와 같은 모양, 분할은 `_split_multinote`가 다시 한다)."""
+    if isinstance(v, list):
+        parts = [str(x).strip() for x in v if str(x).strip()]
+        return "\n\n".join(parts)
+    return v if isinstance(v, str) else None
 
 
 def _run_cli(prompt: str, cwd: Path, engine: str | None = None) -> str:
@@ -703,6 +1005,10 @@ def _run_cli(prompt: str, cwd: Path, engine: str | None = None) -> str:
     if path is None:
         raise RuntimeError(
             f"전사 CLI({name})를 찾지 못했습니다 — 설치/로그인 후 다시 시도")
+    if name == "claude" and _inline_enabled():
+        names = _FILE_RE.findall(prompt)
+        if names:
+            return _run_claude_inline(path, prompt, names, cwd)
     argv = [*_argv_for(name, path, prompt),
             *shlex.split(os.environ.get(ENV_EXTRA_ARGS, ""))]
     # encoding 명시: Windows 한글 로케일에서 UTF-8 출력이 cp949 디코딩에
@@ -726,6 +1032,87 @@ def _run_cli(prompt: str, cwd: Path, engine: str | None = None) -> str:
     if result.returncode != 0 or not out:
         raise RuntimeError(f"전사 CLI 응답 없음(rc={result.returncode}): {detail}")
     return result.stdout
+
+
+def _inline_message(prompt: str, names: list[str], cwd: Path) -> dict:
+    """stream-json 사용자 메시지 — 지시문 + (파일명, 이미지) 쌍의 나열.
+
+    없는 파일은 조용히 건너뛴다(응답에 그 이름이 없으면 호출자가 미응답으로
+    센다 — 옛 루프에서 모델이 파일을 못 찾은 경우와 같은 결과)."""
+    import base64
+    content: list[dict] = [{"type": "text", "text": prompt}]
+    for nm in names:
+        try:
+            raw = (cwd / nm).read_bytes()
+        except OSError:
+            continue
+        content.append({"type": "text", "text": f"filename: {nm}"})
+        content.append({"type": "image", "source": {
+            "type": "base64", "media_type": "image/png",
+            "data": base64.b64encode(raw).decode("ascii")}})
+    return {"type": "user", "message": {"role": "user", "content": content}}
+
+
+def _inline_argv(path: str, lean: bool) -> list[str]:
+    argv = [path, "-p", "--input-format", "stream-json",
+            "--output-format", "stream-json", "--verbose",
+            "--system-prompt", _INLINE_SYSTEM,
+            "--model", _model(), "--effort", _effort()]
+    if lean:
+        argv += list(_LEAN_ARGS)
+    return argv + shlex.split(os.environ.get(ENV_EXTRA_ARGS, ""))
+
+
+def _run_claude_inline(path: str, prompt: str, names: list[str],
+                       cwd: Path) -> str:
+    """크롭을 이미지 블록으로 첨부한 **단일턴** 세션. 결과 텍스트를 돌려준다.
+
+    stream-json 출력의 `result` 이벤트 하나가 답이다(턴이 1이라 하나뿐).
+    `usage`를 로그에 남겨 배치당 토큰이 눈에 보이게 한다 — 이 모듈의 존재
+    이유가 토큰이고, 조용히 되돌아가면(도구 루프로) 아무도 모른다."""
+    global _lean_ok
+    payload = json.dumps(_inline_message(prompt, names, cwd)) + "\n"
+    lean = _lean_ok
+    while True:
+        result = subprocess.run(
+            _inline_argv(path, lean), cwd=cwd, input=payload,
+            capture_output=True, text=True, encoding="utf-8",
+            timeout=_CALL_TIMEOUT, check=False, **_NO_WINDOW)
+        env: dict = {}
+        for line in (result.stdout or "").splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(obj, dict) and obj.get("type") == "result":
+                env = obj
+        text = str(env.get("result") or "")
+        failed = result.returncode != 0 or bool(env.get("is_error")) or not text
+        detail = (text or result.stderr or "").strip()[:200]
+        if failed and lean and re.search(r"not logged in|login", detail,
+                                         re.IGNORECASE):
+            # 린 플래그가 설정 기반 인증을 끊은 환경 — 고정비를 물고 간다
+            logger.warning("xsheet-transcribe: 린 플래그에서 미로그인 응답 — "
+                           "설정을 적재하는 모드로 재시도: %s", detail)
+            _lean_ok = lean = False
+            continue
+        if _FATAL_RE.search(detail):
+            raise TranscribeFatalError(
+                f"전사 CLI(claude)가 요청을 거절했습니다 — {detail}")
+        if failed:
+            raise RuntimeError(
+                f"전사 CLI 응답 없음(rc={result.returncode}): {detail}")
+        u = env.get("usage") or {}
+        logger.info(
+            "xsheet-transcribe: 인라인 배치 %d장 · 컨텍스트 %d · 출력 %d · $%.3f",
+            len(names),
+            (u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
+             + u.get("cache_read_input_tokens", 0)),
+            u.get("output_tokens", 0), float(env.get("total_cost_usd") or 0.0))
+        return text
 
 
 def _extract_json_object(stdout: str) -> dict:

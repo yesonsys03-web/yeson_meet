@@ -19,6 +19,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import math
 import re
 import threading
 from collections.abc import Callable
@@ -44,7 +45,11 @@ _CROP_DPI_CUT = 300  # = handwriting_transcribe._CROP_DPI (경계 절단 회수�
 _DETECT_PAGES = 3
 _SCAN_COVER = 0.5    # 페이지 면적의 이 비율 이상을 덮는 이미지 = 스캔본
 _FONTSIZE = 9.0     # 사람 납품본 9pt 실측
-_MIN_FONTSIZE = 7.0
+_MIN_FONTSIZE = 7.2      # 사람 하한 20pt/24pt(1605 실측: 24pt 87%·22pt 13%·20pt 이하 0)
+# 글꼴 사다리의 가운데 단. ⚠리터럴 8.0을 쓰면 페이지 스케일을 안 탄다 — 2200pt
+# 판형(1605_A1 실측) 계획 3,706건 중 473건(12.8%)이 8pt(정상 25pt)로 굽혀 사실상
+# 안 읽혔다. 스케일 대상 이름으로 두면 792 판형에선 예전과 같은 8pt다.
+_MID_FONTSIZE = 8.0
 
 # ⛔템플릿 좌표를 박지 않는다(2026-08-20). 작품마다 시트 양식이 다르다 —
 # KOTH(792×1224pt, 대사 컬럼 1쌍)와 BM802(A3 841.92×1189.92pt, titmouse
@@ -184,7 +189,78 @@ _CODE_KO = {
     "EXP": "표정", "EYES": "시선",
     "CUSH": "쿠션", "CONT": "계속",
     "HEAD": "고개",
+    "OS": "씬밖", "O.S": "씬밖", "SAC": "포대",
+    "DROP": "방울", "DROPS": "방울",      # 코드만 있는 노트(`C DROPS`) = 액체 방울
 }
+# 해독기가 그대로 통과시키는 토큰 — 원문자·프레임/씬 번호(`C BOB`·`(H) BOB`·
+# `2034B`). 1605 실측: 이런 토큰 하나 때문에 해독이 거부되고 LLM이 원문을
+# 되돌려(에코) 주석 208건이 버려졌다.
+_PASS_TOKEN_RE = re.compile(r"^\(?[A-Z]\)?\.?$|^#?\d+[A-Z]?\.?$")
+
+# ★등장인물 이름표(2026-09-03, 1605_A1 사용자 검수: `CHANE`→차네·`SAND`→샌드·
+# `EMI`→에미로 직역 음역됐다 — 사람은 작품 인물표로 체인·산드라·에밀리오). 손글씨
+# 이름은 줄여 쓰는 일이 많아(BOB·PEG·JOSE·CHAN) LLM 음역이 흔들린다. 내장값은
+# 1605·1603 사람 납품본에서 캔 것(원문 한 단어 ↔ 사람 주석, 예: HANK 행크 26/38·
+# KAHN 칸 14/14·CHANE 체인 7/8)+사용자 지정 3건. 작품이 바뀌면 운영자가
+# `{STORAGE_ROOT}/xsheet_cast.txt`(`NAME => 이름` 한 줄씩, # 주석)로 덮거나 보탠다.
+# 회의·자막 사전(glossary.py)에 넣지 않는다 — `SAND`→산드라가 회의 자막을 망친다.
+_CAST_KO_DEFAULT = {
+    "HANK": "행크", "BOBBY": "바비", "BOB": "바비", "PEGGY": "페기", "PEG": "페기",
+    "DALE": "데일", "BILL": "빌", "JOSEPH": "죠셉", "JOSE": "죠셉", "KAHN": "칸",
+    "CONNIE": "코니", "NANCY": "낸시", "CHANE": "체인", "CHAN": "체인", "MAX": "맥스",
+    "SAND": "산드라", "SANDRA": "산드라", "EMI": "에밀리오", "EMILIO": "에밀리오",
+    "BOOMHAUER": "붐하우어", "LUANNE": "루앤", "MIGUEL": "미구엘",
+}
+_CAST_FILENAME = "xsheet_cast.txt"
+# 원문에 그 이름이 있을 때만 고치는 잘못된 음역(1605 실측). 한글 낱말 경계로
+# 감싼다 — `찬`은 `찬다`의 일부일 수 있다.
+_CAST_VARIANTS = {
+    "체인": ("차네", "챈", "찬", "체인지"),
+    "산드라": ("샌드", "샌디"),
+    "에밀리오": ("에미",),          # `이미`는 흔한 낱말이라 뺀다
+    "미구엘": ("미겔",),
+}
+# 받침 있는 이름으로 바뀌면 조사도 따라간다(차네가 → 체인이)
+_PARTICLE_AFTER_BATCHIM = {"가": "이", "는": "은", "를": "을", "와": "과"}
+
+
+def _has_batchim(word: str) -> bool:
+    ch = word[-1]
+    return "가" <= ch <= "힣" and (ord(ch) - 0xAC00) % 28 != 0
+
+
+def _cast_table() -> dict[str, str]:
+    """내장 이름표 + 운영자 파일(있으면). 키는 대문자."""
+    import os
+
+    from apps.server.ai.glossary import DEFAULT_STORAGE_ROOT, STORAGE_ROOT_ENV
+
+    table = dict(_CAST_KO_DEFAULT)
+    path = Path(os.environ.get(STORAGE_ROOT_ENV) or DEFAULT_STORAGE_ROOT) / _CAST_FILENAME
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            for sep in ("=>", "\t", "="):
+                if sep in line:
+                    en, ko = line.split(sep, 1)
+                    break
+            else:
+                continue
+            if en.strip() and ko.strip():
+                table[en.strip().upper()] = ko.strip()
+    except OSError:
+        pass
+    return table
+
+
+def _cast_prompt_block() -> str:
+    table = _cast_table()
+    return ("Character names on these sheets (handwritten, often abbreviated) "
+            "and their FIXED Korean renderings - always use exactly these, never "
+            "another transliteration: "
+            + ", ".join(f"{en} → {ko}" for en, ko in sorted(table.items())) + ".\n")
 
 # 화자 스트립(A2 실측 2026-08-25): 화자 이름은 대사 칸 왼쪽에 연필
 # 원·굵은 글씨로 쓰이는데 RapidOCR이 전 스케일(120~400dpi)에서 못 읽어
@@ -303,6 +379,13 @@ _HOUSE_KO_XSHEET: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"다이얼"), "대화"),
     (re.compile(r"대사"), "대화"),
     (re.compile(r"돈다"), "턴한다"),
+    # 1605 실측 인공물: 원문 끝의 홀로 선 `TO`가 `~로`(96건)·`안착로`(37건)로 남는다
+    # — 사람은 무시한다(`STL TO`→`안착`). `시프트`는 사람 0/우리 72 → `이동`.
+    (re.compile(r"\s*~[가-힣]+"), ""),
+    # 왼/오른 + 신체 부위는 붙여 쓴다 — 사람 `왼팔`·`왼손`(1605·A2 동일), 우리 `왼 팔` 196건
+    (re.compile(r"(왼|오른)\s+(손|팔|발|다리|눈|어깨|무릎|귀)"), r"\1\2"),
+    (re.compile(r"안착로"), "안착"),
+    (re.compile(r"시프트"), "이동"),
     # `걸음걸이`는 사람도 쓰는 정상 낱말이라 건드리지 않는다.
     (re.compile(r"걸음(?!걸이)"), "스텝"),
     # HEAD: 사람 `고개` 156 / `머리` 9(머리카락 4 제외) ↔ 우리 `머리` 126.
@@ -389,10 +472,91 @@ _HOUSE_KO_XSHEET_BY_SRC: tuple[tuple[re.Pattern[str],
     (re.compile(r"\bSTOPS?\b", re.IGNORECASE), (
         (re.compile(r"정지"), "멈춤"),
     )),
+    # ── 1605_A1 사람 대조(2026-09-03, 3,156쌍 전수) — 원문 조건부 ──
+    # 사람 낱말(우리 0) ↔ 우리 낱말(사람 0)을 짝의 원문 토큰으로 검증한 것.
+    # ⚠A2 번역자는 EYES→시선이었다(사람마다 관례가 다르다). 1603·1605 두 문서가
+    # 두눈이라 다수를 따른다 — 작품별 표기는 xsheet_cast.txt와 같은 방식이 필요.
+    (re.compile(r"\bEYES?\b", re.IGNORECASE), (
+        (re.compile(r"(?<![가-힣])시선"), "두눈"),
+        (re.compile(r"(?<![가-힣])눈(?![가-힣])"), "두눈"),
+    )),
+    (re.compile(r"\bHANDS\b", re.IGNORECASE), (
+        (re.compile(r"(?:양|두)\s*손"), "두손"),
+        (re.compile(r"(?<![가-힣])손(?=[을이,.\s]|$)"), "두손"),
+    )),
+    (re.compile(r"\bARMS\b", re.IGNORECASE), (
+        (re.compile(r"(?:양|두)\s*팔"), "두팔"),
+        (re.compile(r"(?<![가-힣])팔(?=[을이,.\s]|$)"), "두팔"),
+    )),
+    (re.compile(r"\bLEGS\b", re.IGNORECASE), (
+        (re.compile(r"(?:양|두)\s*다리|(?<![가-힣])다리(?=[를이,.\s]|$)"), "두다리"),
+    )),
+    (re.compile(r"\bKICKS?\b", re.IGNORECASE), (
+        (re.compile(r"(?:발로\s*)?찬다"), "발찬다"),
+    )),
+    (re.compile(r"\bUP\b", re.IGNORECASE), (
+        # ⚠낱말 경계 — `들어올린다`의 `올린다`를 바꾸면 `들어위로`가 된다(4차 실측 7건)
+        (re.compile(r"(?<![가-힣])(?:올린다|올리며|올림)|(?<![가-힣])업(?![가-힣])"), "위로"),
+    )),
+    (re.compile(r"\bDN\b|\bDOWN\b", re.IGNORECASE), (
+        (re.compile(r"(?<![가-힣])다운(?![가-힣])"), "아래로"),
+    )),
+    (re.compile(r"\bBACK\b", re.IGNORECASE), (
+        (re.compile(r"(?<![가-힣])백(?![가-힣])"), "뒤로"),
+    )),
+    (re.compile(r"\bCANDLES?\b", re.IGNORECASE), (
+        (re.compile(r"촛불\s*불꽃"), "양초불꽃"), (re.compile(r"캔들|촛불"), "양초"),
+        (re.compile(r"(?<![가-힣])초(?![가-힣])"), "양초"),
+    )),
+    (re.compile(r"\bPENCIL\b", re.IGNORECASE), ((re.compile(r"펜슬"), "연필"),)),
+    (re.compile(r"\bNOTEBOOK\b", re.IGNORECASE), ((re.compile(r"노트북|노트"), "공책"),)),
+    # SAC(포대)를 이름표의 SAND(산드라)로 오인한 LLM — 원문에 SAND가 없을 때만
+    (re.compile(r"^(?![\s\S]*\bSAND)[\s\S]*\bSAC\b", re.IGNORECASE), ((re.compile(r"산드라"), "포대"),)),
+    # OUS/DVS(OVS 오독 변형)를 "화면 밖"으로 번역한 오역
+    (re.compile(r"\b(?:OUS|DVS)\b"), ((re.compile(r"\(?화면\s*밖\)?|\(?OUS\)?"), "오버슛"),)),
+    (re.compile(r"\bENTERS?\b", re.IGNORECASE), ((re.compile(r"등장한다|등장"), "들어온다"),)),
+    (re.compile(r"\bEXP\.?(?![A-Za-z])", re.IGNORECASE), (
+        (re.compile(r"익스포저|익스포즈"), "표정"),
+    )),
+    # OVS를 overlap으로 읽은 오역 — 원문에 OVERLAP/O.LAP이 없을 때만
+    (re.compile(r"\bOVS\b(?![\s\S]*\b(?:O\.?LAP|OVERLAP))", re.IGNORECASE), (
+        (re.compile(r"오버랩"), "오버슛"),
+    )),
+    (re.compile(r"\bW/\s*EXP", re.IGNORECASE), (
+        (re.compile(r"표정과\s*함께|표정과"), "표정하며"),
+    )),
+    (re.compile(r"\bW/\s*ACTION\b", re.IGNORECASE), (
+        (re.compile(r"(?:액션|동작)과\s*함께|(?:액션|동작)과"), "액션맞춰"),
+    )),
+    (re.compile(r"\bBRUSH\b", re.IGNORECASE), (
+        (re.compile(r"브러시로"), "붓으로"), (re.compile(r"브러시를"), "붓을"),
+        (re.compile(r"브러시"), "붓"),
+    )),
+    (re.compile(r"\bLACQUER\b", re.IGNORECASE), ((re.compile(r"래커|락커"), "광택제"),)),
+    (re.compile(r"\bGLOW\b", re.IGNORECASE), ((re.compile(r"글로우"), "섬광"),)),
+    (re.compile(r"\bPARTY\s*LIGHT", re.IGNORECASE), ((re.compile(r"파티\s*(?:조명|라이트)"), "파티조명"),)),
+    (re.compile(r"\bCAST\s*S(?:HADOW)?\b", re.IGNORECASE), ((re.compile(r"캐스트\s*(?:섀도우|그림자)"), "투영그림자"),)),
+    (re.compile(r"\bSHADOWS?\b", re.IGNORECASE), ((re.compile(r"섀도우"), "그림자"),)),
+    (re.compile(r"\bRIM\s*LI(?:T|GHT)", re.IGNORECASE), ((re.compile(r"림\s*라이트"), "림라이트"),)),
+    (re.compile(r"\bCLOTH\b", re.IGNORECASE), ((re.compile(r"(?<![가-힣])(?:천|옷)(?![가-힣])"), "행주"),)),
+    (re.compile(r"\bAD[- ]?LIB", re.IGNORECASE), ((re.compile(r"애드립"), "임의로"),)),
+    (re.compile(r"\bSUBTLE\b", re.IGNORECASE), ((re.compile(r"약하게|미묘하게|미세하게|살짝|약간"), "은근하게"),)),
+    (re.compile(r"\bSLIGHT(?:LY)?\b", re.IGNORECASE), ((re.compile(r"약간|살짝|조금"), "작게"),)),
+    (re.compile(r"\bTHRU\b|\bTHROUGHOUT\b", re.IGNORECASE), ((re.compile(r"씬\s*전체(?:에\s*걸쳐)?|전체에\s*걸쳐"), "씬내내"),)),
+    (re.compile(r"\bPLEDGES?\b", re.IGNORECASE), ((re.compile(r"맹세한다|맹세"), "서약자"),)),
+    (re.compile(r"\bFRAT\b", re.IGNORECASE), ((re.compile(r"프랫\s*형제들"), "협회원들"), (re.compile(r"프랫"), "협회원"))),
+    (re.compile(r"\bDROPPER\b", re.IGNORECASE), ((re.compile(r"드로퍼"), "스포이드"),)),
+    (re.compile(r"\bCOVER\b", re.IGNORECASE), ((re.compile(r"커버"), "가리개"),)),
+    # FLICKER는 불빛의 깜빡임 — 전역 `깜빡→눈깜박` 규칙(눈 깜박)을 되돌린다
+    (re.compile(r"\bFLICKER", re.IGNORECASE), ((re.compile(r"눈깜박"), "깜빡임"),)),
+    (re.compile(r"\bPOP\b", re.IGNORECASE), ((re.compile(r"팝\s*투|팝"), "팍"),)),
+    # HP(마커)는 사람이 옮기지 않는다 — 번역문에 남은 `HP`를 지운다
+    (re.compile(r"\bHP\b"), ((re.compile(r"[\s,]*(?<![A-Za-z])HP(?![A-Za-z])\.?"), ""),)),
     # W/W(with action): 사람 `액션맞춰 움직임` 21 / 우리 `따라·함께 움직임` 6.
     (re.compile(r"\bW/W\b", re.IGNORECASE), (
         (re.compile(r"(?:를|을)?\s*따라\s*움직"), " 액션맞춰 움직"),
         (re.compile(r"와\s*함께\s*움직"), " 액션맞춰 움직"),
+        (re.compile(r"웨이브\s*액션"), "액션맞춰 움직인다"),   # W/W를 wave로 오독(1605)
     )),
     # ON n'S(n콤마 작화): 사람 `1콤마에`·`2콤마에` 12 / 음역 0 ↔ 우리
     # `온 원스`·`온 투스` 17 / 콤마 0 (2026-08-25 사용자 실물 지적 + A2 전수
@@ -694,7 +858,8 @@ _SCALED_NAMES = ("_FONTSIZE", "_MIN_FONTSIZE", "_MIN_BOX_W", "_BELOW_H_CAP",
                  "_WIDE_FROM", "_SIDE_GAP", "_SIDE_MIN_H", "_SNAP_PAD",
                  "_SIDE_MIN_W", "_WRAP_PAD", "_BELOW_GAP", "_ABOVE_GAP",
                  "_TALL_H", "_DY_LADDER", "_BELOW_GAPS", "_SIDE_DYS",
-                 "_FAR_LADDER")
+                 "_FAR_LADDER", "_LINE_DYS", "_LINE_TOP_PAD", "_FREE_RADIUS",
+                 "_MID_FONTSIZE")
 _BASE_PT = None            # 최초 호출 때 현재값(=1401 기준)을 원본으로 저장
 _CUR_SCALE = 1.0
 
@@ -733,10 +898,33 @@ _ZIGZAG = False
 # 길게 흘리느니 사람처럼 아래로 간다. 실측 스윕에서 18→45pt까지 단조 개선,
 # 60pt 이상은 사실상 "자연폭"과 같아져 포화했다(같은 자리 29.1→30.2%).
 _SIDE_MIN_W = 60.0
-_SI_ONLY_RE = re.compile(r"^SI$")
+# ★줄 단위 배치(2026-09-03): 인접 통상자가 전부 막힌 **다중줄** 번역은 원문
+# 손글씨 **행마다 한 줄씩** 곁에 앉힌다 — 사람 관례(A2 사람 납품본: `STEPS/
+# BACK` → `뒤로.`·`스텝.`을 각 행 옆에). 빽빽한 페이지엔 통상자 높이의 빈자리가
+# 없어도 행 옆 작은 틈은 거의 늘 있다. 통상자 곁이 성립하면 손대지 않는다
+# (정상 배치 지표 무영향). 줄이 행보다 많으면 시도하지 않는다(대응 불명).
+_LINE_SPLIT = True
+_ROW_GAP_PX = 3           # 잉크 행 분리 최소 틈(100dpi px) — 획 끊김은 잇는다
+_ROW_MIN_PX = 3           # 이보다 얇은 행은 잡티
+_LINE_DYS = (0.0, 4.0, -4.0)    # 행 기준 미세 이동(pt, 스케일 대상)
+_LINE_TOP_PAD = 2.0             # 상자 윗변을 행보다 살짝 위로(글리프 정렬)
+# ★기둥 방지: 옆자리 상자 폭은 원문 폭이 상한이지만, 그 폭에서 번역이
+# max(_TOWER_LINES_MIN, 원문 행 수) 줄을 넘으면 그만큼만 넓힌다. 실측 기둥
+# (4줄+·폭 40pt 이하) 1603 66건·A2 51건 — 28자 번역이 원문 폭 40pt 상자에서
+# 7줄로 흘렀다. 사람은 4행 원문 옆에 4줄을 넘기지 않는다.
+_TOWER_LINES_MIN = 2
+# ★빈자리 직접 탐색(막혔을 때만): 잉크+주석 마스크의 적분영상으로 원문 주변
+# 반경 안에서 깨끗한 사각형을 찾는다 — 고정 사다리가 전부 막히는 빽빽한
+# 페이지의 최후 수단. 정상 배치에는 관여하지 않는다. 넓은 사다리(±260pt)의
+# 먼 자리보다 가까운 빈자리가 있으면 그쪽이 이긴다.
+_FREE_RADIUS = 120.0      # 탐색 반경(pt, 스케일 대상)
+_FREE_STEP_PX = 3         # 위치 격자(100dpi px)
+# 타이밍·훅업 기호는 사람이 옮기지 않는다(1605 실측: SI 123·HP 116·SO 41·HU 37건이
+# 계획 밖 = 정당한 드롭. 반대로 `HU`→`허` 30건·`SO`→`슬로우 아웃` 39건은 우리 오역).
+_SI_ONLY_RE = re.compile(r"^(?:S[I1]|SO|HU|H/U|HP)$")
 # SI가 프레임 번호와 한 블록으로 병합된 변형(`2\nSI`→`2 슬로우 인`) — 토큰이
 # 전부 {숫자, SI}뿐이면 통째로 타이밍 표기다(1603 실측, 사람은 SI 미번역).
-_SI_TOKEN_RE = re.compile(r"^(?:\d+|SI)$")
+_SI_TOKEN_RE = re.compile(r"^(?:\d+|S[I1]|SO|HU|H/U|HP)$")
 # 인쇄 서식 문구 — 번역 대상이 아니다(사용자 지정 2026-08-31: 로고·판권·
 # PROD NO·FOOTAGE 류 고정 용어). 추출 단계 _is_template이 머리글 밴드로
 # 거르지만, 밴드 밖(로고 옆 판권줄 등)이나 손글씨와 병합된 것이 샌다
@@ -859,6 +1047,54 @@ def _tight_anchor(ink, block: PdfBlock) -> tuple[float, float, float, float]:
             (x0 + int(cols[-1]) + 1) / scale, (y0 + int(rows[-1]) + 1) / scale)
 
 
+def _ink_rows(ink, bbox: tuple[float, float, float, float],
+              ) -> list[tuple[float, float, float, float]]:
+    """블록 안 손글씨 **행** 사각형들(pt) — 위→아래. 가로 투영의 연속 구간.
+
+    행마다 잉크의 x 범위도 재므로 "이 행의 오른쪽 끝"이 나온다 — 줄 단위
+    배치가 행 옆 틈을 볼 때 쓴다. 잉크가 없으면 빈 목록."""
+    import numpy as np
+
+    scale = _INK_DPI / 72.0
+    h, w = ink.shape
+    x0 = max(0, int(bbox[0] * scale)); y0 = max(0, int(bbox[1] * scale))
+    x1 = min(w, int(bbox[2] * scale) + 1); y1 = min(h, int(bbox[3] * scale) + 1)
+    if x1 <= x0 or y1 <= y0:
+        return []
+    sub = ink[y0:y1, x0:x1]
+    ys = np.flatnonzero(sub.any(axis=1))
+    if ys.size == 0:
+        return []
+    runs: list[tuple[int, int]] = []
+    start = prev = int(ys[0])
+    for y in ys[1:]:
+        y = int(y)
+        if y - prev > _ROW_GAP_PX:
+            runs.append((start, prev))
+            start = y
+        prev = y
+    runs.append((start, prev))
+    out = []
+    for a, b in runs:
+        if b - a + 1 < _ROW_MIN_PX:
+            continue
+        cols = np.flatnonzero(sub[a:b + 1].any(axis=0))
+        out.append(((x0 + int(cols[0])) / scale, (y0 + a) / scale,
+                    (x0 + int(cols[-1]) + 1) / scale, (y0 + b + 1) / scale))
+    return out
+
+
+def _width_for_lines(text: str, fontsize: float, max_lines: int) -> float:
+    """이 글이 max_lines 줄 이하로 접히는 **가장 좁은** 폭(자연폭 상한).
+
+    폭이 넓을수록 줄 수는 단조 감소하므로 글자 폭 단위로 넓혀 가며 찾는다."""
+    want = _natural_width(text, fontsize)
+    w = _MIN_BOX_W
+    while w < want and len(_wrap_ko(text, w, fontsize)) > max_lines:
+        w += fontsize
+    return min(w, want)
+
+
 def _wrap_ko(text: str, width: float, fontsize: float) -> list[str]:
     """상자 폭에 맞춰 **우리가 직접, 균형 있게** 줄을 접는다.
 
@@ -939,7 +1175,9 @@ def _min_usable_w(ko_text: str, fontsize: float) -> float:
 
 
 def _side_candidates(anchor, block: PdfBlock, ko_text: str,
-                     page_size: tuple[float, float], right_first: bool = True):
+                     page_size: tuple[float, float], right_first: bool = True,
+                     max_lines: int | None = None,
+                     only: tuple[str, ...] | None = None):
     """앵커와 **같은 크기**의 인접 상자를 `_SIDE_ORDER` 순서로 내놓는다.
 
     ⛔좌우를 번갈아 보던 지그재그(2026-08-26)는 **뺐다**. 사람 대조로 재보니
@@ -957,24 +1195,30 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
     ah = max(ay1 - ay0, _SIDE_MIN_H)
     limit_x1 = block.limit_x1 if block.limit_x1 is not None else page_w - 8.0
     g = _SIDE_GAP
-    def box(w, min_w=_MIN_BOX_W):
+    def box(w, fontsize, min_w=_MIN_BOX_W):
         """원문과 같은 폭을 **상한**으로 두되, 자리가 좁으면 줄인다.
         같은 폭을 강요하면 넓은 노트가 칸 경계에 막혀 오른쪽을 못 쓰고
         왼쪽으로 밀린다(실측: 왼쪽 30% — 사람은 7~10%). 사람 주석 폭도
-        원문의 0.61배(중앙)로 원문보다 좁다."""
-        return max(min(aw, w), min_w) if w >= min_w else 0.0
+        원문의 0.61배(중앙)로 원문보다 좁다.
+
+        단, 그 폭에서 번역이 max_lines 줄을 넘으면 넘지 않을 만큼만 넓힌다
+        (_TOWER_LINES_MIN 근거) — 짧은 글은 영향 없다."""
+        cap = aw
+        if max_lines:
+            cap = max(aw, _width_for_lines(ko_text, fontsize, max_lines))
+        return max(min(cap, w), min_w) if w >= min_w else 0.0
 
     # 네 변 모두 같은 최소 폭을 요구한다 — 아래·위만 빠져 있던 탓에 18pt
     # 상자가 통과해 낱말이 쪼개졌다(_min_usable_w 근거 참조).
     side_min_w = _min_usable_w(ko_text, _FONTSIZE)
 
-    for fontsize in (_FONTSIZE, 8.0, _MIN_FONTSIZE):
+    for fontsize in (_FONTSIZE, _MID_FONTSIZE, _MIN_FONTSIZE):
         # ⚠오른쪽 자리를 **전부 소진한 뒤** 왼쪽으로 간다. 번갈아 내면
         # `왼쪽(dy=0)`이 `오른쪽(dy=16)`보다 먼저 걸려, 살짝 밀면 되는 자리를
         # 두고 왼쪽 빈 여백(프레임 번호 칸)으로 도망간다 — 옛 채점이 왼쪽으로
         # 몰리던 것과 같은 함정이다(실측: 왼쪽 30%→26%에서 더 안 내려갔다).
         def right_slots(fontsize=fontsize):
-            w = box(limit_x1 - (ax1 + g), side_min_w)
+            w = box(limit_x1 - (ax1 + g), fontsize, side_min_w)
             if not w:
                 return
             h = max(ah, _wrapped_height(ko_text, w, fontsize))
@@ -982,7 +1226,7 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
                 yield (ax1 + g, ay0 + dy, ax1 + g + w, ay0 + dy + h), fontsize
 
         def left_slots(fontsize=fontsize):
-            w = box((ax0 - g) - 8.0, side_min_w)
+            w = box((ax0 - g) - 8.0, fontsize, side_min_w)
             if not w:
                 return
             h = max(ah, _wrapped_height(ko_text, w, fontsize))
@@ -992,7 +1236,7 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
         # 아래·위는 원문과 **같은 왼쪽 끝**에서 시작한다(사람 관례: 세로로
         # 쌓아 쓴다). 아래는 그대로, 위는 상자 높이만큼 올린다.
         def below_slots(fontsize=fontsize):
-            w = box(limit_x1 - ax0, side_min_w)
+            w = box(limit_x1 - ax0, fontsize, side_min_w)
             if not w:
                 return
             h = max(ah, _wrapped_height(ko_text, w, fontsize))
@@ -1001,7 +1245,7 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
                 yield (ax0, ay1 + gb, ax0 + w, ay1 + gb + h), fontsize
 
         def above_slots(fontsize=fontsize):
-            w = box(limit_x1 - ax0, side_min_w)
+            w = box(limit_x1 - ax0, fontsize, side_min_w)
             if not w:
                 return
             h = max(ah, _wrapped_height(ko_text, w, fontsize))
@@ -1017,6 +1261,8 @@ def _side_candidates(anchor, block: PdfBlock, ko_text: str,
             swap = {"right": "left", "left": "right"}
             order = tuple(swap.get(n, n) for n in order)
         for name in order:
+            if only is not None and name not in only:
+                continue
             yield from gens[name]()
 
 
@@ -1112,6 +1358,12 @@ class XsheetProfile:
     name = "xsheet"
     label = "엑스시트 (Exposure Sheet)"
     prompt_line_rule = _XSHEET_LINE_RULE
+
+    @staticmethod
+    def prompt_line_rule_now() -> str:
+        """잡 시작 시점의 줄 규칙 = 고정 규칙 + 등장인물 이름표(운영자 파일 포함).
+        pdf_run이 이 훅을 우선한다 — 정적 `prompt_line_rule`은 계약·테스트용."""
+        return _XSHEET_LINE_RULE + _cast_prompt_block()
 
     def detect(self, doc: PdfDocument) -> bool:
         """텍스트 레이어가 없고(스캔) 저해상 OCR에서 시트 헤더 활자가 2개
@@ -1294,12 +1546,17 @@ class XsheetProfile:
         from ..handwriting_transcribe import scan_speaker_strips, transcribe
         strips = [b for b in blocks if b.kind == STRIP_KIND]
         notes = [b for b in blocks if b.kind != STRIP_KIND]
+        vocab = [*_CODE_KO, "SI", "SO", "HP", "HU", "W/", "DN", "REF", "ANTIC",
+                 "SHIFT", "BLINK", *_cast_table()]
         out = transcribe(notes, job_dir, should_continue=should_continue,
-                         on_progress=on_progress, engine=engine)
+                         on_progress=on_progress, engine=engine, vocab=vocab)
         if strips:
             scans = scan_speaker_strips(strips, job_dir, engine=engine)
             out = out + _synthesize_speakers(strips, scans, out)
             out.sort(key=lambda b: b.page)
+        # 손글씨 약어 정규화 — `WT`(with)를 LLM이 wait로 읽어 `대기`가 됐다(1605
+        # 실측 10건, 사람은 `음식들고 포즈로`).
+        out = [replace(b, text=re.sub(r"\bWT\b", "W/", b.text)) for b in out]
         # 순수 코드 노트는 번역기 대신 결정적 해독(block.ko predecode 경로,
         # 판넬 약어와 동일) — 에코-드롭을 원천 우회한다.
         return [replace(b, ko=decoded) if (decoded := _decode_code_note(b.text))
@@ -1339,8 +1596,21 @@ class XsheetProfile:
                            block.page)
             return self.place(block, ko_text, page_size)
         if _SIDE_FIRST:
+            # 사람 순서: ①통상자를 원문 오른쪽에 → ②행마다 한 줄씩 곁에 →
+            # ③통상자를 아래·위·왼쪽에. 옛 코드는 ①③만 있어서 다중줄 번역이
+            # 오른쪽만 막히면 곧장 위·아래에 기둥으로 쌓였다(A2 p36 실물).
             side = self._first_clean_side(block, ko_text, page_size, ink,
+                                          occupied, only=("right",))
+            if side is not None:
+                return self._finalize(side)
+            if _LINE_SPLIT:
+                split = self._place_lines(block, ko_text, page_size, ink,
                                           occupied)
+                if split:
+                    return [self._finalize(ov) for ov in split]
+            side = self._first_clean_side(block, ko_text, page_size, ink,
+                                          occupied,
+                                          only=("below", "above", "left"))
             if side is not None:
                 return self._finalize(side)
         best = self._score_candidates(
@@ -1359,11 +1629,17 @@ class XsheetProfile:
                 block, ko_text, page_size, ink, occupied)
             if wide is not None and wide[0] < best[0]:
                 best = wide
+            # 사다리 밖의 가까운 빈자리 — 먼 사다리 자리·겹치는 자리보다 낫다
+            free = self._free_slot_near(block, ko_text, page_size, ink,
+                                        occupied)
+            if free is not None and free[0] < best[0]:
+                best = free
         return self._finalize(best[1])
 
     def _first_clean_side(self, block: PdfBlock, ko_text: str,
                           page_size: tuple[float, float], ink,
-                          occupied) -> Overlay | None:
+                          occupied, only: tuple[str, ...] | None = None,
+                          ) -> Overlay | None:
         """좌우(→상하) 인접 자리 중 **아무것도 덮지 않는 첫 자리**.
 
         점수 최소화가 아니라 순서다 — 사람 관례가 "곁에, 좌우 먼저"라서
@@ -1378,8 +1654,11 @@ class XsheetProfile:
         limit = min(edges) - 1.0 if edges else None
         blk = block if limit is None else replace(block, limit_x1=limit)
         right_first = (not _ZIGZAG) or len(occupied or ()) % 2 == 0
+        rows = _ink_rows(ink, block.bbox)
+        max_lines = max(_TOWER_LINES_MIN, len(rows)) if rows else None
         for rect, fontsize in _side_candidates(anchor, blk, ko_text,
-                                               page_size, right_first):
+                                               page_size, right_first,
+                                               max_lines=max_lines, only=only):
             rect = _clamp_nondegenerate(
                 *_snap_to_row(rect, grid, page_h), page_h)
             if _ink_ratio(ink, rect, page_h) > _SIDE_INK_OK:
@@ -1417,6 +1696,139 @@ class XsheetProfile:
             if best is None or score < best[0]:
                 best = (score, Overlay(page=block.page, rect=rect,
                                        text=ko_text, fontsize=fontsize))
+        return best
+
+    def _column_limit(self, block: PdfBlock, page_w: float) -> float:
+        """이 블록이 넘어가면 안 되는 오른쪽 x — 칸 경계는 세로 괘선에서."""
+        limit_x1 = (block.limit_x1 if block.limit_x1 is not None
+                    else page_w - 8.0)
+        edges = [x for x in getattr(self, "_col_edges", ())
+                 if x > block.bbox[2] + 1]
+        return min(limit_x1, min(edges) - 1.0) if edges else limit_x1
+
+    def _place_lines(self, block: PdfBlock, ko_text: str,
+                     page_size: tuple[float, float], ink,
+                     occupied) -> list[Overlay] | None:
+        """다중줄 번역을 원문 **행마다 한 줄씩** 곁에 앉힌다(전부 성립할 때만).
+
+        ko 줄 i ↔ 잉크 행 ⌊i·m/k⌋ (줄이 행보다 적으면 비례로 띄운다 — 번역
+        규칙이 연속 원문 줄을 한 구절로 합치므로 앞 줄부터 순서가 보존된다).
+        행마다 오른쪽 → 왼쪽, 미세 상하 이동, 폰트 한 단계 축소 순으로 손글씨
+        (_SIDE_INK_OK)·이웃 주석(_OCC_OK)을 덮지 않는 첫 자리를 고른다. 한
+        줄이라도 자리가 없으면 None — 반쪽 배치는 통상자 경로보다 못 읽힌다."""
+        lines = [ln.strip() for ln in ko_text.split("\n") if ln.strip()]
+        if len(lines) < 2:
+            return None
+        rows = _ink_rows(ink, block.bbox)
+        if len(rows) < 2 or len(lines) > len(rows):
+            return None
+        page_w, page_h = page_size
+        limit_x1 = self._column_limit(block, page_w)
+        m, k = len(rows), len(lines)
+        picks = [rows[(i * m) // k] for i in range(k)]
+        placed: list[Overlay] = []
+        local = list(occupied or ())
+        for text, (rx0, ry0, rx1, _ry1) in zip(lines, picks):
+            found: Overlay | None = None
+            for fontsize in (_FONTSIZE, _MIN_FONTSIZE):
+                w = _natural_width(text, fontsize)
+                h = _wrapped_height(text, w, fontsize)
+                for dy in _LINE_DYS:
+                    top = ry0 - _LINE_TOP_PAD + dy
+                    if top < 8.0 or top + h > page_h - 8.0:
+                        continue
+                    cands = []
+                    if rx1 + _SIDE_GAP + w <= limit_x1:
+                        cands.append((rx1 + _SIDE_GAP, top,
+                                      rx1 + _SIDE_GAP + w, top + h))
+                    if rx0 - _SIDE_GAP - w >= 8.0:
+                        cands.append((rx0 - _SIDE_GAP - w, top,
+                                      rx0 - _SIDE_GAP, top + h))
+                    for rect in cands:
+                        if _ink_ratio(ink, rect, page_h) > _SIDE_INK_OK:
+                            continue
+                        if _occupied_frac(rect, local) > _OCC_OK:
+                            continue
+                        found = Overlay(page=block.page, rect=rect,
+                                        text=text, fontsize=fontsize)
+                        break
+                    if found is not None:
+                        break
+                if found is not None:
+                    break
+            if found is None:
+                return None
+            placed.append(found)
+            local.append(found.rect)
+        return placed
+
+    def _free_slot_near(self, block: PdfBlock, ko_text: str,
+                        page_size: tuple[float, float], ink,
+                        occupied) -> tuple[float, Overlay] | None:
+        """막혔을 때의 최후 수단 — 마스크 위에서 원문에 가장 가까운 빈 사각형.
+
+        잉크(손글씨)와 기존 주석을 한 마스크에 올리고 적분영상으로 모든
+        위치의 덮임을 한꺼번에 센다(격자 _FREE_STEP_PX). 비용 = 원문 상단과의
+        세로 거리 + 가로 틈(+ 왼쪽이면 폭의 절반 — 기존 왼쪽 후보의 페널티와
+        같은 취지). 돌려주는 비용은 채점 경로의 변위 점수와 같은 자(pt)라
+        `_score_candidates` 결과와 직접 비교할 수 있다."""
+        import numpy as np
+
+        page_w, page_h = page_size
+        scale = _INK_DPI / 72.0
+        bx0, by0, bx1, by1 = block.bbox
+        limit_x1 = self._column_limit(block, page_w)
+        wx0 = max(8.0, bx0 - _FREE_RADIUS); wx1 = min(limit_x1, bx1 + _FREE_RADIUS)
+        wy0 = max(8.0, by0 - _FREE_RADIUS); wy1 = min(page_h - 8.0, by1 + _FREE_RADIUS)
+        ih, iw = ink.shape
+        px0, py0 = max(0, int(wx0 * scale)), max(0, int(wy0 * scale))
+        px1, py1 = min(iw, int(wx1 * scale)), min(ih, int(wy1 * scale))
+        if px1 - px0 < 4 or py1 - py0 < 4:
+            return None
+        mask = ink[py0:py1, px0:px1].astype(np.uint8)
+        for o in occupied or ():
+            ox0 = max(0, int(o[0] * scale) - px0); oy0 = max(0, int(o[1] * scale) - py0)
+            ox1 = min(px1 - px0, int(o[2] * scale) + 1 - px0)
+            oy1 = min(py1 - py0, int(o[3] * scale) + 1 - py0)
+            if ox1 > ox0 and oy1 > oy0:
+                mask[oy0:oy1, ox0:ox1] = 1
+        mh, mw = mask.shape
+        integ = np.zeros((mh + 1, mw + 1), dtype=np.int32)
+        integ[1:, 1:] = mask.cumsum(0).cumsum(1)
+        best: tuple[float, Overlay] | None = None
+        for fontsize in (_FONTSIZE, _MIN_FONTSIZE):
+            widths = {_natural_width(ko_text, fontsize),
+                      _width_for_lines(ko_text, fontsize, 2),
+                      _width_for_lines(ko_text, fontsize, 3)}
+            for wpt in sorted(widths, reverse=True):
+                wpt = max(wpt, _min_usable_w(ko_text, fontsize))
+                hpt = _wrapped_height(ko_text, wpt, fontsize)
+                wp, hp = math.ceil(wpt * scale), math.ceil(hpt * scale)
+                if wp >= mw or hp >= mh:
+                    continue
+                ys = np.arange(0, mh - hp, _FREE_STEP_PX)
+                xs = np.arange(0, mw - wp, _FREE_STEP_PX)
+                total = (integ[np.ix_(ys + hp, xs + wp)] - integ[np.ix_(ys, xs + wp)]
+                         - integ[np.ix_(ys + hp, xs)] + integ[np.ix_(ys, xs)])
+                ok = total <= _SIDE_INK_OK * wp * hp
+                if not ok.any():
+                    continue
+                yy, xx = np.nonzero(ok)
+                tops = (py0 + ys[yy]) / scale
+                lefts = (px0 + xs[xx]) / scale
+                rights = lefts + wpt
+                dx = np.maximum(0.0, np.maximum(bx0 - rights, lefts - bx1))
+                cost = (dx + np.abs(tops - by0)
+                        + np.where(rights <= bx0, 0.5 * wpt, 0.0)
+                        + _W_FS * (_FONTSIZE - fontsize))
+                i = int(cost.argmin())
+                if best is None or cost[i] < best[0]:
+                    rect = _clamp_nondegenerate(
+                        float(lefts[i]), float(tops[i]), float(rights[i]),
+                        float(tops[i]) + hpt, page_h)
+                    best = (float(cost[i]), Overlay(
+                        page=block.page, rect=rect, text=ko_text,
+                        fontsize=fontsize))
         return best
 
     def _far_candidates(self, block: PdfBlock, ko_text: str,
@@ -1524,7 +1936,7 @@ class XsheetProfile:
         # 넓은 클러스터의 좌단 바깥은 내용어에서 원문 폭만큼 먼 자리다
         wide_pen = _WIDE_L_W * max((bx1 - bx0) - _WIDE_FROM, 0.0)
 
-        for fontsize in (_FONTSIZE, 8.0, _MIN_FONTSIZE):
+        for fontsize in (_FONTSIZE, _MID_FONTSIZE, _MIN_FONTSIZE):
             want = _natural_width(ko_text, fontsize)
             need = _min_usable_w(ko_text, fontsize)
             for dy in _DY_LADDER:
@@ -1606,7 +2018,7 @@ class XsheetProfile:
         if _SI_ONLY_RE.match(src_norm):
             return ""
         tokens = [t for t in re.split(r"[^A-Za-z0-9]+", (block.text or "").upper()) if t]
-        if tokens and any(t == "SI" for t in tokens) and all(
+        if tokens and any(t in ("SI", "S1", "SO", "HU", "H/U", "HP") for t in tokens) and all(
                 _SI_TOKEN_RE.match(t) for t in tokens):
             return ""          # `2 SI`류 — 프레임 번호+타이밍 표기 묶음
         # 인쇄 서식 문구를 걷어내고 알파벳·숫자가 3자 미만 남으면 서식이다.
@@ -1625,6 +2037,12 @@ class XsheetProfile:
                 continue
             for pat, rep in rules:
                 out = pat.sub(rep, out)
+        out = _clean_leftover_codes(src, out)
+        out = _fix_cast_names(src, out)
+        if "_" in src:
+            # 손글씨의 밑줄 연결(`SAND_CLOTH`)이 번역문에 남는다 — 사람은 `&`로 잇는다
+            out = re.sub(r"(?<=\S)\s*_\s*(?=\S)", "&", out)
+        out = _tidy_lines(out)
         # ★짧은 번역은 한 줄로 — 사람은 주석을 사실상 전부 한 줄로 쓴다
         # (1603 실측 2,868건 중 **1줄 100%**, 상자 높이 중앙 9pt). 우리는 원문
         # 세로 쌓기를 따라 41%만 1줄이라 상자가 3배 높았고, 큰 상자는 빈자리에
@@ -1634,6 +2052,69 @@ class XsheetProfile:
         if len(lines) > 1 and sum(len(ln) for ln in lines) <= _JOIN_MAX_CHARS:
             out = " ".join(lines)
         return out
+
+
+# 번역문에 **원문 코드가 그대로** 남는 경우(1605_A1 실측 117건/3,706: `STL\n뒤로.`,
+# `OVS 약간`, `제스쳐, SI.`). 코드만 있는 노트는 `_decode_code_note`가 해독하지만
+# 낱말과 섞이면 LLM이 코드를 복사한다. 사람은 STL→안착·OVS→오버슛으로 옮기고
+# SI는 아예 쓰지 않는다(1603·1605 납품본 동일).
+_LEFT_STL_RE = re.compile(r"(?<![A-Za-z가-힣])STLS?(?![A-Za-z])")
+_LEFT_OVS_RE = re.compile(r"(?<![A-Za-z가-힣])OVS(?![A-Za-z])")
+_LEFT_SI_RE = re.compile(r"[\s,]*\(?(?<![A-Za-z])S[I1](?![A-Za-z0-9])\)?")
+_DANGLING_RE = re.compile(r"\s+([.,])")
+
+
+def _tidy_lines(ko: str) -> str:
+    """규칙이 낱말을 지운 뒤의 찌꺼기 정리 — ` .`→`.`, 부호만 남은 줄 삭제."""
+    lines = []
+    for ln in ko.split("\n"):
+        ln = _DANGLING_RE.sub(r"\1", ln).strip()
+        ln = re.sub(r"^[,.]\s*", "", ln)
+        if ln and not re.fullmatch(r"[.,&/\-\s]+", ln):
+            lines.append(ln)
+    return "\n".join(lines)
+
+
+def _fix_cast_names(src: str, ko: str) -> str:
+    """원문에 인물 이름이 있으면 그 이름의 알려진 오음역을 표기로 바꾼다.
+
+    두 글자 이상 오음역은 뒤에 조사가 붙을 수 있어(`차네가`) 뒤쪽 경계를 열고,
+    한 글자(`찬`)는 `찬다` 같은 낱말 안을 건드리지 않게 양쪽을 막는다."""
+    for en, canon in _cast_table().items():
+        if not re.search(rf"(?<![A-Za-z]){re.escape(en)}(?![A-Za-z])", src):
+            continue
+        for bad in _CAST_VARIANTS.get(canon, ()):
+            tail = r"(?![가-힣])" if len(bad) == 1 else r"(?!\w*[A-Za-z])"
+            pat = rf"(?<![가-힣]){bad}{tail}"
+            if _has_batchim(canon):
+                pat += r"([가는를와])?"
+                ko = re.sub(pat, lambda m, c=canon: c + _PARTICLE_AFTER_BATCHIM.get(
+                    m.group(1) or "", m.group(1) or ""), ko)
+            else:
+                ko = re.sub(pat, canon, ko)
+    return ko
+
+
+def _clean_leftover_codes(src: str, ko: str) -> str:
+    if re.search(r"\bSTLS?\b", src):
+        ko = _LEFT_STL_RE.sub("안착", ko)
+        ko = ko.replace("안착로", "안착")     # `STL TO`→LLM `STL로`(1605 37건)
+    if re.search(r"\bSO\b", src):
+        ko = re.sub(r"[\s,]*슬로우\s*아웃[,.]?", "", ko)
+    if re.search(r"\bH/?U\b", src):
+        ko = re.sub(r"[\s,]*(?<![가-힣])허(?![가-힣])[,.]?", "", ko)
+    if re.search(r"\bOVS\b", src):
+        ko = _LEFT_OVS_RE.sub("오버슛", ko)
+    if re.search(r"\bS[I1]\b", src) and _LEFT_SI_RE.search(ko):
+        lines = []
+        for ln in ko.split("\n"):
+            ln = _DANGLING_RE.sub(r"\1", _LEFT_SI_RE.sub("", ln)).strip()
+            if ln and ln not in (".", ","):
+                lines.append(ln)
+        if lines and lines[-1].endswith(","):       # `포즈로,` + `SI.` → `포즈로.`
+            lines[-1] = lines[-1][:-1] + "."
+        ko = "\n".join(lines)
+    return ko
 
 
 def _is_template(rect: tuple[float, float, float, float], text: str,
@@ -1780,8 +2261,12 @@ def _decode_code_note(text: str) -> str | None:
         if not toks:
             continue
         decoded = []
+        cast = _cast_table()
         for t in toks:
-            ko = _CODE_KO.get(t.strip(".,").upper())
+            key = t.strip(".,").upper()
+            ko = _CODE_KO.get(key) or cast.get(key)
+            if ko is None and _PASS_TOKEN_RE.match(t.strip(",")):
+                ko = t.strip(",.")
             if ko is None:
                 return None
             decoded.append(ko)
