@@ -272,3 +272,68 @@ export function explainPdfError(err: unknown): string {
   }
   return msg;
 }
+
+// ── 서버 운영자 기능 스위치 ──────────────────────────────────────────────────
+
+export type PdfFeatures = {
+  storyboard: boolean; xsheet: boolean;
+  defaultProvider: string; blockedProviders: string[];
+};
+
+export const ALL_PDF_FEATURES_ENABLED: PdfFeatures = {
+  storyboard: true, xsheet: true,
+  // 서버 조회 실패 시에도 gemini는 잠근다(API 비용은 서버가 최종 막지만
+  // 옛 서버엔 그 게이트가 없다).
+  defaultProvider: "claude", blockedProviders: ["gemini"],
+};
+
+/** 모르는 값은 **켜짐**으로 읽는다 — 차단은 서버가 하고 화면은 표시만 한다. */
+export function parsePdfFeatures(body: unknown): PdfFeatures {
+  const root = body as {
+    formats?: Record<string, unknown>;
+    default_provider?: unknown; blocked_providers?: unknown;
+  } | null;
+  const formats = root?.formats;
+  const flag = (key: "storyboard" | "xsheet"): boolean =>
+    typeof formats?.[key] === "boolean" ? (formats[key] as boolean) : true;
+  // 엔진 정책만은 반대 방향 — 못 읽으면 기본값(claude·gemini 차단)으로 잠근다.
+  const raw = root?.blocked_providers;
+  const blocked = Array.isArray(raw) && raw.every((v) => typeof v === "string")
+    ? (raw as string[]) : [...ALL_PDF_FEATURES_ENABLED.blockedProviders];  // 폴백 상수를 참조로 공유하지 않는다
+  const dflt = typeof root?.default_provider === "string" && root.default_provider
+    ? root.default_provider : ALL_PDF_FEATURES_ENABLED.defaultProvider;
+  return {
+    storyboard: flag("storyboard"), xsheet: flag("xsheet"),
+    defaultProvider: dflt, blockedProviders: blocked,
+  };
+}
+
+/**
+ * 절대 던지지 않는다. 라우트가 없는 옛 서버(404)나 일시적 통신 실패에 기능을
+ * 숨기면 멀쩡한 서버가 반쪽이 된다 — 그럴 땐 둘 다 켜진 것으로 본다.
+ */
+export async function fetchPdfFeatures(): Promise<PdfFeatures> {
+  try {
+    const resp = await fetch(`${apiBase()}/api/v1/pdf-jobs/features`);
+    if (!resp.ok) return ALL_PDF_FEATURES_ENABLED;
+    return parsePdfFeatures(await resp.json());
+  } catch {
+    return ALL_PDF_FEATURES_ENABLED;
+  }
+}
+
+export function pdfFormatEnabled(
+  features: PdfFeatures, format: "storyboard" | "xsheet",
+): boolean {
+  return features[format];
+}
+
+/** 막혀 있거나 비어 있는 선택만 기본 엔진으로 되돌린다. */
+export function resolvePdfProvider(
+  current: string, features: PdfFeatures,
+): string {
+  if (!current || features.blockedProviders.includes(current)) {
+    return features.defaultProvider;
+  }
+  return current;
+}

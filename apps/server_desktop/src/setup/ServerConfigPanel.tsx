@@ -65,6 +65,9 @@ export default function ServerConfigPanel(props: { port: number; running: boolea
   const [summaryModel, setSummaryModel] = useState("");
   const [transcribeWorkers, setTranscribeWorkers] = useState(DEFAULT_PDF_WORKERS);
   const [translateWorkers, setTranslateWorkers] = useState(DEFAULT_PDF_WORKERS);
+  // 클라이언트 앱에 노출할 PDF 번역 기능. 미설정은 Rust가 켜짐으로 돌려준다.
+  const [storyboardEnabled, setStoryboardEnabled] = useState(true);
+  const [xsheetEnabled, setXsheetEnabled] = useState(true);
 
   // First-run operator account form.
   const [adminEmail, setAdminEmail] = useState("");
@@ -92,6 +95,8 @@ export default function ServerConfigPanel(props: { port: number; running: boolea
     // Rust가 0(미설정)에 기본값을 적용해 돌려주므로 그대로 받는다.
     setTranscribeWorkers(next.pdfTranscribeWorkers || DEFAULT_PDF_WORKERS);
     setTranslateWorkers(next.pdfTranslateWorkers || DEFAULT_PDF_WORKERS);
+    setStoryboardEnabled(next.pdfStoryboardEnabled);
+    setXsheetEnabled(next.pdfXsheetEnabled);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -125,6 +130,8 @@ export default function ServerConfigPanel(props: { port: number; running: boolea
         summaryModel,
         pdfTranscribeWorkers: transcribeWorkers,
         pdfTranslateWorkers: translateWorkers,
+        pdfStoryboardEnabled: storyboardEnabled,
+        pdfXsheetEnabled: xsheetEnabled,
       });
       syncMeta(next);
       // Clear the secret inputs so stored secrets are never re-shown.
@@ -139,7 +146,7 @@ export default function ServerConfigPanel(props: { port: number; running: boolea
     } finally {
       setBusy(false);
     }
-  }, [geminiApiKey, googleCredsJson, googleProject, sttLanguage, translateTarget, provider, mlxModel, viewerBase, summaryBackend, summaryModel, transcribeWorkers, translateWorkers, syncMeta]);
+  }, [geminiApiKey, googleCredsJson, googleProject, sttLanguage, translateTarget, provider, mlxModel, viewerBase, summaryBackend, summaryModel, transcribeWorkers, translateWorkers, storyboardEnabled, xsheetEnabled, syncMeta]);
 
   const onClear = useCallback(async () => {
     setError(null);
@@ -329,6 +336,34 @@ export default function ServerConfigPanel(props: { port: number; running: boolea
       <p style={{ ...styles.sub, margin: "-6px 0 10px" }}>
         실측 3→6개에서 1.58배(32분→20분). 사양이 낮거나 사용량을 아끼려면
         줄이세요.
+      </p>
+
+      {/* Field는 <label> 래퍼라 안에 체크박스 <label>을 두면 중첩 label이 되어
+          제목 클릭이 첫 체크박스를 몰래 토글한다 — 여기만 div+span으로 푼다. */}
+      <div style={styles.field}>
+        <span style={styles.fieldLabel}>PDF 번역 기능 (클라이언트 탭)</span>
+        <div style={{ display: "flex", gap: 16, alignItems: "center", fontSize: 12 }}>
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={storyboardEnabled}
+              onChange={(e) => setStoryboardEnabled(e.target.checked)}
+            />
+            스토리보드 번역 허용
+          </label>
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={xsheetEnabled}
+              onChange={(e) => setXsheetEnabled(e.target.checked)}
+            />
+            Xsheet 번역 허용
+          </label>
+        </div>
+      </div>
+      <p style={{ ...styles.sub, margin: "-6px 0 10px" }}>
+        끄면 클라이언트 앱의 해당 탭이 잠기고 서버도 새 업로드를 거부합니다(기존
+        작업 조회는 유지). 저장 후 서버를 재시작해야 적용됩니다.
       </p>
 
       <Field label="VIEWER_BASE">

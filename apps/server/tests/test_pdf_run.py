@@ -40,12 +40,14 @@ def _env(monkeypatch, tmp_path):
     yield
 
 
-async def _seed_job(db_session, admin_user, *, status="queued") -> PdfJob:
+async def _seed_job(db_session, admin_user, *, status="queued",
+                    provider=None) -> PdfJob:
     eid = uuid4()
     src = pdf_job_dir(eid) / "source.pdf"
     _make_storyboard_pdf(src)
     job = PdfJob(external_id=eid, owner_user_id=admin_user.id, title="t",
-                 source_ref="sb.pdf", status=status, source_path=str(src))
+                 source_ref="sb.pdf", status=status, source_path=str(src),
+                 translate_provider=provider)
     db_session.add(job)
     await db_session.commit()
     return job
@@ -597,3 +599,50 @@ async def test_prune_default_keep_is_smaller_than_video_retention():
     같은 30이면 9GB가 된다."""
     from apps.server.domain.video_captions import maintenance
     assert pdf_run.RETENTION_KEEP < maintenance.RETENTION_KEEP
+
+
+async def test_run_pdf_job_disabled_format_sets_error(db_session, admin_user,
+                                                      monkeypatch):
+    """format_hint 없이 올라온(구버전 클라·자동 감지) 업로드도 막혀야 한다 —
+    API 게이트만 두면 이 경로로 샌다."""
+    monkeypatch.setenv("YESON_PDF_STORYBOARD_ENABLED", "0")
+    job = await _seed_job(db_session, admin_user)
+    job_id = job.id  # expire_all() 뒤 job.id 접근 우회 (위 주석 참고)
+    await pdf_run.run_pdf_job(job.external_id)
+    db_session.expire_all()
+    row = (await db_session.execute(
+        select(PdfJob).where(PdfJob.id == job_id))).scalar_one()
+    assert row.status == "error" and "비활성화" in (row.error or "")
+
+
+def test_resolve_pdf_provider_blocks_gemini():
+    """PDF 번역 엔진 정책 — 미지정·gemini는 기본(claude), 나머지는 그대로."""
+    assert pdf_run.resolve_pdf_provider(None) == "claude"
+    assert pdf_run.resolve_pdf_provider("") == "claude"
+    assert pdf_run.resolve_pdf_provider("gemini") == "claude"
+    assert pdf_run.resolve_pdf_provider("GEMINI ") == "claude"
+    assert pdf_run.resolve_pdf_provider("codex") == "codex"
+
+
+@pytest.mark.parametrize("stored", [None, "gemini"])
+async def test_run_pdf_job_never_translates_with_gemini(
+        db_session, admin_user, monkeypatch, stored):
+    """gemini는 API 과금이라 PDF 파이프라인이 절대 쓰면 안 된다 —
+    create_translator의 env 기본이 gemini라, 엔진 미지정 잡은 여기서 막지
+    않으면 조용히 과금으로 흐른다."""
+    used: list[str] = []
+
+    def _record(provider, cli_model, prompt_builder):
+        used.append(provider)
+        return FakeTranslator()
+
+    monkeypatch.setattr(pdf_run, "create_translator", _record)
+    job = await _seed_job(db_session, admin_user, provider=stored)
+
+    await pdf_run.run_pdf_job(job.external_id)
+
+    assert used == ["claude"]
+    # 목록·비용 감사가 실제 쓴 엔진을 보도록 행에도 되써야 한다(옛 gemini 행이
+    # 재시작 복구로 다시 돌면 retranslate 경로를 안 거친다).
+    await db_session.refresh(job)
+    assert job.translate_provider == "claude"

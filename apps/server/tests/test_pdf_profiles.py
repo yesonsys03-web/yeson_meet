@@ -7,7 +7,15 @@ from pathlib import Path
 import pytest
 
 from apps.server.domain.pdf_translate.backend import open_pdf
-from apps.server.domain.pdf_translate.profiles import detect_profile
+from apps.server.domain.pdf_translate.profiles import (
+    ENABLED_ENV,
+    detect_profile,
+    disabled_message,
+    enabled_formats,
+    profile_by_name,
+    profile_enabled,
+    profile_names,
+)
 from apps.server.domain.pdf_translate.profiles.base import (
     PdfBlock,
     has_hangul,
@@ -1518,3 +1526,48 @@ def test_panels_latency_normal_p95_and_worst_broken_page():
         assert p95 <= 300.0, f"정상 페이지 p95 {p95:.1f}ms > 300ms"
     finally:
         doc.close()
+
+
+# ── 포맷 비활성화 스위치(서버 운영자) ─────────────────────────────────────────
+def test_enabled_env_is_derived_from_registry():
+    """환경변수 이름을 레지스트리에서 자동 도출 — 새 프로파일이 하드코딩
+    누락으로 조용히 '항상 켜짐'이 되지 않게 잠근다."""
+    assert set(ENABLED_ENV) == set(profile_names())
+    assert ENABLED_ENV["storyboard"] == "YESON_PDF_STORYBOARD_ENABLED"
+    assert ENABLED_ENV["xsheet"] == "YESON_PDF_XSHEET_ENABLED"
+
+
+def test_profile_enabled_defaults_true_when_unset(monkeypatch):
+    """미설정 = 켜짐. 구버전 설치본이 갑자기 잠기면 안 된다."""
+    for env in ENABLED_ENV.values():
+        monkeypatch.delenv(env, raising=False)
+    assert all(profile_enabled(name) for name in profile_names())
+    assert profile_enabled("no-such-format") is True  # 모르는 이름도 켜짐
+
+
+@pytest.mark.parametrize("value", ["0", "false", "FALSE", "no", "off", " Off "])
+def test_profile_enabled_false_for_off_values(monkeypatch, value):
+    monkeypatch.setenv(ENABLED_ENV["xsheet"], value)
+    monkeypatch.delenv(ENABLED_ENV["storyboard"], raising=False)
+    assert profile_enabled("xsheet") is False
+    assert profile_enabled("storyboard") is True  # 포맷별 독립
+
+
+@pytest.mark.parametrize("value", ["1", "true", "", "yes", "on"])
+def test_profile_enabled_true_for_other_values(monkeypatch, value):
+    monkeypatch.setenv(ENABLED_ENV["xsheet"], value)
+    assert profile_enabled("xsheet") is True
+
+
+def test_enabled_formats_keys_match_profile_names(monkeypatch):
+    monkeypatch.setenv(ENABLED_ENV["xsheet"], "0")
+    monkeypatch.delenv(ENABLED_ENV["storyboard"], raising=False)
+    formats = enabled_formats()
+    assert set(formats) == set(profile_names())
+    assert formats == {"storyboard": True, "xsheet": False}
+
+
+def test_disabled_message_uses_profile_label():
+    """사용자에게 보이는 문구의 단일 출처 — API·파이프라인이 같은 말을 한다."""
+    assert disabled_message(profile_by_name("xsheet")) == (
+        "서버 운영자가 엑스시트 (Exposure Sheet) 번역을 비활성화했습니다")

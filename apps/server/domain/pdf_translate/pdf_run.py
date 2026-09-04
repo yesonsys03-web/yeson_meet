@@ -49,7 +49,12 @@ from .pdf_tasks import (
     _try_set_error,
     mark_rebaking,
 )
-from .profiles import detect_profile, profile_by_name
+from .profiles import (
+    detect_profile,
+    disabled_message,
+    profile_by_name,
+    profile_enabled,
+)
 from .profiles.base import PdfBlock
 from .translate_blocks import build_pdf_prompt, translate_texts
 from .utterances import group_utterances
@@ -68,6 +73,21 @@ _INFLIGHT_STATUSES = (
 # 30을 쓰면 상한이 9GB가 된다. 자가호스팅 데스크톱 앱이라 이 디스크는
 # 사용자의 개인 디스크다(2026-07-30 전브랜치 리뷰 I-2).
 RETENTION_KEEP = 10
+
+# PDF 번역 엔진 정책 — gemini는 API 과금이라 제외(전사도 같은 이유로 이미 제외,
+# handwriting_transcribe.py). 구독 CLI 엔진만 쓴다. 자막 메이커(video_jobs)는 별개.
+PDF_BLOCKED_PROVIDERS: frozenset[str] = frozenset({"gemini"})
+PDF_DEFAULT_PROVIDER = "claude"
+
+
+def resolve_pdf_provider(provider: str | None) -> str:
+    """비어 있거나 차단된 엔진은 기본(claude)으로 — create_translator의 env 기본이
+    gemini라, 여기서 안 막으면 엔진 미지정 잡이 조용히 API 과금으로 흐른다."""
+    name = (provider or "").strip().lower()
+    if not name or name in PDF_BLOCKED_PROVIDERS:
+        return PDF_DEFAULT_PROVIDER
+    return name
+
 
 # 추출 결과 캐시(엑스시트 재번역 가속). 전 페이지 OCR은 문서당 10~17분인데
 # 결정적이라 같은 원본·같은 추출 코드면 결과가 같다 — 재번역은 배치·용어·
@@ -292,7 +312,12 @@ async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
                 select(PdfJob).where(PdfJob.external_id == external_id)
             )).scalar_one()
             source_path = job.source_path
-            provider = job.translate_provider
+            provider = resolve_pdf_provider(job.translate_provider)
+            if job.translate_provider != provider:
+                # 목록·비용 감사가 실제 쓴 엔진을 보도록 행에도 되쓴다(옛
+                # gemini 행이 재시작 복구로 다시 돌면 retranslate를 안 거친다).
+                job.translate_provider = provider
+                await db.commit()
             cli_model = job.translate_cli_model
             format_hint = job.format
         if not source_path or not Path(source_path).exists():
@@ -320,6 +345,10 @@ async def _translate_and_overlay(external_id: UUID, slot: _JobSlot) -> None:
         if profile is None:
             raise PdfTranslateError(
                 "지원하지 않는 PDF 포맷입니다 (현재 지원: 스토리보드형·엑스시트)")
+        # 운영자가 끈 포맷 — API 게이트는 format_hint가 있을 때만 걸리므로
+        # 자동 감지로 들어온 업로드(구버전 클라)는 여기서 막는다.
+        if not profile_enabled(profile.name):
+            raise PdfTranslateError(disabled_message(profile))
         # 추출 캐시 — 같은 원본·같은 추출 코드면 결과가 같다(_BLOCKS_CACHE 참조).
         cache_key = _blocks_cache_key(profile, Path(source_path))
         job_dir = pdf_job_dir(external_id)

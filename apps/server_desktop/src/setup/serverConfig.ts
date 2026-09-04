@@ -21,6 +21,10 @@ export type ServerConfigInput = {
   // 상태에 따라 적정값이 달라 운영자가 고른다. 0 = 미설정(기본값 사용).
   pdfTranscribeWorkers: number;
   pdfTranslateWorkers: number;
+  // 클라이언트 앱에 노출할 PDF 번역 기능(탭) 스위치. 미설정(옛 설정 블롭)은
+  // Rust에서 켜짐으로 읽으므로 여기서는 항상 실제 값을 보낸다.
+  pdfStoryboardEnabled: boolean;
+  pdfXsheetEnabled: boolean;
 };
 
 export type ServerConfigMeta = {
@@ -37,6 +41,8 @@ export type ServerConfigMeta = {
   summaryModel: string;
   pdfTranscribeWorkers: number;
   pdfTranslateWorkers: number;
+  pdfStoryboardEnabled: boolean;
+  pdfXsheetEnabled: boolean;
 };
 
 export type BootstrapAdminResult = {
@@ -67,6 +73,8 @@ export const EMPTY_META: ServerConfigMeta = {
   summaryModel: "",
   pdfTranscribeWorkers: DEFAULT_PDF_WORKERS,
   pdfTranslateWorkers: DEFAULT_PDF_WORKERS,
+  pdfStoryboardEnabled: true,
+  pdfXsheetEnabled: true,
 };
 
 type TauriWindow = Window & { __TAURI_INTERNALS__?: unknown };

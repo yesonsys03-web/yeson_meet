@@ -65,6 +65,18 @@ pub struct ServerConfig {
     /// 적용한다(디스크의 옛 설정 파일에는 이 필드가 없어 0으로 역직렬화된다).
     pub pdf_transcribe_workers: u32,
     pub pdf_translate_workers: u32,
+    /// 클라이언트 앱에 노출할 PDF 번역 기능(탭) 스위치. None = 미설정 → 켜짐.
+    /// 키체인의 옛 설정 블롭에는 이 필드가 없어 None으로 역직렬화된다 — 평범한
+    /// `bool`이었다면 false가 되어, 아무것도 바꾸지 않은 기존 사용자의 번역 탭이
+    /// 업데이트만으로 조용히 잠긴다. 실제 차단(탭 노출·업로드 거부)의 단일
+    /// 진실은 서버(Python)이고 여기서는 값만 보관·전달한다.
+    pub pdf_storyboard_enabled: Option<bool>,
+    pub pdf_xsheet_enabled: Option<bool>,
+}
+
+/// 미설정 필드가 기능을 끄지 않도록 하는 입력 기본값(위 `Option` 주석과 같은 이유).
+fn default_true() -> bool {
+    true
 }
 
 /// 워커 수 상한. 전사는 서버가 8로 클램프하므로(handwriting_transcribe._workers)
@@ -102,13 +114,15 @@ pub struct ServerConfigMeta {
     pub summary_model: String,
     pub pdf_transcribe_workers: u32,
     pub pdf_translate_workers: u32,
+    pub pdf_storyboard_enabled: bool,
+    pub pdf_xsheet_enabled: bool,
 }
 
 /// Fields the operator can edit from the GUI. Submitting a blank string leaves a
 /// secret untouched (we never want the UI — which only ever sees presence, not
 /// values — to blank a stored secret just because its field came back empty).
 /// Non-secret fields are always overwritten with the submitted value.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ServerConfigInput {
     pub gemini_api_key: String,
@@ -123,6 +137,34 @@ pub struct ServerConfigInput {
     pub summary_model: String,
     pub pdf_transcribe_workers: u32,
     pub pdf_translate_workers: u32,
+    #[serde(default = "default_true")]
+    pub pdf_storyboard_enabled: bool,
+    #[serde(default = "default_true")]
+    pub pdf_xsheet_enabled: bool,
+}
+
+/// `derive(Default)`는 bool을 false로 만들어 serde의 `default_true`와 어긋난다 —
+/// 이 파일의 관례(`..Default::default()`)를 따르는 다음 호출자가 두 포맷을
+/// 조용히 끄지 않도록 기본값을 손으로 맞춘다.
+impl Default for ServerConfigInput {
+    fn default() -> Self {
+        Self {
+            gemini_api_key: Default::default(), // vibelign: allow-secret
+            google_application_credentials_json: Default::default(), // vibelign: allow-secret
+            google_cloud_project: Default::default(),
+            google_stt_language_code: Default::default(),
+            google_translate_target_language: Default::default(),
+            yeson_ai_provider: Default::default(),
+            yeson_mlx_model: Default::default(),
+            viewer_base: Default::default(),
+            summary_backend: Default::default(),
+            summary_model: Default::default(),
+            pdf_transcribe_workers: Default::default(),
+            pdf_translate_workers: Default::default(),
+            pdf_storyboard_enabled: true,
+            pdf_xsheet_enabled: true,
+        }
+    }
 }
 
 /// Default provider when the operator hasn't picked one. Matches the server
@@ -161,6 +203,16 @@ impl ServerConfig {
         clamp_workers(self.pdf_translate_workers)
     }
 
+    /// 스토리보드 번역 탭 허용 여부(미설정 → 켜짐).
+    pub fn storyboard_enabled(&self) -> bool {
+        self.pdf_storyboard_enabled.unwrap_or(true)
+    }
+
+    /// 엑스시트 번역 탭 허용 여부(미설정 → 켜짐).
+    pub fn xsheet_enabled(&self) -> bool {
+        self.pdf_xsheet_enabled.unwrap_or(true)
+    }
+
     pub fn to_meta(&self) -> ServerConfigMeta {
         ServerConfigMeta {
             has_gemini_key: !self.gemini_api_key.trim().is_empty(),
@@ -176,6 +228,8 @@ impl ServerConfig {
             summary_model: self.summary_model.clone(),
             pdf_transcribe_workers: self.transcribe_workers(),
             pdf_translate_workers: self.translate_workers(),
+            pdf_storyboard_enabled: self.storyboard_enabled(),
+            pdf_xsheet_enabled: self.xsheet_enabled(),
         }
     }
 
@@ -203,6 +257,10 @@ impl ServerConfig {
         // 기본값을 바꾸면 명시적으로 고르지 않은 사용자에게도 반영된다.
         self.pdf_transcribe_workers = input.pdf_transcribe_workers.min(MAX_WORKERS);
         self.pdf_translate_workers = input.pdf_translate_workers.min(MAX_WORKERS);
+        // 운영자가 고른 값은 Some으로 굳는다(미설정과 구분). 입력 쪽 기본값이
+        // true라 필드가 빠진 요청이 기능을 끄는 일은 없다.
+        self.pdf_storyboard_enabled = Some(input.pdf_storyboard_enabled);
+        self.pdf_xsheet_enabled = Some(input.pdf_xsheet_enabled);
     }
 }
 
@@ -345,6 +403,45 @@ mod tests {
     }
 
     #[test]
+    fn pdf_features_default_to_enabled_when_the_field_is_absent() {
+        // 디스크(키체인)의 옛 설정 블롭에는 이 필드가 없다 — None으로 역직렬화
+        // 되어야 "켜짐"으로 읽힌다. 평범한 bool이었다면 false가 되어 기존
+        // 사용자의 번역 탭이 조용히 잠긴다.
+        let config = ServerConfig::default();
+        assert!(config.storyboard_enabled());
+        assert!(config.xsheet_enabled());
+
+        let legacy: ServerConfig =
+            serde_json::from_str(r#"{"geminiApiKey":"k","viewerBase":"https://v"}"#).unwrap();
+        assert_eq!(legacy.pdf_storyboard_enabled, None, "옛 블롭 = 미설정");
+        assert!(legacy.storyboard_enabled());
+        assert!(legacy.xsheet_enabled());
+
+        // 입력 쪽도 마찬가지 — 필드가 빠진 요청이 기능을 끄면 안 된다.
+        let input: ServerConfigInput = serde_json::from_str("{}").unwrap();
+        assert!(input.pdf_storyboard_enabled);
+        assert!(input.pdf_xsheet_enabled);
+    }
+
+    #[test]
+    fn apply_stores_feature_toggles_and_meta_projects_them() {
+        let mut config = ServerConfig::default();
+        config.apply(ServerConfigInput {
+            pdf_storyboard_enabled: true,
+            pdf_xsheet_enabled: false,
+            ..Default::default()
+        });
+        assert!(!config.xsheet_enabled(), "끈 기능은 꺼진 채로 읽혀야 한다");
+        assert!(config.storyboard_enabled(), "다른 기능은 영향받지 않는다");
+        // 명시적으로 고른 값은 Some으로 굳는다(미설정과 구분).
+        assert_eq!(config.pdf_xsheet_enabled, Some(false));
+
+        let meta = config.to_meta();
+        assert!(meta.pdf_storyboard_enabled);
+        assert!(!meta.pdf_xsheet_enabled);
+    }
+
+    #[test]
     fn meta_hides_secret_values_and_reports_presence() {
         let config = ServerConfig {
             gemini_api_key: "sk-secret".to_string(), // vibelign: allow-secret
@@ -360,6 +457,8 @@ mod tests {
             summary_model: String::new(),
             pdf_transcribe_workers: 0,
             pdf_translate_workers: 0,
+            pdf_storyboard_enabled: None,
+            pdf_xsheet_enabled: None,
         };
         let meta = config.to_meta();
         // Presence booleans are true...

@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from apps.server.api.v1 import pdf_jobs as api_pdf
 from apps.server.db.models import PdfJob
-from apps.server.domain.pdf_translate.pdf_store import pdf_job_dir
+from apps.server.domain.pdf_translate.pdf_store import pdf_job_dir, pdf_jobs_root
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +47,7 @@ def _tiny_pdf_bytes() -> bytes:
 async def test_upload_creates_job_and_saves_file(client, admin_user, db_session):
     resp = await client.post(
         "/api/v1/pdf-jobs/upload",
-        data={"title": "콘티", "translate_provider": "gemini"},
+        data={"title": "콘티", "translate_provider": "claude"},
         files={"file": ("GABE01_A1.pdf", _tiny_pdf_bytes(), "application/pdf")},
     )
     assert resp.status_code == 201
@@ -147,3 +147,138 @@ async def test_cancel_and_delete(client, admin_user, db_session):
         f"/api/v1/pdf-jobs/{job_id}/cancel")).status_code == 409
     assert (await client.delete(
         f"/api/v1/pdf-jobs/{job_id}")).status_code == 204
+
+
+async def test_features_reports_enabled_formats(client, admin_user, monkeypatch):
+    """서버가 권위 — 콘솔이 끈 포맷을 클라이언트가 조회한다."""
+    # 개발 셸에 스위치가 켜져 있어도 기준선은 "둘 다 켜짐"이어야 한다.
+    monkeypatch.delenv("YESON_PDF_STORYBOARD_ENABLED", raising=False)
+    monkeypatch.delenv("YESON_PDF_XSHEET_ENABLED", raising=False)
+    resp = await client.get("/api/v1/pdf-jobs/features")
+    assert resp.status_code == 200
+    assert resp.json() == {"formats": {"storyboard": True, "xsheet": True},
+                           "default_provider": "claude",
+                           "blocked_providers": ["gemini"]}
+    monkeypatch.setenv("YESON_PDF_XSHEET_ENABLED", "0")
+    assert (await client.get("/api/v1/pdf-jobs/features")).json()["formats"] == {
+        "storyboard": True, "xsheet": False}
+
+
+async def test_upload_rejects_disabled_format_only(client, admin_user,
+                                                   monkeypatch):
+    monkeypatch.setenv("YESON_PDF_XSHEET_ENABLED", "0")
+    resp = await client.post(
+        "/api/v1/pdf-jobs/upload",
+        data={"format_hint": "xsheet"},
+        files={"file": ("a.pdf", _tiny_pdf_bytes(), "application/pdf")},
+    )
+    assert resp.status_code == 403
+    assert "비활성화" in resp.json()["detail"]
+    # 다른 포맷은 그대로 동작해야 한다(전체 잠금 아님)
+    ok = await client.post(
+        "/api/v1/pdf-jobs/upload",
+        data={"format_hint": "storyboard"},
+        files={"file": ("b.pdf", _tiny_pdf_bytes(), "application/pdf")},
+    )
+    assert ok.status_code == 201
+
+
+async def test_rebake_rejects_disabled_format(client, admin_user, db_session,
+                                              monkeypatch):
+    """기존 잡의 조회·다운로드는 허용하되 재굽기(=생산)는 막는다."""
+    monkeypatch.setenv("YESON_PDF_XSHEET_ENABLED", "0")
+    job = PdfJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                 source_ref="a.pdf", status="done", progress=100,
+                 format="xsheet")
+    db_session.add(job)
+    await db_session.commit()
+    resp = await client.post(f"/api/v1/pdf-jobs/{job.external_id}/rebake")
+    assert resp.status_code == 403
+    assert "비활성화" in resp.json()["detail"]
+
+
+async def test_retranslate_rejects_disabled_format_and_keeps_done(
+        client, admin_user, db_session, monkeypatch):
+    """retranslate는 파이프라인을 다시 띄우므로 rebake와 같은 문턱이 필요하다.
+    문턱이 없으면 queued로 바꾼 뒤 파이프라인이 오류로 끝내 — download·rebake·
+    retranslate가 전부 done을 요구하므로 — 잡이 영구 409가 된다."""
+    monkeypatch.setenv("YESON_PDF_XSHEET_ENABLED", "0")
+    job = PdfJob(external_id=uuid4(), owner_user_id=admin_user.id, title="t",
+                 source_ref="a.pdf", status="done", progress=100,
+                 format="xsheet")
+    db_session.add(job)
+    await db_session.commit()
+    resp = await client.post(f"/api/v1/pdf-jobs/{job.external_id}/retranslate")
+    assert resp.status_code == 403
+    assert "비활성화" in resp.json()["detail"]
+    await db_session.refresh(job)
+    assert job.status == "done"
+
+
+async def test_upload_rejects_gemini_provider(client, admin_user, db_session):
+    """gemini는 API 과금이라 PDF 번역에서 제외 — 업로드 단계에서 거절한다.
+    거절은 디스크 저장·행 생성보다 앞이어야 한다(고아 source.pdf 방지)."""
+    resp = await client.post(
+        "/api/v1/pdf-jobs/upload",
+        data={"translate_provider": "gemini"},
+        files={"file": ("a.pdf", _tiny_pdf_bytes(), "application/pdf")},
+    )
+    assert resp.status_code == 422
+    assert "Gemini" in resp.json()["detail"]
+    assert (await db_session.execute(select(PdfJob))).scalars().all() == []
+    assert not list(pdf_jobs_root().glob("*/source.pdf"))
+
+
+async def test_upload_records_resolved_provider(client, admin_user, db_session):
+    """엔진 미지정이면 기본(claude)을 행에 남긴다 — 목록이 실제 쓴 엔진을
+    보여야 하고, 파이프라인 env 기본(gemini)으로 새면 안 된다."""
+    resp = await client.post(
+        "/api/v1/pdf-jobs/upload",
+        files={"file": ("a.pdf", _tiny_pdf_bytes(), "application/pdf")},
+    )
+    assert resp.status_code == 201
+    row = (await db_session.execute(select(PdfJob).where(
+        PdfJob.external_id == UUID(resp.json()["job_id"])))).scalar_one()
+    assert row.translate_provider == "claude"
+
+    other = await client.post(
+        "/api/v1/pdf-jobs/upload",
+        data={"translate_provider": "codex"},
+        files={"file": ("b.pdf", _tiny_pdf_bytes(), "application/pdf")},
+    )
+    assert other.status_code == 201
+    row2 = (await db_session.execute(select(PdfJob).where(
+        PdfJob.external_id == UUID(other.json()["job_id"])))).scalar_one()
+    assert row2.translate_provider == "codex"
+
+
+async def test_retranslate_coerces_gemini_provider(client, admin_user,
+                                                   db_session):
+    """옛 gemini 잡은 거절이 아니라 기본 엔진으로 바꿔 진행한다 —
+    재업로드가 필요 없고 API 비용도 0이다(사용자 결정)."""
+    eid = uuid4()
+    src = pdf_job_dir(eid) / "source.pdf"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_bytes(_tiny_pdf_bytes())
+    job = PdfJob(external_id=eid, owner_user_id=admin_user.id, title="t",
+                 source_ref="a.pdf", status="done", progress=100,
+                 format="storyboard", translate_provider="gemini",
+                 source_path=str(src))
+    db_session.add(job)
+    await db_session.commit()
+    job_pk = job.id  # expire_all() 뒤 속성 재조회 우회 (위 주석 참고)
+
+    resp = await client.post(f"/api/v1/pdf-jobs/{eid}/retranslate")
+
+    assert resp.status_code == 200 and resp.json() == {"status": "queued"}
+    db_session.expire_all()
+    row = (await db_session.execute(select(PdfJob).where(
+        PdfJob.id == job_pk))).scalar_one()
+    assert row.translate_provider == "claude"
+
+
+async def test_features_reports_provider_policy(client, admin_user):
+    """엔진 정책도 서버가 권위 — 클라이언트가 목록에서 gemini를 빼는 근거."""
+    body = (await client.get("/api/v1/pdf-jobs/features")).json()
+    assert body["default_provider"] == "claude"
+    assert body["blocked_providers"] == ["gemini"]
